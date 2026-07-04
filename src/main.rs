@@ -161,8 +161,23 @@ fn main() -> ! {
     loop {
         tft_backlight.set_high();
         #[cfg(all(target_arch = "xtensa", feature = "wireless"))]
-        if let Some(runtime) = wifi_runtime.as_mut() {
-            runtime.poll();
+        {
+            let runtime_actions = if let Some(runtime) = wifi_runtime.as_mut() {
+                runtime.poll(&mut app_state)
+            } else {
+                None
+            };
+            if let Some(actions) = runtime_actions {
+                let mut action_context = UiActionContext {
+                    settings_store: &mut settings_store,
+                    bms_ble: &mut bms_ble,
+                    bms_frame_assembler: &mut bms_frame_assembler,
+                    pending_bms_command: &mut pending_bms_command,
+                    wifi_peripheral: &mut wifi_peripheral,
+                    wifi_runtime: &mut wifi_runtime,
+                };
+                handle_runtime_actions(actions, &mut app_state, &mut action_context);
+            }
         }
         poll_battery_adc(&mut battery_adc, &mut battery_sample_tick, &mut app_state);
         poll_gps_uart(&mut gps_uart, &mut gps_service, &mut app_state);
@@ -284,6 +299,25 @@ fn poll_gps_uart(
     let mut bytes = [0_u8; 96];
     if let Ok(len) = uart.read_buffered(&mut bytes) {
         gps_service.feed(&bytes[..len], app_state);
+    }
+}
+
+#[cfg(all(target_arch = "xtensa", feature = "wireless"))]
+fn handle_runtime_actions(
+    actions: runtime_effects::RuntimeActions,
+    app_state: &mut AppState,
+    context: &mut UiActionContext<'_, '_>,
+) {
+    if actions.persist_settings {
+        let _ = context.settings_store.save(&app_state.settings);
+    }
+    if actions.reconnect_wifi {
+        apply_target_wifi_config(app_state, context.wifi_peripheral, context.wifi_runtime);
+    }
+    if actions.start_bms_scan {
+        context.bms_frame_assembler.reset();
+        app_state.clear_bms_scan_candidates();
+        *context.pending_bms_command = context.bms_ble.start_scan();
     }
 }
 

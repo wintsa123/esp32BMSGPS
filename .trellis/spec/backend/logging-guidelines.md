@@ -76,6 +76,8 @@ Firmware bring-up logs should use a short module prefix such as `[boot]` or
   - `[wifi] AP client disconnected: clients=0`
 - Log DHCP requests/replies after a client is associated, without logging any
   Wi-Fi password.
+- Log local HTTP request outcomes as status code and body length only. Do not
+  log setup passwords, external Wi-Fi passwords, or request bodies.
 - Until the async station connect task exists, target logs must explicitly say
   that station credentials are configured but `connect_async()` is not running.
 
@@ -92,6 +94,9 @@ Firmware bring-up logs should use a short module prefix such as `[boot]` or
   phone is likely stuck before receiving an IPv4 lease.
 - `DHCP ...` appears but phone still cannot open `192.168.4.1` -> AP IPv4 lease
   likely works; inspect TCP/HTTP server integration next.
+- `HTTP 401` from a browser-hosted control page -> the page is reaching the
+  device, but the `X-Setup-Password` value does not match the current setup AP
+  password.
 - Station mode requested before async connect is implemented ->
   `[wifi] station credentials configured; async connect task is not running yet`.
 

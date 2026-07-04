@@ -12,6 +12,7 @@ use core::{
 use embassy_net::{
     Config as NetConfig, IpAddress, IpEndpoint, Ipv4Address, Ipv4Cidr, Runner, Stack,
     StackResources, StaticConfigV4,
+    tcp::{State as TcpState, TcpSocket},
     udp::{PacketMetadata, UdpSocket},
 };
 use esp_hal::peripherals::WIFI;
@@ -27,17 +28,35 @@ use esp_radio::wifi::{
 use heapless::Vec;
 
 use esp32_bms_gps::{
+    app_state::AppState,
     dhcp_server::{
         DHCP_CLIENT_PORT, DHCP_SERVER_PORT, SETUP_AP_CLIENT_IP, SETUP_AP_SERVER_IP, parse_request,
         write_reply,
     },
+    http_api::{EmbeddedAssets, HttpParseError, ResponseBody, body_len, parse_http_request},
+    http_server::handle_connection_with_effects,
+    runtime_effects::RuntimeActions,
     wifi_control::{DesiredWifiMode, WifiRuntimeConfig},
 };
+
+use crate::{assets, build_config};
 
 #[cfg(feature = "net")]
 const DHCP_PACKET_BUFFER_SIZE: usize = 576;
 #[cfg(feature = "net")]
 const DHCP_REPLY_BUFFER_SIZE: usize = 320;
+#[cfg(feature = "net")]
+const HTTP_PORT: u16 = 80;
+#[cfg(feature = "net")]
+const HTTP_TCP_RX_BUFFER_SIZE: usize = 2048;
+#[cfg(feature = "net")]
+const HTTP_TCP_TX_BUFFER_SIZE: usize = 16 * 1024;
+#[cfg(feature = "net")]
+const HTTP_REQUEST_BUFFER_SIZE: usize = 2048;
+#[cfg(feature = "net")]
+const HTTP_HEADER_BUFFER_SIZE: usize = 768;
+#[cfg(feature = "net")]
+const HTTP_JSON_BUFFER_SIZE: usize = 1024;
 
 pub struct WifiRuntime<'d> {
     controller: WifiController<'d>,
@@ -54,6 +73,11 @@ struct SetupApNetwork<'d> {
     stack: Stack<'d>,
     runner: Runner<'d, Interface<'d>>,
     dhcp_socket: UdpSocket<'d>,
+    http_socket: TcpSocket<'d>,
+    http_request_buffer: &'d mut [u8; HTTP_REQUEST_BUFFER_SIZE],
+    http_header_buffer: &'d mut [u8; HTTP_HEADER_BUFFER_SIZE],
+    http_json_buffer: &'d mut [u8; HTTP_JSON_BUFFER_SIZE],
+    http_request_len: usize,
     ap_link_up: bool,
     associated_stations: ApStationSnapshot,
 }
@@ -147,11 +171,13 @@ impl WifiRuntime<'static> {
         Ok(true)
     }
 
-    pub fn poll(&mut self) {
+    pub fn poll(&mut self, app_state: &mut AppState) -> Option<RuntimeActions> {
         #[cfg(feature = "net")]
         if let Some(ap_network) = self.ap_network.as_mut() {
-            ap_network.poll();
+            return ap_network.poll(app_state);
         }
+        #[allow(unreachable_code)]
+        None
     }
 }
 
@@ -241,12 +267,25 @@ fn start_setup_ap_network(interface: Interface<'static>) -> Option<SetupApNetwor
         esp_println::println!("[wifi] setup AP DHCP bind failed: {:?}", error);
         return None;
     }
+    let tcp_rx_buffer = Box::leak(Box::new([0_u8; HTTP_TCP_RX_BUFFER_SIZE]));
+    let tcp_tx_buffer = Box::leak(Box::new([0_u8; HTTP_TCP_TX_BUFFER_SIZE]));
+    let http_socket = TcpSocket::new(stack, tcp_rx_buffer, tcp_tx_buffer);
+    let http_request_buffer = Box::leak(Box::new([0_u8; HTTP_REQUEST_BUFFER_SIZE]));
+    let http_header_buffer = Box::leak(Box::new([0_u8; HTTP_HEADER_BUFFER_SIZE]));
+    let http_json_buffer = Box::leak(Box::new([0_u8; HTTP_JSON_BUFFER_SIZE]));
 
-    esp_println::println!("[wifi] setup AP IPv4 network ready: 192.168.4.1 lease=192.168.4.2");
+    esp_println::println!(
+        "[wifi] setup AP IPv4 network ready: 192.168.4.1 lease=192.168.4.2 http=on"
+    );
     Some(SetupApNetwork {
         stack,
         runner,
         dhcp_socket,
+        http_socket,
+        http_request_buffer,
+        http_header_buffer,
+        http_json_buffer,
+        http_request_len: 0,
         ap_link_up: false,
         associated_stations: ApStationSnapshot::empty(),
     })
@@ -254,13 +293,18 @@ fn start_setup_ap_network(interface: Interface<'static>) -> Option<SetupApNetwor
 
 #[cfg(feature = "net")]
 impl SetupApNetwork<'_> {
-    fn poll(&mut self) {
+    fn poll(&mut self, app_state: &mut AppState) -> Option<RuntimeActions> {
         self.poll_runner();
         self.log_ap_link_state();
         self.log_station_list_changes();
         if self.poll_dhcp_once() {
             self.poll_runner();
         }
+        let actions = self.poll_http_once(app_state);
+        if actions.is_some() {
+            self.poll_runner();
+        }
+        actions
     }
 
     fn poll_runner(&mut self) {
@@ -307,6 +351,77 @@ impl SetupApNetwork<'_> {
         }
 
         true
+    }
+
+    fn poll_http_once(&mut self, app_state: &mut AppState) -> Option<RuntimeActions> {
+        match self.http_socket.state() {
+            TcpState::Closed => {
+                self.http_request_len = 0;
+                let _ = poll_future_once(self.http_socket.accept(HTTP_PORT));
+                None
+            }
+            TcpState::Listen | TcpState::SynReceived => None,
+            TcpState::Established | TcpState::CloseWait => {
+                while self.http_socket.can_recv()
+                    && self.http_request_len < self.http_request_buffer.len()
+                {
+                    let target = &mut self.http_request_buffer[self.http_request_len..];
+                    match poll_future_once(self.http_socket.read(target)) {
+                        Some(Ok(0)) | Some(Err(_)) => break,
+                        Some(Ok(len)) => self.http_request_len += len,
+                        None => break,
+                    }
+                }
+
+                if self.http_request_len == 0 {
+                    return None;
+                }
+                if !http_request_ready(&self.http_request_buffer[..self.http_request_len])
+                    && self.http_request_len < self.http_request_buffer.len()
+                {
+                    return None;
+                }
+
+                let result = handle_connection_with_effects(
+                    &self.http_request_buffer[..self.http_request_len],
+                    app_state,
+                    build_config::FIRMWARE_VERSION,
+                    EmbeddedAssets {
+                        index_html: assets::INDEX_HTML,
+                        index_content_type: assets::INDEX_HTML_CONTENT_TYPE,
+                    },
+                    self.http_json_buffer,
+                    self.http_header_buffer,
+                );
+                self.http_request_len = 0;
+
+                let actions = match result {
+                    Ok((response, actions)) => {
+                        let header = &self.http_header_buffer[..response.header_len];
+                        let body = match response.body {
+                            ResponseBody::Static(bytes) | ResponseBody::Buffer(bytes) => bytes,
+                            ResponseBody::Empty => &[],
+                        };
+                        let socket = &mut self.http_socket;
+                        let ok = write_http_bytes(socket, header) && write_http_bytes(socket, body);
+                        esp_println::println!(
+                            "[wifi] HTTP {} len={}{}",
+                            response.status,
+                            body_len(response.body),
+                            if ok { "" } else { " truncated" }
+                        );
+                        Some(actions)
+                    }
+                    Err(error) => {
+                        esp_println::println!("[wifi] HTTP handler failed: {:?}", error);
+                        None
+                    }
+                };
+                self.http_socket.close();
+                actions
+            }
+            _ => None,
+        }
     }
 
     fn log_ap_link_state(&mut self) {
@@ -384,6 +499,25 @@ fn read_ap_station_snapshot() -> Option<ApStationSnapshot> {
 #[cfg(feature = "net")]
 fn seed_from_mac(mac: [u8; 6]) -> u64 {
     u64::from_be_bytes([0, 0, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]])
+}
+
+#[cfg(feature = "net")]
+fn http_request_ready(bytes: &[u8]) -> bool {
+    !matches!(
+        parse_http_request(bytes),
+        Err(HttpParseError::MissingHeadersEnd | HttpParseError::BodyIncomplete)
+    )
+}
+
+#[cfg(feature = "net")]
+fn write_http_bytes(socket: &mut TcpSocket<'_>, mut bytes: &[u8]) -> bool {
+    while !bytes.is_empty() {
+        match poll_future_once(socket.write(bytes)) {
+            Some(Ok(0)) | Some(Err(_)) | None => return false,
+            Some(Ok(len)) => bytes = &bytes[len..],
+        }
+    }
+    true
 }
 
 #[cfg(feature = "net")]

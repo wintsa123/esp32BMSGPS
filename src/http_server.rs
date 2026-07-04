@@ -86,7 +86,7 @@ mod tests {
     fn handles_raw_get_index_request() {
         let mut state = AppState::default();
         let mut json = [0_u8; 512];
-        let mut headers = [0_u8; 256];
+        let mut headers = [0_u8; 768];
 
         let response = handle_connection(
             b"GET / HTTP/1.1\r\nHost: 192.168.4.1\r\n\r\n",
@@ -110,7 +110,7 @@ mod tests {
     fn handles_raw_api_post_and_mutates_state() {
         let mut state = AppState::default();
         let mut json = [0_u8; 512];
-        let mut headers = [0_u8; 256];
+        let mut headers = [0_u8; 768];
 
         let response = handle_connection(
             b"POST /api/wifi HTTP/1.1\r\nContent-Length: 41\r\n\r\n{\"ssid\":\"garage\",\"password\":\"secretpass\"}",
@@ -135,7 +135,7 @@ mod tests {
     fn handles_raw_status_json_request() {
         let mut state = AppState::default();
         let mut json = [0_u8; 512];
-        let mut headers = [0_u8; 256];
+        let mut headers = [0_u8; 768];
 
         let response = handle_connection(
             b"GET /api/status HTTP/1.1\r\n\r\n",
@@ -163,7 +163,7 @@ mod tests {
     fn maps_bad_raw_http_to_bad_request_response() {
         let mut state = AppState::default();
         let mut json = [0_u8; 128];
-        let mut headers = [0_u8; 256];
+        let mut headers = [0_u8; 768];
 
         let response = handle_connection(
             b"GET /api/status HTTP/1.1\r\n",
@@ -186,7 +186,7 @@ mod tests {
     fn raw_ota_start_sets_downloading_state() {
         let mut state = AppState::default();
         let mut json = [0_u8; 128];
-        let mut headers = [0_u8; 256];
+        let mut headers = [0_u8; 768];
 
         let response = handle_connection(
             b"POST /api/ota/start HTTP/1.1\r\nContent-Length: 0\r\n\r\n",
@@ -207,7 +207,7 @@ mod tests {
     fn connection_effects_report_persist_and_reconnect_actions() {
         let mut state = AppState::default();
         let mut json = [0_u8; 128];
-        let mut headers = [0_u8; 256];
+        let mut headers = [0_u8; 768];
 
         let (response, actions) = handle_connection_with_effects(
             b"POST /api/wifi HTTP/1.1\r\nContent-Length: 41\r\n\r\n{\"ssid\":\"garage\",\"password\":\"secretpass\"}",

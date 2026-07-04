@@ -103,6 +103,8 @@ pub struct HttpRequest<'a> {
     pub method: HttpMethod,
     pub path: &'a str,
     pub body: &'a str,
+    pub setup_password: Option<&'a str>,
+    pub cross_origin: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -128,6 +130,15 @@ pub fn handle_request<'a>(
     assets: EmbeddedAssets,
     response_buffer: &'a mut [u8],
 ) -> HttpResponse<'a> {
+    if request.method == HttpMethod::Options {
+        return HttpResponse::no_content();
+    }
+    if request.cross_origin
+        && request.setup_password != Some(app_state.settings.wifi.setup_ap_password.as_str())
+    {
+        return unauthorized_response();
+    }
+
     match local_api::route(request.method, request.path) {
         Ok(ApiRoute::Index) => HttpResponse {
             status: 200,
@@ -214,6 +225,7 @@ pub fn method_from_bytes(bytes: &[u8]) -> Option<HttpMethod> {
     match bytes {
         b"GET" => Some(HttpMethod::Get),
         b"POST" => Some(HttpMethod::Post),
+        b"OPTIONS" => Some(HttpMethod::Options),
         _ => None,
     }
 }
@@ -235,7 +247,24 @@ pub fn parse_http_request(bytes: &[u8]) -> Result<HttpRequest<'_>, HttpParseErro
         return Err(HttpParseError::InvalidRequestLine);
     }
 
-    let content_length = parse_content_length(lines)?;
+    let mut content_length = 0;
+    let mut setup_password = None;
+    let mut cross_origin = false;
+    for line in lines {
+        let Some((name, value)) = line.split_once(':') else {
+            continue;
+        };
+        let value = value.trim();
+        if name.eq_ignore_ascii_case("content-length") {
+            content_length = value
+                .parse::<usize>()
+                .map_err(|_| HttpParseError::InvalidContentLength)?;
+        } else if name.eq_ignore_ascii_case("x-setup-password") {
+            setup_password = Some(value);
+        } else if name.eq_ignore_ascii_case("origin") {
+            cross_origin = true;
+        }
+    }
     let body_start = header_end + HEADER_END.len();
     let body_end = body_start
         .checked_add(content_length)
@@ -246,7 +275,13 @@ pub fn parse_http_request(bytes: &[u8]) -> Result<HttpRequest<'_>, HttpParseErro
     let body = core::str::from_utf8(&bytes[body_start..body_end])
         .map_err(|_| HttpParseError::InvalidUtf8)?;
 
-    Ok(HttpRequest { method, path, body })
+    Ok(HttpRequest {
+        method,
+        path,
+        body,
+        setup_password,
+        cross_origin,
+    })
 }
 
 pub fn write_response_headers(
@@ -261,7 +296,13 @@ pub fn write_response_headers(
     writer.push(response.content_type)?;
     writer.push("\r\nContent-Length: ")?;
     writer.push_usize(content_len)?;
-    writer.push("\r\nConnection: close\r\n\r\n")?;
+    writer.push("\r\nConnection: close")?;
+    writer.push("\r\nAccess-Control-Allow-Origin: *")?;
+    writer.push("\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS")?;
+    writer.push("\r\nAccess-Control-Allow-Headers: Content-Type, X-Setup-Password")?;
+    writer.push("\r\nAccess-Control-Allow-Private-Network: true")?;
+    writer.push("\r\nPrivate-Network-Access-Name: \"esp32-bms-gps\"")?;
+    writer.push("\r\nPrivate-Network-Access-ID: 02:00:00:00:00:01\r\n\r\n")?;
     Ok(writer.len())
 }
 
@@ -270,22 +311,6 @@ pub fn body_len(body: ResponseBody<'_>) -> usize {
         ResponseBody::Static(bytes) | ResponseBody::Buffer(bytes) => bytes.len(),
         ResponseBody::Empty => 0,
     }
-}
-
-fn parse_content_length<'a>(lines: impl Iterator<Item = &'a str>) -> Result<usize, HttpParseError> {
-    let mut content_length = 0;
-    for line in lines {
-        let Some((name, value)) = line.split_once(':') else {
-            continue;
-        };
-        if name.eq_ignore_ascii_case("content-length") {
-            content_length = value
-                .trim()
-                .parse::<usize>()
-                .map_err(|_| HttpParseError::InvalidContentLength)?;
-        }
-    }
-    Ok(content_length)
 }
 
 fn find_subslice(bytes: &[u8], needle: &[u8]) -> Option<usize> {
@@ -302,10 +327,20 @@ fn status_text(status: u16) -> &'static str {
         200 => "200 OK",
         204 => "204 No Content",
         400 => "400 Bad Request",
+        401 => "401 Unauthorized",
         404 => "404 Not Found",
         405 => "405 Method Not Allowed",
         500 => "500 Internal Server Error",
         _ => "500 Internal Server Error",
+    }
+}
+
+fn unauthorized_response() -> HttpResponse<'static> {
+    HttpResponse {
+        status: 401,
+        content_type: CONTENT_TYPE_TEXT,
+        body: ResponseBody::Static(b"unauthorized"),
+        effects: HttpEffects::none(),
     }
 }
 
@@ -401,32 +436,38 @@ mod tests {
         index_content_type: "text/html",
     };
 
+    fn get(path: &'static str) -> HttpRequest<'static> {
+        HttpRequest {
+            method: HttpMethod::Get,
+            path,
+            body: "",
+            setup_password: None,
+            cross_origin: false,
+        }
+    }
+
+    fn post(path: &'static str, body: &'static str) -> HttpRequest<'static> {
+        HttpRequest {
+            method: HttpMethod::Post,
+            path,
+            body,
+            setup_password: None,
+            cross_origin: false,
+        }
+    }
+
     #[test]
     fn serves_index_and_status_json() {
         let mut app_state = AppState::default();
         let mut out = [0_u8; 512];
 
-        let index = handle_request(
-            HttpRequest {
-                method: HttpMethod::Get,
-                path: "/",
-                body: "",
-            },
-            &mut app_state,
-            "0.1.0",
-            ASSETS,
-            &mut out,
-        );
+        let index = handle_request(get("/"), &mut app_state, "0.1.0", ASSETS, &mut out);
         assert_eq!(index.status, 200);
         assert_eq!(index.body, ResponseBody::Static(INDEX));
         assert_eq!(index.effects, HttpEffects::none());
 
         let status = handle_request(
-            HttpRequest {
-                method: HttpMethod::Get,
-                path: "/api/status",
-                body: "",
-            },
+            get("/api/status"),
             &mut app_state,
             "0.1.0",
             ASSETS,
@@ -448,11 +489,7 @@ mod tests {
         let mut out = [0_u8; 512];
 
         let response = handle_request(
-            HttpRequest {
-                method: HttpMethod::Post,
-                path: "/api/wifi",
-                body: r#"{"ssid":"garage","password":"secretpass"}"#,
-            },
+            post("/api/wifi", r#"{"ssid":"garage","password":"secretpass"}"#),
             &mut app_state,
             "0.1.0",
             ASSETS,
@@ -463,11 +500,10 @@ mod tests {
         assert_eq!(response.effects, HttpEffects::wifi_reconnect_requested());
 
         let response = handle_request(
-            HttpRequest {
-                method: HttpMethod::Post,
-                path: "/api/config",
-                body: r#"{"brightness":42,"display_rotation":"portrait","speed_unit":"mph"}"#,
-            },
+            post(
+                "/api/config",
+                r#"{"brightness":42,"display_rotation":"portrait","speed_unit":"mph"}"#,
+            ),
             &mut app_state,
             "0.1.0",
             ASSETS,
@@ -489,11 +525,7 @@ mod tests {
         let mut out = [0_u8; 512];
 
         let response = handle_request(
-            HttpRequest {
-                method: HttpMethod::Get,
-                path: "/api/bms/candidates",
-                body: "",
-            },
+            get("/api/bms/candidates"),
             &mut app_state,
             "0.1.0",
             ASSETS,
@@ -511,11 +543,7 @@ mod tests {
         assert!(json.contains(r#""rssi":-44"#));
 
         let response = handle_request(
-            HttpRequest {
-                method: HttpMethod::Post,
-                path: "/api/bms/scan",
-                body: "",
-            },
+            post("/api/bms/scan", ""),
             &mut app_state,
             "0.1.0",
             ASSETS,
@@ -531,11 +559,7 @@ mod tests {
         let mut out = [0_u8; 128];
 
         let response = handle_request(
-            HttpRequest {
-                method: HttpMethod::Post,
-                path: "/api/bms/bind",
-                body: r#"{"mac":"AA:BB:CC:DD:EE:FF"}"#,
-            },
+            post("/api/bms/bind", r#"{"mac":"AA:BB:CC:DD:EE:FF"}"#),
             &mut app_state,
             "0.1.0",
             ASSETS,
@@ -560,26 +584,12 @@ mod tests {
         let mut app_state = AppState::default();
         let mut out = [0_u8; 128];
 
-        let response = handle_request(
-            HttpRequest {
-                method: HttpMethod::Get,
-                path: "/api/wifi",
-                body: "",
-            },
-            &mut app_state,
-            "0.1.0",
-            ASSETS,
-            &mut out,
-        );
+        let response = handle_request(get("/api/wifi"), &mut app_state, "0.1.0", ASSETS, &mut out);
         assert_eq!(response.status, 405);
         assert_eq!(response.effects, HttpEffects::none());
 
         let response = handle_request(
-            HttpRequest {
-                method: HttpMethod::Post,
-                path: "/api/ap-password",
-                body: r#"{"password":"short"}"#,
-            },
+            post("/api/ap-password", r#"{"password":"short"}"#),
             &mut app_state,
             "0.1.0",
             ASSETS,
@@ -597,6 +607,7 @@ mod tests {
     fn maps_http_method_bytes() {
         assert_eq!(method_from_bytes(b"GET"), Some(HttpMethod::Get));
         assert_eq!(method_from_bytes(b"POST"), Some(HttpMethod::Post));
+        assert_eq!(method_from_bytes(b"OPTIONS"), Some(HttpMethod::Options));
         assert_eq!(method_from_bytes(b"PUT"), None);
     }
 
@@ -607,14 +618,73 @@ mod tests {
         assert_eq!(get.method, HttpMethod::Get);
         assert_eq!(get.path, "/api/status");
         assert_eq!(get.body, "");
+        assert!(!get.cross_origin);
 
         let post = parse_http_request(
-            b"POST /api/wifi HTTP/1.1\r\nContent-Length: 41\r\n\r\n{\"ssid\":\"garage\",\"password\":\"secretpass\"}tail",
+            b"POST /api/wifi HTTP/1.1\r\nOrigin: https://example.vercel.app\r\nX-Setup-Password: 12345678\r\nContent-Length: 41\r\n\r\n{\"ssid\":\"garage\",\"password\":\"secretpass\"}tail",
         )
         .unwrap();
         assert_eq!(post.method, HttpMethod::Post);
         assert_eq!(post.path, "/api/wifi");
         assert_eq!(post.body, r#"{"ssid":"garage","password":"secretpass"}"#);
+        assert_eq!(post.setup_password, Some("12345678"));
+        assert!(post.cross_origin);
+    }
+
+    #[test]
+    fn cross_origin_requests_require_setup_password() {
+        let mut app_state = AppState::default();
+        app_state
+            .settings
+            .wifi
+            .set_setup_ap_password("12345678")
+            .unwrap();
+        let mut out = [0_u8; 512];
+
+        let denied = handle_request(
+            HttpRequest {
+                method: HttpMethod::Get,
+                path: "/api/status",
+                body: "",
+                setup_password: Some("bad"),
+                cross_origin: true,
+            },
+            &mut app_state,
+            "0.1.0",
+            ASSETS,
+            &mut out,
+        );
+        assert_eq!(denied.status, 401);
+
+        let allowed = handle_request(
+            HttpRequest {
+                method: HttpMethod::Get,
+                path: "/api/status",
+                body: "",
+                setup_password: Some("12345678"),
+                cross_origin: true,
+            },
+            &mut app_state,
+            "0.1.0",
+            ASSETS,
+            &mut out,
+        );
+        assert_eq!(allowed.status, 200);
+
+        let preflight = handle_request(
+            HttpRequest {
+                method: HttpMethod::Options,
+                path: "/api/status",
+                body: "",
+                setup_password: None,
+                cross_origin: true,
+            },
+            &mut app_state,
+            "0.1.0",
+            ASSETS,
+            &mut out,
+        );
+        assert_eq!(preflight.status, 204);
     }
 
     #[test]
@@ -641,7 +711,7 @@ mod tests {
             body: ResponseBody::Static(b"{}"),
             effects: HttpEffects::none(),
         };
-        let mut out = [0_u8; 128];
+        let mut out = [0_u8; 512];
 
         let len = write_response_headers(&response, body_len(response.body), &mut out).unwrap();
         let text = core::str::from_utf8(&out[..len]).unwrap();
@@ -649,6 +719,10 @@ mod tests {
         assert!(text.starts_with("HTTP/1.1 200 OK\r\n"));
         assert!(text.contains("Content-Type: application/json\r\n"));
         assert!(text.contains("Content-Length: 2\r\n"));
-        assert!(text.ends_with("Connection: close\r\n\r\n"));
+        assert!(text.contains("Connection: close\r\n"));
+        assert!(text.contains("Access-Control-Allow-Origin: *\r\n"));
+        assert!(text.contains("Access-Control-Allow-Headers: Content-Type, X-Setup-Password\r\n"));
+        assert!(text.contains("Access-Control-Allow-Private-Network: true\r\n"));
+        assert!(text.ends_with("Private-Network-Access-ID: 02:00:00:00:00:01\r\n\r\n"));
     }
 }

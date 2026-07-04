@@ -186,6 +186,9 @@ apply_target_wifi_config(&mut app_state, &mut wifi_peripheral, &mut wifi_runtime
 
 - `GET /api/status` is produced by
   `local_api::write_status_json(output, app_state, firmware_version)`.
+- Browser-hosted control pages may call the device API from a public HTTPS
+  origin. Cross-origin requests must use `X-Setup-Password` with the current
+  setup AP password; preflight `OPTIONS` is allowed without authentication.
 - HTTP-side OTA triggers are `POST /api/ota/check` and
   `POST /api/ota/start`.
 - Runtime OTA coordination is handled through
@@ -230,6 +233,12 @@ apply_target_wifi_config(&mut app_state, &mut wifi_peripheral, &mut wifi_runtime
   - `bms_mac`: string or `null`
 - `POST /api/config` may update `language`; invalid values must return
   `ApiError::InvalidLanguage`.
+- Cross-origin device API responses must include CORS and Private Network
+  Access headers:
+  - `Access-Control-Allow-Origin: *`
+  - `Access-Control-Allow-Methods: GET, POST, OPTIONS`
+  - `Access-Control-Allow-Headers: Content-Type, X-Setup-Password`
+  - `Access-Control-Allow-Private-Network: true`
 - Web UI battery display must use `local_battery_mv` first and fall back to
   `pack_voltage_mv`; do not introduce a separate `battery` field unless the API
   is updated and tested.
@@ -247,6 +256,10 @@ apply_target_wifi_config(&mut app_state, &mut wifi_peripheral, &mut wifi_runtime
 
 - Missing or invalid JSON fields -> `ApiError::InvalidJson` or a specific
   validation error.
+- Cross-origin request without the current setup password -> HTTP 401 and no
+  settings mutation.
+- PNA/CORS preflight request -> HTTP 204 with the required access-control
+  headers.
 - Invalid `language` -> `ApiError::InvalidLanguage` and HTTP 400.
 - Oversized JSON response or bounded text -> `ResponseTooLarge` /
   `FixedTextError::TooLong`.
@@ -279,6 +292,8 @@ apply_target_wifi_config(&mut app_state, &mut wifi_peripheral, &mut wifi_runtime
   from config POST bodies, and applied to `DeviceSettings`.
 - `http_server` / `runtime_effects` tests must assert OTA HTTP effects and
   `OtaJobCommand` boundaries.
+- `http_api` tests must assert cross-origin setup password enforcement and PNA
+  response headers.
 - `ota_job` tests must cover check-only, start-after-check, same-version, and
   unsupported-current-version paths.
 

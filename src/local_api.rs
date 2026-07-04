@@ -23,6 +23,7 @@ pub const OTA_START_PATH: &str = "/api/ota/start";
 pub enum HttpMethod {
     Get,
     Post,
+    Options,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -212,6 +213,7 @@ pub fn route(method: HttpMethod, path: &str) -> Result<ApiRoute, ApiError> {
         CONFIG_PATH => match method {
             HttpMethod::Get => Ok(ApiRoute::ConfigRead),
             HttpMethod::Post => Ok(ApiRoute::ConfigWrite),
+            HttpMethod::Options => Err(ApiError::MethodNotAllowed),
         },
         WIFI_PATH => method_route(method, HttpMethod::Post, ApiRoute::WifiUpdate),
         AP_PASSWORD_PATH => method_route(method, HttpMethod::Post, ApiRoute::ApPasswordUpdate),
