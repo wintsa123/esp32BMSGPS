@@ -5,6 +5,7 @@ pub mod app_state;
 pub mod battery;
 pub mod bms_ble;
 pub mod bms_scan;
+pub mod dhcp_server;
 pub mod gps_nmea;
 pub mod gps_service;
 pub mod http_api;

@@ -1,6 +1,9 @@
 #![no_std]
 #![no_main]
 
+#[cfg(all(target_arch = "xtensa", feature = "net"))]
+extern crate alloc;
+
 mod assets;
 mod battery_adc;
 mod board;
@@ -157,6 +160,10 @@ fn main() -> ! {
     let mut battery_sample_tick = 0_u8;
     loop {
         tft_backlight.set_high();
+        #[cfg(all(target_arch = "xtensa", feature = "wireless"))]
+        if let Some(runtime) = wifi_runtime.as_mut() {
+            runtime.poll();
+        }
         poll_battery_adc(&mut battery_adc, &mut battery_sample_tick, &mut app_state);
         poll_gps_uart(&mut gps_uart, &mut gps_service, &mut app_state);
         if let Some(calibration) = app_state.settings.touch_calibration

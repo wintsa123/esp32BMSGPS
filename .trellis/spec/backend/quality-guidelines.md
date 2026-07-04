@@ -59,6 +59,10 @@ Questions to answer:
   `wireless_wifi::WifiRuntime::start(wifi, config) -> Result<Option<WifiRuntime>, WifiError>`.
 - Reconfiguration is
   `WifiRuntime::apply_config(config) -> Result<bool, WifiError>`.
+- AP network polling is `WifiRuntime::poll()`, called from the main loop while
+  the runtime is alive.
+- Setup AP DHCP packet logic lives in `dhcp_server::{parse_request,
+  write_reply}` and is host-testable.
 - `main::apply_target_wifi_config(app_state, wifi_peripheral, wifi_runtime)`
   bridges settings state to target radio ownership.
 
@@ -79,10 +83,22 @@ Questions to answer:
 - The setup AP QR payload must use the same `setup_ap_ssid` and
   `setup_ap_password` passed to `AccessPointConfig`.
 - The setup AP QR payload must keep the phone-tested field order and flags:
-  `WIFI:S:<escaped ssid>;T:SAE;P:<escaped password>;H:true;;`. The target AP
-  transport still uses `AuthenticationMethod::Wpa2Personal` because
-  `esp-radio 0.18.0` documents WPA3 as unsupported; treat `T:SAE` here as the
-  scanner compatibility string until hardware testing proves otherwise.
+  `WIFI:S:<escaped ssid>;T:WPA;P:<escaped password>;;`. The target AP transport
+  uses `AuthenticationMethod::Wpa2Personal`; do not encode the QR as WPA3/SAE or
+  as hidden unless the AP config changes to match.
+- Starting the AP radio is not the same as providing an IPv4 setup network. If
+  a phone accepts the password but stays on "connecting" or "obtaining IP",
+  verify whether the target firmware is running a DHCP/static-IP network stack
+  for the AP interface before treating it as a password/auth failure.
+- Default firmware features must include the `net` feature so the setup AP gets
+  an IPv4 stack in addition to the Wi-Fi radio.
+- Setup AP IPv4 defaults are fixed for the local provisioning MVP:
+  - ESP32 AP/server/router/DNS IP: `192.168.4.1/24`.
+  - DHCP lease offered to the phone: `192.168.4.2`.
+  - DHCP server listens on UDP/67 and replies to UDP/68.
+- `WifiRuntime::poll()` must continue polling both the AP network runner and
+  the DHCP socket from the main loop; configuring `embassy-net` resources
+  without polling the runner is equivalent to no IP network.
 - Current setup AP SSIDs must be generated as `fuckingBms_` plus a six-character
   random hexadecimal suffix. The setup AP password must be eight random digits.
 - `main::ensure_first_boot_provisioning` must migrate old persisted SSID or
@@ -100,8 +116,14 @@ Questions to answer:
   AP in the same boot.
 - Default build pulls `ble`/`coex` before BLE transport validation -> release
   link may fail on native BT/coexistence symbols.
-- QR payload uses `WIFI:T:WPA;S:...;H:false;;` -> tested phone may decode the
-  QR but fail to join the setup AP.
+- QR payload uses `T:SAE`, `H:true`, or a different SSID/password from
+  `AccessPointConfig` -> phone may decode the QR but fail to join the setup AP.
+- AP radio is up but no DHCP/static IPv4 setup network is running -> phone may
+  accept the password yet remain in "connecting" / "obtaining IP".
+- AP IPv4 stack exists but `WifiRuntime::poll()` is not called -> DHCP requests
+  are not consumed and the phone remains stuck obtaining IP.
+- DHCP parser ignores malformed or unsupported DHCP message types; the phone
+  should retry instead of the firmware panicking.
 - Persisted `BMS-GPS-*` SSID or non-eight-digit password remains accepted
   forever -> the TFT keeps showing stale setup credentials after a firmware
   update.
@@ -120,9 +142,11 @@ Questions to answer:
 - Keep host tests for `provisioning::wifi_qr_payload` and
   `wifi_control::desired_runtime_config`.
 - `provisioning::wifi_qr_payload` tests must assert the exact `S`-first,
-  `T:SAE`, and `H:true` payload shape.
+  `T:WPA`, visible-network payload shape.
 - `provisioning` tests must assert the `fuckingBms_` SSID policy and the
   eight-digit password policy.
+- `dhcp_server` host tests must cover Discover -> Offer, Request -> Ack,
+  invalid packet ignore, and small output buffer rejection.
 - Run `cargo +esp check --bin esp32-bms-gps -j1` after target Wi-Fi changes.
 - Run `cargo +esp build --release -j1` after Cargo feature or native radio
   dependency changes.

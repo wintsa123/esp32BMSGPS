@@ -497,6 +497,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "embassy-time-queue-utils"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "168297bf80aaf114b3c9ad589bf38b01b3009b9af7f97cd18086c5bbf96f5693"
+dependencies = [
+ "embassy-executor-timer-queue",
+ "heapless 0.9.3",
+]
+
+[[package]]
 name = "embedded-can"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -878,7 +888,10 @@ dependencies = [
  "allocator-api2",
  "cfg-if",
  "document-features",
+ "embassy-executor",
  "embassy-sync 0.8.0",
+ "embassy-time-driver",
+ "embassy-time-queue-utils",
  "esp-alloc",
  "esp-config",
  "esp-hal",

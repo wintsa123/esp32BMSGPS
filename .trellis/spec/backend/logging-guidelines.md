@@ -56,6 +56,8 @@ Firmware bring-up logs should use a short module prefix such as `[boot]` or
   `wireless_wifi::WifiRuntime::start(wifi, config) -> Result<Option<_>, WifiError>`.
 - Runtime reconfiguration:
   `WifiRuntime::apply_config(config) -> Result<bool, WifiError>`.
+- Runtime network polling:
+  `WifiRuntime::poll()`.
 
 #### 3. Contracts
 
@@ -66,6 +68,14 @@ Firmware bring-up logs should use a short module prefix such as `[boot]` or
   output.
 - Log when desired mode is `Off`, when the `WIFI` peripheral is unavailable,
   and when app state is forced to `Offline`.
+- Log the actual AP/IP boundary separately from config acceptance:
+  - `[wifi] AP started: ip=192.168.4.1 dhcp=on`
+  - `[wifi] AP stopped`
+- Log SoftAP client association separately from DHCP:
+  - `[wifi] AP client connected: clients=<n> first_mac=<mac> rssi=<rssi>`
+  - `[wifi] AP client disconnected: clients=0`
+- Log DHCP requests/replies after a client is associated, without logging any
+  Wi-Fi password.
 - Until the async station connect task exists, target logs must explicitly say
   that station credentials are configured but `connect_async()` is not running.
 
@@ -75,17 +85,25 @@ Firmware bring-up logs should use a short module prefix such as `[boot]` or
 - `set_config` fails -> `[wifi] set_config failed: ...`.
 - Desired mode is off -> `[wifi] desired mode is off; no Wi-Fi runtime started`.
 - Runtime exists and config changes -> `[wifi] applying config to existing runtime`.
+- Config accepted but no `AP started` log -> inspect whether the AP interface
+  link state is being polled and whether `esp_wifi_start` reached
+  `AccessPointStart`.
+- `AP client connected` appears but no `DHCP` log -> client associated, but the
+  phone is likely stuck before receiving an IPv4 lease.
+- `DHCP ...` appears but phone still cannot open `192.168.4.1` -> AP IPv4 lease
+  likely works; inspect TCP/HTTP server integration next.
 - Station mode requested before async connect is implemented ->
   `[wifi] station credentials configured; async connect task is not running yet`.
 
 #### 5. Good/Base/Bad Cases
 
 - Good: setup AP log shows `mode=setup-ap`, AP SSID, password length, and
-  `controller initialized and initial config accepted`.
+  `controller initialized and initial config accepted`, then `AP started`,
+  `AP client connected`, and a DHCP Offer/Ack log when a phone joins.
 - Base: AP+STA log shows `mode=setup-ap+station`, both SSIDs, password lengths,
   and the explicit async-connect limitation.
 - Bad: printing `"password='secretpass'"` or reporting only `connecting` without
-  a radio/config boundary.
+  a radio/config, AP started, client association, or DHCP boundary.
 
 #### 6. Tests Required
 

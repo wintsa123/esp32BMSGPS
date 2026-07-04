@@ -180,9 +180,6 @@ mod tests {
         let password = FixedAscii::<64>::try_from_str("pa:ss,word").unwrap();
         let payload = wifi_qr_payload(ssid, password).unwrap();
 
-        assert_eq!(
-            payload.as_str(),
-            r"WIFI:S:BMS\;GPS;T:WPA;P:pa\:ss\,word;;"
-        );
+        assert_eq!(payload.as_str(), r"WIFI:S:BMS\;GPS;T:WPA;P:pa\:ss\,word;;");
     }
 }

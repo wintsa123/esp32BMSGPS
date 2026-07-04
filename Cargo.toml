@@ -30,8 +30,8 @@ qrcodegen = { package = "qrcodegen-no-heap", version = "1.8.1" }
 sha2 = { version = "0.10.9", default-features = false }
 
 [features]
-default = ["storage", "wireless"]
-async-runtime = ["dep:embassy-executor", "dep:embassy-sync", "dep:embassy-time"]
+default = ["storage", "net"]
+async-runtime = ["dep:embassy-executor", "dep:embassy-sync", "dep:embassy-time", "esp-rtos/embassy"]
 storage = ["dep:esp-storage"]
 wireless = ["async-runtime", "dep:esp-radio"]
 ble-radio = ["wireless", "esp-radio/ble", "esp-radio/coex"]
