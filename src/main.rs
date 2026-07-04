@@ -59,11 +59,7 @@ fn main() -> ! {
     }
 
     let mut settings_store = flash_settings::DeviceSettingsStore::new(peripherals.FLASH);
-    let mut tft_backlight = Output::new(
-        peripherals.GPIO21,
-        board::tft::BACKLIGHT_ON_LEVEL,
-        OutputConfig::default(),
-    );
+    let mut tft_backlight = Output::new(peripherals.GPIO21, Level::Low, OutputConfig::default());
     let mut status_r = Output::new(peripherals.GPIO17, Level::Low, OutputConfig::default());
     let mut status_g = Output::new(peripherals.GPIO22, Level::Low, OutputConfig::default());
     let mut status_b = Output::new(peripherals.GPIO16, Level::Low, OutputConfig::default());
@@ -100,8 +96,6 @@ fn main() -> ! {
     let mut wifi_peripheral = Some(peripherals.WIFI);
     #[cfg(all(target_arch = "xtensa", feature = "wireless"))]
     let mut wifi_runtime = None;
-    #[cfg(all(target_arch = "xtensa", feature = "wireless"))]
-    apply_target_wifi_config(&mut app_state, &mut wifi_peripheral, &mut wifi_runtime);
 
     let _build_marker = (
         build_config::FIRMWARE_NAME,
@@ -127,9 +121,8 @@ fn main() -> ! {
     if display.init(app_state.settings.display_rotation).is_err() {
         fast_blink(tft_backlight, status_r, delay);
     }
-    if display.draw_color_bars().is_err() {
-        fast_blink(tft_backlight, status_r, delay);
-    }
+    let _ = display.clear(display::BLACK);
+    tft_backlight.set_high();
     status_b.set_low();
     status_g.set_high();
 
@@ -156,6 +149,8 @@ fn main() -> ! {
     if draw_screen(&mut display, &app_state, ui.screen).is_err() {
         fast_blink(tft_backlight, status_r, delay);
     }
+    #[cfg(all(target_arch = "xtensa", feature = "wireless"))]
+    apply_target_wifi_config(&mut app_state, &mut wifi_peripheral, &mut wifi_runtime);
 
     let mut battery_sample_tick = 0_u8;
     loop {

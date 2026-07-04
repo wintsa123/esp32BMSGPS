@@ -32,9 +32,7 @@ const MADCTL_MY: u8 = 0x80;
 const RGB565: u8 = 0x55;
 
 pub const BLACK: u16 = 0x0000;
-pub const RED: u16 = 0xF800;
 pub const GREEN: u16 = 0x07E0;
-pub const BLUE: u16 = 0x001F;
 pub const WHITE: u16 = 0xFFFF;
 pub const YELLOW: u16 = 0xFFE0;
 pub const CYAN: u16 = 0x07FF;
@@ -82,18 +80,6 @@ impl<'d> St7789<'d> {
         self.delay.delay_millis(10);
         self.command(DISPON)?;
         self.delay.delay_millis(120);
-
-        Ok(())
-    }
-
-    pub fn draw_color_bars(&mut self) -> Result<(), SpiError> {
-        let (w, h) = self.rotation.logical_size();
-        let stripe = w / 4;
-
-        self.fill_rect(0, 0, stripe, h, RED)?;
-        self.fill_rect(stripe, 0, stripe, h, GREEN)?;
-        self.fill_rect(stripe * 2, 0, stripe, h, BLUE)?;
-        self.fill_rect(stripe * 3, 0, w - stripe * 3, h, WHITE)?;
 
         Ok(())
     }
@@ -156,13 +142,14 @@ impl<'d> St7789<'d> {
     pub fn draw_settings_menu(&mut self, settings: &DeviceSettings) -> Result<(), SpiError> {
         self.clear(BLACK)?;
         self.draw_text(10, 8, 2, CYAN, "SETTINGS")?;
-        self.draw_menu_row(0, "WIFI SETUP")?;
-        self.draw_menu_row(1, "BRIGHTNESS")?;
-        self.draw_menu_row(2, "ROTATION")?;
-        self.draw_menu_row(3, "SPEED UNIT")?;
-        self.draw_menu_row(4, language_menu_label(settings.language))?;
-        self.draw_menu_row(5, "BMS BIND")?;
-        self.draw_menu_row(6, "RESTORE DEFAULTS")
+        self.draw_text(212, 12, 1, DARK_GRAY, "TAP TOP=BACK")?;
+        self.draw_menu_row_value(0, "WIFI AP", setup_ap_label(settings))?;
+        self.draw_menu_row_u8(1, "BRIGHT", settings.brightness_percent, "%")?;
+        self.draw_menu_row_value(2, "ROT", rotation_label(settings.display_rotation))?;
+        self.draw_menu_row_value(3, "SPEED", speed_unit_label(settings.speed_unit))?;
+        self.draw_menu_row_value(4, "LANG", language_label(settings.language))?;
+        self.draw_menu_row_value(5, "BMS", bms_label(settings))?;
+        self.draw_menu_row_value(6, "RESET", "DEFAULTS")
     }
 
     pub fn draw_setup_ap_qr(
@@ -171,11 +158,13 @@ impl<'d> St7789<'d> {
         ssid: &str,
         password: &str,
     ) -> Result<(), SpiError> {
-        self.clear(WHITE)?;
-        self.draw_text(10, 8, 2, BLUE, "SETUP WIFI")?;
-        self.draw_text(10, 32, 1, BLACK, ssid)?;
-        self.draw_text(10, 48, 1, BLACK, password)?;
-        self.draw_text(10, 64, 1, DARK_GRAY, "HTTP://192.168.4.1")?;
+        self.clear(BLACK)?;
+        self.draw_text(10, 8, 2, CYAN, "SETUP WIFI")?;
+        self.draw_text(10, 34, 1, WHITE, "SSID")?;
+        self.draw_text(58, 34, 1, YELLOW, ssid)?;
+        self.draw_text(10, 50, 1, WHITE, "PASS")?;
+        self.draw_text(58, 50, 1, YELLOW, password)?;
+        self.draw_text(10, 66, 1, GRAY, "HTTP://192.168.4.1")?;
 
         let (width, height) = self.rotation.logical_size();
         let quiet_modules = 4_u16;
@@ -187,6 +176,13 @@ impl<'d> St7789<'d> {
         let start_x = (width.saturating_sub(qr_px)) / 2;
         let start_y = 84_u16;
 
+        self.fill_rect(
+            start_x.saturating_sub(3),
+            start_y.saturating_sub(3),
+            qr_px + 6,
+            qr_px + 6,
+            WHITE,
+        )?;
         self.fill_rect(start_x, start_y, qr_px, qr_px, WHITE)?;
         let mut y = 0;
         while y < qr.size() {
@@ -206,13 +202,7 @@ impl<'d> St7789<'d> {
             y += 1;
         }
 
-        self.draw_text(
-            10,
-            height.saturating_sub(18),
-            1,
-            DARK_GRAY,
-            "SCAN QR TO JOIN",
-        )
+        self.draw_text(10, height.saturating_sub(18), 1, GRAY, "SCAN QR TO JOIN")
     }
 
     pub fn draw_text(
@@ -381,10 +371,29 @@ impl<'d> St7789<'d> {
         }
     }
 
-    fn draw_menu_row(&mut self, index: u16, label: &str) -> Result<(), SpiError> {
+    fn draw_menu_row_value(
+        &mut self,
+        index: u16,
+        label: &str,
+        value: &str,
+    ) -> Result<(), SpiError> {
         let y = 48 + index * 28;
         self.fill_rect(8, y - 4, 304, 24, DARK_GRAY)?;
-        self.draw_text(18, y, 1, WHITE, label)
+        self.draw_text(18, y, 1, WHITE, label)?;
+        self.draw_text(128, y, 1, YELLOW, value)
+    }
+
+    fn draw_menu_row_u8(
+        &mut self,
+        index: u16,
+        label: &str,
+        value: u8,
+        suffix: &str,
+    ) -> Result<(), SpiError> {
+        let y = 48 + index * 28;
+        self.fill_rect(8, y - 4, 304, 24, DARK_GRAY)?;
+        self.draw_text(18, y, 1, WHITE, label)?;
+        self.draw_u16(128, y, 1, YELLOW, value as u16, suffix)
     }
 
     fn draw_u16_deci(
@@ -517,10 +526,35 @@ fn speed_unit_label(unit: SpeedUnit) -> &'static str {
     }
 }
 
-fn language_menu_label(language: Language) -> &'static str {
+fn language_label(language: Language) -> &'static str {
     match language {
-        Language::Chinese => "LANGUAGE:ZH",
-        Language::English => "LANGUAGE:EN",
+        Language::Chinese => "ZH",
+        Language::English => "EN",
+    }
+}
+
+fn rotation_label(rotation: DisplayRotation) -> &'static str {
+    match rotation {
+        DisplayRotation::Portrait => "PORTRAIT",
+        DisplayRotation::Landscape => "LAND",
+        DisplayRotation::InvertedPortrait => "INV PORT",
+        DisplayRotation::InvertedLandscape => "INV LAND",
+    }
+}
+
+fn setup_ap_label(settings: &DeviceSettings) -> &'static str {
+    match settings.wifi.setup_ap_state {
+        esp32_bms_gps::settings::SetupApState::FirstBoot => "FIRST",
+        esp32_bms_gps::settings::SetupApState::Disabled => "OFF",
+        esp32_bms_gps::settings::SetupApState::Reprovisioning => "ON",
+    }
+}
+
+fn bms_label(settings: &DeviceSettings) -> &'static str {
+    if settings.bms.bound_mac.is_some() {
+        "BOUND"
+    } else {
+        "SCAN/BIND"
     }
 }
 

@@ -72,6 +72,9 @@ Questions to answer:
   Wi-Fi heap, start `esp-rtos`, create an `esp-radio` Wi-Fi controller, and call
   `set_config` either through `wifi::new(...with_initial_config(...))` or
   `WifiRuntime::apply_config`.
+- Initialize the TFT and draw the first visible screen before starting the
+  Wi-Fi runtime. Radio/network allocation or startup failures must not leave the
+  user staring at an uninitialized white TFT.
 - Keep `WifiRuntime` alive for as long as Wi-Fi should stay on. Dropping
   `WifiController` stops/deinitializes Wi-Fi.
 - Do not consume the `WIFI` peripheral when
@@ -108,6 +111,8 @@ Questions to answer:
 #### 4. Validation & Error Matrix
 
 - QR screen visible but no `WifiRuntime` started -> phone cannot see AP.
+- Backlight turns on before TFT init or Wi-Fi starts before the first screen is
+  drawn -> target may look like a white-screen boot failure.
 - `esp_rtos::start` missing before `wifi::new` -> radio runtime is invalid for
   `esp-radio`.
 - `WifiController` stored in a local temporary and dropped -> AP starts then
