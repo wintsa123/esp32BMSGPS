@@ -75,6 +75,9 @@ Questions to answer:
 - Initialize the TFT and draw the first visible screen before starting the
   Wi-Fi runtime. Radio/network allocation or startup failures must not leave the
   user staring at an uninitialized white TFT.
+- Do not enable ST7789 display inversion by default. On this TFT path the UI
+  draws black backgrounds; `INVON` makes a healthy screen look like a white
+  boot failure.
 - Keep `WifiRuntime` alive for as long as Wi-Fi should stay on. Dropping
   `WifiController` stops/deinitializes Wi-Fi.
 - Do not consume the `WIFI` peripheral when
@@ -113,6 +116,8 @@ Questions to answer:
 - QR screen visible but no `WifiRuntime` started -> phone cannot see AP.
 - Backlight turns on before TFT init or Wi-Fi starts before the first screen is
   drawn -> target may look like a white-screen boot failure.
+- `board::tft::INVERT_COLORS == true` while UI clears to black -> the rendered
+  screen appears white even though SPI drawing succeeded.
 - `esp_rtos::start` missing before `wifi::new` -> radio runtime is invalid for
   `esp-radio`.
 - `WifiController` stored in a local temporary and dropped -> AP starts then

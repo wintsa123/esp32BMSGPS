@@ -44,7 +44,7 @@ pub mod tft {
     pub const BL: u8 = 21;
     pub const BACKLIGHT_ON_LEVEL: Level = Level::High;
     pub const SPI_FREQUENCY_MHZ: u32 = 1;
-    pub const INVERT_COLORS: bool = true;
+    pub const INVERT_COLORS: bool = false;
 }
 
 pub mod touch {
