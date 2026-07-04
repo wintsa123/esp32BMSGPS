@@ -1,0 +1,6 @@
+/target/
+/.embuild/
+/.espflash/
+*.bin
+*.elf
+*.map

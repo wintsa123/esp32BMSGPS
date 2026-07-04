@@ -1,0 +1,18 @@
+[build]
+target = "xtensa-esp32-none-elf"
+
+[target.'cfg(target_arch = "xtensa")']
+runner = "espflash flash --monitor --partition-table partitions.csv"
+rustflags = [
+    "-C",
+    "link-arg=-Wl,-Tlinkall.x",
+    "-C",
+    "link-arg=-nostartfiles",
+]
+
+[env]
+ESP_LOG = { value = "info", force = false }
+OTA_MANIFEST_URL = { value = "https://example.invalid/esp32-bms-gps/manifest.json", force = false }
+
+[unstable]
+build-std = ["core", "alloc"]
