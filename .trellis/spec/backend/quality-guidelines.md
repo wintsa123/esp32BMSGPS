@@ -75,6 +75,26 @@ Questions to answer:
 - Initialize the TFT and draw the first visible screen before starting the
   Wi-Fi runtime. Radio/network allocation or startup failures must not leave the
   user staring at an uninitialized white TFT.
+- The default TFT controller fallback for this hardware contract is ST7789.
+  Runtime RDDID detection may select ILI9341 when the panel reports a matching
+  ID; only change `board::tft::CONTROLLER` when verified hardware proves the
+  fallback is wrong.
+- When RDDID is unavailable or unrecognized during bring-up, the target firmware
+  may auto-probe ST7789/ILI9341, all four display rotations, and display
+  inversion by reinitializing and redrawing the current screen. This is a
+  temporary visibility aid, not proof of hardware completion.
+- During white-screen bring-up, each init/probe should issue a raw full-screen
+  `RAMWR` color fill before windowed `CASET`/`RASET` drawing. If raw fill is
+  visible but settings are not, focus next on window offsets and MADCTL.
+- The `ili9341-tft` Cargo feature exists only to build an alternate ILI9341
+  fallback image for hardware validation when RDDID/MISO is unavailable.
+- Because this panel has no controllable TFT reset pin, wait
+  `board::tft::POWER_ON_DELAY_MS` before the first RDDID read or init command.
+- Keep that wait conservative during bring-up; a 1s wait is acceptable because
+  it is cheaper than missing the first init commands on a no-RST TFT.
+- The ST7789 init path must issue `SLPOUT`, wait, then write panel power/gamma
+  setup before `DISPON`; sleep-out plus color-mode alone is not enough for
+  every TPM408 module variant.
 - Do not enable ST7789 display inversion by default. On this TFT path the UI
   draws black backgrounds; `INVON` makes a healthy screen look like a white
   boot failure.
@@ -116,6 +136,19 @@ Questions to answer:
 - QR screen visible but no `WifiRuntime` started -> phone cannot see AP.
 - Backlight turns on before TFT init or Wi-Fi starts before the first screen is
   drawn -> target may look like a white-screen boot failure.
+- Sending TFT commands immediately after ESP boot on a no-RST panel -> the
+  display may still be powering up and remain white.
+- `board::tft::CONTROLLER == Ili9341` on the documented ST7789 TPM408 path ->
+  controller-specific power/gamma commands may leave the panel white.
+- RDDID reads as all `00` or `ff` -> treat it as an SPI/MISO/CS/DC/connection
+  diagnostic; do not auto-switch away from the ST7789 fallback.
+- Unknown RDDID with a white TFT -> use the target auto-probe logs and watch
+  whether any controller/rotation/inversion phase draws the settings screen
+  before changing pins.
+- Auto-probe phases should draw a full-screen color diagnostic before returning
+  to the settings screen, so visibility does not depend on tiny text.
+- ST7789 init omits power/gamma commands -> some modules may accept SPI traffic
+  but never render the boot/settings screen.
 - `board::tft::INVERT_COLORS == true` while UI clears to black -> the rendered
   screen appears white even though SPI drawing succeeded.
 - `esp_rtos::start` missing before `wifi::new` -> radio runtime is invalid for
@@ -158,6 +191,10 @@ Questions to answer:
 - `dhcp_server` host tests must cover Discover -> Offer, Request -> Ack,
   invalid packet ignore, and small output buffer rejection.
 - Run `cargo +esp check --bin esp32-bms-gps -j1` after target Wi-Fi changes.
+- Run `cargo +esp check --bin esp32-bms-gps -j1` after target TFT controller or
+  display-init changes.
+- Run `cargo +esp check --bin esp32-bms-gps --features ili9341-tft -j1` when
+  changing the TFT fallback feature.
 - Run `cargo +esp build --release -j1` after Cargo feature or native radio
   dependency changes.
 - Use `espflash save-image --chip esp32 --partition-table partitions.csv
@@ -197,8 +234,9 @@ apply_target_wifi_config(&mut app_state, &mut wifi_peripheral, &mut wifi_runtime
 - `GET /api/status` is produced by
   `local_api::write_status_json(output, app_state, firmware_version)`.
 - Browser-hosted control pages may call the device API from a public HTTPS
-  origin. Cross-origin requests must use `X-Setup-Password` with the current
-  setup AP password; preflight `OPTIONS` is allowed without authentication.
+  origin. API requests must use the current setup AP password through either
+  `X-Setup-Password` or HTTP Basic `Authorization`; preflight `OPTIONS` is
+  allowed without authentication.
 - HTTP-side OTA triggers are `POST /api/ota/check` and
   `POST /api/ota/start`.
 - Runtime OTA coordination is handled through
@@ -247,8 +285,20 @@ apply_target_wifi_config(&mut app_state, &mut wifi_peripheral, &mut wifi_runtime
   Access headers:
   - `Access-Control-Allow-Origin: *`
   - `Access-Control-Allow-Methods: GET, POST, OPTIONS`
-  - `Access-Control-Allow-Headers: Content-Type, X-Setup-Password`
+  - `Access-Control-Allow-Headers: Content-Type, X-Setup-Password, Authorization`
+  - `Access-Control-Max-Age: 600`
   - `Access-Control-Allow-Private-Network: true`
+- Unauthorized API responses must return HTTP 401 with
+  `WWW-Authenticate: Basic realm="esp32-bms-gps", charset="UTF-8"` so direct
+  browser access can use the native password prompt.
+- `GET /` and `OPTIONS` remain unauthenticated. All other API routes require
+  the current setup AP password even when the request is not cross-origin.
+- Browser-hosted control pages that fetch the local HTTP API from a public
+  HTTPS origin must annotate local requests with `targetAddressSpace: "local"`
+  when the browser supports Local Network Access, and may retry the older
+  `targetAddressSpace: "private"` PNA value for rollout compatibility. Keep the
+  older PNA response header too, because Chrome versions and flags differ during
+  rollout.
 - Web UI battery display must use `local_battery_mv` first and fall back to
   `pack_voltage_mv`; do not introduce a separate `battery` field unless the API
   is updated and tested.
@@ -266,8 +316,8 @@ apply_target_wifi_config(&mut app_state, &mut wifi_peripheral, &mut wifi_runtime
 
 - Missing or invalid JSON fields -> `ApiError::InvalidJson` or a specific
   validation error.
-- Cross-origin request without the current setup password -> HTTP 401 and no
-  settings mutation.
+- API request without the current setup password -> HTTP 401 and no settings
+  mutation.
 - PNA/CORS preflight request -> HTTP 204 with the required access-control
   headers.
 - Invalid `language` -> `ApiError::InvalidLanguage` and HTTP 400.
@@ -302,8 +352,8 @@ apply_target_wifi_config(&mut app_state, &mut wifi_peripheral, &mut wifi_runtime
   from config POST bodies, and applied to `DeviceSettings`.
 - `http_server` / `runtime_effects` tests must assert OTA HTTP effects and
   `OtaJobCommand` boundaries.
-- `http_api` tests must assert cross-origin setup password enforcement and PNA
-  response headers.
+- `http_api` tests must assert setup password enforcement, Basic auth support,
+  and PNA response headers.
 - `ota_job` tests must cover check-only, start-after-check, same-version, and
   unsupported-current-version paths.
 

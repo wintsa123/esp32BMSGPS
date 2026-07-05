@@ -11,7 +11,7 @@
       "headers": [
         {
           "key": "Permissions-Policy",
-          "value": "bluetooth=(self), local-network-access=(self)"
+          "value": "bluetooth=(self), local-network=(self), loopback-network=(self), local-network-access=(self)"
         },
         {
           "key": "X-Content-Type-Options",

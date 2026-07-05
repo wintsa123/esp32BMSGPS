@@ -95,8 +95,8 @@ Firmware bring-up logs should use a short module prefix such as `[boot]` or
 - `DHCP ...` appears but phone still cannot open `192.168.4.1` -> AP IPv4 lease
   likely works; inspect TCP/HTTP server integration next.
 - `HTTP 401` from a browser-hosted control page -> the page is reaching the
-  device, but the `X-Setup-Password` value does not match the current setup AP
-  password.
+  device, but the `X-Setup-Password` or Basic auth value does not match the
+  current setup AP password.
 - Station mode requested before async connect is implemented ->
   `[wifi] station credentials configured; async connect task is not running yet`.
 

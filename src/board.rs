@@ -31,9 +31,19 @@ pub mod sd_spi {
 pub mod tft {
     use esp_hal::gpio::Level;
 
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub enum Controller {
+        St7789,
+        Ili9341,
+    }
+
     pub const WIDTH: u16 = 240;
     pub const HEIGHT: u16 = 320;
     pub const COLOR_ORDER: &str = "BGR";
+    #[cfg(feature = "ili9341-tft")]
+    pub const CONTROLLER: Controller = Controller::Ili9341;
+    #[cfg(not(feature = "ili9341-tft"))]
+    pub const CONTROLLER: Controller = Controller::St7789;
 
     pub const MISO: u8 = 12;
     pub const MOSI: u8 = 13;
@@ -44,7 +54,13 @@ pub mod tft {
     pub const BL: u8 = 21;
     pub const BACKLIGHT_ON_LEVEL: Level = Level::High;
     pub const SPI_FREQUENCY_MHZ: u32 = 1;
+    pub const POWER_ON_DELAY_MS: u32 = 1_000;
     pub const INVERT_COLORS: bool = false;
+    pub const BOOT_DIAGNOSTIC_MS: u32 = 1_200;
+    // ponytail: show settings first until TFT/touch is verified; set false after validation.
+    pub const BOOT_STARTS_ON_SETTINGS: bool = true;
+    // ponytail: boot-visible settings proof while touch/display hardware is unverified; set 0 after validation.
+    pub const BOOT_SETTINGS_PREVIEW_MS: u32 = 5_000;
 }
 
 pub mod touch {

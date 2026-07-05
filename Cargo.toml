@@ -37,6 +37,7 @@ wireless = ["async-runtime", "dep:esp-radio"]
 ble-radio = ["wireless", "esp-radio/ble", "esp-radio/coex"]
 net = ["wireless", "dep:embassy-net"]
 full = ["net", "storage"]
+ili9341-tft = []
 
 [profile.dev]
 debug = 2

@@ -102,6 +102,21 @@ which sets `OTA_MANIFEST_URL` for the build.
 Web assets are embedded in the app image with `include_bytes!`, so every OTA app
 slot must fit the firmware plus static assets.
 
+## Vercel Control Page
+
+The repository also contains a static browser-hosted control page under
+`vercel/index.html`. Deploy the repo to Vercel and open the HTTPS site, then join
+the phone/laptop to the ESP32 setup AP and press `连接热点 API`. The page prompts
+for the current setup password shown on the TFT QR screen and sends it as both
+`X-Setup-Password` and HTTP Basic auth.
+
+The ESP32 HTTP API returns CORS plus Private Network Access headers so a public
+HTTPS Vercel origin can call `http://192.168.4.1`. The Vercel page first tries
+`targetAddressSpace: "local"` and then falls back to the older `"private"` value
+for browser rollout differences. The `连接蓝牙` button is present for the future
+ESP32 BLE control GATT service; the current target BLE work still covers the Ant
+BMS central/client path only.
+
 ## Current Scope
 
 Implemented in this scaffold:
@@ -110,9 +125,10 @@ Implemented in this scaffold:
 - ESP-IDF-compatible app descriptor for OTA metadata.
 - TFT backlight GPIO21 driven high continuously during the main loop.
 - GPIO17 red LED heartbeat toggles every 250 ms during the main loop.
-- ST7789 driver initializes the display and can draw a low-memory dashboard,
-  settings menu, calibration targets, touch feedback, filled rectangles, and a
-  small built-in 5 x 7 ASCII font.
+- TFT driver initializes ST7789 by default, can probe ST7789/ILI9341 plus all
+  rotations and inversion during bring-up when RDDID is unknown, and can draw a
+  low-memory dashboard, settings menu, calibration targets, touch feedback,
+  filled rectangles, boot color bars, and a small built-in 5 x 7 ASCII font.
 - Display rotation is a persisted device setting with portrait, landscape,
   inverted portrait, and inverted landscape values.
 - Central board pin map.
@@ -142,6 +158,10 @@ Implemented in this scaffold:
 - Host-testable HTTP dispatch layer that serves the embedded index page,
   returns JSON API responses, applies JSON settings updates to `AppState`, and
   maps API errors to HTTP status codes.
+- Browser-hosted Vercel control page with vanilla JS HTTP control, setup
+  password prompt/auth headers, CORS/Private Network Access fetch compatibility,
+  and a Web Bluetooth control-service shell for the pending ESP32 BLE GATT
+  service.
 - Host-testable raw HTTP request parser and response-header writer for the
   future single-connection TCP server.
 - Host-testable single-connection HTTP core that maps raw request bytes to
@@ -213,8 +233,14 @@ Smoke-test interpretation:
 - Red LED not blinking: check reset loop, power, boot strap pins, and flashing
   with GPS attached to UART0.
 - Blue LED on briefly during display init, green LED on afterward: the firmware
-  finished sending the ST7789 init and color-bar writes. This still does not
-  prove the LCD received them, because ST7789 writes are one-way in this setup.
+  finished sending TFT init and display writes. A successful visible path should
+  flash a raw full-screen red `RAMWR` fill for about 0.4 seconds before the
+  normal color bars/settings screen. If RDDID is unknown, the serial log should
+  also show
+  `[tft] auto probe controller=... rotation=... invert=...` roughly every 2
+  seconds while the firmware alternates controller, rotation, and inversion.
+  Each probe flashes raw red first, draws full-screen color bars, then returns
+  to SETTINGS.
 
 Next implementation phases:
 
@@ -237,7 +263,7 @@ cargo test --target x86_64-unknown-linux-gnu --lib
 cargo clippy --target x86_64-unknown-linux-gnu --lib -- -D warnings
 ```
 
-Current host test count: 96.
+Current host test count: 102.
 
 Passing for the ESP32 target on the development machine:
 
@@ -245,17 +271,24 @@ Passing for the ESP32 target on the development machine:
 . "$HOME/export-esp.sh"
 cargo +esp check --bin esp32-bms-gps -j1
 cargo +esp clippy --bin esp32-bms-gps -j1 -- -D warnings
+cargo +esp check --bin esp32-bms-gps --features ili9341-tft -j1
+cargo +esp clippy --bin esp32-bms-gps --features ili9341-tft -j1 -- -D warnings
 cargo +esp build --release -j1
+cargo +esp build --release --features ili9341-tft -j1
 ```
 
 Current release ELF:
 
-- `target/xtensa-esp32-none-elf/release/esp32-bms-gps` (3,324,472 bytes)
+- `target/xtensa-esp32-none-elf/release/esp32-bms-gps` (4,117,448 bytes)
 
-Current generated factory app image:
+Current generated factory app images:
 
-- `/tmp/esp32-bms-gps.bin` from `espflash save-image`: 549,488 bytes
-  (52.40% of the 1 MB app slot)
+- `target/xtensa-esp32-none-elf/release/esp32-bms-gps-factory.bin`:
+  654,768 bytes, SHA-256
+  `124572110f4393bb975115e45e9a722a8e2827429c5b964ed76e6844d7d7030e`.
+- `target/xtensa-esp32-none-elf/release/esp32-bms-gps-ili9341-factory.bin`:
+  654,816 bytes, SHA-256
+  `1e1e2bab115357aa1beaf5d6356ae4633f1b5676e5dc25ec3b396c7d4f40d119`.
 
 Pending on hardware:
 

@@ -18,12 +18,22 @@ const SLPOUT: u8 = 0x11;
 const NORON: u8 = 0x13;
 const INVOFF: u8 = 0x20;
 const INVON: u8 = 0x21;
+const GAMMASET: u8 = 0x26;
+const RDDID: u8 = 0x04;
 const CASET: u8 = 0x2A;
 const RASET: u8 = 0x2B;
 const RAMWR: u8 = 0x2C;
 const MADCTL: u8 = 0x36;
 const COLMOD: u8 = 0x3A;
 const DISPON: u8 = 0x29;
+const FRMCTR1: u8 = 0xB1;
+const DFUNCTR: u8 = 0xB6;
+const PWCTR1: u8 = 0xC0;
+const PWCTR2: u8 = 0xC1;
+const VMCTR1: u8 = 0xC5;
+const VMCTR2: u8 = 0xC7;
+const PGAMCTRL: u8 = 0xE0;
+const NGAMCTRL: u8 = 0xE1;
 
 const MADCTL_BGR: u8 = 0x08;
 const MADCTL_MV: u8 = 0x20;
@@ -32,7 +42,9 @@ const MADCTL_MY: u8 = 0x80;
 const RGB565: u8 = 0x55;
 
 pub const BLACK: u16 = 0x0000;
+pub const BLUE: u16 = 0x001F;
 pub const GREEN: u16 = 0x07E0;
+pub const RED: u16 = 0xF800;
 pub const WHITE: u16 = 0xFFFF;
 pub const YELLOW: u16 = 0xFFE0;
 pub const CYAN: u16 = 0x07FF;
@@ -59,19 +71,48 @@ impl<'d> St7789<'d> {
         }
     }
 
-    pub fn init(&mut self, rotation: DisplayRotation) -> Result<(), SpiError> {
+    pub fn wait_for_power(&mut self) {
+        self.cs.set_high();
+        self.delay.delay_millis(board::tft::POWER_ON_DELAY_MS);
+    }
+
+    pub fn init(
+        &mut self,
+        controller: board::tft::Controller,
+        rotation: DisplayRotation,
+    ) -> Result<(), SpiError> {
+        self.init_with_inversion(controller, rotation, board::tft::INVERT_COLORS)
+    }
+
+    pub fn init_with_inversion(
+        &mut self,
+        controller: board::tft::Controller,
+        rotation: DisplayRotation,
+        invert_colors: bool,
+    ) -> Result<(), SpiError> {
         self.cs.set_high();
         self.delay.delay_millis(20);
 
         self.command(SWRESET)?;
         self.delay.delay_millis(150);
-        self.command(SLPOUT)?;
-        self.delay.delay_millis(120);
+
+        match controller {
+            board::tft::Controller::St7789 => {
+                self.command(SLPOUT)?;
+                self.delay.delay_millis(120);
+                self.init_st7789_power()?;
+            }
+            board::tft::Controller::Ili9341 => {
+                self.init_ili9341_power()?;
+                self.command(SLPOUT)?;
+                self.delay.delay_millis(120);
+            }
+        }
 
         self.command_data(COLMOD, &[RGB565])?;
         self.set_rotation(rotation)?;
 
-        if board::tft::INVERT_COLORS {
+        if invert_colors {
             self.command(INVON)?;
         } else {
             self.command(INVOFF)?;
@@ -84,9 +125,92 @@ impl<'d> St7789<'d> {
         Ok(())
     }
 
+    fn init_st7789_power(&mut self) -> Result<(), SpiError> {
+        self.command_data(0xB2, &[0x0C, 0x0C, 0x00, 0x33, 0x33])?;
+        self.command_data(0xB7, &[0x35])?;
+        self.command_data(0xBB, &[0x19])?;
+        self.command_data(0xC0, &[0x2C])?;
+        self.command_data(0xC2, &[0x01])?;
+        self.command_data(0xC3, &[0x12])?;
+        self.command_data(0xC4, &[0x20])?;
+        self.command_data(0xC6, &[0x0F])?;
+        self.command_data(0xD0, &[0xA4, 0xA1])?;
+        self.command_data(
+            PGAMCTRL,
+            &[
+                0xD0, 0x04, 0x0D, 0x11, 0x13, 0x2B, 0x3F, 0x54, 0x4C, 0x18, 0x0D, 0x0B, 0x1F, 0x23,
+            ],
+        )?;
+        self.command_data(
+            NGAMCTRL,
+            &[
+                0xD0, 0x04, 0x0C, 0x11, 0x13, 0x2C, 0x3F, 0x44, 0x51, 0x2F, 0x1F, 0x1F, 0x20, 0x23,
+            ],
+        )
+    }
+
+    fn init_ili9341_power(&mut self) -> Result<(), SpiError> {
+        self.command_data(0xEF, &[0x03, 0x80, 0x02])?;
+        self.command_data(0xCF, &[0x00, 0xC1, 0x30])?;
+        self.command_data(0xED, &[0x64, 0x03, 0x12, 0x81])?;
+        self.command_data(0xE8, &[0x85, 0x00, 0x78])?;
+        self.command_data(0xCB, &[0x39, 0x2C, 0x00, 0x34, 0x02])?;
+        self.command_data(0xF7, &[0x20])?;
+        self.command_data(0xEA, &[0x00, 0x00])?;
+        self.command_data(PWCTR1, &[0x23])?;
+        self.command_data(PWCTR2, &[0x10])?;
+        self.command_data(VMCTR1, &[0x3E, 0x28])?;
+        self.command_data(VMCTR2, &[0x86])?;
+        self.command_data(FRMCTR1, &[0x00, 0x18])?;
+        self.command_data(DFUNCTR, &[0x08, 0x82, 0x27])?;
+        self.command_data(0xF2, &[0x00])?;
+        self.command_data(GAMMASET, &[0x01])?;
+        self.command_data(
+            PGAMCTRL,
+            &[
+                0x0F, 0x31, 0x2B, 0x0C, 0x0E, 0x08, 0x4E, 0xF1, 0x37, 0x07, 0x10, 0x03, 0x0E, 0x09,
+                0x00,
+            ],
+        )?;
+        self.command_data(
+            NGAMCTRL,
+            &[
+                0x00, 0x0E, 0x14, 0x03, 0x11, 0x07, 0x31, 0xC1, 0x48, 0x08, 0x0F, 0x0C, 0x31, 0x36,
+                0x0F,
+            ],
+        )
+    }
+
     pub fn clear(&mut self, color: u16) -> Result<(), SpiError> {
         let (w, h) = self.rotation.logical_size();
         self.fill_rect(0, 0, w, h, color)
+    }
+
+    pub fn read_id(&mut self) -> Result<[u8; 4], SpiError> {
+        let mut id = [0_u8; 4];
+        self.dc.set_low();
+        self.cs.set_low();
+        self.spi.write(&[RDDID])?;
+        self.dc.set_high();
+        let result = self.spi.read(&mut id);
+        self.cs.set_high();
+        result.map(|_| id)
+    }
+
+    pub fn draw_boot_diagnostics(&mut self) -> Result<(), SpiError> {
+        let (width, height) = self.rotation.logical_size();
+        let band = (height / 4).max(1);
+        self.fill_rect(0, 0, width, band, RED)?;
+        self.fill_rect(0, band, width, band, GREEN)?;
+        self.fill_rect(0, band * 2, width, band, BLUE)?;
+        self.fill_rect(0, band * 3, width, height.saturating_sub(band * 3), WHITE)?;
+        self.draw_text(34, 28, 4, WHITE, "TFT")?;
+        self.draw_text(34, 78, 4, BLACK, "OK")
+    }
+
+    pub fn write_raw_screen_color(&mut self, color: u16) -> Result<(), SpiError> {
+        self.command(RAMWR)?;
+        self.write_color_pixels(color, board::tft::WIDTH as u32 * board::tft::HEIGHT as u32)
     }
 
     pub fn draw_calibration_target(&mut self, point: ScreenPoint) -> Result<(), SpiError> {
@@ -248,6 +372,10 @@ impl<'d> St7789<'d> {
 
         self.set_window(x, y, x + width - 1, y + height - 1)?;
         self.command(RAMWR)?;
+        self.write_color_pixels(color, width as u32 * height as u32)
+    }
+
+    fn write_color_pixels(&mut self, color: u16, mut pixels: u32) -> Result<(), SpiError> {
         self.dc.set_high();
         self.cs.set_low();
 
@@ -259,7 +387,6 @@ impl<'d> St7789<'d> {
             pair[1] = lo;
         }
 
-        let mut pixels = width as u32 * height as u32;
         while pixels > 0 {
             let send_pixels = pixels.min((chunk.len() / 2) as u32) as usize;
             self.spi.write(&chunk[..send_pixels * 2])?;
@@ -517,6 +644,16 @@ impl<'d> St7789<'d> {
         self.cs.set_high();
         result
     }
+}
+
+pub fn controller_from_rddid(id: [u8; 4]) -> Option<board::tft::Controller> {
+    if id[2] == 0x93 && id[3] == 0x41 {
+        return Some(board::tft::Controller::Ili9341);
+    }
+    if (id[1] == 0x85 && id[2] == 0x52) || (id[1] == 0x77 && id[2] == 0x89) {
+        return Some(board::tft::Controller::St7789);
+    }
+    None
 }
 
 fn speed_unit_label(unit: SpeedUnit) -> &'static str {

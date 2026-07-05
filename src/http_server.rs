@@ -82,6 +82,16 @@ mod tests {
         index_content_type: "text/html; charset=utf-8",
     };
 
+    fn app_state_with_password() -> AppState {
+        let mut state = AppState::default();
+        state
+            .settings
+            .wifi
+            .set_setup_ap_password("12345678")
+            .unwrap();
+        state
+    }
+
     #[test]
     fn handles_raw_get_index_request() {
         let mut state = AppState::default();
@@ -108,12 +118,12 @@ mod tests {
 
     #[test]
     fn handles_raw_api_post_and_mutates_state() {
-        let mut state = AppState::default();
+        let mut state = app_state_with_password();
         let mut json = [0_u8; 512];
         let mut headers = [0_u8; 768];
 
         let response = handle_connection(
-            b"POST /api/wifi HTTP/1.1\r\nContent-Length: 41\r\n\r\n{\"ssid\":\"garage\",\"password\":\"secretpass\"}",
+            b"POST /api/wifi HTTP/1.1\r\nX-Setup-Password: 12345678\r\nContent-Length: 41\r\n\r\n{\"ssid\":\"garage\",\"password\":\"secretpass\"}",
             &mut state,
             "0.1.0",
             ASSETS,
@@ -133,12 +143,12 @@ mod tests {
 
     #[test]
     fn handles_raw_status_json_request() {
-        let mut state = AppState::default();
+        let mut state = app_state_with_password();
         let mut json = [0_u8; 512];
         let mut headers = [0_u8; 768];
 
         let response = handle_connection(
-            b"GET /api/status HTTP/1.1\r\n\r\n",
+            b"GET /api/status HTTP/1.1\r\nAuthorization: Basic ZXNwMzI6MTIzNDU2Nzg=\r\n\r\n",
             &mut state,
             "0.1.0",
             ASSETS,
@@ -184,12 +194,12 @@ mod tests {
 
     #[test]
     fn raw_ota_start_sets_downloading_state() {
-        let mut state = AppState::default();
+        let mut state = app_state_with_password();
         let mut json = [0_u8; 128];
         let mut headers = [0_u8; 768];
 
         let response = handle_connection(
-            b"POST /api/ota/start HTTP/1.1\r\nContent-Length: 0\r\n\r\n",
+            b"POST /api/ota/start HTTP/1.1\r\nX-Setup-Password: 12345678\r\nContent-Length: 0\r\n\r\n",
             &mut state,
             "0.1.0",
             ASSETS,
@@ -205,12 +215,12 @@ mod tests {
 
     #[test]
     fn connection_effects_report_persist_and_reconnect_actions() {
-        let mut state = AppState::default();
+        let mut state = app_state_with_password();
         let mut json = [0_u8; 128];
         let mut headers = [0_u8; 768];
 
         let (response, actions) = handle_connection_with_effects(
-            b"POST /api/wifi HTTP/1.1\r\nContent-Length: 41\r\n\r\n{\"ssid\":\"garage\",\"password\":\"secretpass\"}",
+            b"POST /api/wifi HTTP/1.1\r\nX-Setup-Password: 12345678\r\nContent-Length: 41\r\n\r\n{\"ssid\":\"garage\",\"password\":\"secretpass\"}",
             &mut state,
             "0.1.0",
             ASSETS,

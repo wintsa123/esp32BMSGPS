@@ -104,6 +104,7 @@ pub struct HttpRequest<'a> {
     pub path: &'a str,
     pub body: &'a str,
     pub setup_password: Option<&'a str>,
+    pub authorization: Option<&'a str>,
     pub cross_origin: bool,
 }
 
@@ -133,11 +134,6 @@ pub fn handle_request<'a>(
     if request.method == HttpMethod::Options {
         return HttpResponse::no_content();
     }
-    if request.cross_origin
-        && request.setup_password != Some(app_state.settings.wifi.setup_ap_password.as_str())
-    {
-        return unauthorized_response();
-    }
 
     match local_api::route(request.method, request.path) {
         Ok(ApiRoute::Index) => HttpResponse {
@@ -146,6 +142,7 @@ pub fn handle_request<'a>(
             body: ResponseBody::Static(assets.index_html),
             effects: HttpEffects::none(),
         },
+        Ok(_) if !request_has_setup_password(&request, app_state) => unauthorized_response(),
         Ok(ApiRoute::Status) => json_result(local_api::write_status_json(
             response_buffer,
             app_state,
@@ -249,6 +246,7 @@ pub fn parse_http_request(bytes: &[u8]) -> Result<HttpRequest<'_>, HttpParseErro
 
     let mut content_length = 0;
     let mut setup_password = None;
+    let mut authorization = None;
     let mut cross_origin = false;
     for line in lines {
         let Some((name, value)) = line.split_once(':') else {
@@ -261,6 +259,8 @@ pub fn parse_http_request(bytes: &[u8]) -> Result<HttpRequest<'_>, HttpParseErro
                 .map_err(|_| HttpParseError::InvalidContentLength)?;
         } else if name.eq_ignore_ascii_case("x-setup-password") {
             setup_password = Some(value);
+        } else if name.eq_ignore_ascii_case("authorization") {
+            authorization = Some(value);
         } else if name.eq_ignore_ascii_case("origin") {
             cross_origin = true;
         }
@@ -280,6 +280,7 @@ pub fn parse_http_request(bytes: &[u8]) -> Result<HttpRequest<'_>, HttpParseErro
         path,
         body,
         setup_password,
+        authorization,
         cross_origin,
     })
 }
@@ -297,12 +298,17 @@ pub fn write_response_headers(
     writer.push("\r\nContent-Length: ")?;
     writer.push_usize(content_len)?;
     writer.push("\r\nConnection: close")?;
+    if response.status == 401 {
+        writer.push("\r\nWWW-Authenticate: Basic realm=\"esp32-bms-gps\", charset=\"UTF-8\"")?;
+    }
     writer.push("\r\nAccess-Control-Allow-Origin: *")?;
     writer.push("\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS")?;
-    writer.push("\r\nAccess-Control-Allow-Headers: Content-Type, X-Setup-Password")?;
+    writer
+        .push("\r\nAccess-Control-Allow-Headers: Content-Type, X-Setup-Password, Authorization")?;
+    writer.push("\r\nAccess-Control-Max-Age: 600")?;
     writer.push("\r\nAccess-Control-Allow-Private-Network: true")?;
     writer.push("\r\nPrivate-Network-Access-Name: \"esp32-bms-gps\"")?;
-    writer.push("\r\nPrivate-Network-Access-ID: 02:00:00:00:00:01\r\n\r\n")?;
+    writer.push("\r\nPrivate-Network-Access-ID: \"02:00:00:00:00:01\"\r\n\r\n")?;
     Ok(writer.len())
 }
 
@@ -333,6 +339,104 @@ fn status_text(status: u16) -> &'static str {
         500 => "500 Internal Server Error",
         _ => "500 Internal Server Error",
     }
+}
+
+fn request_has_setup_password(request: &HttpRequest<'_>, app_state: &AppState) -> bool {
+    let expected = app_state.settings.wifi.setup_ap_password.as_bytes();
+    if expected.is_empty() {
+        return false;
+    }
+    if request
+        .setup_password
+        .is_some_and(|password| constant_time_eq(password.as_bytes(), expected))
+    {
+        return true;
+    }
+    request
+        .authorization
+        .is_some_and(|value| basic_auth_password_matches(value, expected))
+}
+
+fn basic_auth_password_matches(value: &str, expected_password: &[u8]) -> bool {
+    let mut parts = value.split_ascii_whitespace();
+    let Some(scheme) = parts.next() else {
+        return false;
+    };
+    let Some(encoded) = parts.next() else {
+        return false;
+    };
+    if parts.next().is_some() || !scheme.eq_ignore_ascii_case("basic") {
+        return false;
+    }
+
+    let mut decoded = [0_u8; 96];
+    let Some(len) = decode_base64(encoded.as_bytes(), &mut decoded) else {
+        return false;
+    };
+    let Some(colon) = decoded[..len].iter().position(|byte| *byte == b':') else {
+        return false;
+    };
+    constant_time_eq(&decoded[colon + 1..len], expected_password)
+}
+
+fn decode_base64(input: &[u8], output: &mut [u8]) -> Option<usize> {
+    let mut out_len = 0;
+    let mut chunk = [0_u8; 4];
+    let mut chunk_len = 0;
+    let mut saw_padding = false;
+
+    for &byte in input {
+        let value = match byte {
+            b'A'..=b'Z' => byte - b'A',
+            b'a'..=b'z' => byte - b'a' + 26,
+            b'0'..=b'9' => byte - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            b'=' => {
+                saw_padding = true;
+                64
+            }
+            _ => return None,
+        };
+        if saw_padding && value != 64 {
+            return None;
+        }
+        chunk[chunk_len] = value;
+        chunk_len += 1;
+        if chunk_len == 4 {
+            let pad = usize::from(chunk[2] == 64) + usize::from(chunk[3] == 64);
+            if chunk[0] == 64 || chunk[1] == 64 || (chunk[2] == 64 && chunk[3] != 64) {
+                return None;
+            }
+            if out_len + 3 - pad > output.len() {
+                return None;
+            }
+            output[out_len] = (chunk[0] << 2) | (chunk[1] >> 4);
+            out_len += 1;
+            if pad < 2 {
+                output[out_len] = (chunk[1] << 4) | (chunk[2] >> 2);
+                out_len += 1;
+            }
+            if pad == 0 {
+                output[out_len] = (chunk[2] << 6) | chunk[3];
+                out_len += 1;
+            }
+            chunk_len = 0;
+        }
+    }
+
+    if chunk_len == 0 { Some(out_len) } else { None }
+}
+
+fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut diff = 0_u8;
+    for index in 0..left.len() {
+        diff |= left[index] ^ right[index];
+    }
+    diff == 0
 }
 
 fn unauthorized_response() -> HttpResponse<'static> {
@@ -436,12 +540,23 @@ mod tests {
         index_content_type: "text/html",
     };
 
+    fn app_state_with_password() -> AppState {
+        let mut state = AppState::default();
+        state
+            .settings
+            .wifi
+            .set_setup_ap_password("12345678")
+            .unwrap();
+        state
+    }
+
     fn get(path: &'static str) -> HttpRequest<'static> {
         HttpRequest {
             method: HttpMethod::Get,
             path,
             body: "",
-            setup_password: None,
+            setup_password: Some("12345678"),
+            authorization: None,
             cross_origin: false,
         }
     }
@@ -451,14 +566,15 @@ mod tests {
             method: HttpMethod::Post,
             path,
             body,
-            setup_password: None,
+            setup_password: Some("12345678"),
+            authorization: None,
             cross_origin: false,
         }
     }
 
     #[test]
     fn serves_index_and_status_json() {
-        let mut app_state = AppState::default();
+        let mut app_state = app_state_with_password();
         let mut out = [0_u8; 512];
 
         let index = handle_request(get("/"), &mut app_state, "0.1.0", ASSETS, &mut out);
@@ -485,7 +601,7 @@ mod tests {
 
     #[test]
     fn applies_post_routes_to_app_state() {
-        let mut app_state = AppState::default();
+        let mut app_state = app_state_with_password();
         let mut out = [0_u8; 512];
 
         let response = handle_request(
@@ -516,7 +632,7 @@ mod tests {
 
     #[test]
     fn serves_bms_candidates_and_scan_effect() {
-        let mut app_state = AppState::default();
+        let mut app_state = app_state_with_password();
         app_state.bms_scan_candidates.upsert(
             crate::settings::MacAddress::new([1, 2, 3, 4, 5, 6]),
             Some("ANT-24S"),
@@ -555,7 +671,7 @@ mod tests {
 
     #[test]
     fn bms_bind_persists_mac_and_requests_scan() {
-        let mut app_state = AppState::default();
+        let mut app_state = app_state_with_password();
         let mut out = [0_u8; 128];
 
         let response = handle_request(
@@ -581,7 +697,7 @@ mod tests {
 
     #[test]
     fn reports_http_errors_without_mutating_settings() {
-        let mut app_state = AppState::default();
+        let mut app_state = app_state_with_password();
         let mut out = [0_u8; 128];
 
         let response = handle_request(get("/api/wifi"), &mut app_state, "0.1.0", ASSETS, &mut out);
@@ -618,27 +734,24 @@ mod tests {
         assert_eq!(get.method, HttpMethod::Get);
         assert_eq!(get.path, "/api/status");
         assert_eq!(get.body, "");
+        assert_eq!(get.authorization, None);
         assert!(!get.cross_origin);
 
         let post = parse_http_request(
-            b"POST /api/wifi HTTP/1.1\r\nOrigin: https://example.vercel.app\r\nX-Setup-Password: 12345678\r\nContent-Length: 41\r\n\r\n{\"ssid\":\"garage\",\"password\":\"secretpass\"}tail",
+            b"POST /api/wifi HTTP/1.1\r\nOrigin: https://example.vercel.app\r\nX-Setup-Password: 12345678\r\nAuthorization: Basic ZXNwMzI6MTIzNDU2Nzg=\r\nContent-Length: 41\r\n\r\n{\"ssid\":\"garage\",\"password\":\"secretpass\"}tail",
         )
         .unwrap();
         assert_eq!(post.method, HttpMethod::Post);
         assert_eq!(post.path, "/api/wifi");
         assert_eq!(post.body, r#"{"ssid":"garage","password":"secretpass"}"#);
         assert_eq!(post.setup_password, Some("12345678"));
+        assert_eq!(post.authorization, Some("Basic ZXNwMzI6MTIzNDU2Nzg="));
         assert!(post.cross_origin);
     }
 
     #[test]
-    fn cross_origin_requests_require_setup_password() {
-        let mut app_state = AppState::default();
-        app_state
-            .settings
-            .wifi
-            .set_setup_ap_password("12345678")
-            .unwrap();
+    fn api_requests_require_setup_password() {
+        let mut app_state = app_state_with_password();
         let mut out = [0_u8; 512];
 
         let denied = handle_request(
@@ -647,6 +760,7 @@ mod tests {
                 path: "/api/status",
                 body: "",
                 setup_password: Some("bad"),
+                authorization: None,
                 cross_origin: true,
             },
             &mut app_state,
@@ -662,6 +776,7 @@ mod tests {
                 path: "/api/status",
                 body: "",
                 setup_password: Some("12345678"),
+                authorization: None,
                 cross_origin: true,
             },
             &mut app_state,
@@ -671,12 +786,29 @@ mod tests {
         );
         assert_eq!(allowed.status, 200);
 
+        let basic = handle_request(
+            HttpRequest {
+                method: HttpMethod::Get,
+                path: "/api/status",
+                body: "",
+                setup_password: None,
+                authorization: Some("Basic ZXNwMzI6MTIzNDU2Nzg="),
+                cross_origin: true,
+            },
+            &mut app_state,
+            "0.1.0",
+            ASSETS,
+            &mut out,
+        );
+        assert_eq!(basic.status, 200);
+
         let preflight = handle_request(
             HttpRequest {
                 method: HttpMethod::Options,
                 path: "/api/status",
                 body: "",
                 setup_password: None,
+                authorization: None,
                 cross_origin: true,
             },
             &mut app_state,
@@ -721,8 +853,25 @@ mod tests {
         assert!(text.contains("Content-Length: 2\r\n"));
         assert!(text.contains("Connection: close\r\n"));
         assert!(text.contains("Access-Control-Allow-Origin: *\r\n"));
-        assert!(text.contains("Access-Control-Allow-Headers: Content-Type, X-Setup-Password\r\n"));
+        assert!(text.contains(
+            "Access-Control-Allow-Headers: Content-Type, X-Setup-Password, Authorization\r\n"
+        ));
+        assert!(text.contains("Access-Control-Max-Age: 600\r\n"));
         assert!(text.contains("Access-Control-Allow-Private-Network: true\r\n"));
-        assert!(text.ends_with("Private-Network-Access-ID: 02:00:00:00:00:01\r\n\r\n"));
+        assert!(text.ends_with("Private-Network-Access-ID: \"02:00:00:00:00:01\"\r\n\r\n"));
+    }
+
+    #[test]
+    fn unauthorized_response_requests_basic_auth() {
+        let response = unauthorized_response();
+        let mut out = [0_u8; 512];
+
+        let len = write_response_headers(&response, body_len(response.body), &mut out).unwrap();
+        let text = core::str::from_utf8(&out[..len]).unwrap();
+
+        assert!(text.starts_with("HTTP/1.1 401 Unauthorized\r\n"));
+        assert!(
+            text.contains("WWW-Authenticate: Basic realm=\"esp32-bms-gps\", charset=\"UTF-8\"\r\n")
+        );
     }
 }

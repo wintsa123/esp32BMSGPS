@@ -112,19 +112,73 @@ fn main() -> ! {
     ) {
         Ok(spi) => spi
             .with_sck(peripherals.GPIO14)
-            .with_mosi(peripherals.GPIO13),
+            .with_mosi(peripherals.GPIO13)
+            .with_miso(peripherals.GPIO12),
         Err(_) => fast_blink(tft_backlight, status_r, delay),
     };
 
     status_b.set_high();
     let mut display = display::St7789::new(spi, tft_cs, tft_dc, delay);
-    if display.init(app_state.settings.display_rotation).is_err() {
-        fast_blink(tft_backlight, status_r, delay);
+    display.wait_for_power();
+    let detected_tft_controller = match display.read_id() {
+        Ok(id) => {
+            esp_println::println!("[tft] pre-init RDDID={:02x?}", id);
+            display::controller_from_rddid(id)
+        }
+        Err(error) => {
+            esp_println::println!("[tft] pre-init RDDID failed: {:?}", error);
+            None
+        }
+    };
+    let mut tft_controller = detected_tft_controller.unwrap_or(board::tft::CONTROLLER);
+    let tft_auto_probe = detected_tft_controller.is_none();
+    let mut tft_rotation = if tft_auto_probe {
+        DisplayRotation::Portrait
+    } else {
+        app_state.settings.display_rotation
+    };
+    let mut tft_invert_colors = board::tft::INVERT_COLORS;
+    esp_println::println!(
+        "[tft] controller={:?} rotation={:?} invert={} auto_probe={}",
+        tft_controller,
+        tft_rotation,
+        tft_invert_colors,
+        tft_auto_probe
+    );
+    match display.init(tft_controller, tft_rotation) {
+        Ok(()) => esp_println::println!("[tft] init ok"),
+        Err(error) => {
+            esp_println::println!("[tft] init failed: {:?}", error);
+            fast_blink(tft_backlight, status_r, delay);
+        }
     }
-    let _ = display.clear(display::BLACK);
+    match display.read_id() {
+        Ok(id) => esp_println::println!("[tft] RDDID={:02x?}", id),
+        Err(error) => esp_println::println!("[tft] RDDID failed: {:?}", error),
+    }
     tft_backlight.set_high();
+    match display.write_raw_screen_color(display::RED) {
+        Ok(()) => esp_println::println!("[tft] raw RAMWR red drawn"),
+        Err(error) => esp_println::println!("[tft] raw RAMWR red failed: {:?}", error),
+    }
+    Delay::new().delay_millis(400);
+    let _ = display.clear(display::BLACK);
     status_b.set_low();
     status_g.set_high();
+    if board::tft::BOOT_DIAGNOSTIC_MS > 0 {
+        match display.draw_boot_diagnostics() {
+            Ok(()) => esp_println::println!("[tft] boot diagnostics drawn"),
+            Err(error) => esp_println::println!("[tft] boot diagnostics failed: {:?}", error),
+        }
+        Delay::new().delay_millis(board::tft::BOOT_DIAGNOSTIC_MS);
+    }
+    if board::tft::BOOT_SETTINGS_PREVIEW_MS > 0 {
+        match display.draw_settings_menu(&app_state.settings) {
+            Ok(()) => esp_println::println!("[tft] settings preview drawn"),
+            Err(error) => esp_println::println!("[tft] settings preview failed: {:?}", error),
+        }
+        Delay::new().delay_millis(board::tft::BOOT_SETTINGS_PREVIEW_MS);
+    }
 
     let mut touch = touch::Xpt2046::new(
         touch_clk, touch_mosi, touch_miso, touch_cs, touch_irq, delay,
@@ -142,10 +196,18 @@ fn main() -> ! {
             Err(_) => fast_blink(tft_backlight, status_r, delay),
         }
     }
-    let mut ui = TouchUi::new();
+    let mut ui = if board::tft::BOOT_STARTS_ON_SETTINGS {
+        TouchUi {
+            screen: UiScreen::Settings,
+        }
+    } else {
+        TouchUi::new()
+    };
     let mut bms_ble = BmsBleRuntime::new();
     let mut bms_frame_assembler = FrameAssembler::new();
     let mut pending_bms_command = BmsBleCommand::None;
+    let mut tft_auto_probe_tick = 0_u8;
+    let mut tft_auto_probe_step = 0_u8;
     if draw_screen(&mut display, &app_state, ui.screen).is_err() {
         fast_blink(tft_backlight, status_r, delay);
     }
@@ -176,6 +238,34 @@ fn main() -> ! {
         }
         poll_battery_adc(&mut battery_adc, &mut battery_sample_tick, &mut app_state);
         poll_gps_uart(&mut gps_uart, &mut gps_service, &mut app_state);
+        if tft_auto_probe {
+            tft_auto_probe_tick = tft_auto_probe_tick.saturating_add(1);
+            if tft_auto_probe_tick >= 8 {
+                tft_auto_probe_tick = 0;
+                tft_auto_probe_step = tft_auto_probe_step.wrapping_add(1);
+                let (probe_controller, probe_rotation, probe_invert_colors) =
+                    tft_probe_target(tft_auto_probe_step);
+                tft_controller = probe_controller;
+                tft_rotation = probe_rotation;
+                tft_invert_colors = probe_invert_colors;
+                esp_println::println!(
+                    "[tft] auto probe controller={:?} rotation={:?} invert={}",
+                    tft_controller,
+                    tft_rotation,
+                    tft_invert_colors
+                );
+                if display
+                    .init_with_inversion(tft_controller, tft_rotation, tft_invert_colors)
+                    .is_ok()
+                {
+                    let _ = display.write_raw_screen_color(display::RED);
+                    Delay::new().delay_millis(300);
+                    let _ = display.draw_boot_diagnostics();
+                    Delay::new().delay_millis(400);
+                    let _ = draw_screen(&mut display, &app_state, ui.screen);
+                }
+            }
+        }
         if let Some(calibration) = app_state.settings.touch_calibration
             && let Some(raw) = touch.read_raw_average()
         {
@@ -435,6 +525,29 @@ fn fast_blink(mut tft_backlight: Output<'_>, mut status_led: Output<'_>, delay: 
         status_led.toggle();
         delay.delay_millis(100);
     }
+}
+
+fn alternate_tft_controller(controller: board::tft::Controller) -> board::tft::Controller {
+    match controller {
+        board::tft::Controller::St7789 => board::tft::Controller::Ili9341,
+        board::tft::Controller::Ili9341 => board::tft::Controller::St7789,
+    }
+}
+
+fn tft_probe_target(step: u8) -> (board::tft::Controller, DisplayRotation, bool) {
+    let controller = if step & 0b1000 == 0 {
+        board::tft::CONTROLLER
+    } else {
+        alternate_tft_controller(board::tft::CONTROLLER)
+    };
+    let rotation = match step & 0b11 {
+        0 => DisplayRotation::Portrait,
+        1 => DisplayRotation::Landscape,
+        2 => DisplayRotation::InvertedPortrait,
+        _ => DisplayRotation::InvertedLandscape,
+    };
+    let invert_colors = step & 0b100 != 0;
+    (controller, rotation, invert_colors)
 }
 
 fn run_touch_calibration(
