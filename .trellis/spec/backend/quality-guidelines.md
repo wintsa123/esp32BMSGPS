@@ -79,10 +79,14 @@ Questions to answer:
   Runtime RDDID detection may select ILI9341 when the panel reports a matching
   ID; only change `board::tft::CONTROLLER` when verified hardware proves the
   fallback is wrong.
-- When RDDID is unavailable or unrecognized during bring-up, the target firmware
-  may auto-probe ST7789/ILI9341, all four display rotations, and display
-  inversion by reinitializing and redrawing the current screen. This is a
-  temporary visibility aid, not proof of hardware completion.
+- When RDDID is unavailable or unrecognized during normal boot, the target
+  firmware must stay on `board::tft::CONTROLLER` and
+  `DeviceSettings.display_rotation`. Auto-probing ST7789/ILI9341, rotations,
+  or inversion is a manual bring-up aid only and must stay behind
+  `board::tft::AUTO_PROBE_ON_RDDID_MISS`.
+- Display drawing, touch mapping, and touch calibration must use the same
+  active display rotation source. Do not let a diagnostic probe rotation drift
+  away from the rotation used for touch hit testing.
 - During white-screen bring-up, each init/probe should issue a raw full-screen
   `RAMWR` color fill before windowed `CASET`/`RASET` drawing. If raw fill is
   visible but settings are not, focus next on window offsets and MADCTL.
@@ -170,6 +174,13 @@ Questions to answer:
 - Persisted `BMS-GPS-*` SSID or non-eight-digit password remains accepted
   forever -> the TFT keeps showing stale setup credentials after a firmware
   update.
+- RDDID reads as all `00` or `ff` during normal boot -> keep the documented
+  fallback controller/rotation, log the failed ID, and do not enter automatic
+  portrait/landscape cycling unless `AUTO_PROBE_ON_RDDID_MISS` is explicitly
+  enabled.
+- XPT2046 `TOUCH_IRQ` stays high while pressure/raw samples are valid -> touch
+  reads must still produce a tap; `read_raw_average()` and
+  `wait_for_release()` must share the same effective touched predicate.
 
 #### 5. Good/Base/Bad Cases
 
@@ -193,6 +204,8 @@ Questions to answer:
 - Run `cargo +esp check --bin esp32-bms-gps -j1` after target Wi-Fi changes.
 - Run `cargo +esp check --bin esp32-bms-gps -j1` after target TFT controller or
   display-init changes.
+- Run `cargo +esp clippy --bin esp32-bms-gps -j1 -- -D warnings` after target
+  TFT, touch, or serial diagnostic changes.
 - Run `cargo +esp check --bin esp32-bms-gps --features ili9341-tft -j1` when
   changing the TFT fallback feature.
 - Run `cargo +esp build --release -j1` after Cargo feature or native radio

@@ -131,12 +131,9 @@ fn main() -> ! {
         }
     };
     let mut tft_controller = detected_tft_controller.unwrap_or(board::tft::CONTROLLER);
-    let tft_auto_probe = detected_tft_controller.is_none();
-    let mut tft_rotation = if tft_auto_probe {
-        DisplayRotation::Portrait
-    } else {
-        app_state.settings.display_rotation
-    };
+    let tft_auto_probe = board::tft::AUTO_PROBE_ON_RDDID_MISS && detected_tft_controller.is_none();
+    let mut active_display_rotation = app_state.settings.display_rotation;
+    let mut tft_rotation = active_display_rotation;
     let mut tft_invert_colors = board::tft::INVERT_COLORS;
     esp_println::println!(
         "[tft] controller={:?} rotation={:?} invert={} auto_probe={}",
@@ -184,11 +181,7 @@ fn main() -> ! {
         touch_clk, touch_mosi, touch_miso, touch_cs, touch_irq, delay,
     );
     if board::touch::CALIBRATE_ON_BOOT || app_state.settings.touch_calibration.is_none() {
-        match run_touch_calibration(
-            &mut display,
-            &mut touch,
-            app_state.settings.display_rotation,
-        ) {
+        match run_touch_calibration(&mut display, &mut touch, active_display_rotation) {
             Ok(calibration) => {
                 app_state.settings.touch_calibration = Some(calibration);
                 let _ = settings_store.save(&app_state.settings);
@@ -208,6 +201,7 @@ fn main() -> ! {
     let mut pending_bms_command = BmsBleCommand::None;
     let mut tft_auto_probe_tick = 0_u8;
     let mut tft_auto_probe_step = 0_u8;
+    let mut touch_log_tick = 0_u8;
     if draw_screen(&mut display, &app_state, ui.screen).is_err() {
         fast_blink(tft_backlight, status_r, delay);
     }
@@ -247,6 +241,7 @@ fn main() -> ! {
                     tft_probe_target(tft_auto_probe_step);
                 tft_controller = probe_controller;
                 tft_rotation = probe_rotation;
+                active_display_rotation = probe_rotation;
                 tft_invert_colors = probe_invert_colors;
                 esp_println::println!(
                     "[tft] auto probe controller={:?} rotation={:?} invert={}",
@@ -270,7 +265,22 @@ fn main() -> ! {
             && let Some(raw) = touch.read_raw_average()
         {
             let point = calibration.map(raw);
-            let (_, screen_height) = app_state.settings.display_rotation.logical_size();
+            let (_, screen_height) = active_display_rotation.logical_size();
+            if touch_log_tick == 0 {
+                esp_println::println!(
+                    "[touch] raw=({}, {}) irq_low={} screen=({}, {}) rotation={:?}",
+                    raw.x,
+                    raw.y,
+                    touch.is_touched(),
+                    point.x,
+                    point.y,
+                    active_display_rotation
+                );
+            }
+            touch_log_tick = touch_log_tick.wrapping_add(1);
+            if touch_log_tick >= 4 {
+                touch_log_tick = 0;
+            }
             let action = ui.handle_tap(point, screen_height);
             let mut action_context = UiActionContext {
                 settings_store: &mut settings_store,
@@ -285,6 +295,9 @@ fn main() -> ! {
             if handle_ui_action(action, &mut app_state, &mut display, &mut action_context).is_err()
             {
                 fast_blink(tft_backlight, status_r, delay);
+            }
+            if matches!(action, UiAction::RotateDisplay) {
+                active_display_rotation = app_state.settings.display_rotation;
             }
             let _ = draw_screen(&mut display, &app_state, ui.screen);
             touch.wait_for_release();

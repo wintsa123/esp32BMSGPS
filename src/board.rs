@@ -56,6 +56,7 @@ pub mod tft {
     pub const SPI_FREQUENCY_MHZ: u32 = 1;
     pub const POWER_ON_DELAY_MS: u32 = 1_000;
     pub const INVERT_COLORS: bool = false;
+    pub const AUTO_PROBE_ON_RDDID_MISS: bool = false;
     pub const BOOT_DIAGNOSTIC_MS: u32 = 1_200;
     // ponytail: show settings first until TFT/touch is verified; set false after validation.
     pub const BOOT_STARTS_ON_SETTINGS: bool = true;

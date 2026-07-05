@@ -6,7 +6,17 @@ use esp32_bms_gps::settings::RawTouchPoint;
 
 const READ_X: u8 = 0xD0;
 const READ_Y: u8 = 0x90;
+const READ_Z1: u8 = 0xB0;
+const READ_Z2: u8 = 0xC0;
 const SAMPLE_COUNT: u16 = 8;
+const MIN_SAMPLES: u16 = 2;
+const ADC_MAX: u16 = 4095;
+const RAW_MIN: u16 = 64;
+const RAW_MAX: u16 = 4031;
+const RAW_FALLBACK_MIN: u16 = 180;
+const RAW_FALLBACK_MAX: u16 = 3915;
+const PRESSURE_MIN_Z1: u16 = 16;
+const PRESSURE_MIN_DELTA: u16 = 8;
 
 pub struct Xpt2046<'d> {
     clk: Output<'d>,
@@ -43,43 +53,40 @@ impl<'d> Xpt2046<'d> {
     }
 
     pub fn wait_for_touch(&mut self) -> RawTouchPoint {
-        while !self.is_touched() {
+        loop {
+            if let Some(point) = self.read_raw_average() {
+                return point;
+            }
             self.delay.delay_millis(5);
         }
-        self.delay.delay_millis(20);
-        self.read_raw_average()
-            .unwrap_or_else(|| self.read_raw_once())
     }
 
     pub fn wait_for_release(&mut self) {
-        while self.is_touched() {
+        while self.read_touch_sample().is_some() {
             self.delay.delay_millis(10);
         }
         self.delay.delay_millis(60);
     }
 
     pub fn read_raw_average(&mut self) -> Option<RawTouchPoint> {
-        if !self.is_touched() {
-            return None;
-        }
-
         let mut sum_x = 0_u32;
         let mut sum_y = 0_u32;
         let mut samples = 0_u16;
 
         for _ in 0..SAMPLE_COUNT {
-            if !self.is_touched() {
+            let Some(point) = self.read_touch_sample() else {
+                if samples == 0 {
+                    return None;
+                }
                 break;
-            }
-
-            let point = self.read_raw_once();
+            };
             sum_x += point.x as u32;
             sum_y += point.y as u32;
             samples += 1;
             self.delay.delay_millis(2);
         }
 
-        if samples == 0 {
+        if samples < MIN_SAMPLES {
             return None;
         }
 
@@ -93,6 +100,21 @@ impl<'d> Xpt2046<'d> {
         RawTouchPoint {
             x: self.read_axis(READ_X),
             y: self.read_axis(READ_Y),
+        }
+    }
+
+    fn read_touch_sample(&mut self) -> Option<RawTouchPoint> {
+        let irq_low = self.is_touched();
+        let point = self.read_raw_once();
+        let z1 = self.read_axis(READ_Z1);
+        let z2 = self.read_axis(READ_Z2);
+
+        if raw_point_valid(point)
+            && (irq_low || pressure_valid(z1, z2) || raw_fallback_valid(point))
+        {
+            Some(point)
+        } else {
+            None
         }
     }
 
@@ -130,4 +152,17 @@ impl<'d> Xpt2046<'d> {
 
         received
     }
+}
+
+fn raw_point_valid(point: RawTouchPoint) -> bool {
+    (RAW_MIN..=RAW_MAX).contains(&point.x) && (RAW_MIN..=RAW_MAX).contains(&point.y)
+}
+
+fn raw_fallback_valid(point: RawTouchPoint) -> bool {
+    (RAW_FALLBACK_MIN..=RAW_FALLBACK_MAX).contains(&point.x)
+        && (RAW_FALLBACK_MIN..=RAW_FALLBACK_MAX).contains(&point.y)
+}
+
+fn pressure_valid(z1: u16, z2: u16) -> bool {
+    z1 >= PRESSURE_MIN_Z1 && z2 > z1.saturating_add(PRESSURE_MIN_DELTA) && z2 < ADC_MAX
 }
