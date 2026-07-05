@@ -11,7 +11,7 @@ use esp32_bms_gps::{
     settings::{DeviceSettings, DisplayRotation, Language, ScreenPoint},
 };
 
-use crate::board;
+use crate::{board, cjk_font};
 
 const SWRESET: u8 = 0x01;
 const SLPOUT: u8 = 0x11;
@@ -260,20 +260,20 @@ impl<'d> St7789<'d> {
         self.draw_text(46, 216, 1, WHITE, ota_label(snapshot.ota))?;
         self.draw_text(190, 216, 1, GRAY, "FW")?;
         self.draw_text(214, 216, 1, WHITE, firmware_version)?;
-        self.draw_text(10, 232, 1, DARK_GRAY, "TAP BOTTOM FOR SETTINGS")
+        self.draw_text_zh(10, 232, 1, DARK_GRAY, "点底部设置")
     }
 
     pub fn draw_settings_menu(&mut self, settings: &DeviceSettings) -> Result<(), SpiError> {
         self.clear(BLACK)?;
-        self.draw_text(10, 8, 2, CYAN, "SETTINGS")?;
-        self.draw_text(212, 12, 1, DARK_GRAY, "TAP TOP=BACK")?;
-        self.draw_menu_row_value(0, "WIFI AP", setup_ap_label(settings))?;
-        self.draw_menu_row_u8(1, "BRIGHT", settings.brightness_percent, "%")?;
-        self.draw_menu_row_value(2, "ROT", rotation_label(settings.display_rotation))?;
-        self.draw_menu_row_value(3, "SPEED", speed_unit_label(settings.speed_unit))?;
-        self.draw_menu_row_value(4, "LANG", language_label(settings.language))?;
-        self.draw_menu_row_value(5, "BMS", bms_label(settings))?;
-        self.draw_menu_row_value(6, "RESET", "DEFAULTS")
+        self.draw_text_zh(10, 8, 2, CYAN, "设置")?;
+        self.draw_text_zh(212, 12, 1, DARK_GRAY, "顶部返回")?;
+        self.draw_menu_row_value(0, "无线热点", setup_ap_label(settings))?;
+        self.draw_menu_row_u8(1, "亮度", settings.brightness_percent, "%")?;
+        self.draw_menu_row_value(2, "方向", rotation_label(settings.display_rotation))?;
+        self.draw_menu_row_value(3, "速度", speed_unit_label(settings.speed_unit))?;
+        self.draw_menu_row_value(4, "语言", language_label(settings.language))?;
+        self.draw_menu_row_value(5, "电池绑定", bms_label(settings))?;
+        self.draw_menu_row_value(6, "恢复默认", "")
     }
 
     pub fn draw_setup_ap_qr(
@@ -345,6 +345,34 @@ impl<'d> St7789<'d> {
         for byte in text.bytes() {
             self.draw_char(cursor_x, y, scale, color, byte)?;
             cursor_x = cursor_x.saturating_add(6 * scale);
+        }
+        Ok(())
+    }
+
+    pub fn draw_text_zh(
+        &mut self,
+        x: u16,
+        y: u16,
+        scale: u16,
+        color: u16,
+        text: &str,
+    ) -> Result<(), SpiError> {
+        if scale == 0 {
+            return Ok(());
+        }
+
+        let mut cursor_x = x;
+        for ch in text.chars() {
+            if ch.is_ascii() {
+                self.draw_char(cursor_x, y, scale, color, ch as u8)?;
+                cursor_x = cursor_x.saturating_add(6 * scale);
+            } else if let Some(rows) = cjk_font::glyph_rows(ch) {
+                self.draw_cjk_char(cursor_x, y, scale, color, rows)?;
+                cursor_x = cursor_x.saturating_add(17 * scale);
+            } else {
+                self.draw_char(cursor_x, y, scale, color, b'?')?;
+                cursor_x = cursor_x.saturating_add(6 * scale);
+            }
         }
         Ok(())
     }
@@ -506,8 +534,8 @@ impl<'d> St7789<'d> {
     ) -> Result<(), SpiError> {
         let y = 48 + index * 28;
         self.fill_rect(8, y - 4, 304, 24, DARK_GRAY)?;
-        self.draw_text(18, y, 1, WHITE, label)?;
-        self.draw_text(128, y, 1, YELLOW, value)
+        self.draw_text_zh(18, y, 1, WHITE, label)?;
+        self.draw_text_zh(128, y, 1, YELLOW, value)
     }
 
     fn draw_menu_row_u8(
@@ -519,7 +547,7 @@ impl<'d> St7789<'d> {
     ) -> Result<(), SpiError> {
         let y = 48 + index * 28;
         self.fill_rect(8, y - 4, 304, 24, DARK_GRAY)?;
-        self.draw_text(18, y, 1, WHITE, label)?;
+        self.draw_text_zh(18, y, 1, WHITE, label)?;
         self.draw_u16(128, y, 1, YELLOW, value as u16, suffix)
     }
 
@@ -623,6 +651,30 @@ impl<'d> St7789<'d> {
         Ok(())
     }
 
+    fn draw_cjk_char(
+        &mut self,
+        x: u16,
+        y: u16,
+        scale: u16,
+        color: u16,
+        rows: &[u16; 16],
+    ) -> Result<(), SpiError> {
+        for (row, bits) in rows.iter().copied().enumerate() {
+            for col in 0..16 {
+                if bits & (1 << (15 - col)) != 0 {
+                    self.fill_rect(
+                        x + col as u16 * scale,
+                        y + row as u16 * scale,
+                        scale,
+                        scale,
+                        color,
+                    )?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn set_window(&mut self, x0: u16, y0: u16, x1: u16, y1: u16) -> Result<(), SpiError> {
         self.command_data(CASET, &pack_u16_pair(x0, x1))?;
         self.command_data(RASET, &pack_u16_pair(y0, y1))
@@ -665,33 +717,33 @@ fn speed_unit_label(unit: SpeedUnit) -> &'static str {
 
 fn language_label(language: Language) -> &'static str {
     match language {
-        Language::Chinese => "ZH",
-        Language::English => "EN",
+        Language::Chinese => "中文",
+        Language::English => "英文",
     }
 }
 
 fn rotation_label(rotation: DisplayRotation) -> &'static str {
     match rotation {
-        DisplayRotation::Portrait => "PORTRAIT",
-        DisplayRotation::Landscape => "LAND",
-        DisplayRotation::InvertedPortrait => "INV PORT",
-        DisplayRotation::InvertedLandscape => "INV LAND",
+        DisplayRotation::Portrait => "竖屏",
+        DisplayRotation::Landscape => "横屏",
+        DisplayRotation::InvertedPortrait => "反向竖屏",
+        DisplayRotation::InvertedLandscape => "反向横屏",
     }
 }
 
 fn setup_ap_label(settings: &DeviceSettings) -> &'static str {
     match settings.wifi.setup_ap_state {
-        esp32_bms_gps::settings::SetupApState::FirstBoot => "FIRST",
-        esp32_bms_gps::settings::SetupApState::Disabled => "OFF",
-        esp32_bms_gps::settings::SetupApState::Reprovisioning => "ON",
+        esp32_bms_gps::settings::SetupApState::FirstBoot => "首启",
+        esp32_bms_gps::settings::SetupApState::Disabled => "关",
+        esp32_bms_gps::settings::SetupApState::Reprovisioning => "开启",
     }
 }
 
 fn bms_label(settings: &DeviceSettings) -> &'static str {
     if settings.bms.bound_mac.is_some() {
-        "BOUND"
+        "已绑定"
     } else {
-        "SCAN/BIND"
+        "扫码绑定"
     }
 }
 

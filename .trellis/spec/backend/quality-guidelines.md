@@ -87,6 +87,13 @@ Questions to answer:
 - Display drawing, touch mapping, and touch calibration must use the same
   active display rotation source. Do not let a diagnostic probe rotation drift
   away from the rotation used for touch hit testing.
+- If touch calibration targets were visually correct in a prior build, do not
+  treat later tap failures as a display-orientation problem first. Inspect the
+  shared XPT2046 read path and preserve the known-working IRQ-gated tap path
+  unless serial diagnostics prove GPIO36 is unusable.
+- TFT Chinese text must use a small built-in bitmap glyph table scoped to the
+  strings actually displayed on the device. Do not add a full CJK font or
+  runtime font renderer for the local TFT UI.
 - During white-screen bring-up, each init/probe should issue a raw full-screen
   `RAMWR` color fill before windowed `CASET`/`RASET` drawing. If raw fill is
   visible but settings are not, focus next on window offsets and MADCTL.
@@ -181,6 +188,14 @@ Questions to answer:
 - XPT2046 `TOUCH_IRQ` stays high while pressure/raw samples are valid -> touch
   reads must still produce a tap; `read_raw_average()` and
   `wait_for_release()` must share the same effective touched predicate.
+- XPT2046 taps do not trigger any UI action -> serial diagnostics must expose
+  `raw.x`, `raw.y`, `z1`, `z2`, and `irq_low` at a low rate even when no tap is
+  accepted, so the next hardware run can distinguish IRQ failure from SPI/raw
+  sampling failure.
+- TFT shows English static settings labels after Chinese UI is requested -> add
+  the missing characters to the minimal bitmap table and render static labels
+  through the Chinese text path; keep ASCII for dynamic credentials and numeric
+  values.
 
 #### 5. Good/Base/Bad Cases
 
@@ -206,6 +221,8 @@ Questions to answer:
   display-init changes.
 - Run `cargo +esp clippy --bin esp32-bms-gps -j1 -- -D warnings` after target
   TFT, touch, or serial diagnostic changes.
+- Run `cargo +esp build --release -j1` and `espflash save-image ...` after
+  adding TFT bitmap glyphs to verify the image still fits the factory slot.
 - Run `cargo +esp check --bin esp32-bms-gps --features ili9341-tft -j1` when
   changing the TFT fallback feature.
 - Run `cargo +esp build --release -j1` after Cargo feature or native radio

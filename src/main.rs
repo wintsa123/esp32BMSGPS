@@ -8,6 +8,7 @@ mod assets;
 mod battery_adc;
 mod board;
 mod build_config;
+mod cjk_font;
 mod display;
 mod flash_settings;
 mod touch;
@@ -202,6 +203,7 @@ fn main() -> ! {
     let mut tft_auto_probe_tick = 0_u8;
     let mut tft_auto_probe_step = 0_u8;
     let mut touch_log_tick = 0_u8;
+    let mut touch_diag_tick = 0_u8;
     if draw_screen(&mut display, &app_state, ui.screen).is_err() {
         fast_blink(tft_backlight, status_r, delay);
     }
@@ -260,6 +262,19 @@ fn main() -> ! {
                     let _ = draw_screen(&mut display, &app_state, ui.screen);
                 }
             }
+        }
+        touch_diag_tick = touch_diag_tick.wrapping_add(1);
+        if touch_diag_tick >= 8 {
+            touch_diag_tick = 0;
+            let sample = touch.diagnostic_sample();
+            esp_println::println!(
+                "[touch] diag raw=({}, {}) z1={} z2={} irq_low={}",
+                sample.raw.x,
+                sample.raw.y,
+                sample.z1,
+                sample.z2,
+                sample.irq_low
+            );
         }
         if let Some(calibration) = app_state.settings.touch_calibration
             && let Some(raw) = touch.read_raw_average()
