@@ -72,3 +72,36 @@ Stabilized TFT landscape boot, added XPT2046 touch fallback/diagnostics, preserv
 ### Next Steps
 
 - None - task complete
+
+
+## Session 3: Fix TFT Chinese UI and touch diagnostics
+
+**Date**: 2026-07-05
+**Task**: Fix TFT Chinese UI and touch diagnostics
+**Branch**: `main`
+
+### Summary
+
+Added a minimal TFT Chinese bitmap path, switched static settings labels to Chinese, restored IRQ-first XPT2046 tap reads, and added low-rate raw touch diagnostics.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e246bd4` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
