@@ -1,8 +1,15 @@
 {
+  "installCommand": "cd vercel && npm ci",
+  "buildCommand": "cd vercel && npm run build",
+  "outputDirectory": "vercel/dist",
   "rewrites": [
     {
       "source": "/",
-      "destination": "/vercel/index.html"
+      "destination": "/index.html"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
     }
   ],
   "headers": [

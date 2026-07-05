@@ -9,6 +9,10 @@ const READ_Y: u8 = 0x90;
 const READ_Z1: u8 = 0xB0;
 const READ_Z2: u8 = 0xC0;
 const SAMPLE_COUNT: u16 = 8;
+const PRESSURE_Z1_MIN: u16 = 16;
+const PRESSURE_Z2_MAX: u16 = 4080;
+const RAW_ACTIVE_MIN: u16 = 64;
+const RAW_ACTIVE_MAX: u16 = 4032;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TouchDiagnosticSample {
@@ -16,6 +20,8 @@ pub struct TouchDiagnosticSample {
     pub z1: u16,
     pub z2: u16,
     pub irq_low: bool,
+    pub pressure_active: bool,
+    pub raw_active: bool,
 }
 
 pub struct Xpt2046<'d> {
@@ -53,23 +59,23 @@ impl<'d> Xpt2046<'d> {
     }
 
     pub fn wait_for_touch(&mut self) -> RawTouchPoint {
-        while !self.is_touched() {
+        loop {
+            if let Some(point) = self.read_raw_average() {
+                return point;
+            }
             self.delay.delay_millis(5);
         }
-        self.delay.delay_millis(20);
-        self.read_raw_average()
-            .unwrap_or_else(|| self.read_raw_once())
     }
 
     pub fn wait_for_release(&mut self) {
-        while self.is_touched() {
+        while self.touch_gate_active() {
             self.delay.delay_millis(10);
         }
         self.delay.delay_millis(60);
     }
 
     pub fn read_raw_average(&mut self) -> Option<RawTouchPoint> {
-        if !self.is_touched() {
+        if !self.touch_gate_active() {
             return None;
         }
 
@@ -78,7 +84,7 @@ impl<'d> Xpt2046<'d> {
         let mut samples = 0_u16;
 
         for _ in 0..SAMPLE_COUNT {
-            if !self.is_touched() {
+            if !self.touch_gate_active() {
                 break;
             }
 
@@ -107,12 +113,28 @@ impl<'d> Xpt2046<'d> {
     }
 
     pub fn diagnostic_sample(&mut self) -> TouchDiagnosticSample {
+        let irq_low = self.is_touched();
+        let raw = self.read_raw_once();
+        let z1 = self.read_axis(READ_Z1);
+        let z2 = self.read_axis(READ_Z2);
         TouchDiagnosticSample {
-            irq_low: self.is_touched(),
-            raw: self.read_raw_once(),
-            z1: self.read_axis(READ_Z1),
-            z2: self.read_axis(READ_Z2),
+            irq_low,
+            raw,
+            z1,
+            z2,
+            pressure_active: pressure_active(z1, z2),
+            raw_active: raw_active(raw),
         }
+    }
+
+    fn touch_gate_active(&mut self) -> bool {
+        if self.is_touched() {
+            return true;
+        }
+
+        let z1 = self.read_axis(READ_Z1);
+        let z2 = self.read_axis(READ_Z2);
+        pressure_active(z1, z2) || raw_active(self.read_raw_once())
     }
 
     fn read_axis(&mut self, command: u8) -> u16 {
@@ -149,4 +171,15 @@ impl<'d> Xpt2046<'d> {
 
         received
     }
+}
+
+fn pressure_active(z1: u16, z2: u16) -> bool {
+    z1 >= PRESSURE_Z1_MIN && z2 <= PRESSURE_Z2_MAX && z2 > z1
+}
+
+fn raw_active(raw: RawTouchPoint) -> bool {
+    raw.x >= RAW_ACTIVE_MIN
+        && raw.x <= RAW_ACTIVE_MAX
+        && raw.y >= RAW_ACTIVE_MIN
+        && raw.y <= RAW_ACTIVE_MAX
 }

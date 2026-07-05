@@ -57,6 +57,9 @@ const HTTP_REQUEST_BUFFER_SIZE: usize = 2048;
 const HTTP_HEADER_BUFFER_SIZE: usize = 768;
 #[cfg(feature = "net")]
 const HTTP_JSON_BUFFER_SIZE: usize = 1024;
+#[cfg(feature = "net")]
+// embassy-net's DNS feature owns one internal socket; AP DHCP and HTTP use two more.
+const SETUP_AP_STACK_SOCKET_COUNT: usize = 3;
 
 pub struct WifiRuntime<'d> {
     controller: WifiController<'d>,
@@ -255,7 +258,9 @@ fn start_setup_ap_network(interface: Interface<'static>) -> Option<SetupApNetwor
         dns_servers,
     });
     let seed = seed_from_mac(interface.mac_address());
-    let resources = Box::leak(Box::new(StackResources::<2>::new()));
+    let resources = Box::leak(Box::new(
+        StackResources::<SETUP_AP_STACK_SOCKET_COUNT>::new(),
+    ));
     let (stack, runner) = embassy_net::new(interface, net_config, resources, seed);
     let rx_meta = Box::leak(Box::new([PacketMetadata::EMPTY; 1]));
     let tx_meta = Box::leak(Box::new([PacketMetadata::EMPTY; 1]));

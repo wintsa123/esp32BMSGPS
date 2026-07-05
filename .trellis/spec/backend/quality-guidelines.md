@@ -94,6 +94,15 @@ Questions to answer:
 - TFT Chinese text must use a small built-in bitmap glyph table scoped to the
   strings actually displayed on the device. Do not add a full CJK font or
   runtime font renderer for the local TFT UI.
+- Target LVGL builds use `oxivgl-sys` C FFI and must force the C toolchain
+  through `.cargo/config.toml`: `DEP_LV_CONFIG_PATH`, `BINDGEN_EXTRA_CLANG_ARGS`,
+  `CC_xtensa_esp32_none_elf=xtensa-esp32-elf-gcc`, and
+  `AR_xtensa_esp32_none_elf=xtensa-esp32-elf-ar`. Without the explicit CC/AR,
+  the `cc` crate can emit big-endian Xtensa LVGL objects that fail only at
+  release link time.
+- Keep LVGL widget and font config minimal for the 1 MB factory app slot. Large
+  built-in fonts such as Montserrat 48 can push the app over the partition even
+  when target check/clippy still pass.
 - During white-screen bring-up, each init/probe should issue a raw full-screen
   `RAMWR` color fill before windowed `CASET`/`RASET` drawing. If raw fill is
   visible but settings are not, focus next on window offsets and MADCTL.
@@ -129,6 +138,12 @@ Questions to answer:
   for the AP interface before treating it as a password/auth failure.
 - Default firmware features must include the `net` feature so the setup AP gets
   an IPv4 stack in addition to the Wi-Fi radio.
+- Setup AP `StackResources<N>` capacity must cover all sockets owned by
+  `embassy-net`, not only sockets created explicitly in project code. With the
+  current `dns`, `udp`, and `tcp` features the AP stack uses three sockets:
+  the internal embassy-net DNS socket, the DHCP UDP server socket, and the HTTP
+  TCP server socket. Do not reduce the capacity below three unless the feature
+  set or socket ownership changes.
 - Setup AP IPv4 defaults are fixed for the local provisioning MVP:
   - ESP32 AP/server/router/DNS IP: `192.168.4.1/24`.
   - DHCP lease offered to the phone: `192.168.4.2`.
@@ -176,6 +191,9 @@ Questions to answer:
   accept the password yet remain in "connecting" / "obtaining IP".
 - AP IPv4 stack exists but `WifiRuntime::poll()` is not called -> DHCP requests
   are not consumed and the phone remains stuck obtaining IP.
+- `PANIC: adding a socket to a full SocketSet` before the main loop -> inspect
+  `StackResources<N>` first; the firmware may never reach touch polling even if
+  the touch hardware and calibration are healthy.
 - DHCP parser ignores malformed or unsupported DHCP message types; the phone
   should retry instead of the firmware panicking.
 - Persisted `BMS-GPS-*` SSID or non-eight-digit password remains accepted
@@ -196,6 +214,12 @@ Questions to answer:
   the missing characters to the minimal bitmap table and render static labels
   through the Chinese text path; keep ASCII for dynamic credentials and numeric
   values.
+- Release link fails with `compiled for a big endian system and target is
+  little endian` from `liboxivgl_sys*.rlib` -> inspect `CC_xtensa_esp32_none_elf`
+  / `AR_xtensa_esp32_none_elf` first, then rebuild `oxivgl-sys`.
+- `espflash save-image` reports `image_too_big` after LVGL changes -> trim
+  LVGL fonts/widgets or increase the partition table before flashing; do not
+  treat a passing `cargo +esp build --release` as a size check.
 
 #### 5. Good/Base/Bad Cases
 
@@ -223,6 +247,8 @@ Questions to answer:
   TFT, touch, or serial diagnostic changes.
 - Run `cargo +esp build --release -j1` and `espflash save-image ...` after
   adding TFT bitmap glyphs to verify the image still fits the factory slot.
+- Run `cargo +esp build --release -j1` and `espflash save-image ...` after
+  changing `lvgl_conf/lv_conf.h`, LVGL dependencies, or LVGL font usage.
 - Run `cargo +esp check --bin esp32-bms-gps --features ili9341-tft -j1` when
   changing the TFT fallback feature.
 - Run `cargo +esp build --release -j1` after Cargo feature or native radio

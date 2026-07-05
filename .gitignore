@@ -1,6 +1,11 @@
 /target/
 /.embuild/
 /.espflash/
+/.sync_temp_dir/
+/firmware-images/
+/firmware-packages/
+/release-images/
+/ota-images/
 *.bin
 *.elf
 *.map

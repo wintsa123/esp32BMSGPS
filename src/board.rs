@@ -53,15 +53,14 @@ pub mod tft {
     pub const RST: Option<u8> = None;
     pub const BL: u8 = 21;
     pub const BACKLIGHT_ON_LEVEL: Level = Level::High;
-    pub const SPI_FREQUENCY_MHZ: u32 = 1;
+    pub const SPI_FREQUENCY_MHZ: u32 = 20;
     pub const POWER_ON_DELAY_MS: u32 = 1_000;
     pub const INVERT_COLORS: bool = false;
     pub const AUTO_PROBE_ON_RDDID_MISS: bool = false;
     pub const BOOT_DIAGNOSTIC_MS: u32 = 1_200;
-    // ponytail: show settings first until TFT/touch is verified; set false after validation.
-    pub const BOOT_STARTS_ON_SETTINGS: bool = true;
-    // ponytail: boot-visible settings proof while touch/display hardware is unverified; set 0 after validation.
-    pub const BOOT_SETTINGS_PREVIEW_MS: u32 = 5_000;
+    pub const BOOT_STARTS_ON_SETTINGS: bool = false;
+    pub const BOOT_SETTINGS_PREVIEW_MS: u32 = 0;
+    pub const SHOW_SETUP_QR_ON_DASHBOARD: bool = false;
 }
 
 pub mod touch {

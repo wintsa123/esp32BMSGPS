@@ -24,6 +24,7 @@ embassy-sync = { version = "0.8.0", optional = true, default-features = false }
 embassy-time = { version = "0.5.1", optional = true, default-features = false }
 esp-radio = { version = "0.18.0", optional = true, default-features = false, features = ["esp32", "wifi", "esp-alloc", "log-04", "unstable"] }
 esp-storage = { version = "0.9.0", optional = true, features = ["esp32"] }
+oxivgl_sys = { package = "oxivgl-sys", version = "0.2.2", default-features = false }
 
 [dependencies]
 qrcodegen = { package = "qrcodegen-no-heap", version = "1.8.1" }

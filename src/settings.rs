@@ -238,6 +238,16 @@ impl TouchCalibration {
         ScreenPoint { x, y }
     }
 
+    pub fn map_for_rotation(self, raw: RawTouchPoint, rotation: DisplayRotation) -> ScreenPoint {
+        let point = self.map(raw);
+        let source_rotation = calibration_source_rotation(self.width, self.height);
+        let portrait = point_to_portrait(point, self.width, self.height, source_rotation);
+        clamp_screen_point(
+            point_from_portrait(portrait, self.width, self.height, rotation),
+            rotation,
+        )
+    }
+
     pub fn encode(self) -> [u8; Self::ENCODED_LEN] {
         let mut bytes = [0_u8; Self::ENCODED_LEN];
         bytes[0..2].copy_from_slice(&self.raw_x_min.to_le_bytes());
@@ -402,6 +412,74 @@ fn scale_axis(raw: u16, raw_min: u16, raw_max: u16, screen_max: u16) -> u16 {
     (numerator / denominator) as u16
 }
 
+fn calibration_source_rotation(width: u16, height: u16) -> DisplayRotation {
+    if width > height {
+        DisplayRotation::Landscape
+    } else {
+        DisplayRotation::Portrait
+    }
+}
+
+fn point_to_portrait(
+    point: ScreenPoint,
+    width: u16,
+    height: u16,
+    rotation: DisplayRotation,
+) -> ScreenPoint {
+    match rotation {
+        DisplayRotation::Portrait => point,
+        DisplayRotation::Landscape => ScreenPoint {
+            x: height.saturating_sub(1).saturating_sub(point.y),
+            y: point.x,
+        },
+        DisplayRotation::InvertedPortrait => ScreenPoint {
+            x: width.saturating_sub(1).saturating_sub(point.x),
+            y: height.saturating_sub(1).saturating_sub(point.y),
+        },
+        DisplayRotation::InvertedLandscape => ScreenPoint {
+            x: point.y,
+            y: width.saturating_sub(1).saturating_sub(point.x),
+        },
+    }
+}
+
+fn point_from_portrait(
+    point: ScreenPoint,
+    source_width: u16,
+    source_height: u16,
+    rotation: DisplayRotation,
+) -> ScreenPoint {
+    let (portrait_width, portrait_height) = if source_width > source_height {
+        (source_height, source_width)
+    } else {
+        (source_width, source_height)
+    };
+
+    match rotation {
+        DisplayRotation::Portrait => point,
+        DisplayRotation::Landscape => ScreenPoint {
+            x: point.y,
+            y: portrait_width.saturating_sub(1).saturating_sub(point.x),
+        },
+        DisplayRotation::InvertedPortrait => ScreenPoint {
+            x: portrait_width.saturating_sub(1).saturating_sub(point.x),
+            y: portrait_height.saturating_sub(1).saturating_sub(point.y),
+        },
+        DisplayRotation::InvertedLandscape => ScreenPoint {
+            x: portrait_height.saturating_sub(1).saturating_sub(point.y),
+            y: point.x,
+        },
+    }
+}
+
+fn clamp_screen_point(point: ScreenPoint, rotation: DisplayRotation) -> ScreenPoint {
+    let (width, height) = rotation.logical_size();
+    ScreenPoint {
+        x: point.x.min(width.saturating_sub(1)),
+        y: point.y.min(height.saturating_sub(1)),
+    }
+}
+
 fn parse_hex_pair(high: u8, low: u8) -> Result<u8, MacAddressError> {
     Ok((hex_nibble(high)? << 4) | hex_nibble(low)?)
 }
@@ -507,6 +585,75 @@ mod tests {
         assert_eq!(
             calibration.map(RawTouchPoint { x: 300, y: 420 }),
             ScreenPoint { x: 319, y: 239 }
+        );
+    }
+
+    #[test]
+    fn touch_calibration_maps_landscape_baseline_to_display_rotation() {
+        let calibration = TouchCalibration {
+            raw_x_min: 0,
+            raw_x_max: 319,
+            raw_y_min: 0,
+            raw_y_max: 239,
+            swap_xy: false,
+            invert_x: false,
+            invert_y: false,
+            width: 320,
+            height: 240,
+        };
+        let top_left = RawTouchPoint { x: 0, y: 0 };
+        let bottom_right = RawTouchPoint { x: 319, y: 239 };
+
+        assert_eq!(
+            calibration.map_for_rotation(top_left, DisplayRotation::Landscape),
+            ScreenPoint { x: 0, y: 0 }
+        );
+        assert_eq!(
+            calibration.map_for_rotation(top_left, DisplayRotation::Portrait),
+            ScreenPoint { x: 239, y: 0 }
+        );
+        assert_eq!(
+            calibration.map_for_rotation(top_left, DisplayRotation::InvertedPortrait),
+            ScreenPoint { x: 0, y: 319 }
+        );
+        assert_eq!(
+            calibration.map_for_rotation(top_left, DisplayRotation::InvertedLandscape),
+            ScreenPoint { x: 319, y: 239 }
+        );
+        assert_eq!(
+            calibration.map_for_rotation(bottom_right, DisplayRotation::Portrait),
+            ScreenPoint { x: 0, y: 319 }
+        );
+    }
+
+    #[test]
+    fn touch_calibration_maps_portrait_baseline_to_display_rotation() {
+        let calibration = TouchCalibration {
+            raw_x_min: 0,
+            raw_x_max: 239,
+            raw_y_min: 0,
+            raw_y_max: 319,
+            swap_xy: false,
+            invert_x: false,
+            invert_y: false,
+            width: 240,
+            height: 320,
+        };
+
+        assert_eq!(
+            calibration.map_for_rotation(RawTouchPoint { x: 0, y: 0 }, DisplayRotation::Portrait),
+            ScreenPoint { x: 0, y: 0 }
+        );
+        assert_eq!(
+            calibration.map_for_rotation(RawTouchPoint { x: 0, y: 0 }, DisplayRotation::Landscape),
+            ScreenPoint { x: 0, y: 239 }
+        );
+        assert_eq!(
+            calibration.map_for_rotation(
+                RawTouchPoint { x: 239, y: 319 },
+                DisplayRotation::InvertedLandscape
+            ),
+            ScreenPoint { x: 0, y: 239 }
         );
     }
 

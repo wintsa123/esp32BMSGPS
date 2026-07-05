@@ -11,6 +11,7 @@ mod build_config;
 mod cjk_font;
 mod display;
 mod flash_settings;
+mod lvgl_ui;
 mod touch;
 #[cfg(all(target_arch = "xtensa", feature = "wireless"))]
 mod wireless_wifi;
@@ -41,10 +42,13 @@ use esp32_bms_gps::{
     },
     qr, runtime_effects,
     settings::{DeviceSettings, DisplayRotation, RawTouchPoint, ScreenPoint, TouchCalibration},
-    touch_ui::{self, TouchUi, UiAction, UiScreen},
+    touch_ui::{self, UiAction, UiScreen},
 };
 
 esp_bootloader_esp_idf::esp_app_desc!();
+
+#[allow(dead_code)]
+const DASHBOARD_BMS_NOTICE_MS: u32 = 1_500;
 
 #[main]
 fn main() -> ! {
@@ -170,12 +174,15 @@ fn main() -> ! {
         }
         Delay::new().delay_millis(board::tft::BOOT_DIAGNOSTIC_MS);
     }
-    if board::tft::BOOT_SETTINGS_PREVIEW_MS > 0 {
-        match display.draw_settings_menu(&app_state.settings) {
-            Ok(()) => esp_println::println!("[tft] settings preview drawn"),
-            Err(error) => esp_println::println!("[tft] settings preview failed: {:?}", error),
+    match board::tft::BOOT_SETTINGS_PREVIEW_MS {
+        0 => {}
+        preview_ms => {
+            match display.draw_settings_menu(&app_state.settings) {
+                Ok(()) => esp_println::println!("[tft] settings preview drawn"),
+                Err(error) => esp_println::println!("[tft] settings preview failed: {:?}", error),
+            }
+            Delay::new().delay_millis(preview_ms);
         }
-        Delay::new().delay_millis(board::tft::BOOT_SETTINGS_PREVIEW_MS);
     }
 
     let mut touch = touch::Xpt2046::new(
@@ -190,13 +197,8 @@ fn main() -> ! {
             Err(_) => fast_blink(tft_backlight, status_r, delay),
         }
     }
-    let mut ui = if board::tft::BOOT_STARTS_ON_SETTINGS {
-        TouchUi {
-            screen: UiScreen::Settings,
-        }
-    } else {
-        TouchUi::new()
-    };
+    let mut ui = lvgl_ui::LvglUi::new(&mut display, active_display_rotation);
+    ui.update(&app_state);
     let mut bms_ble = BmsBleRuntime::new();
     let mut bms_frame_assembler = FrameAssembler::new();
     let mut pending_bms_command = BmsBleCommand::None;
@@ -204,13 +206,11 @@ fn main() -> ! {
     let mut tft_auto_probe_step = 0_u8;
     let mut touch_log_tick = 0_u8;
     let mut touch_diag_tick = 0_u8;
-    if draw_screen(&mut display, &app_state, ui.screen).is_err() {
-        fast_blink(tft_backlight, status_r, delay);
-    }
+    let mut status_tick = 0_u8;
     #[cfg(all(target_arch = "xtensa", feature = "wireless"))]
     apply_target_wifi_config(&mut app_state, &mut wifi_peripheral, &mut wifi_runtime);
 
-    let mut battery_sample_tick = 0_u8;
+    let mut battery_sample_tick = 0_u16;
     loop {
         tft_backlight.set_high();
         #[cfg(all(target_arch = "xtensa", feature = "wireless"))]
@@ -236,7 +236,7 @@ fn main() -> ! {
         poll_gps_uart(&mut gps_uart, &mut gps_service, &mut app_state);
         if tft_auto_probe {
             tft_auto_probe_tick = tft_auto_probe_tick.saturating_add(1);
-            if tft_auto_probe_tick >= 8 {
+            if tft_auto_probe_tick >= 80 {
                 tft_auto_probe_tick = 0;
                 tft_auto_probe_step = tft_auto_probe_step.wrapping_add(1);
                 let (probe_controller, probe_rotation, probe_invert_colors) =
@@ -259,44 +259,57 @@ fn main() -> ! {
                     Delay::new().delay_millis(300);
                     let _ = display.draw_boot_diagnostics();
                     Delay::new().delay_millis(400);
-                    let _ = draw_screen(&mut display, &app_state, ui.screen);
+                    ui.update(&app_state);
                 }
             }
         }
         touch_diag_tick = touch_diag_tick.wrapping_add(1);
-        if touch_diag_tick >= 8 {
+        if touch_diag_tick >= 40 {
             touch_diag_tick = 0;
             let sample = touch.diagnostic_sample();
             esp_println::println!(
-                "[touch] diag raw=({}, {}) z1={} z2={} irq_low={}",
+                "[touch] diag raw=({}, {}) z1={} z2={} irq_low={} pressure_active={} raw_active={}",
                 sample.raw.x,
                 sample.raw.y,
                 sample.z1,
                 sample.z2,
-                sample.irq_low
+                sample.irq_low,
+                sample.pressure_active,
+                sample.raw_active
             );
         }
-        if let Some(calibration) = app_state.settings.touch_calibration
-            && let Some(raw) = touch.read_raw_average()
-        {
-            let point = calibration.map(raw);
-            let (_, screen_height) = active_display_rotation.logical_size();
-            if touch_log_tick == 0 {
-                esp_println::println!(
-                    "[touch] raw=({}, {}) irq_low={} screen=({}, {}) rotation={:?}",
-                    raw.x,
-                    raw.y,
-                    touch.is_touched(),
-                    point.x,
-                    point.y,
-                    active_display_rotation
-                );
+        let touch_point = if let Some(calibration) = app_state.settings.touch_calibration {
+            if let Some(raw) = touch.read_raw_average() {
+                let point = calibration.map_for_rotation(raw, active_display_rotation);
+                if touch_log_tick == 0 {
+                    esp_println::println!(
+                        "[touch] raw=({}, {}) irq_low={} point=({}, {}) rotation={:?}",
+                        raw.x,
+                        raw.y,
+                        touch.is_touched(),
+                        point.x,
+                        point.y,
+                        active_display_rotation
+                    );
+                }
+                touch_log_tick = touch_log_tick.wrapping_add(1);
+                if touch_log_tick >= 4 {
+                    touch_log_tick = 0;
+                }
+                Some(point)
+            } else {
+                None
             }
-            touch_log_tick = touch_log_tick.wrapping_add(1);
-            if touch_log_tick >= 4 {
-                touch_log_tick = 0;
-            }
-            let action = ui.handle_tap(point, screen_height);
+        } else {
+            None
+        };
+        ui.feed_touch(touch_point);
+        ui.update(&app_state);
+        ui.tick();
+
+        let action = ui.take_action();
+        if !matches!(action, UiAction::None) {
+            let previous_rotation = active_display_rotation;
             let mut action_context = UiActionContext {
                 settings_store: &mut settings_store,
                 bms_ble: &mut bms_ble,
@@ -311,14 +324,24 @@ fn main() -> ! {
             {
                 fast_blink(tft_backlight, status_r, delay);
             }
-            if matches!(action, UiAction::RotateDisplay) {
-                active_display_rotation = app_state.settings.display_rotation;
+            active_display_rotation = app_state.settings.display_rotation;
+            if active_display_rotation != previous_rotation {
+                if !matches!(action, UiAction::RotateDisplay)
+                    && display.set_rotation(active_display_rotation).is_err()
+                {
+                    fast_blink(tft_backlight, status_r, delay);
+                }
+                ui.set_rotation(active_display_rotation, &app_state);
             }
-            let _ = draw_screen(&mut display, &app_state, ui.screen);
-            touch.wait_for_release();
+            ui.apply_action(action, &app_state);
+            ui.tick();
         }
-        status_r.toggle();
-        delay.delay_millis(250);
+        status_tick = status_tick.wrapping_add(1);
+        if status_tick >= 10 {
+            status_tick = 0;
+            status_r.toggle();
+        }
+        delay.delay_millis(25);
     }
 }
 
@@ -331,6 +354,63 @@ struct UiActionContext<'a, 'd> {
     wifi_peripheral: &'a mut Option<esp_hal::peripherals::WIFI<'static>>,
     #[cfg(all(target_arch = "xtensa", feature = "wireless"))]
     wifi_runtime: &'a mut Option<wireless_wifi::WifiRuntime<'static>>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(dead_code)]
+struct TouchGesture {
+    start: ScreenPoint,
+    end: ScreenPoint,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(dead_code)]
+enum ScreenRefresh {
+    None,
+    Full,
+    SettingsRow(u16),
+}
+
+#[allow(dead_code)]
+fn refresh_for_action(action: UiAction) -> ScreenRefresh {
+    match action {
+        UiAction::None | UiAction::StartBmsBind => ScreenRefresh::None,
+        UiAction::ShowDashboard
+        | UiAction::ShowQuickMenu
+        | UiAction::ShowSettings
+        | UiAction::RotateDisplay
+        | UiAction::RestoreDefaults => ScreenRefresh::Full,
+        UiAction::EnableWifiReprovisioning => ScreenRefresh::SettingsRow(0),
+        UiAction::CycleBrightness => ScreenRefresh::SettingsRow(1),
+        UiAction::ToggleSpeedUnit => ScreenRefresh::SettingsRow(3),
+        UiAction::ToggleLanguage => ScreenRefresh::SettingsRow(4),
+    }
+}
+
+#[allow(dead_code)]
+fn read_touch_gesture(
+    touch: &mut touch::Xpt2046<'_>,
+    calibration: TouchCalibration,
+    rotation: DisplayRotation,
+    initial_raw: RawTouchPoint,
+    delay: &Delay,
+) -> TouchGesture {
+    let start = calibration.map_for_rotation(initial_raw, rotation);
+    let mut gesture = TouchGesture { start, end: start };
+    let mut samples = 0_u8;
+
+    while samples < 16 {
+        if let Some(raw) = touch.read_raw_average() {
+            gesture.end = calibration.map_for_rotation(raw, rotation);
+            samples = samples.saturating_add(1);
+            delay.delay_millis(8);
+        } else {
+            break;
+        }
+    }
+
+    touch.wait_for_release();
+    gesture
 }
 
 #[cfg(all(target_arch = "xtensa", feature = "wireless"))]
@@ -385,11 +465,11 @@ fn apply_target_wifi_config(
 
 fn poll_battery_adc(
     battery_adc: &mut battery_adc::BatteryAdc<'_>,
-    sample_tick: &mut u8,
+    sample_tick: &mut u16,
     app_state: &mut AppState,
 ) {
     *sample_tick = sample_tick.saturating_add(1);
-    if *sample_tick < battery_adc::DEFAULT_SAMPLE_PERIOD_TICKS {
+    if *sample_tick < battery_adc::DEFAULT_SAMPLE_PERIOD_TICKS as u16 * 10 {
         return;
     }
 
@@ -462,6 +542,7 @@ fn ensure_first_boot_provisioning(settings: &mut DeviceSettings) -> bool {
     changed
 }
 
+#[allow(dead_code)]
 fn draw_screen(
     display: &mut display::St7789<'_>,
     app_state: &AppState,
@@ -469,7 +550,8 @@ fn draw_screen(
 ) -> Result<(), esp_hal::spi::Error> {
     match screen {
         UiScreen::Dashboard => {
-            if app_state.settings.wifi.setup_ap_state.enabled()
+            if board::tft::SHOW_SETUP_QR_ON_DASHBOARD
+                && app_state.settings.wifi.setup_ap_state.enabled()
                 && matches!(app_state.wifi, WifiLinkState::SetupApOnly)
             {
                 draw_setup_ap_qr_screen(display, &app_state.settings)
@@ -480,10 +562,83 @@ fn draw_screen(
                 )
             }
         }
+        UiScreen::QuickMenu => {
+            display.draw_dashboard(
+                &app_state.dashboard_snapshot(),
+                build_config::FIRMWARE_VERSION,
+            )?;
+            display.draw_quick_menu()
+        }
         UiScreen::Settings => display.draw_settings_menu(&app_state.settings),
     }
 }
 
+#[allow(dead_code)]
+fn draw_quick_menu_opening(
+    display: &mut display::St7789<'_>,
+    app_state: &AppState,
+    delay: &Delay,
+) -> Result<(), esp_hal::spi::Error> {
+    display.draw_dashboard(
+        &app_state.dashboard_snapshot(),
+        build_config::FIRMWARE_VERSION,
+    )?;
+    for panel_height in [24_u16, 48, 72, 96, touch_ui::QUICK_MENU_PANEL_HEIGHT] {
+        display.draw_quick_menu_panel(panel_height)?;
+        delay.delay_millis(18);
+    }
+    Ok(())
+}
+
+#[allow(dead_code)]
+fn draw_quick_menu_closing(
+    display: &mut display::St7789<'_>,
+    app_state: &AppState,
+    delay: &Delay,
+) -> Result<(), esp_hal::spi::Error> {
+    let (width, _) = app_state.settings.display_rotation.logical_size();
+    let mut previous_height = touch_ui::QUICK_MENU_PANEL_HEIGHT;
+
+    for panel_height in [96_u16, 72, 48, 24, 0] {
+        if previous_height > panel_height {
+            display.fill_rect(
+                0,
+                panel_height,
+                width,
+                previous_height - panel_height,
+                display::BLACK,
+            )?;
+        }
+        if panel_height > 0 {
+            display.draw_quick_menu_panel(panel_height)?;
+        }
+        previous_height = panel_height;
+        delay.delay_millis(18);
+    }
+
+    display.draw_dashboard(
+        &app_state.dashboard_snapshot(),
+        build_config::FIRMWARE_VERSION,
+    )
+}
+
+#[allow(dead_code)]
+fn show_dashboard_bms_notice_if_needed(
+    display: &mut display::St7789<'_>,
+    app_state: &AppState,
+    delay: &Delay,
+) -> Result<(), esp_hal::spi::Error> {
+    if app_state.dashboard_snapshot().bms_online {
+        return Ok(());
+    }
+
+    esp_println::println!("[ui] dashboard notice: bms_offline");
+    display.draw_dashboard_notice("BMS OFFLINE", "CHECK BINDING")?;
+    delay.delay_millis(DASHBOARD_BMS_NOTICE_MS);
+    draw_screen(display, app_state, UiScreen::Dashboard)
+}
+
+#[allow(dead_code)]
 fn draw_setup_ap_qr_screen(
     display: &mut display::St7789<'_>,
     settings: &DeviceSettings,

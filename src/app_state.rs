@@ -137,6 +137,15 @@ impl AppState {
 
     pub fn dashboard_snapshot(&self) -> DashboardSnapshot {
         let telemetry = self.bms.telemetry;
+        let mut temperature_celsius = [None; 6];
+        if let Some(value) = telemetry {
+            let count = (value.temperature_count as usize).min(temperature_celsius.len());
+            let mut index = 0;
+            while index < count {
+                temperature_celsius[index] = Some(value.temperature_celsius[index]);
+                index += 1;
+            }
+        }
         DashboardSnapshot {
             speed_deci_units: self.gps.speed_deci_units(self.settings.speed_unit),
             speed_unit: self.settings.speed_unit,
@@ -147,6 +156,11 @@ impl AppState {
             soc_percent: telemetry.map(|value| value.soc_percent),
             min_cell_voltage_mv: telemetry.map(|value| value.min_cell_voltage_mv),
             max_cell_voltage_mv: telemetry.map(|value| value.max_cell_voltage_mv),
+            delta_cell_voltage_mv: telemetry.map(|value| value.delta_cell_voltage_mv),
+            average_cell_voltage_mv: telemetry.map(|value| value.average_cell_voltage_mv),
+            total_capacity_mah: telemetry.map(|value| value.total_capacity_mah),
+            capacity_remaining_mah: telemetry.map(|value| value.capacity_remaining_mah),
+            temperature_celsius,
             local_battery_voltage_mv: self.battery.latest.map(|sample| sample.voltage_mv),
             setup_ap_enabled: self.settings.wifi.setup_ap_state.enabled(),
             wifi: self.wifi,
@@ -172,6 +186,11 @@ pub struct DashboardSnapshot {
     pub soc_percent: Option<u16>,
     pub min_cell_voltage_mv: Option<u16>,
     pub max_cell_voltage_mv: Option<u16>,
+    pub delta_cell_voltage_mv: Option<u16>,
+    pub average_cell_voltage_mv: Option<u16>,
+    pub total_capacity_mah: Option<u32>,
+    pub capacity_remaining_mah: Option<u32>,
+    pub temperature_celsius: [Option<i16>; 6],
     pub local_battery_voltage_mv: Option<u32>,
     pub setup_ap_enabled: bool,
     pub wifi: WifiLinkState,
@@ -198,7 +217,7 @@ mod tests {
                 cells
             },
             temperature_celsius: [0_i16; MAX_TEMPERATURES],
-            temperature_count: 0,
+            temperature_count: 6,
             pack_voltage_mv: 6602,
             current_deci_amps: -12,
             soc_percent: 88,
@@ -251,6 +270,11 @@ mod tests {
         assert_eq!(snapshot.pack_voltage_mv, Some(6602));
         assert_eq!(snapshot.current_deci_amps, Some(-12));
         assert_eq!(snapshot.soc_percent, Some(88));
+        assert_eq!(snapshot.total_capacity_mah, Some(100_000));
+        assert_eq!(snapshot.capacity_remaining_mah, Some(88_000));
+        assert_eq!(snapshot.delta_cell_voltage_mv, Some(2));
+        assert_eq!(snapshot.average_cell_voltage_mv, Some(3301));
+        assert_eq!(snapshot.temperature_celsius, [Some(0); 6]);
         assert_eq!(snapshot.local_battery_voltage_mv, Some(3300));
         assert_eq!(snapshot.wifi, WifiLinkState::StationConnected);
     }
