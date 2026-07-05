@@ -39,3 +39,36 @@ Added TFT bring-up diagnostics, hardened local HTTP/Web auth and PNA behavior, g
 ### Next Steps
 
 - None - task complete
+
+
+## Session 2: Fix TFT rotation touch language regression
+
+**Date**: 2026-07-05
+**Task**: Fix TFT rotation touch language regression
+**Branch**: `main`
+
+### Summary
+
+Stabilized TFT landscape boot, added XPT2046 touch fallback/diagnostics, preserved ASCII language labels, and validated host plus ESP builds.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6311856` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
