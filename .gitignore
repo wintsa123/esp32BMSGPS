@@ -6,6 +6,7 @@
 /firmware-packages/
 /release-images/
 /ota-images/
+/vercel/
 *.bin
 *.elf
 *.map
