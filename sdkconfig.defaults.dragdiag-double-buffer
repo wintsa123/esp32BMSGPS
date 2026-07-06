@@ -1,0 +1,4 @@
+# Optional overlay for LVGL drag diagnostics with a second SPI draw buffer.
+# Use only after normal diagnostic boot logs show enough dma_free/dma_largest.
+
+CONFIG_ESP_BMS_LVGL_BRIDGE_DOUBLE_BUFFER=y

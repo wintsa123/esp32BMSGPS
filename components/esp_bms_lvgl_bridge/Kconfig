@@ -1,0 +1,37 @@
+menu "ESP BMS LVGL Bridge"
+
+    config ESP_BMS_LVGL_BRIDGE_SPI_DRAW_BUFFER_HEIGHT
+        int "SPI draw buffer height"
+        range 10 120
+        default 64
+        help
+            Draw buffer height in display rows for the ESP LVGL adapter SPI
+            display path. Larger values reduce visible row-band refresh during
+            whole-page drags, but consume more internal DMA-capable RAM.
+
+            At 320 px wide and RGB565, 64 rows use about 40 KiB for the single
+            partial-mode draw buffer. Keep this below a full frame on ESP32
+            without PSRAM.
+
+    config ESP_BMS_LVGL_BRIDGE_TASK_MAX_DELAY_MS
+        int "LVGL adapter task max delay"
+        range 1 15
+        default 5
+        help
+            Maximum sleep interval for the ESP LVGL adapter worker task in
+            milliseconds. Lower values improve touch-following latency at the
+            cost of more frequent LVGL work.
+
+    config ESP_BMS_LVGL_BRIDGE_DOUBLE_BUFFER
+        bool "Use two LVGL SPI draw buffers"
+        default n
+        help
+            Allocate a secondary SPI draw buffer for the ESP LVGL adapter
+            partial render mode. This can improve overlap between rendering and
+            SPI flush work during page drags, but at 320 px wide and 64 rows it
+            costs another about 40 KiB of internal DMA-capable RAM.
+
+            Keep this disabled in the normal image until hardware logs confirm
+            enough free internal RAM remains after LVGL, Wi-Fi, and HTTP start.
+
+endmenu

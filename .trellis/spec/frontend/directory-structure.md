@@ -23,10 +23,9 @@ Questions to answer:
 ## Directory Layout
 
 ```
-<!-- Replace with your actual structure -->
-src/
-├── ...
-└── ...
+main/
+└── web/
+    └── index.html
 ```
 
 ---
@@ -35,7 +34,9 @@ src/
 
 <!-- How should new features be organized? -->
 
-(To be filled by the team)
+- The embedded Web UI is a single framework-free HTML/CSS/vanilla JS file.
+- Keep the local device UI in `main/web/index.html` so the IDF runtime can embed
+  it directly into the firmware image.
 
 ---
 
@@ -43,7 +44,8 @@ src/
 
 <!-- File and folder naming rules -->
 
-(To be filled by the team)
+- Keep embedded Web UI assets small and local.
+- Do not introduce remote assets, CDN calls, or framework bundles.
 
 ---
 

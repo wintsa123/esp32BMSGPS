@@ -1,0 +1,6 @@
+# Overlay for an LVGL drag diagnostic image. Use with:
+#   ./scripts/esp-idf-drag-diag.sh build
+
+CONFIG_ESP_BMS_LVGL_UI_DRAG_DIAGNOSTICS=y
+CONFIG_ESP_BMS_LVGL_UI_DRAG_SAMPLE_DIAGNOSTICS=y
+CONFIG_ESP_BMS_LVGL_UI_DRAG_SAMPLE_PERIOD_MS=100

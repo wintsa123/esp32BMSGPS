@@ -1,7 +1,17 @@
 /target/
+/build/
+/build_dragdiag/
+/build_dragdiag_db/
+/managed_components/
 /.embuild/
 /.espflash/
 /.sync_temp_dir/
+/sdkconfig
+/sdkconfig.old
+/sdkconfig.dragdiag
+/sdkconfig.dragdiag.old
+/sdkconfig.dragdiag-db
+/sdkconfig.dragdiag-db.old
 /firmware-images/
 /firmware-packages/
 /release-images/

@@ -1,8 +1,10 @@
 # ESP32 BMS GPS Firmware
 
-Rust `no_std` firmware scaffold for an ESP32-WROOM-32E dashboard with GPS speed,
-TPM408 TFT/touch, Ant BMS BLE telemetry, local Wi-Fi setup UI, and OTA-ready
-partitioning.
+ESP-IDF firmware for an ESP32-WROOM-32E dashboard with GPS speed, TPM408
+TFT/touch, local setup AP/Web UI, local battery ADC, and OTA-ready partitioning.
+
+The target firmware is now built and flashed only through ESP-IDF. The previous
+Rust/Cargo firmware path has been removed.
 
 ## Hardware Target
 
@@ -26,272 +28,166 @@ partitioning.
 | Expansion SPI CS reserved | GPIO27 |
 | SD SPI reserved MOSI/MISO/SCK/CS | GPIO23 / GPIO19 / GPIO18 / GPIO5 |
 
-Boot validation is required with GPIO2, GPIO4, GPIO5, GPIO12, and GPIO15 attached.
-GPS on UART0 can interfere with flashing and logs; the current firmware prints
-only a short boot smoke message.
+Boot validation is required with GPIO2, GPIO4, GPIO5, GPIO12, and GPIO15
+attached. GPS on UART0 can interfere with flashing and logs.
 
 ## Build Prerequisites
 
-Install the ESP Rust Xtensa toolchain and `espflash`, then load the toolchain
-environment for your shell:
+Install ESP-IDF 5.5.x. The helper script loads `$IDF_PATH/export.sh` when
+available, otherwise `$HOME/esp/esp-idf-v5.5.4/export.sh`.
 
-```bash
-cargo install espup espflash
-espup install
-. "$HOME/export-esp.sh"
-```
+The ESP-IDF component lock currently pins:
 
-This checkout currently expects target `xtensa-esp32-none-elf`. On this
-development machine, the ESP Rust `esp` toolchain is installed with Xtensa Rust
-1.95.0.0, Xtensa GCC 15.2.0, and LLVM/libclang 20.1.1.
-
-Default firmware features include settings storage plus the Wi-Fi setup AP
-transport. The BLE/coexistence radio link is kept behind the non-default
-`ble-radio` feature until the target BLE transport adapter is implemented and
-linked on hardware.
+- `lvgl/lvgl` 9.5.0
+- `espressif/esp_lvgl_adapter` 0.6.2
+- `atanisoft/esp_lcd_touch_xpt2046` 1.0.6
 
 ## Build And Flash
 
-On Windows, use the helper script from the repository root:
+Build the ESP-IDF app:
 
-```powershell
-.\scripts\flash.ps1
+```bash
+./scripts/esp-idf-env.sh build
 ```
 
-Useful options:
+Flash from a Unix-like shell:
+
+```bash
+./scripts/esp-idf-env.sh -p /dev/ttyUSB0 flash monitor
+```
+
+On Windows, the flash helper wraps the same ESP-IDF flow:
 
 ```powershell
 .\scripts\flash.ps1 -Port COM3
-.\scripts\flash.ps1 -Monitor
-.\scripts\flash.ps1 -Profile debug
-.\scripts\flash.ps1 -ManifestUrl "https://your-domain.example/firmware/manifest.json"
+.\scripts\flash.ps1 -Port COM3 -Monitor
 ```
 
-The script currently builds with:
+For a raw TCP serial bridge, use `socket://`, not `rfc2217://`. Raw TCP cannot
+change the Windows-side serial baud rate, so the flash baud must match the
+bridge process. `scripts/flash.ps1` defaults socket ports to `-b 115200`:
 
 ```powershell
-cargo +esp build -Zbuild-std=core --target xtensa-esp32-none-elf --release
+.\scripts\flash.ps1 -Port socket://192.168.2.10:4000
+.\scripts\flash.ps1 -Port socket://192.168.2.10:4000 -Monitor
+.\scripts\flash.ps1 -Port socket://192.168.2.10:4000 -BaudRate 115200
 ```
 
-and flashes with:
+The raw bridge in `scripts/serial_tcp_bridge.ps1` can reset the ESP32 into the
+bootloader on the first TCP write, but it cannot expose RFC2217 line-control
+commands to esptool.
 
-```powershell
-espflash flash -p COMx --partition-table partitions.csv target\xtensa-esp32-none-elf\release\esp32-bms-gps
+In non-interactive shells where `idf.py monitor` refuses to run without a TTY,
+capture the same raw socket with:
+
+```bash
+python3 scripts/raw-socket-monitor.py socket://192.168.2.10:4000 --duration 30
 ```
 
-If you prefer to run the steps manually, the repository already includes
-`.cargo/config.toml` with the ESP32 target, `build-std`, and linker arguments:
+## Runtime Status
 
-```powershell
-cargo +esp build -Zbuild-std=core --target xtensa-esp32-none-elf --release
-espflash flash -p COM3 --partition-table partitions.csv target\xtensa-esp32-none-elf\release\esp32-bms-gps
-```
+Implemented on the ESP-IDF path:
 
-The OTA manifest endpoint is also build-time configurable via `-ManifestUrl`,
-which sets `OTA_MANIFEST_URL` for the build.
+- `app_main` orchestration in `main/idf_main.c`.
+- LVGL 9.5 display path through Espressif's LVGL adapter.
+- ST7789 SPI display bridge and XPT2046 touch registration.
+- GPIO21 backlight brightness through LEDC PWM.
+- LVGL dashboard/settings UI with brightness, rotation, speed unit, language,
+  setup AP QR, and BMS bind actions.
+- Display settings persisted in NVS.
+- GPIO34 local battery sampling through ADC1.
+- UART0 RX GPIO3 NMEA RMC parsing for GPS speed/fix.
+- Native ESP-IDF setup AP:
+  - SSID policy: `fuckingBms_` plus six lowercase hex characters.
+  - Password policy: eight random digits.
+  - AP/server/gateway: `192.168.4.1/24`.
+  - DHCP provided by ESP-IDF AP netif.
+- Setup AP credentials persisted in NVS, with stale values regenerated and
+  saved before applying Wi-Fi config.
+- Embedded Web UI served from `main/web/index.html` through
+  `esp_http_server`.
+- Authenticated API routes for status, config, external Wi-Fi, AP password, BMS
+  scan trigger/candidates, and BMS bind persistence.
+- External Wi-Fi credentials persisted in NVS through `/api/wifi`; when present,
+  the firmware starts ESP-IDF Wi-Fi in AP+STA mode so the setup AP stays
+  available while station connection is attempted.
+- NimBLE-backed BMS discovery: `/api/bms/scan` starts a BLE scan and
+  `/api/bms/candidates` returns deduplicated ANT BMS candidates from live
+  advertisements.
+- Bound BMS connection flow: the ESP-IDF runtime connects to a saved or newly
+  bound ANT BMS MAC, discovers service `0xFFE0` / characteristic `0xFFE1`,
+  subscribes to notifications, writes status/device-info request frames, and
+  maps valid status notifications into the TFT/Web dashboard snapshot.
+
+Still pending on the ESP-IDF path:
+
+- OTA manifest parsing, image download, verification, partition switch, and
+  post-boot validity marking. `/api/ota/check` and `/api/ota/start` currently
+  return an explicit unavailable response instead of reporting fake success.
+- Hardware validation of the new BMS BLE connection and notification telemetry
+  path with a real ANT BMS.
 
 ## Flash Layout
 
-`partitions.csv` starts with an OTA-capable 4 MB layout:
+`partitions.csv` uses a 4 MB two-OTA layout:
 
-- `factory`: 1 MB
-- `ota_0`: 1 MB
-- `ota_1`: 1 MB
-- `nvs`, `otadata`, and `phy_init` data partitions
+- `ota_0`: offset `0x10000`, size `0x1E0000`
+- `ota_1`: offset `0x1F0000`, size `0x1E0000`
+- `nvs`, `otadata`, and `phy_init` data partitions before `ota_0`
+- `0x3F0000..0x400000` is intentionally left free for a future settings or
+  reserved partition
 
-Web assets are embedded in the app image with `include_bytes!`, so every OTA app
-slot must fit the firmware plus static assets.
+When flashing a board that previously used a different partition table, erase
+flash once or flash the new partition table together with the app before judging
+boot behavior.
+
+## Diagnostics
+
+The IDF boot log prints heap snapshots at `runtime_init`, `lvgl_bridge`,
+`first_ui`, `display_settings`, and `setup_ap_http`. Use `dma_free` and
+`dma_largest` before enabling double buffering or increasing the SPI draw
+buffer height on hardware.
+
+Drag diagnostics are disabled by default:
+
+- `CONFIG_ESP_BMS_LVGL_UI_DRAG_DIAGNOSTICS`
+- `CONFIG_ESP_BMS_LVGL_UI_DRAG_SAMPLE_DIAGNOSTICS`
+
+Use the drag diagnostic helper for separate diagnostic images:
+
+```bash
+./scripts/esp-idf-drag-diag.sh build
+./scripts/esp-idf-drag-diag.sh -p /dev/ttyUSB0 flash monitor
+./scripts/esp-idf-drag-diag.sh --double-buffer build
+```
+
+## Web UI
+
+The embedded Web UI is a framework-free HTML/CSS/vanilla JS page in
+`main/web/index.html`. It is embedded into the firmware image by
+`components/esp_bms_idf_runtime/CMakeLists.txt`.
+
+Default UI language is Chinese. English is selectable from device settings.
 
 ## Vercel Control Page
 
-The repository also contains a static browser-hosted control page under
-`vercel/index.html`. Deploy the repo to Vercel and open the HTTPS site, then join
-the phone/laptop to the ESP32 setup AP and press `连接热点 API`. The page prompts
-for the current setup password shown on the TFT QR screen and sends it as both
-`X-Setup-Password` and HTTP Basic auth.
+The repository also contains a browser-hosted control page under
+`vercel/index.html`. Deploy the repo to Vercel, join the phone/laptop to the
+ESP32 setup AP, and press `连接热点 API`. The page prompts for the current setup
+password shown on the TFT QR screen and sends it as both `X-Setup-Password` and
+HTTP Basic auth.
 
 The ESP32 HTTP API returns CORS plus Private Network Access headers so a public
-HTTPS Vercel origin can call `http://192.168.4.1`. The Vercel page first tries
-`targetAddressSpace: "local"` and then falls back to the older `"private"` value
-for browser rollout differences. The `连接蓝牙` button is present for the future
-ESP32 BLE control GATT service; the current target BLE work still covers the Ant
-BMS central/client path only.
-
-## Current Scope
-
-Implemented in this scaffold:
-
-- `esp-hal` boot entry for ESP32.
-- ESP-IDF-compatible app descriptor for OTA metadata.
-- TFT backlight GPIO21 driven high continuously during the main loop.
-- GPIO17 red LED heartbeat toggles every 250 ms during the main loop.
-- TFT driver initializes ST7789 by default, can probe ST7789/ILI9341 plus all
-  rotations and inversion during bring-up when RDDID is unknown, and can draw a
-  low-memory dashboard, settings menu, calibration targets, touch feedback,
-  filled rectangles, boot color bars, and a small built-in 5 x 7 ASCII font.
-- Display rotation is a persisted device setting with portrait, landscape,
-  inverted portrait, and inverted landscape values.
-- Central board pin map.
-- Host-testable RMC NMEA speed parser plus a byte-stream NMEA line buffer for
-  the future UART0 task.
-- Host-testable GPS service that feeds UART byte chunks into the NMEA line
-  buffer, updates `AppState`, and tracks parse errors.
-- Host-testable first-boot Wi-Fi setup AP state model.
-- OTA manifest URL build config.
-- Host-testable OTA manifest parser, SHA-256 hex validation, and version
-  comparison.
-- Embedded plain HTML/CSS/vanilla JS setup page placeholder.
-- Flash-backed full device settings store using two records in the reserved tail
-  region of flash. The loader can migrate the old single `TCHC` touch
-  calibration record if present.
-- Factory touch calibration for the current TPM408 module:
-  `raw_x_min=453`, `raw_x_max=3549`, `raw_y_min=613`, `raw_y_max=3485`,
-  `swap_xy=true`, `invert_x=false`, `invert_y=false`, `width=320`,
-  `height=240`.
-- Host-testable versioned settings record codec with generation counter, CRC,
-  dual-slot latest-record selection, Wi-Fi credentials, AP password, BMS MAC,
-  display settings, speed unit, and optional touch calibration.
-- Host-testable local API route/settings contract for `/api/status`,
-  `/api/config`, `/api/wifi`, `/api/ap-password`, `/api/bms/bind`,
-  `/api/bms/candidates`, `/api/bms/scan`, `/api/ota/check`, and
-  `/api/ota/start`.
-- Host-testable HTTP dispatch layer that serves the embedded index page,
-  returns JSON API responses, applies JSON settings updates to `AppState`, and
-  maps API errors to HTTP status codes.
-- Browser-hosted Vercel control page with vanilla JS HTTP control, setup
-  password prompt/auth headers, CORS/Private Network Access fetch compatibility,
-  and a Web Bluetooth control-service shell for the pending ESP32 BLE GATT
-  service.
-- Host-testable raw HTTP request parser and response-header writer for the
-  future single-connection TCP server.
-- Host-testable single-connection HTTP core that maps raw request bytes to
-  response headers plus body slices, mutates `AppState` through the API
-  dispatch layer, and reports runtime effects for settings persistence, Wi-Fi
-  reconnect, and OTA actions.
-- Host-testable runtime effect dispatcher that turns HTTP and Wi-Fi events into
-  explicit actions such as `persist_settings`, `reconnect_wifi`, OTA check, and
-  OTA download start.
-- Host-testable Wi-Fi control-plane state model that chooses setup AP, station,
-  or AP+STA mode and closes setup AP after a successful external Wi-Fi
-  connection.
-- Host-testable first-provisioning helpers for setup AP SSID/password and Wi-Fi
-  QR payload generation.
-- Host-testable no-heap QR encoder integration for first-boot Wi-Fi payloads.
-- Host-testable local battery ADC conversion/state model for GPIO34 using an
-  explicit voltage-divider configuration, with `/api/status` exposing
-  `local_battery_mv`.
-- Target firmware samples GPIO34 through ADC1 at a low rate and feeds the same
-  battery state. The current default divider model is 100 kOhm / 100 kOhm and
-  should be adjusted after measuring the real board divider.
-- Host-testable Ant BMS frame builder, Modbus CRC16 validation, BLE notification
-  frame assembler, status telemetry parser, and device-info parser. The parser
-  follows the `syssi/esphome-ant-bms` BLE frame shape: service `0xFFE0`,
-  characteristic `0xFFE1`, frame start `7E A1`, frame end `AA 55`.
-- Host-testable Ant BMS BLE control-plane state machine for scan, filtered
-  connect, service/characteristic discovery, notification subscription, polling,
-  frame assembly, telemetry update, and offline backoff. The real ESP32 BLE
-  transport adapter is still pending.
-- Host-testable fixed-capacity Ant BMS scan candidate list. BLE advertisements
-  matching `ANT-*` are exposed through `/api/bms/candidates`, and the web UI can
-  request a scan through `/api/bms/scan` before binding a selected MAC.
-- Host-testable app-state snapshot model combining GPS, BMS, Wi-Fi, OTA, and
-  user settings for the dashboard renderer.
-- Embedded web UI now displays the local ADC battery voltage when available and
-  falls back to BMS pack voltage. It also includes a framework-free BMS scan
-  list that can fill and bind the BMS MAC without typing it manually.
-- Host-testable touchscreen UI state machine for dashboard/settings navigation,
-  Wi-Fi reprovisioning, brightness cycling, screen rotation, speed-unit toggle,
-  BMS bind scan action, and restore-defaults behavior.
-- Touchscreen BMS bind now emits a runtime `start_bms_scan` action and drives
-  the host-testable BLE control state machine to `Scan`; the real BLE radio
-  adapter still needs to consume that command on target hardware.
-- Host-testable OTA download core that streams chunks to an image writer,
-  enforces manifest size, and verifies SHA-256 before an OTA slot switch is
-  allowed.
-- Host-testable OTA job state machine that turns web/API update requests into
-  explicit runtime commands: fetch manifest, download verified firmware, switch
-  slot, and reboot. It also keeps `AppState.ota` aligned with check, available,
-  download, verify, ready-to-reboot, and failed states.
-- Firmware `main` now loads persisted settings, starts the ESP RTOS scheduler
-  and Wi-Fi heap for target wireless builds, generates first-boot setup AP
-  SSID/password if missing, starts the `esp-radio` setup AP when provisioning is
-  enabled, applies factory touch calibration as fallback, initializes UART0 at
-  9600 baud for GPS NMEA, polls buffered GPS bytes into `AppState`, renders a
-  scannable Wi-Fi QR setup screen while setup AP is enabled, renders the
-  dashboard/settings screens otherwise, and persists settings changed by
-  touchscreen actions.
-- Target firmware initializes the `esp-println` logger and emits Wi-Fi
-  diagnostics for desired mode, AP SSID, password lengths, `esp-radio`
-  controller/config errors, and the current limitation that station credentials
-  are configured but the async external-AP connect task is not running yet.
-- OTA-ready partition table.
-
-Smoke-test interpretation:
-
-- Red LED blinking and screen black: firmware is alive; continue with ST7789
-  initialization, backlight polarity, and display wiring checks.
-- Red LED not blinking: check reset loop, power, boot strap pins, and flashing
-  with GPS attached to UART0.
-- Blue LED on briefly during display init, green LED on afterward: the firmware
-  finished sending TFT init and display writes. A successful visible path should
-  flash a raw full-screen red `RAMWR` fill for about 0.4 seconds before the
-  normal color bars/settings screen. If RDDID is unknown, the serial log should
-  also show
-  `[tft] auto probe controller=... rotation=... invert=...` roughly every 2
-  seconds while the firmware alternates controller, rotation, and inversion.
-  Each probe flashes raw red first, draws full-screen color bars, then returns
-  to SETTINGS.
-
-Next implementation phases:
-
-- GPS UART0 hardware validation and async/task cleanup.
-- `embassy-net` station connection lifecycle and TCP socket read/write adapter
-  around the HTTP connection core.
-- Async station connect task using `WifiController::connect_async()` so saved
-  external Wi-Fi credentials progress beyond the current "connecting" state.
-- Ant BMS BLE scan/connect transport.
-- OTA manifest download transport, inactive partition writer, boot partition
-  switch, and post-boot validity marking.
+HTTPS Vercel origin can call `http://192.168.4.1`.
 
 ## Current Validation
 
-Passing on the development machine:
+Primary validation:
 
 ```bash
-cargo fmt --check
-cargo test --target x86_64-unknown-linux-gnu --lib
-cargo clippy --target x86_64-unknown-linux-gnu --lib -- -D warnings
+./scripts/esp-idf-env.sh build
 ```
 
-Current host test count: 102.
-
-Passing for the ESP32 target on the development machine:
-
-```bash
-. "$HOME/export-esp.sh"
-cargo +esp check --bin esp32-bms-gps -j1
-cargo +esp clippy --bin esp32-bms-gps -j1 -- -D warnings
-cargo +esp check --bin esp32-bms-gps --features ili9341-tft -j1
-cargo +esp clippy --bin esp32-bms-gps --features ili9341-tft -j1 -- -D warnings
-cargo +esp build --release -j1
-cargo +esp build --release --features ili9341-tft -j1
-```
-
-Current release ELF:
-
-- `target/xtensa-esp32-none-elf/release/esp32-bms-gps` (4,117,448 bytes)
-
-Current generated factory app images:
-
-- `target/xtensa-esp32-none-elf/release/esp32-bms-gps-factory.bin`:
-  654,768 bytes, SHA-256
-  `124572110f4393bb975115e45e9a722a8e2827429c5b964ed76e6844d7d7030e`.
-- `target/xtensa-esp32-none-elf/release/esp32-bms-gps-ili9341-factory.bin`:
-  654,816 bytes, SHA-256
-  `1e1e2bab115357aa1beaf5d6356ae4633f1b5676e5dc25ec3b396c7d4f40d119`.
-
-Pending on hardware:
-
-- Hardware validation remains pending for GPS UART0, GPIO34 ADC scaling against
-  a multimeter, phone scan and join of the setup AP shown on the TFT QR screen,
-  BLE BMS, full settings Flash writes on device, and OTA slot switching.
+Hardware validation remains pending for GPS UART0, GPIO34 ADC scaling against a
+multimeter, phone scan and join of the setup AP shown on the TFT QR screen,
+HTTP access to `http://192.168.4.1`, BLE BMS, and OTA slot switching.

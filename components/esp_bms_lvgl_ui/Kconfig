@@ -1,0 +1,40 @@
+menu "ESP BMS LVGL UI"
+
+    config ESP_BMS_LVGL_UI_DRAG_FULL_INVALIDATE
+        bool "Invalidate full dashboard viewport while page scrolling"
+        default y
+        help
+            Invalidate the entire dashboard viewport after page x-position
+            changes during LVGL native horizontal scroll and snap animations.
+            This makes moving pages redraw as one surface instead of letting
+            individual labels/widgets refresh in separate invalidation chunks.
+
+            Disable this only when hardware logs show the extra redraw work
+            causes worse latency than the partial-object invalidation path.
+
+    config ESP_BMS_LVGL_UI_DRAG_DIAGNOSTICS
+        bool "Enable LVGL page scroll diagnostics"
+        default n
+        help
+            Log dashboard page scroll begin/end boundary events.
+            Keep this disabled for normal images because serial logging changes
+            the touch-following behavior being measured.
+
+    config ESP_BMS_LVGL_UI_DRAG_SAMPLE_DIAGNOSTICS
+        bool "Enable LVGL page scroll sample diagnostics"
+        default n
+        depends on ESP_BMS_LVGL_UI_DRAG_DIAGNOSTICS
+        help
+            Log low-rate LV_EVENT_SCROLL samples while a dashboard page is
+            scrolled. This helps diagnose touch sampling gaps and scroll-position
+            jumps on hardware, but should stay disabled for normal images.
+
+    config ESP_BMS_LVGL_UI_DRAG_SAMPLE_PERIOD_MS
+        int "LVGL page scroll sample diagnostic period"
+        range 20 1000
+        default 100
+        depends on ESP_BMS_LVGL_UI_DRAG_SAMPLE_DIAGNOSTICS
+        help
+            Minimum interval between scroll sample diagnostic log lines.
+
+endmenu

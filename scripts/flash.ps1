@@ -1,21 +1,27 @@
 [CmdletBinding()]
 param(
     [string]$Port,
-    [ValidateSet("debug", "release")]
-    [string]$Profile = "release",
-    [string]$ManifestUrl,
-    [switch]$Monitor,
-    [switch]$NoBuild
+    [int]$BaudRate = 0,
+    [switch]$Monitor
 )
 
 $ErrorActionPreference = "Stop"
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$target = "xtensa-esp32-none-elf"
-$binaryName = "esp32-bms-gps"
-$partitionTable = Join-Path $repoRoot "partitions.csv"
-$firmwarePath = Join-Path $repoRoot "target\$target\$Profile\$binaryName"
-$buildStateDir = Join-Path $repoRoot "target\$target\$Profile"
+$idfExportScript = Join-Path $env:USERPROFILE "esp\esp-idf-v5.5.4\export.ps1"
+$originalLocation = Get-Location
+
+function Set-DefaultProxyEnv {
+    if (-not (Test-Path Env:https_proxy)) {
+        $env:https_proxy = "http://127.0.0.1:7897"
+    }
+    if (-not (Test-Path Env:http_proxy)) {
+        $env:http_proxy = "http://127.0.0.1:7897"
+    }
+    if (-not (Test-Path Env:all_proxy)) {
+        $env:all_proxy = "socks5://127.0.0.1:7897"
+    }
+}
 
 function Test-CommandExists {
     param([Parameter(Mandatory = $true)][string]$Name)
@@ -25,37 +31,13 @@ function Test-CommandExists {
     }
 }
 
-function Initialize-Python3Shim {
-    param([Parameter(Mandatory = $true)][string]$RepoRoot)
-
-    $shimDir = Join-Path $RepoRoot "target\tool-shims"
-    New-Item -ItemType Directory -Force -Path $shimDir | Out-Null
-
-    $shimPath = Join-Path $shimDir "python3.exe"
-    $launcher = Get-Command py.exe -ErrorAction SilentlyContinue
-    if ($launcher) {
-        Copy-Item -LiteralPath $launcher.Source -Destination $shimPath -Force
-    }
-    else {
-        $python = Get-Command python.exe -ErrorAction SilentlyContinue
-        if (-not $python) {
-            throw "Required command 'python3' was not found, and neither 'py.exe' nor 'python.exe' is available for a shim."
-        }
-        Copy-Item -LiteralPath $python.Source -Destination $shimPath -Force
-    }
-
-    & $shimPath --version | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw "Prepared python3 shim failed to run at '$shimPath'."
-    }
-
-    $shimDir
-}
-
 function Resolve-FlashPort {
     param([string]$RequestedPort)
 
     if ($RequestedPort) {
+        if ($RequestedPort -match "^[A-Za-z][A-Za-z0-9+.-]*://") {
+            return $RequestedPort
+        }
         return $RequestedPort.ToUpperInvariant()
     }
 
@@ -115,136 +97,47 @@ function Invoke-Checked {
     }
 }
 
-function Remove-BuildArtifact {
-    param(
-        [Parameter(Mandatory = $true)][System.IO.FileSystemInfo]$Item,
-        [Parameter(Mandatory = $true)][string]$StateDir
-    )
-
-    $trimChars = @([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
-    $statePath = [System.IO.Path]::GetFullPath($StateDir).TrimEnd($trimChars)
-    $itemPath = [System.IO.Path]::GetFullPath($Item.FullName)
-    $allowedPrefix = $statePath + [System.IO.Path]::DirectorySeparatorChar
-
-    if (-not $itemPath.StartsWith($allowedPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
-        throw "Refusing to remove build artifact outside '$statePath': '$itemPath'."
+function Initialize-IdfEnvironment {
+    $candidates = @()
+    if (Test-Path Env:IDF_PATH) {
+        $candidates += (Join-Path $env:IDF_PATH "export.ps1")
     }
+    $candidates += $idfExportScript
 
-    Remove-Item -LiteralPath $itemPath -Recurse -Force
-}
-
-function Clear-LocalCrateArtifacts {
-    param(
-        [Parameter(Mandatory = $true)][string]$StateDir,
-        [Parameter(Mandatory = $true)][string]$BinaryName
-    )
-
-    if (-not (Test-Path $StateDir)) {
-        return 0
-    }
-
-    $crateFilePrefix = $BinaryName.Replace("-", "_")
-    $items = @()
-
-    foreach ($name in @(
-        $BinaryName,
-        "$BinaryName.d",
-        "lib$crateFilePrefix.rlib",
-        "lib$crateFilePrefix.d"
-    )) {
-        $path = Join-Path $StateDir $name
-        if (Test-Path $path) {
-            $items += @(Get-Item -LiteralPath $path -Force)
+    foreach ($candidate in $candidates) {
+        if (Test-Path $candidate) {
+            . $candidate
+            return
         }
     }
-
-    $depsDir = Join-Path $StateDir "deps"
-    if (Test-Path $depsDir) {
-        $items += @(Get-ChildItem -LiteralPath $depsDir -Force -File | Where-Object {
-            $_.Name -like "$crateFilePrefix-*" -or $_.Name -like "lib$crateFilePrefix-*"
-        })
-    }
-
-    $fingerprintDir = Join-Path $StateDir ".fingerprint"
-    if (Test-Path $fingerprintDir) {
-        $items += @(Get-ChildItem -LiteralPath $fingerprintDir -Force -Directory | Where-Object {
-            $_.Name -like "$BinaryName-*"
-        })
-    }
-
-    $incrementalDir = Join-Path $StateDir "incremental"
-    if (Test-Path $incrementalDir) {
-        $items += @(Get-ChildItem -LiteralPath $incrementalDir -Force -Directory | Where-Object {
-            $_.Name -like "$crateFilePrefix-*"
-        })
-    }
-
-    $removed = 0
-    foreach ($item in @($items | Sort-Object FullName -Unique)) {
-        Remove-BuildArtifact -Item $item -StateDir $StateDir
-        $removed += 1
-    }
-
-    $removed
 }
-
-Test-CommandExists cargo
-Test-CommandExists espflash
-
-$resolvedPort = Resolve-FlashPort -RequestedPort $Port
-$hadManifestUrl = Test-Path Env:OTA_MANIFEST_URL
-$originalManifestUrl = $env:OTA_MANIFEST_URL
-$originalPath = $env:PATH
-$originalLocation = Get-Location
 
 try {
     Push-Location $repoRoot
-    $pythonShimDir = Initialize-Python3Shim -RepoRoot $repoRoot
-    $env:PATH = "$pythonShimDir;$repoRoot\scripts;$env:PATH"
+    Set-DefaultProxyEnv
+    Initialize-IdfEnvironment
+    Test-CommandExists idf.py
 
-    if ($PSBoundParameters.ContainsKey("ManifestUrl")) {
-        $env:OTA_MANIFEST_URL = $ManifestUrl
+    $resolvedPort = Resolve-FlashPort -RequestedPort $Port
+    $effectiveBaudRate = $BaudRate
+    if ($effectiveBaudRate -le 0 -and $resolvedPort -match "(?i)^socket://") {
+        $effectiveBaudRate = 115200
+        Write-Host "==> Raw socket serial selected; using -b $effectiveBaudRate to match the bridge baud rate" -ForegroundColor DarkGray
     }
 
-    if (-not $NoBuild) {
-        $removedArtifactCount = Clear-LocalCrateArtifacts -StateDir $buildStateDir -BinaryName $binaryName
-        Write-Host "==> Forcing local crate rebuild; removed $removedArtifactCount artifact(s)" -ForegroundColor Cyan
-
-        $buildArgs = @("+esp", "build", "--target", $target)
-        if ($Profile -eq "release") {
-            $buildArgs += "--release"
-        }
-
-        Invoke-Checked -Step "Building firmware for $target ($Profile)" -Action {
-            & cargo @buildArgs
-        }
+    $idfArgs = @("-p", $resolvedPort)
+    if ($effectiveBaudRate -gt 0) {
+        $idfArgs += @("-b", "$effectiveBaudRate")
     }
-
-    if (-not (Test-Path $firmwarePath)) {
-        throw "Firmware image not found at '$firmwarePath'. Build first or remove -NoBuild."
-    }
-
-    $firmwareInfo = Get-Item -LiteralPath $firmwarePath
-    Write-Host ("==> Firmware timestamp: {0:u}" -f $firmwareInfo.LastWriteTimeUtc) -ForegroundColor DarkGray
-
-    $flashArgs = @("flash", "-p", $resolvedPort, "--partition-table", $partitionTable)
+    $idfArgs += "flash"
     if ($Monitor) {
-        $flashArgs += "--monitor"
+        $idfArgs += "monitor"
     }
-    $flashArgs += $firmwarePath
 
-    Invoke-Checked -Step "Flashing $firmwarePath to $resolvedPort" -Action {
-        & espflash @flashArgs
+    Invoke-Checked -Step "Flashing ESP-IDF app to $resolvedPort" -Action {
+        & idf.py @idfArgs
     }
 }
 finally {
     Set-Location $originalLocation
-
-    if ($hadManifestUrl) {
-        $env:OTA_MANIFEST_URL = $originalManifestUrl
-    }
-    else {
-        Remove-Item Env:OTA_MANIFEST_URL -ErrorAction SilentlyContinue
-    }
-    $env:PATH = $originalPath
 }
