@@ -26,7 +26,17 @@ typedef enum {
     ESP_BMS_LVGL_ACTION_TOGGLE_LANGUAGE = 8,
     ESP_BMS_LVGL_ACTION_START_BMS_BIND = 9,
     ESP_BMS_LVGL_ACTION_RESTORE_DEFAULTS = 10,
+    ESP_BMS_LVGL_ACTION_SET_BRIGHTNESS = 11,
+    ESP_BMS_LVGL_ACTION_SET_VOLUME = 12,
 } esp_bms_lvgl_action_t;
+
+typedef struct {
+    esp_bms_lvgl_action_t action;
+    bool brightness_percent_valid;
+    uint8_t brightness_percent;
+    bool volume_percent_valid;
+    uint8_t volume_percent;
+} esp_bms_lvgl_action_event_t;
 
 typedef enum {
     ESP_BMS_SPEED_UNIT_KMH = 0,
@@ -49,6 +59,10 @@ typedef enum {
     ESP_BMS_OTA_READY = 5,
     ESP_BMS_OTA_FAILED = 6,
 } esp_bms_ota_state_t;
+
+#define ESP_BMS_BMS_CODE_MAX_COUNT 6U
+#define ESP_BMS_BMS_CODE_TEXT_LEN 8U
+#define ESP_BMS_BMS_TEMP_MAX_COUNT 6U
 
 typedef struct {
     bool speed_valid;
@@ -80,6 +94,16 @@ typedef struct {
     uint32_t capacity_remaining_mah;
     bool local_battery_valid;
     uint32_t local_battery_mv;
+    uint8_t brightness_percent;
+    uint8_t volume_percent;
+
+    char bms_info_text[16];
+    uint8_t bms_protection_count;
+    char bms_protection_codes[ESP_BMS_BMS_CODE_MAX_COUNT][ESP_BMS_BMS_CODE_TEXT_LEN];
+    uint8_t bms_warning_count;
+    char bms_warning_codes[ESP_BMS_BMS_CODE_MAX_COUNT][ESP_BMS_BMS_CODE_TEXT_LEN];
+    bool bms_temperature_valid[ESP_BMS_BMS_TEMP_MAX_COUNT];
+    int16_t bms_temperature_celsius[ESP_BMS_BMS_TEMP_MAX_COUNT];
 
     bool setup_ap_enabled;
     esp_bms_wifi_state_t wifi;
@@ -93,6 +117,7 @@ typedef struct {
 esp_err_t esp_bms_lvgl_ui_init(lv_display_t *display);
 esp_err_t esp_bms_lvgl_ui_update(const esp_bms_dashboard_snapshot_t *snapshot);
 esp_err_t esp_bms_lvgl_ui_set_page(esp_bms_lvgl_page_t page, bool animated);
+esp_err_t esp_bms_lvgl_ui_take_action_event(esp_bms_lvgl_action_event_t *event);
 esp_err_t esp_bms_lvgl_ui_take_action(esp_bms_lvgl_action_t *action);
 
 #ifdef __cplusplus

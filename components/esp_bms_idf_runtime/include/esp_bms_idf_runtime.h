@@ -55,6 +55,7 @@ typedef struct {
     uint16_t bms_char_val_handle;
     uint16_t bms_cccd_handle;
     uint8_t brightness_percent;
+    uint8_t volume_percent;
     uint8_t bms_own_addr_type;
     uint8_t bms_ble_phase;
     uint8_t bms_frame[ESP_BMS_IDF_BMS_FRAME_MAX_LEN];
@@ -73,6 +74,7 @@ typedef struct {
     uint8_t station_retry_count;
     uint8_t bms_scan_candidate_count;
     uint8_t http_pending_brightness_percent;
+    uint8_t http_pending_volume_percent;
     char http_pending_setup_ap_password[9];
     char http_pending_external_ssid[33];
     char http_pending_external_password[65];
@@ -115,6 +117,8 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
 esp_err_t esp_bms_idf_runtime_save_display_settings(esp_bms_idf_runtime_t *runtime);
 esp_err_t esp_bms_idf_runtime_start_setup_ap(esp_bms_idf_runtime_t *runtime);
 bool esp_bms_idf_runtime_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_ms);
+bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,
+                                            const esp_bms_lvgl_action_event_t *event);
 bool esp_bms_idf_runtime_apply_action(esp_bms_idf_runtime_t *runtime, esp_bms_lvgl_action_t action);
 const char *esp_bms_idf_runtime_action_name(esp_bms_lvgl_action_t action);
 

@@ -69,6 +69,8 @@
       <div class="metric"><span data-i18n="speed">速度</span><strong id="speed">--</strong></div>
       <div class="metric"><span data-i18n="battery">电池</span><strong id="battery">--</strong></div>
       <div class="metric"><span>BMS</span><strong id="bms">--</strong></div>
+      <div class="metric"><span data-i18n="protections">保护</span><strong id="bms-protections">--</strong></div>
+      <div class="metric"><span data-i18n="warnings">告警</span><strong id="bms-warnings">--</strong></div>
       <div class="metric"><span>Wi-Fi</span><strong id="wifi">--</strong></div>
     </div>
 
@@ -144,6 +146,7 @@
         passwordPrompt: "输入 ESP32 设置密码",
         passwordWrong: "密码错误",
         portrait: "竖屏",
+        protections: "保护",
         refresh: "刷新",
         saveApPassword: "保存热点密码",
         saveDevice: "保存设备设置",
@@ -155,7 +158,8 @@
         setupApPassword: "设置热点密码",
         speed: "速度",
         speedUnit: "速度单位",
-        startUpdate: "开始更新"
+        startUpdate: "开始更新",
+        warnings: "告警"
       },
       en: {
         battery: "Battery",
@@ -179,6 +183,7 @@
         passwordPrompt: "Enter ESP32 setup password",
         passwordWrong: "Wrong password",
         portrait: "Portrait",
+        protections: "Protections",
         refresh: "Refresh",
         saveApPassword: "Save AP Password",
         saveDevice: "Save Device Settings",
@@ -190,7 +195,8 @@
         setupApPassword: "Setup AP password",
         speed: "Speed",
         speedUnit: "Speed unit",
-        startUpdate: "Start Update"
+        startUpdate: "Start Update",
+        warnings: "Warnings"
       }
     };
     let uiLanguage = "zh";
@@ -250,7 +256,9 @@
         $("fw").textContent = `${t("firmware")} ${data.version ?? "0.1.0"}`;
         $("speed").textContent = data.speed ?? "--";
         $("battery").textContent = formatMillivolts(data.local_battery_mv ?? data.pack_voltage_mv);
-        $("bms").textContent = formatState(data.bms);
+        $("bms").textContent = formatBmsState(data);
+        $("bms-protections").textContent = formatCodes(data.bms_protections);
+        $("bms-warnings").textContent = formatCodes(data.bms_warnings);
         $("wifi").textContent = formatState(data.wifi);
       } catch {
         $("wifi").textContent = t("setup");
@@ -292,6 +300,15 @@
     function formatState(value) {
       const key = String(value || "").replace("_ap", "").replace("setup", "setup");
       return I18N[uiLanguage]?.[key] || value || "--";
+    }
+
+    function formatCodes(value) {
+      return Array.isArray(value) && value.length ? value.join(" ") : "--";
+    }
+
+    function formatBmsState(data) {
+      const state = formatState(data.bms);
+      return data.bms_info ? `${state} ${data.bms_info}` : state;
     }
 
     async function loadConfig() {

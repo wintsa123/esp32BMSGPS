@@ -7,7 +7,7 @@ import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
-API_BASE = "https://image.squarefaceicon.org"
+API_BASE = "https://api.squarefaceicon.org"
 LOCAL_API_KEY_FILE = ".gpt_image2_api_key"
 
 

@@ -19,6 +19,108 @@ Run GitNexus change detection before commit:
 node .gitnexus/run.cjs detect-changes -r esp32BMSGPS
 ```
 
+## Scenario: LAN RFC2217 Serial Flash Bridge
+
+### 1. Scope / Trigger
+
+- Trigger: flashing or monitoring the ESP32 from this Linux development host
+  when the board is attached to the Windows client machine through COM3.
+- This is the default remote hardware path for this project; do not ask for a
+  USB serial device first when this bridge information is available.
+
+### 2. Signatures
+
+- ESP-IDF port URL: `rfc2217://192.168.2.10:4000?ign_set_control`
+- Windows-side serial port: `COM3`
+- TCP bridge listen port: `4000`
+- Windows host IP: `192.168.2.10`
+- Allowed remote CIDR: `192.168.2.108/32`
+- Firewall rule: `ESP_COM3_TCP_Bridge_4000`
+- Bridge process PID from the recorded setup: `43276`
+- Bridge log path on Windows: `target\serial-bridge\bridge.out.log`
+- Known-good local validation: `esptool read_mac` succeeds through RFC2217;
+  MAC is `20:e7:c8:5f:ab:a4`.
+
+### 3. Contracts
+
+- The bridge is Espressif's official `esp_rfc2217_server`, not a raw TCP
+  socket bridge.
+- Use `rfc2217://192.168.2.10:4000?ign_set_control`; never use `socket://` for
+  this bridge.
+- RFC2217 is required so the remote esptool can control DTR/RTS and reset the
+  ESP32 into the bootloader.
+- Use an explicit flash baud that matches the bridge configuration, normally
+  `-b 115200`.
+- Only one client should use the RFC2217 bridge at a time.
+
+### 4. Validation & Error Matrix
+
+- Port closed or filtered -> check the Windows bridge process, firewall rule,
+  and that this host is still `192.168.2.108`.
+- Connection opens but flash sync fails -> confirm the bridge is the RFC2217
+  server, not a raw TCP bridge, and that no monitor client is still connected.
+- Flash starts then corrupts/times out -> retry with `-b 115200`; do not change
+  baud unless the Windows-side bridge was also changed.
+- Monitor cannot start after flash -> close any previous client connected to
+  the bridge and reconnect with
+  `rfc2217://192.168.2.10:4000?ign_set_control`.
+
+### 5. Good/Base/Bad Cases
+
+- Good: `idf.py -p "rfc2217://192.168.2.10:4000?ign_set_control" -b 115200 flash monitor`
+  flashes and then streams boot logs.
+- Base: `idf.py -p "rfc2217://192.168.2.10:4000?ign_set_control" -b 115200 flash` succeeds; a
+  separate RFC2217 monitor is used afterward.
+- Bad: using `/dev/ttyUSB0`, `COM3`, or `socket://192.168.2.10:4000` from the
+  Linux host.
+
+### 6. Tests Required
+
+- Before flashing, optionally test TCP reachability:
+
+```bash
+python3 - <<'PY'
+import socket
+socket.create_connection(("192.168.2.10", 4000), timeout=3).close()
+PY
+```
+
+- Flash through the project wrapper:
+
+```bash
+./scripts/esp-idf-env.sh -p "rfc2217://192.168.2.10:4000?ign_set_control" -b 115200 flash
+```
+
+- Capture boot logs through ESP-IDF monitor:
+
+```bash
+./scripts/esp-idf-env.sh -p "rfc2217://192.168.2.10:4000?ign_set_control" -b 115200 monitor
+```
+
+### 7. Completion Flash Requirement
+
+- After completing a code task, run one flash attempt through this LAN bridge
+  before reporting final completion.
+- Do not ask for a serial port when the recorded bridge is available; use
+  `rfc2217://192.168.2.10:4000?ign_set_control`.
+- If the flash attempt fails, report the exact esptool error and whether the
+  RFC2217 endpoint was reachable.
+
+### 8. Wrong vs Correct
+
+#### Wrong
+
+```bash
+idf.py -p socket://192.168.2.10:4000 flash
+idf.py -p /dev/ttyUSB0 flash
+```
+
+#### Correct
+
+```bash
+./scripts/esp-idf-env.sh -p "rfc2217://192.168.2.10:4000?ign_set_control" -b 115200 flash
+```
+
 ## Required Patterns
 
 - Keep `main/idf_main.c` as orchestration only. Subsystem logic belongs in
@@ -76,6 +178,15 @@ node .gitnexus/run.cjs detect-changes -r esp32BMSGPS
 - Dynamic LVGL labels and QR widgets should update only when their rendered
   value changes.
 - Runtime snapshot updates should be deferred while page drag/settle is active.
+- LVGL long-press handlers that must not also run the click action should call
+  `lv_indev_wait_release(lv_indev_active())` from `LV_EVENT_LONG_PRESSED`;
+  LVGL 9 can still emit `LV_EVENT_CLICKED` when the pointer is released after a
+  long press.
+- TFT icon controls should prefer LVGL built-in `LV_SYMBOL_*` glyphs from the
+  enabled Montserrat/FontAwesome fonts, or simple LVGL primitives for tiny
+  custom icons. Enable any required built-in font size in both `sdkconfig` and
+  `sdkconfig.defaults`. Do not depend on external iconfont assets until a
+  device-side font/image loading path is explicitly added.
 - Keep visible TFT text ASCII until a separate font task approves a wider font
   plan.
 

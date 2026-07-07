@@ -1,0 +1,4 @@
+interface:
+  display_name: "ESP32 LAN RFC2217 Flash"
+  short_description: "Flash ESP32 over the LAN RFC2217 bridge"
+  default_prompt: "Use $esp32-lan-rfc2217-flash to flash and monitor the ESP32 through the project LAN bridge."

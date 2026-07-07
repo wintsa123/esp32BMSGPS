@@ -71,13 +71,17 @@ static const char *TAG = "bms_idf_runtime";
 #define BMS_FRAME_TYPE_DEVICE_INFO 0x12U
 #define BMS_MAX_CELLS 32U
 #define BMS_MAX_TEMPERATURE_SENSORS 4U
+#define BMS_STATUS_PROTECTION_MASK_OFFSET 10U
+#define BMS_STATUS_WARNING_MASK_OFFSET 18U
+#define BMS_STATUS_DYNAMIC_BASE_OFFSET 34U
 #define BMS_NVS_BOUND_MAC_KEY "bms_mac"
 #define DISPLAY_NVS_BRIGHTNESS_KEY "disp_bright"
+#define DISPLAY_NVS_VOLUME_KEY "disp_vol"
 #define DISPLAY_NVS_ROTATION_KEY "disp_rot"
 #define DISPLAY_NVS_SPEED_UNIT_KEY "speed_unit"
 #define DISPLAY_NVS_LANGUAGE_KEY "lang"
 #define HTTP_BODY_MAX_LEN 384U
-#define HTTP_JSON_MAX_LEN 768U
+#define HTTP_JSON_MAX_LEN 1024U
 #define HTTP_AUTH_MAX_LEN 48U
 #define HTTP_SETUP_USER "esp32"
 
@@ -132,6 +136,14 @@ static void runtime_copy_snapshot_text(char *out, size_t out_len, const char *te
     }
     strncpy(out, text, out_len - 1);
     out[out_len - 1] = '\0';
+}
+
+static void runtime_set_bms_info(esp_bms_idf_runtime_t *runtime, const char *text)
+{
+    runtime_copy_snapshot_text(runtime->snapshot.bms_info_text,
+                               sizeof(runtime->snapshot.bms_info_text),
+                               text);
+    runtime_set_error(runtime, text);
 }
 
 static void runtime_update_setup_ap_snapshot(esp_bms_idf_runtime_t *runtime)
@@ -408,6 +420,53 @@ static void runtime_clear_bms_telemetry(esp_bms_idf_runtime_t *runtime)
     runtime->snapshot.total_capacity_mah = 0;
     runtime->snapshot.capacity_remaining_valid = false;
     runtime->snapshot.capacity_remaining_mah = 0;
+    runtime->snapshot.bms_protection_count = 0;
+    memset(runtime->snapshot.bms_protection_codes, 0, sizeof(runtime->snapshot.bms_protection_codes));
+    runtime->snapshot.bms_warning_count = 0;
+    memset(runtime->snapshot.bms_warning_codes, 0, sizeof(runtime->snapshot.bms_warning_codes));
+    memset(runtime->snapshot.bms_temperature_valid, 0, sizeof(runtime->snapshot.bms_temperature_valid));
+    memset(runtime->snapshot.bms_temperature_celsius, 0, sizeof(runtime->snapshot.bms_temperature_celsius));
+    runtime_copy_snapshot_text(runtime->snapshot.bms_info_text,
+                               sizeof(runtime->snapshot.bms_info_text),
+                               "BMS OFF");
+}
+
+static void runtime_append_bms_code(char codes[][ESP_BMS_BMS_CODE_TEXT_LEN],
+                                    uint8_t *count,
+                                    const char prefix,
+                                    uint8_t bit)
+{
+    if (!codes || !count || *count >= ESP_BMS_BMS_CODE_MAX_COUNT) {
+        return;
+    }
+    (void)snprintf(codes[*count], ESP_BMS_BMS_CODE_TEXT_LEN, "%c%02u", prefix, (unsigned)bit);
+    (*count)++;
+}
+
+static void runtime_apply_bms_fault_masks(esp_bms_dashboard_snapshot_t *snapshot,
+                                          uint64_t protection_mask,
+                                          uint64_t warning_mask)
+{
+    snapshot->bms_protection_count = 0;
+    memset(snapshot->bms_protection_codes, 0, sizeof(snapshot->bms_protection_codes));
+    snapshot->bms_warning_count = 0;
+    memset(snapshot->bms_warning_codes, 0, sizeof(snapshot->bms_warning_codes));
+
+    for (uint8_t bit = 0; bit < 64U; bit++) {
+        const uint64_t mask = 1ULL << bit;
+        if ((protection_mask & mask) != 0ULL) {
+            runtime_append_bms_code(snapshot->bms_protection_codes,
+                                    &snapshot->bms_protection_count,
+                                    'P',
+                                    bit);
+        }
+        if ((warning_mask & mask) != 0ULL) {
+            runtime_append_bms_code(snapshot->bms_warning_codes,
+                                    &snapshot->bms_warning_count,
+                                    'W',
+                                    bit);
+        }
+    }
 }
 
 static uint16_t runtime_crc16_modbus(const uint8_t *bytes, size_t len)
@@ -451,6 +510,19 @@ static bool runtime_read_u32_le(const uint8_t *data, size_t len, size_t index, u
            ((uint32_t)data[index + 1U] << 8) |
            ((uint32_t)data[index + 2U] << 16) |
            ((uint32_t)data[index + 3U] << 24);
+    return true;
+}
+
+static bool runtime_read_u64_le(const uint8_t *data, size_t len, size_t index, uint64_t *out)
+{
+    if (!data || !out || index + 7U >= len) {
+        return false;
+    }
+    uint64_t value = 0;
+    for (uint8_t byte = 0; byte < 8U; byte++) {
+        value |= ((uint64_t)data[index + byte]) << (byte * 8U);
+    }
+    *out = value;
     return true;
 }
 
@@ -509,12 +581,18 @@ static bool runtime_apply_bms_status_frame(esp_bms_idf_runtime_t *runtime,
     uint16_t soc_percent = 0;
     uint32_t total_capacity_uah = 0;
     uint32_t capacity_remaining_uah = 0;
+    uint64_t protection_mask = 0;
+    uint64_t warning_mask = 0;
     uint16_t max_cell_mv = 0;
     uint16_t min_cell_mv = 0;
     uint16_t delta_cell_mv = 0;
     uint16_t average_cell_mv = 0;
+    int16_t temperatures[ESP_BMS_BMS_TEMP_MAX_COUNT] = { 0 };
+    bool temperature_valid[ESP_BMS_BMS_TEMP_MAX_COUNT] = { false };
 
-    if (!runtime_read_u16_le(data, protocol_len, 38U + dynamic_offset, &pack_voltage_dv) ||
+    if (!runtime_read_u64_le(data, protocol_len, BMS_STATUS_PROTECTION_MASK_OFFSET, &protection_mask) ||
+        !runtime_read_u64_le(data, protocol_len, BMS_STATUS_WARNING_MASK_OFFSET, &warning_mask) ||
+        !runtime_read_u16_le(data, protocol_len, 38U + dynamic_offset, &pack_voltage_dv) ||
         !runtime_read_i16_le(data, protocol_len, 40U + dynamic_offset, &current_deci_amps) ||
         !runtime_read_u16_le(data, protocol_len, 42U + dynamic_offset, &soc_percent) ||
         !runtime_read_u32_le(data, protocol_len, 50U + dynamic_offset, &total_capacity_uah) ||
@@ -525,6 +603,23 @@ static bool runtime_apply_bms_status_frame(esp_bms_idf_runtime_t *runtime,
         !runtime_read_u16_le(data, protocol_len, 84U + dynamic_offset, &average_cell_mv)) {
         return false;
     }
+
+    const size_t temperature_offset = BMS_STATUS_DYNAMIC_BASE_OFFSET + ((size_t)cell_count * 2U);
+    const uint8_t temperature_count = temperature_sensor_count > ESP_BMS_BMS_TEMP_MAX_COUNT - 2U
+                                          ? ESP_BMS_BMS_TEMP_MAX_COUNT - 2U
+                                          : temperature_sensor_count;
+    for (uint8_t index = 0; index < temperature_count; index++) {
+        if (!runtime_read_i16_le(data, protocol_len, temperature_offset + ((size_t)index * 2U), &temperatures[index])) {
+            return false;
+        }
+        temperature_valid[index] = true;
+    }
+    if (!runtime_read_i16_le(data, protocol_len, BMS_STATUS_DYNAMIC_BASE_OFFSET + dynamic_offset, &temperatures[4]) ||
+        !runtime_read_i16_le(data, protocol_len, BMS_STATUS_DYNAMIC_BASE_OFFSET + dynamic_offset + 2U, &temperatures[5])) {
+        return false;
+    }
+    temperature_valid[4] = true;
+    temperature_valid[5] = true;
 
     runtime->snapshot.bms_online = true;
     runtime->snapshot.pack_voltage_valid = true;
@@ -545,7 +640,14 @@ static bool runtime_apply_bms_status_frame(esp_bms_idf_runtime_t *runtime,
     runtime->snapshot.total_capacity_mah = total_capacity_uah / 1000U;
     runtime->snapshot.capacity_remaining_valid = true;
     runtime->snapshot.capacity_remaining_mah = capacity_remaining_uah / 1000U;
-    runtime_set_error(runtime, "BMS OK");
+    memcpy(runtime->snapshot.bms_temperature_valid,
+           temperature_valid,
+           sizeof(runtime->snapshot.bms_temperature_valid));
+    memcpy(runtime->snapshot.bms_temperature_celsius,
+           temperatures,
+           sizeof(runtime->snapshot.bms_temperature_celsius));
+    runtime_apply_bms_fault_masks(&runtime->snapshot, protection_mask, warning_mask);
+    runtime_set_bms_info(runtime, "BMS OK");
     return true;
 }
 
@@ -954,6 +1056,31 @@ static bool runtime_brightness_matches_policy(uint8_t brightness_percent)
     return brightness_percent >= 10U && brightness_percent <= 100U;
 }
 
+static bool runtime_set_brightness_percent(esp_bms_idf_runtime_t *runtime, uint8_t brightness_percent)
+{
+    if (!runtime || !runtime_brightness_matches_policy(brightness_percent)) {
+        return false;
+    }
+    runtime->brightness_percent = brightness_percent;
+    runtime->snapshot.brightness_percent = brightness_percent;
+    return true;
+}
+
+static bool runtime_volume_matches_policy(uint8_t volume_percent)
+{
+    return volume_percent <= 100U;
+}
+
+static bool runtime_set_volume_percent(esp_bms_idf_runtime_t *runtime, uint8_t volume_percent)
+{
+    if (!runtime || !runtime_volume_matches_policy(volume_percent)) {
+        return false;
+    }
+    runtime->volume_percent = volume_percent;
+    runtime->snapshot.volume_percent = volume_percent;
+    return true;
+}
+
 static bool runtime_rotation_matches_policy(uint8_t rotation)
 {
     return rotation <= (uint8_t)ESP_BMS_IDF_DISPLAY_ROTATION_INVERTED_LANDSCAPE;
@@ -1091,7 +1218,8 @@ static void runtime_reset_state(esp_bms_idf_runtime_t *runtime)
     runtime->snapshot.setup_ap_enabled = true;
     runtime->snapshot.wifi = ESP_BMS_WIFI_SETUP_AP;
     runtime->snapshot.ota = ESP_BMS_OTA_IDLE;
-    runtime->brightness_percent = 85;
+    (void)runtime_set_brightness_percent(runtime, 85U);
+    (void)runtime_set_volume_percent(runtime, 65U);
     runtime->display_rotation = ESP_BMS_IDF_DISPLAY_ROTATION_LANDSCAPE;
     runtime->language_zh = true;
     runtime->bms_bind_active = false;
@@ -1105,7 +1233,7 @@ static void runtime_reset_state(esp_bms_idf_runtime_t *runtime)
     runtime_bms_scan_clear_candidates(runtime);
     runtime_clear_bms_telemetry(runtime);
     runtime_update_setup_ap_snapshot(runtime);
-    runtime_set_error(runtime, "BMS OFF");
+    runtime_set_bms_info(runtime, "BMS OFF");
     runtime_update_snapshot_speed(runtime);
 }
 
@@ -1234,11 +1362,20 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
     }
 
     uint8_t brightness_percent = 0;
+    uint8_t volume_percent = 0;
     uint8_t rotation = 0;
     uint8_t speed_unit = 0;
     uint8_t language = 0;
 
     ret = nvs_get_u8(handle, DISPLAY_NVS_BRIGHTNESS_KEY, &brightness_percent);
+    if (ret == ESP_OK) {
+        const esp_err_t volume_ret = nvs_get_u8(handle, DISPLAY_NVS_VOLUME_KEY, &volume_percent);
+        if (volume_ret == ESP_ERR_NVS_NOT_FOUND) {
+            volume_percent = runtime->volume_percent;
+        } else {
+            ret = volume_ret;
+        }
+    }
     if (ret == ESP_OK) {
         ret = nvs_get_u8(handle, DISPLAY_NVS_ROTATION_KEY, &rotation);
     }
@@ -1254,13 +1391,15 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
     }
 
     if (!runtime_brightness_matches_policy(brightness_percent) ||
+        !runtime_volume_matches_policy(volume_percent) ||
         !runtime_rotation_matches_policy(rotation) ||
         !runtime_speed_unit_matches_policy(speed_unit) ||
         !runtime_language_matches_policy(language)) {
         return ESP_ERR_INVALID_STATE;
     }
 
-    runtime->brightness_percent = brightness_percent;
+    (void)runtime_set_brightness_percent(runtime, brightness_percent);
+    (void)runtime_set_volume_percent(runtime, volume_percent);
     runtime->display_rotation = (esp_bms_idf_display_rotation_t)rotation;
     runtime->snapshot.speed_unit = (esp_bms_speed_unit_t)speed_unit;
     runtime->language_zh = language != 0U;
@@ -1274,6 +1413,8 @@ esp_err_t esp_bms_idf_runtime_save_display_settings(esp_bms_idf_runtime_t *runti
     ESP_RETURN_ON_FALSE(runtime, ESP_ERR_INVALID_ARG, TAG, "runtime is required");
     ESP_RETURN_ON_FALSE(runtime_brightness_matches_policy(runtime->brightness_percent),
                         ESP_ERR_INVALID_STATE, TAG, "invalid brightness");
+    ESP_RETURN_ON_FALSE(runtime_volume_matches_policy(runtime->volume_percent),
+                        ESP_ERR_INVALID_STATE, TAG, "invalid volume");
     ESP_RETURN_ON_FALSE(runtime_rotation_matches_policy((uint8_t)runtime->display_rotation),
                         ESP_ERR_INVALID_STATE, TAG, "invalid display rotation");
     ESP_RETURN_ON_FALSE(runtime_speed_unit_matches_policy((uint8_t)runtime->snapshot.speed_unit),
@@ -1288,6 +1429,9 @@ esp_err_t esp_bms_idf_runtime_save_display_settings(esp_bms_idf_runtime_t *runti
     }
 
     ret = nvs_set_u8(handle, DISPLAY_NVS_BRIGHTNESS_KEY, runtime->brightness_percent);
+    if (ret == ESP_OK) {
+        ret = nvs_set_u8(handle, DISPLAY_NVS_VOLUME_KEY, runtime->volume_percent);
+    }
     if (ret == ESP_OK) {
         ret = nvs_set_u8(handle, DISPLAY_NVS_ROTATION_KEY, (uint8_t)runtime->display_rotation);
     }
@@ -1306,6 +1450,7 @@ esp_err_t esp_bms_idf_runtime_save_display_settings(esp_bms_idf_runtime_t *runti
 
 static bool runtime_set_pending_http_config(esp_bms_idf_runtime_t *runtime,
                                             uint8_t brightness_percent,
+                                            uint8_t volume_percent,
                                             esp_bms_idf_display_rotation_t rotation,
                                             esp_bms_speed_unit_t speed_unit,
                                             bool language_zh)
@@ -1318,6 +1463,7 @@ static bool runtime_set_pending_http_config(esp_bms_idf_runtime_t *runtime,
     }
 
     runtime->http_pending_brightness_percent = brightness_percent;
+    runtime->http_pending_volume_percent = volume_percent;
     runtime->http_pending_display_rotation = rotation;
     runtime->http_pending_speed_unit = speed_unit;
     runtime->http_pending_language_zh = language_zh;
@@ -1338,6 +1484,7 @@ static bool runtime_apply_pending_http_config(esp_bms_idf_runtime_t *runtime)
 
     const bool pending = runtime->http_config_pending;
     const uint8_t brightness_percent = runtime->http_pending_brightness_percent;
+    const uint8_t volume_percent = runtime->http_pending_volume_percent;
     const esp_bms_idf_display_rotation_t rotation = runtime->http_pending_display_rotation;
     const esp_bms_speed_unit_t speed_unit = runtime->http_pending_speed_unit;
     const bool language_zh = runtime->http_pending_language_zh;
@@ -1349,6 +1496,7 @@ static bool runtime_apply_pending_http_config(esp_bms_idf_runtime_t *runtime)
     }
 
     const bool changed = runtime->brightness_percent != brightness_percent ||
+                         runtime->volume_percent != volume_percent ||
                          runtime->display_rotation != rotation ||
                          runtime->snapshot.speed_unit != speed_unit ||
                          runtime->language_zh != language_zh;
@@ -1356,7 +1504,8 @@ static bool runtime_apply_pending_http_config(esp_bms_idf_runtime_t *runtime)
         return false;
     }
 
-    runtime->brightness_percent = brightness_percent;
+    (void)runtime_set_brightness_percent(runtime, brightness_percent);
+    (void)runtime_set_volume_percent(runtime, volume_percent);
     runtime->display_rotation = rotation;
     runtime->snapshot.speed_unit = speed_unit;
     runtime->language_zh = language_zh;
@@ -1549,12 +1698,83 @@ static esp_err_t runtime_http_index_handler(httpd_req_t *req)
     return httpd_resp_send(req, web_index_html_start, (ssize_t)html_len);
 }
 
+static bool runtime_json_write_bms_codes(char *out,
+                                         size_t out_len,
+                                         const char codes[][ESP_BMS_BMS_CODE_TEXT_LEN],
+                                         uint8_t count)
+{
+    if (!out || out_len == 0U) {
+        return false;
+    }
+
+    size_t offset = 0;
+    int written = snprintf(out, out_len, "[");
+    if (written < 0 || (size_t)written >= out_len) {
+        return false;
+    }
+    offset = (size_t)written;
+
+    const uint8_t safe_count = count > ESP_BMS_BMS_CODE_MAX_COUNT ? ESP_BMS_BMS_CODE_MAX_COUNT : count;
+    for (uint8_t index = 0; index < safe_count; index++) {
+        written = snprintf(out + offset,
+                           out_len - offset,
+                           "%s\"%s\"",
+                           index == 0U ? "" : ",",
+                           codes[index]);
+        if (written < 0 || (size_t)written >= out_len - offset) {
+            return false;
+        }
+        offset += (size_t)written;
+    }
+
+    written = snprintf(out + offset, out_len - offset, "]");
+    return written >= 0 && (size_t)written < out_len - offset;
+}
+
+static bool runtime_json_write_bms_temperatures(char *out,
+                                                size_t out_len,
+                                                const esp_bms_dashboard_snapshot_t *snapshot)
+{
+    if (!out || out_len == 0U || !snapshot) {
+        return false;
+    }
+
+    size_t offset = 0;
+    int written = snprintf(out, out_len, "[");
+    if (written < 0 || (size_t)written >= out_len) {
+        return false;
+    }
+    offset = (size_t)written;
+
+    for (uint8_t index = 0; index < ESP_BMS_BMS_TEMP_MAX_COUNT; index++) {
+        if (snapshot->bms_temperature_valid[index]) {
+            written = snprintf(out + offset,
+                               out_len - offset,
+                               "%s%d",
+                               index == 0U ? "" : ",",
+                               (int)snapshot->bms_temperature_celsius[index]);
+        } else {
+            written = snprintf(out + offset, out_len - offset, "%snull", index == 0U ? "" : ",");
+        }
+        if (written < 0 || (size_t)written >= out_len - offset) {
+            return false;
+        }
+        offset += (size_t)written;
+    }
+
+    written = snprintf(out + offset, out_len - offset, "]");
+    return written >= 0 && (size_t)written < out_len - offset;
+}
+
 static esp_err_t runtime_http_status_handler(httpd_req_t *req, esp_bms_idf_runtime_t *runtime)
 {
     char pack_voltage[16] = { 0 };
     char current[16] = { 0 };
     char soc[16] = { 0 };
     char local_battery[16] = { 0 };
+    char protections[96] = { 0 };
+    char warnings[96] = { 0 };
+    char temperatures[80] = { 0 };
     if (!runtime_json_write_u32_or_null(pack_voltage,
                                         sizeof(pack_voltage),
                                         runtime->snapshot.pack_voltage_valid,
@@ -1570,7 +1790,16 @@ static esp_err_t runtime_http_status_handler(httpd_req_t *req, esp_bms_idf_runti
         !runtime_json_write_u32_or_null(local_battery,
                                         sizeof(local_battery),
                                         runtime->snapshot.local_battery_valid,
-                                        runtime->snapshot.local_battery_mv)) {
+                                        runtime->snapshot.local_battery_mv) ||
+        !runtime_json_write_bms_codes(protections,
+                                      sizeof(protections),
+                                      runtime->snapshot.bms_protection_codes,
+                                      runtime->snapshot.bms_protection_count) ||
+        !runtime_json_write_bms_codes(warnings,
+                                      sizeof(warnings),
+                                      runtime->snapshot.bms_warning_codes,
+                                      runtime->snapshot.bms_warning_count) ||
+        !runtime_json_write_bms_temperatures(temperatures, sizeof(temperatures), &runtime->snapshot)) {
         return runtime_http_send_text(req, "500 Internal Server Error", "json format error");
     }
 
@@ -1586,7 +1815,9 @@ static esp_err_t runtime_http_status_handler(httpd_req_t *req, esp_bms_idf_runti
                                  "{\"version\":\"0.1.0\",\"speed\":\"%s\",\"speed_unit\":\"%s\","
                                  "\"gps_fix\":%s,\"bms\":\"%s\",\"pack_voltage_mv\":%s,"
                                  "\"current_deci_amps\":%s,\"soc_percent\":%s,"
-                                 "\"local_battery_mv\":%s,\"wifi\":\"%s\","
+                                 "\"local_battery_mv\":%s,\"bms_info\":\"%s\","
+                                 "\"bms_protections\":%s,\"bms_warnings\":%s,"
+                                 "\"bms_temperatures_c\":%s,\"wifi\":\"%s\","
                                  "\"setup_ap_enabled\":%s,\"ota\":\"%s\"}",
                                  speed,
                                  runtime_speed_unit_config_text(runtime->snapshot.speed_unit),
@@ -1596,6 +1827,10 @@ static esp_err_t runtime_http_status_handler(httpd_req_t *req, esp_bms_idf_runti
                                  current,
                                  soc,
                                  local_battery,
+                                 runtime->snapshot.bms_info_text[0] != '\0' ? runtime->snapshot.bms_info_text : "BMS OFF",
+                                 protections,
+                                 warnings,
+                                 temperatures,
                                  runtime_wifi_config_text(runtime->snapshot.wifi),
                                  runtime->snapshot.setup_ap_enabled ? "true" : "false",
                                  runtime_ota_config_text(runtime->snapshot.ota));
@@ -1722,12 +1957,13 @@ static esp_err_t runtime_http_config_handler(httpd_req_t *req, esp_bms_idf_runti
     char json[HTTP_JSON_MAX_LEN] = { 0 };
     const int written = snprintf(json,
                                  sizeof(json),
-                                 "{\"brightness\":%u,\"display_rotation\":\"%s\","
+                                 "{\"brightness\":%u,\"volume\":%u,\"display_rotation\":\"%s\","
                                  "\"speed_unit\":\"%s\",\"language\":\"%s\","
                                  "\"setup_ap_ssid\":\"%s\",\"external_wifi_saved\":%s,"
                                  "\"external_ssid\":\"%s\",\"setup_ap_password_saved\":%s,"
                                  "\"setup_ap_state\":\"%s\",\"bms_mac\":%s}",
                                  runtime->brightness_percent,
+                                 runtime->volume_percent,
                                  runtime_rotation_config_text(runtime->display_rotation),
                                  runtime_speed_unit_config_text(runtime->snapshot.speed_unit),
                                  runtime->language_zh ? "zh" : "en",
@@ -1838,6 +2074,7 @@ static esp_err_t runtime_http_post_config_handler(httpd_req_t *req, esp_bms_idf_
     }
 
     uint8_t brightness_percent = runtime->brightness_percent;
+    uint8_t volume_percent = runtime->volume_percent;
     esp_bms_idf_display_rotation_t rotation = runtime->display_rotation;
     esp_bms_speed_unit_t speed_unit = runtime->snapshot.speed_unit;
     bool language_zh = runtime->language_zh;
@@ -1852,6 +2089,16 @@ static esp_err_t runtime_http_post_config_handler(httpd_req_t *req, esp_bms_idf_
             return runtime_http_send_text(req, "400 Bad Request", "invalid brightness");
         }
         brightness_percent = parsed_u8;
+    }
+
+    if (!runtime_json_get_u8(body, "volume", &parsed_u8, &found)) {
+        return runtime_http_send_text(req, "400 Bad Request", "invalid volume");
+    }
+    if (found) {
+        if (!runtime_volume_matches_policy(parsed_u8)) {
+            return runtime_http_send_text(req, "400 Bad Request", "invalid volume");
+        }
+        volume_percent = parsed_u8;
     }
 
     char parsed_text[32] = { 0 };
@@ -1884,7 +2131,8 @@ static esp_err_t runtime_http_post_config_handler(httpd_req_t *req, esp_bms_idf_
         }
     }
 
-    if (!runtime_set_pending_http_config(runtime, brightness_percent, rotation, speed_unit, language_zh)) {
+    if (!runtime_set_pending_http_config(runtime, brightness_percent, volume_percent,
+                                         rotation, speed_unit, language_zh)) {
         return runtime_http_send_text(req, "500 Internal Server Error", "config queue failed");
     }
     return runtime_http_send_no_content(req);
@@ -2508,7 +2756,7 @@ static bool runtime_apply_pending_http_bms_scan(esp_bms_idf_runtime_t *runtime)
         return true;
     }
 
-    runtime_set_error(runtime, runtime->bms_ble_ready ? "BLE WAIT" : "BLE OFF");
+    runtime_set_bms_info(runtime, runtime->bms_ble_ready ? "BLE WAIT" : "BLE OFF");
     ESP_LOGW(TAG, "[bms] BLE scan deferred or failed: %s", esp_err_to_name(ret));
     return true;
 }
@@ -2572,7 +2820,7 @@ static bool runtime_apply_pending_http_bms_bind(esp_bms_idf_runtime_t *runtime)
         ESP_LOGI(TAG, "[bms] bound MAC saved: mac=%s", mac);
         const esp_err_t scan_ret = runtime_bms_ble_start_scan(runtime);
         if (scan_ret != ESP_OK) {
-            runtime_set_error(runtime, runtime->bms_ble_ready ? "BLE WAIT" : "BLE OFF");
+            runtime_set_bms_info(runtime, runtime->bms_ble_ready ? "BLE WAIT" : "BLE OFF");
             ESP_LOGW(TAG, "[bms] scan after bind deferred or failed: %s", esp_err_to_name(scan_ret));
         }
         return true;
@@ -2584,7 +2832,7 @@ static bool runtime_apply_pending_http_bms_bind(esp_bms_idf_runtime_t *runtime)
                                    previous_mac);
         xSemaphoreGive(runtime->http_pending_lock);
     }
-    runtime_set_error(runtime, "BMS SAVE");
+    runtime_set_bms_info(runtime, "BMS SAVE");
     ESP_LOGW(TAG, "[bms] bound MAC save failed: %s", esp_err_to_name(ret));
     return true;
 }
@@ -2667,7 +2915,7 @@ static int runtime_bms_ble_write_cb(uint16_t conn_handle,
 
     runtime->bms_write_in_flight = false;
     if (error && error->status != 0) {
-        runtime_set_error(runtime, "BMS WR");
+        runtime_set_bms_info(runtime, "BMS WR");
         ESP_LOGW(TAG, "[bms] GATT write failed: conn=%u status=%u",
                  conn_handle, (unsigned)error->status);
         return 0;
@@ -2676,7 +2924,7 @@ static int runtime_bms_ble_write_cb(uint16_t conn_handle,
     if (runtime->bms_ble_phase == (uint8_t)BMS_BLE_PHASE_SUBSCRIBING) {
         runtime->bms_ble_phase = (uint8_t)BMS_BLE_PHASE_ONLINE;
         runtime->bms_status_poll_elapsed_ms = BMS_STATUS_POLL_PERIOD_MS;
-        runtime_set_error(runtime, "BMS ON");
+        runtime_set_bms_info(runtime, "BMS ON");
         ESP_LOGI(TAG, "[bms] notifications subscribed: conn=%u", conn_handle);
     }
     return 0;
@@ -2781,14 +3029,14 @@ static int runtime_bms_ble_dsc_cb(uint16_t conn_handle,
 
     if (error && error->status == BLE_HS_EDONE) {
         if (runtime->bms_cccd_handle == 0U) {
-            runtime_set_error(runtime, "BMS NO CCCD");
+            runtime_set_bms_info(runtime, "BMS NO CCCD");
             ESP_LOGW(TAG, "[bms] characteristic lacks CCCD: conn=%u val_handle=%u",
                      conn_handle, runtime->bms_char_val_handle);
             (void)ble_gap_terminate(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
             return 0;
         }
         if (runtime_bms_ble_subscribe(runtime) != ESP_OK) {
-            runtime_set_error(runtime, "BMS SUB");
+            runtime_set_bms_info(runtime, "BMS SUB");
             ESP_LOGW(TAG, "[bms] subscribe request failed: conn=%u cccd=%u",
                      conn_handle, runtime->bms_cccd_handle);
             (void)ble_gap_terminate(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
@@ -2796,7 +3044,7 @@ static int runtime_bms_ble_dsc_cb(uint16_t conn_handle,
         return 0;
     }
 
-    runtime_set_error(runtime, "BMS DSC");
+    runtime_set_bms_info(runtime, "BMS DSC");
     ESP_LOGW(TAG, "[bms] descriptor discovery failed: conn=%u status=%u",
              conn_handle, error ? (unsigned)error->status : 0U);
     (void)ble_gap_terminate(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
@@ -2847,7 +3095,7 @@ static int runtime_bms_ble_chr_cb(uint16_t conn_handle,
     if (error && error->status == BLE_HS_EDONE) {
         if (runtime->bms_char_val_handle == 0U ||
             runtime_bms_ble_start_descriptor_discovery(runtime) != ESP_OK) {
-            runtime_set_error(runtime, "BMS NO CHR");
+            runtime_set_bms_info(runtime, "BMS NO CHR");
             ESP_LOGW(TAG, "[bms] characteristic discovery failed or missing: conn=%u",
                      conn_handle);
             (void)ble_gap_terminate(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
@@ -2855,7 +3103,7 @@ static int runtime_bms_ble_chr_cb(uint16_t conn_handle,
         return 0;
     }
 
-    runtime_set_error(runtime, "BMS CHR");
+    runtime_set_bms_info(runtime, "BMS CHR");
     ESP_LOGW(TAG, "[bms] characteristic discovery failed: conn=%u status=%u",
              conn_handle, error ? (unsigned)error->status : 0U);
     (void)ble_gap_terminate(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
@@ -2901,7 +3149,7 @@ static int runtime_bms_ble_service_cb(uint16_t conn_handle,
     if (error && error->status == BLE_HS_EDONE) {
         if (runtime->bms_service_start_handle == 0U ||
             runtime_bms_ble_start_characteristic_discovery(runtime) != ESP_OK) {
-            runtime_set_error(runtime, "BMS NO SVC");
+            runtime_set_bms_info(runtime, "BMS NO SVC");
             ESP_LOGW(TAG, "[bms] service discovery failed or missing: conn=%u",
                      conn_handle);
             (void)ble_gap_terminate(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
@@ -2909,7 +3157,7 @@ static int runtime_bms_ble_service_cb(uint16_t conn_handle,
         return 0;
     }
 
-    runtime_set_error(runtime, "BMS SVC");
+    runtime_set_bms_info(runtime, "BMS SVC");
     ESP_LOGW(TAG, "[bms] service discovery failed: conn=%u status=%u",
              conn_handle, error ? (unsigned)error->status : 0U);
     (void)ble_gap_terminate(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
@@ -2968,7 +3216,7 @@ static esp_err_t runtime_bms_ble_connect_to_disc(esp_bms_idf_runtime_t *runtime,
     runtime->bms_own_addr_type = own_addr_type;
     runtime->bms_ble_phase = (uint8_t)BMS_BLE_PHASE_CONNECTING;
     runtime->bms_scan_active = false;
-    runtime_set_error(runtime, "BMS CONN");
+    runtime_set_bms_info(runtime, "BMS CONN");
     ESP_LOGI(TAG, "[bms] connecting to bound BMS: mac=%s addr_type=%u",
              mac, disc->addr.type);
     return ESP_OK;
@@ -2984,7 +3232,7 @@ static void runtime_bms_ble_handle_notification(esp_bms_idf_runtime_t *runtime,
 
     const int len = OS_MBUF_PKTLEN(event->notify_rx.om);
     if (len <= 0 || len > (int)sizeof(runtime->bms_frame)) {
-        runtime_set_error(runtime, "BMS RX LEN");
+        runtime_set_bms_info(runtime, "BMS RX LEN");
         ESP_LOGW(TAG, "[bms] invalid notification length: len=%d", len);
         return;
     }
@@ -2992,7 +3240,7 @@ static void runtime_bms_ble_handle_notification(esp_bms_idf_runtime_t *runtime,
     uint8_t chunk[ESP_BMS_IDF_BMS_FRAME_MAX_LEN] = { 0 };
     const int rc = os_mbuf_copydata(event->notify_rx.om, 0, len, chunk);
     if (rc != 0 || !runtime_bms_frame_push(runtime, chunk, (size_t)len)) {
-        runtime_set_error(runtime, "BMS RX");
+        runtime_set_bms_info(runtime, "BMS RX");
         ESP_LOGW(TAG, "[bms] notification parse failed: len=%d rc=%d", len, rc);
     }
 }
@@ -3026,7 +3274,7 @@ static int runtime_bms_ble_gap_event(struct ble_gap_event *event, void *arg)
         if (matches_binding) {
             const esp_err_t ret = runtime_bms_ble_connect_to_disc(runtime, &event->disc, mac);
             if (ret != ESP_OK) {
-                runtime_set_error(runtime, "BMS CONN ERR");
+                runtime_set_bms_info(runtime, "BMS CONN ERR");
                 ESP_LOGW(TAG, "[bms] connect request failed: mac=%s ret=%s",
                          mac, esp_err_to_name(ret));
             }
@@ -3038,10 +3286,10 @@ static int runtime_bms_ble_gap_event(struct ble_gap_event *event, void *arg)
             runtime->bms_conn_handle = event->connect.conn_handle;
             runtime->bms_scan_active = false;
             runtime->bms_ble_phase = (uint8_t)BMS_BLE_PHASE_DISCOVERING_SERVICE;
-            runtime_set_error(runtime, "BMS DISC");
+            runtime_set_bms_info(runtime, "BMS DISC");
             ESP_LOGI(TAG, "[bms] connected: conn=%u", event->connect.conn_handle);
             if (runtime_bms_ble_start_service_discovery(runtime) != ESP_OK) {
-                runtime_set_error(runtime, "BMS SVC");
+                runtime_set_bms_info(runtime, "BMS SVC");
                 ESP_LOGW(TAG, "[bms] service discovery request failed: conn=%u",
                          event->connect.conn_handle);
                 (void)ble_gap_terminate(event->connect.conn_handle, BLE_ERR_REM_USER_CONN_TERM);
@@ -3049,7 +3297,7 @@ static int runtime_bms_ble_gap_event(struct ble_gap_event *event, void *arg)
         } else {
             runtime_bms_ble_reset_connection_state(runtime, BMS_BLE_PHASE_BACKOFF);
             runtime_clear_bms_telemetry(runtime);
-            runtime_set_error(runtime, "BMS CONN FAIL");
+            runtime_set_bms_info(runtime, "BMS CONN FAIL");
             ESP_LOGW(TAG, "[bms] connection failed: status=%d", event->connect.status);
         }
         return 0;
@@ -3059,7 +3307,7 @@ static int runtime_bms_ble_gap_event(struct ble_gap_event *event, void *arg)
             const bool scan_requested = runtime->bms_scan_requested;
             runtime_bms_ble_reset_connection_state(runtime, BMS_BLE_PHASE_BACKOFF);
             runtime_clear_bms_telemetry(runtime);
-            runtime_set_error(runtime, "BMS OFF");
+            runtime_set_bms_info(runtime, "BMS OFF");
             ESP_LOGW(TAG, "[bms] disconnected: reason=%d", event->disconnect.reason);
             if (scan_requested) {
                 runtime->bms_scan_requested = true;
@@ -3075,7 +3323,7 @@ static int runtime_bms_ble_gap_event(struct ble_gap_event *event, void *arg)
         if (runtime->bms_ble_phase == (uint8_t)BMS_BLE_PHASE_SCANNING) {
             runtime->bms_ble_phase = (uint8_t)BMS_BLE_PHASE_IDLE;
             runtime->bms_scan_active = false;
-            runtime_set_error(runtime, "BMS DONE");
+            runtime_set_bms_info(runtime, "BMS DONE");
         }
         ESP_LOGI(TAG, "[bms] BLE scan complete: reason=%d candidates=%u",
                  event->disc_complete.reason, runtime->bms_scan_candidate_count);
@@ -3136,7 +3384,7 @@ static esp_err_t runtime_bms_ble_start_scan(esp_bms_idf_runtime_t *runtime)
     runtime->bms_scan_requested = false;
     runtime->bms_scan_active = true;
     runtime->bms_ble_phase = (uint8_t)BMS_BLE_PHASE_SCANNING;
-    runtime_set_error(runtime, "BMS SCAN");
+    runtime_set_bms_info(runtime, "BMS SCAN");
     ESP_LOGI(TAG, "[bms] BLE scan started: duration_ms=%u", (unsigned)BMS_SCAN_DURATION_MS);
     return ESP_OK;
 }
@@ -3689,7 +3937,7 @@ bool esp_bms_idf_runtime_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_m
             !runtime->bms_write_in_flight) {
             const esp_err_t poll_ret = runtime_bms_ble_send_poll_request(runtime);
             if (poll_ret != ESP_OK) {
-                runtime_set_error(runtime, "BMS POLL");
+                runtime_set_bms_info(runtime, "BMS POLL");
                 ESP_LOGW(TAG, "[bms] poll request failed: %s", esp_err_to_name(poll_ret));
                 changed = true;
             }
@@ -3710,23 +3958,47 @@ bool esp_bms_idf_runtime_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_m
     return changed;
 }
 
-bool esp_bms_idf_runtime_apply_action(esp_bms_idf_runtime_t *runtime, esp_bms_lvgl_action_t action)
+bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,
+                                            const esp_bms_lvgl_action_event_t *event)
 {
-    if (!runtime || action == ESP_BMS_LVGL_ACTION_NONE) {
+    if (!runtime || !event || event->action == ESP_BMS_LVGL_ACTION_NONE) {
         return false;
     }
 
-    switch (action) {
+    switch (event->action) {
     case ESP_BMS_LVGL_ACTION_ENABLE_WIFI_REPROVISIONING:
         runtime->snapshot.setup_ap_enabled = true;
         runtime->snapshot.wifi = ESP_BMS_WIFI_SETUP_AP;
         runtime_set_error(runtime, "SETUP AP");
         return true;
     case ESP_BMS_LVGL_ACTION_CYCLE_BRIGHTNESS:
-        runtime->brightness_percent = runtime->brightness_percent >= 85 ? 30 :
-                                      runtime->brightness_percent >= 60 ? 85 : 60;
+        (void)runtime_set_brightness_percent(runtime,
+                                             runtime->brightness_percent >= 85 ? 30 :
+                                             runtime->brightness_percent >= 60 ? 85 : 60);
         runtime_set_error(runtime, runtime->brightness_percent >= 85 ? "BRIGHT 85" :
                                    runtime->brightness_percent >= 60 ? "BRIGHT 60" : "BRIGHT 30");
+        return true;
+    case ESP_BMS_LVGL_ACTION_SET_BRIGHTNESS:
+        if (!event->brightness_percent_valid ||
+            !runtime_brightness_matches_policy(event->brightness_percent)) {
+            return false;
+        }
+        if (runtime->brightness_percent == event->brightness_percent) {
+            return false;
+        }
+        (void)runtime_set_brightness_percent(runtime, event->brightness_percent);
+        runtime_set_error(runtime, "BRIGHT SET");
+        return true;
+    case ESP_BMS_LVGL_ACTION_SET_VOLUME:
+        if (!event->volume_percent_valid ||
+            !runtime_volume_matches_policy(event->volume_percent)) {
+            return false;
+        }
+        if (runtime->volume_percent == event->volume_percent) {
+            return false;
+        }
+        (void)runtime_set_volume_percent(runtime, event->volume_percent);
+        runtime_set_error(runtime, "VOL SET");
         return true;
     case ESP_BMS_LVGL_ACTION_ROTATE_DISPLAY:
         runtime->display_rotation = runtime_next_rotation(runtime->display_rotation);
@@ -3745,7 +4017,7 @@ bool esp_bms_idf_runtime_apply_action(esp_bms_idf_runtime_t *runtime, esp_bms_lv
         return true;
     case ESP_BMS_LVGL_ACTION_START_BMS_BIND:
         if (!runtime_set_pending_http_bms_scan(runtime)) {
-            runtime_set_error(runtime, "BMS Q FAIL");
+            runtime_set_bms_info(runtime, "BMS Q FAIL");
         }
         return true;
     case ESP_BMS_LVGL_ACTION_RESTORE_DEFAULTS:
@@ -3763,6 +4035,14 @@ bool esp_bms_idf_runtime_apply_action(esp_bms_idf_runtime_t *runtime, esp_bms_lv
     }
 }
 
+bool esp_bms_idf_runtime_apply_action(esp_bms_idf_runtime_t *runtime, esp_bms_lvgl_action_t action)
+{
+    const esp_bms_lvgl_action_event_t event = {
+        .action = action,
+    };
+    return esp_bms_idf_runtime_apply_action_event(runtime, &event);
+}
+
 const char *esp_bms_idf_runtime_action_name(esp_bms_lvgl_action_t action)
 {
     switch (action) {
@@ -3776,6 +4056,10 @@ const char *esp_bms_idf_runtime_action_name(esp_bms_lvgl_action_t action)
         return "enable-wifi-reprovisioning";
     case ESP_BMS_LVGL_ACTION_CYCLE_BRIGHTNESS:
         return "cycle-brightness";
+    case ESP_BMS_LVGL_ACTION_SET_BRIGHTNESS:
+        return "set-brightness";
+    case ESP_BMS_LVGL_ACTION_SET_VOLUME:
+        return "set-volume";
     case ESP_BMS_LVGL_ACTION_ROTATE_DISPLAY:
         return "rotate-display";
     case ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_UNIT:

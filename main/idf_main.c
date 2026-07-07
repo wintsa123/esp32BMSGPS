@@ -29,6 +29,8 @@ static esp_bms_display_rotation_t bridge_rotation_from_runtime(esp_bms_idf_displ
 static bool action_should_save_display_settings(esp_bms_lvgl_action_t action)
 {
     return action == ESP_BMS_LVGL_ACTION_CYCLE_BRIGHTNESS ||
+           action == ESP_BMS_LVGL_ACTION_SET_BRIGHTNESS ||
+           action == ESP_BMS_LVGL_ACTION_SET_VOLUME ||
            action == ESP_BMS_LVGL_ACTION_ROTATE_DISPLAY ||
            action == ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_UNIT ||
            action == ESP_BMS_LVGL_ACTION_TOGGLE_LANGUAGE ||
@@ -108,11 +110,12 @@ void app_main(void)
         const bool tick_changed = esp_bms_idf_runtime_tick(&runtime, 50);
 
         ESP_ERROR_CHECK(esp_bms_lvgl_bridge_lock(-1));
-        esp_bms_lvgl_action_t action = ESP_BMS_LVGL_ACTION_NONE;
-        ESP_ERROR_CHECK(esp_bms_lvgl_ui_take_action(&action));
+        esp_bms_lvgl_action_event_t action_event = { 0 };
+        ESP_ERROR_CHECK(esp_bms_lvgl_ui_take_action_event(&action_event));
+        const esp_bms_lvgl_action_t action = action_event.action;
         const bool should_start_setup_ap =
             action == ESP_BMS_LVGL_ACTION_ENABLE_WIFI_REPROVISIONING && !runtime.setup_ap_started;
-        const bool action_changed = esp_bms_idf_runtime_apply_action(&runtime, action);
+        const bool action_changed = esp_bms_idf_runtime_apply_action_event(&runtime, &action_event);
         if ((tick_changed || action_changed) && runtime.brightness_percent != previous_brightness) {
             ESP_ERROR_CHECK(esp_bms_lvgl_bridge_set_brightness(runtime.brightness_percent));
         }
