@@ -42,6 +42,18 @@ LV_FONT_DECLARE(settings_zh_16);
 #define SETTINGS_SWIPE_BACK_MIN_DX 54
 #define SETTINGS_SWIPE_BACK_MAX_DY 42
 #define SETTINGS_CAROUSEL_SIDE_SHIFT 46
+#define SETTINGS_CAROUSEL_CENTER_SCALE 276
+#define SETTINGS_CAROUSEL_SIDE_SCALE 222
+#define SETTINGS_OPTION_SUBTITLE_SCALE 192
+#define SETTINGS_OPTION_SUBTITLE_H 23
+#define SETTINGS_OPTION_TALL_ICON_Y 14
+#define SETTINGS_OPTION_TALL_TITLE_Y 14
+#define SETTINGS_OPTION_TALL_SUBTITLE_Y 35
+#define SETTINGS_OPTION_TALL_ARROW_Y 24
+#define SETTINGS_OPTION_COMPACT_ICON_Y 9
+#define SETTINGS_OPTION_COMPACT_TITLE_Y 9
+#define SETTINGS_OPTION_COMPACT_SUBTITLE_Y 30
+#define SETTINGS_OPTION_COMPACT_ARROW_Y 19
 #define SETTINGS_CAROUSEL_REPEAT_COUNT 3U
 #define SETTINGS_CAROUSEL_CENTER_REPEAT 1U
 #define SETTINGS_CAROUSEL_VIRTUAL_COUNT (SETTINGS_OPTION_COUNT * SETTINGS_CAROUSEL_REPEAT_COUNT)
@@ -127,6 +139,14 @@ _Static_assert(ESP_BMS_LVGL_ACTION_RESTORE_DEFAULTS == 10,
 _Static_assert(ESP_BMS_LVGL_ACTION_SET_BRIGHTNESS == 11,
                "esp_bms_lvgl_action_t value changed; update C action consumers too");
 _Static_assert(ESP_BMS_LVGL_ACTION_SET_VOLUME == 12,
+               "esp_bms_lvgl_action_t value changed; update C action consumers too");
+_Static_assert(ESP_BMS_LVGL_ACTION_SELECT_BMS_ANT == 13,
+               "esp_bms_lvgl_action_t value changed; update C action consumers too");
+_Static_assert(ESP_BMS_LVGL_ACTION_SELECT_BMS_JK == 14,
+               "esp_bms_lvgl_action_t value changed; update C action consumers too");
+_Static_assert(ESP_BMS_LVGL_ACTION_SELECT_BMS_JBD == 15,
+               "esp_bms_lvgl_action_t value changed; update C action consumers too");
+_Static_assert(ESP_BMS_LVGL_ACTION_SELECT_BMS_DALY == 16,
                "esp_bms_lvgl_action_t value changed; update C action consumers too");
 
 typedef struct {
@@ -1545,7 +1565,7 @@ static const quick_panel_item_t QUICK_PANEL_ITEMS[QUICK_PANEL_BUTTON_COUNT] = {
 };
 
 static const settings_option_t SETTINGS_OPTIONS[SETTINGS_OPTION_COUNT] = {
-    { SETTINGS_DETAIL_WIFI, "无线网络", "WiFi 配置", LV_SYMBOL_WIFI, &lv_font_montserrat_24 },
+    { SETTINGS_DETAIL_WIFI, "无线网络", "SSID / OTA", LV_SYMBOL_WIFI, &lv_font_montserrat_24 },
     { SETTINGS_DETAIL_HOTSPOT, "热点共享", "Setup AP", QUICK_HOTSPOT_SYMBOL, &wlanJZ },
     { SETTINGS_DETAIL_BLUETOOTH, "蓝牙", "BLE 绑定", QUICK_BLUETOOTH_SYMBOL, &bluetoothon },
     { SETTINGS_DETAIL_BMS, "保护板设置", "BMS 状态", LV_SYMBOL_CHARGE, &lv_font_montserrat_24 },
@@ -1554,15 +1574,17 @@ static const settings_option_t SETTINGS_OPTIONS[SETTINGS_OPTION_COUNT] = {
 };
 
 static const settings_detail_row_t SETTINGS_WIFI_ROWS[] = {
-    { "状态", "当前: Setup AP", ESP_BMS_LVGL_ACTION_NONE },
-    { "配置入口", "开启配网入口", ESP_BMS_LVGL_ACTION_ENABLE_WIFI_REPROVISIONING },
-    { "手机页面", "192.168.4.1 网页配置", ESP_BMS_LVGL_ACTION_NONE },
+    { "状态", "未连接", ESP_BMS_LVGL_ACTION_NONE },
+    { "WiFi", "SSID / PASS", ESP_BMS_LVGL_ACTION_NONE },
+    { "OTA", "OTA INFO", ESP_BMS_LVGL_ACTION_NONE },
 };
 
 static const settings_detail_row_t SETTINGS_HOTSPOT_ROWS[] = {
     { "状态", "热点已打开", ESP_BMS_LVGL_ACTION_NONE },
     { "名称", "fuckingBms_xxxxxx", ESP_BMS_LVGL_ACTION_NONE },
-    { "密码", "8 位数字", ESP_BMS_LVGL_ACTION_NONE },
+    { "密码", "8 DIGITS", ESP_BMS_LVGL_ACTION_NONE },
+    { "手机页面", "192.168.4.1 网页配置", ESP_BMS_LVGL_ACTION_NONE },
+    { "配置入口", "开启配网入口", ESP_BMS_LVGL_ACTION_ENABLE_WIFI_REPROVISIONING },
     { "二维码", "网页查看", ESP_BMS_LVGL_ACTION_ENABLE_WIFI_REPROVISIONING },
 };
 
@@ -1572,9 +1594,12 @@ static const settings_detail_row_t SETTINGS_BLUETOOTH_ROWS[] = {
 };
 
 static const settings_detail_row_t SETTINGS_BMS_ROWS[] = {
-    { "连接状态", "未连接", ESP_BMS_LVGL_ACTION_NONE },
-    { "保护信息", "暂无告警", ESP_BMS_LVGL_ACTION_NONE },
-    { "扫描绑定", "扫描保护板", ESP_BMS_LVGL_ACTION_START_BMS_BIND },
+    { "保护板设置", "ANT / JK / JBD / DALY", ESP_BMS_LVGL_ACTION_NONE },
+    { "蓝牙", "扫描绑定", ESP_BMS_LVGL_ACTION_START_BMS_BIND },
+    { "ANT", "esphome-ant-bms", ESP_BMS_LVGL_ACTION_SELECT_BMS_ANT },
+    { "JK", "esp32-jkbms-ble", ESP_BMS_LVGL_ACTION_SELECT_BMS_JK },
+    { "JBD", "esphome-jbd-bms", ESP_BMS_LVGL_ACTION_SELECT_BMS_JBD },
+    { "DALY", "esphome-daly-bms", ESP_BMS_LVGL_ACTION_SELECT_BMS_DALY },
 };
 
 static const settings_detail_row_t SETTINGS_SYSTEM_ROWS[] = {
@@ -2036,6 +2061,28 @@ static void settings_carousel_refresh(lv_obj_t *carousel)
         lv_obj_set_style_translate_x(child, shift, LV_PART_MAIN);
 
         const bool centered = diff_y <= (lv_obj_get_height(child) / 2);
+        const int32_t scale_span = LV_MAX(lv_obj_get_height(child), 1);
+        int32_t scale = SETTINGS_CAROUSEL_SIDE_SCALE;
+        if (diff_y < scale_span) {
+            scale += ((SETTINGS_CAROUSEL_CENTER_SCALE - SETTINGS_CAROUSEL_SIDE_SCALE) *
+                      (scale_span - diff_y)) / scale_span;
+        }
+        lv_obj_set_style_transform_pivot_x(child, lv_obj_get_width(child) / 2, LV_PART_MAIN);
+        lv_obj_set_style_transform_pivot_y(child, lv_obj_get_height(child) / 2, LV_PART_MAIN);
+        lv_obj_set_style_transform_scale(child, scale, LV_PART_MAIN);
+        if (scale > LV_SCALE_NONE) {
+            lv_obj_set_style_transform_width(child,
+                                             ((lv_obj_get_width(child) * (scale - LV_SCALE_NONE)) /
+                                              (2 * LV_SCALE_NONE)) + 2,
+                                             LV_PART_MAIN);
+            lv_obj_set_style_transform_height(child,
+                                              ((lv_obj_get_height(child) * (scale - LV_SCALE_NONE)) /
+                                               (2 * LV_SCALE_NONE)) + 2,
+                                              LV_PART_MAIN);
+        } else {
+            lv_obj_set_style_transform_width(child, 0, LV_PART_MAIN);
+            lv_obj_set_style_transform_height(child, 0, LV_PART_MAIN);
+        }
         lv_obj_set_style_border_width(child, centered ? 2 : 1, LV_PART_MAIN);
         lv_obj_set_style_border_color(child,
                                       centered ? COLOR_SETTINGS_ACCENT : COLOR_SETTINGS_BORDER,
@@ -2317,6 +2364,17 @@ static void settings_option_event_cb(lv_event_t *event)
         return;
     }
 
+    lv_obj_t *option_card = (lv_obj_t *)lv_event_get_current_target(event);
+    lv_obj_t *carousel = option_card ? lv_obj_get_parent(option_card) : NULL;
+    if (carousel == s_ui.settings_carousel) {
+        const int32_t center_index = settings_carousel_center_index(carousel);
+        const int32_t option_index = lv_obj_get_index(option_card);
+        if (center_index < 0 || option_index != center_index) {
+            lv_obj_scroll_to_view(option_card, LV_ANIM_ON);
+            return;
+        }
+    }
+
     const settings_detail_id_t detail_id =
         (settings_detail_id_t)(uintptr_t)lv_event_get_user_data(event);
     if (detail_id != SETTINGS_DETAIL_NONE) {
@@ -2346,27 +2404,60 @@ static lv_obj_t *settings_option_card(lv_obj_t *parent,
 
     lv_obj_t *icon_box = lv_obj_create(box);
     clear_style(icon_box);
-    lv_obj_set_pos(icon_box, 10, 8);
-    lv_obj_set_size(icon_box, 36, h - 16);
+    const bool tall_card = h >= 70;
+    const int32_t icon_box_size = 36;
+    const int32_t icon_y = tall_card ? SETTINGS_OPTION_TALL_ICON_Y : SETTINGS_OPTION_COMPACT_ICON_Y;
+    lv_obj_set_pos(icon_box, 10, icon_y);
+    lv_obj_set_size(icon_box, icon_box_size, icon_box_size);
     lv_obj_set_style_radius(icon_box, 8, LV_PART_MAIN);
     lv_obj_set_style_bg_color(icon_box, COLOR_SETTINGS_ICON_BG, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(icon_box, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_clear_flag(icon_box, LV_OBJ_FLAG_SCROLLABLE);
     if (option) {
-        lv_obj_t *icon = quick_symbol_icon(icon_box, 36, h - 16, option->icon, option->icon_font);
+        const int32_t icon_content_size = 30;
+        lv_obj_t *icon = quick_symbol_icon(icon_box,
+                                           icon_content_size,
+                                           icon_content_size,
+                                           option->icon,
+                                           option->icon_font);
+        lv_obj_set_pos(icon,
+                       lv_obj_get_x(icon) + ((icon_box_size - icon_content_size) / 2),
+                       lv_obj_get_y(icon) + ((icon_box_size - icon_content_size) / 2));
         lv_obj_set_style_text_color(icon, COLOR_SETTINGS_ACCENT, LV_PART_MAIN);
     }
 
     const int32_t text_x = 58;
-    lv_obj_t *title = label(box, text_x, 7, w - text_x - 30, 18, &settings_zh_16);
+    const int32_t title_h = 18;
+    const char *subtitle_text = option ? option->subtitle : "";
+    const lv_font_t *subtitle_font = &settings_zh_16;
+    const int32_t subtitle_h = LV_MAX((int32_t)subtitle_font->line_height,
+                                      SETTINGS_OPTION_SUBTITLE_H);
+    const int32_t title_y = tall_card ? SETTINGS_OPTION_TALL_TITLE_Y : SETTINGS_OPTION_COMPACT_TITLE_Y;
+    const int32_t subtitle_y = tall_card ? SETTINGS_OPTION_TALL_SUBTITLE_Y :
+                                           SETTINGS_OPTION_COMPACT_SUBTITLE_Y;
+    const int32_t arrow_y = tall_card ? SETTINGS_OPTION_TALL_ARROW_Y : SETTINGS_OPTION_COMPACT_ARROW_Y;
+    lv_obj_t *title = label(box, text_x, title_y, w - text_x - 30, title_h, &settings_zh_16);
     lv_label_set_text(title, option ? option->title : "");
     lv_obj_set_style_text_color(title, COLOR_SETTINGS_TEXT, LV_PART_MAIN);
 
-    lv_obj_t *subtitle = label(box, text_x, 29, w - text_x - 30, 16, &settings_zh_16);
-    lv_label_set_text(subtitle, option ? option->subtitle : "");
+    lv_obj_t *subtitle = label(box,
+                               text_x,
+                               subtitle_y,
+                               w - text_x - 30,
+                               subtitle_h,
+                               subtitle_font);
+    lv_label_set_text(subtitle, subtitle_text);
     lv_obj_set_style_text_color(subtitle, COLOR_SETTINGS_MUTED, LV_PART_MAIN);
+    lv_obj_set_style_transform_scale(subtitle, SETTINGS_OPTION_SUBTITLE_SCALE, LV_PART_MAIN);
+    lv_obj_set_style_transform_pivot_x(subtitle, 0, LV_PART_MAIN);
+    lv_obj_set_style_transform_pivot_y(subtitle, 0, LV_PART_MAIN);
 
-    lv_obj_t *arrow = label(box, w - 22, (h - 16) / 2, 14, 16, &settings_zh_16);
+    lv_obj_t *arrow = label(box,
+                            w - 22,
+                            arrow_y,
+                            14,
+                            16,
+                            &settings_zh_16);
     lv_label_set_text(arrow, ">");
     lv_obj_set_style_text_align(arrow, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(arrow, COLOR_SETTINGS_MUTED, LV_PART_MAIN);

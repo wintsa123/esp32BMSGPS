@@ -21,6 +21,13 @@ typedef enum {
     ESP_BMS_IDF_DISPLAY_ROTATION_INVERTED_LANDSCAPE = 3,
 } esp_bms_idf_display_rotation_t;
 
+typedef enum {
+    ESP_BMS_IDF_BMS_TYPE_ANT = 0,
+    ESP_BMS_IDF_BMS_TYPE_JK = 1,
+    ESP_BMS_IDF_BMS_TYPE_JBD = 2,
+    ESP_BMS_IDF_BMS_TYPE_DALY = 3,
+} esp_bms_idf_bms_type_t;
+
 #define ESP_BMS_IDF_BMS_SCAN_MAX_CANDIDATES 6U
 #define ESP_BMS_IDF_BMS_SCAN_NAME_LEN 24U
 #define ESP_BMS_IDF_BMS_FRAME_MAX_LEN 192U
@@ -56,6 +63,7 @@ typedef struct {
     uint16_t bms_cccd_handle;
     uint8_t brightness_percent;
     uint8_t volume_percent;
+    uint8_t bms_type;
     uint8_t bms_own_addr_type;
     uint8_t bms_ble_phase;
     uint8_t bms_frame[ESP_BMS_IDF_BMS_FRAME_MAX_LEN];
@@ -75,6 +83,7 @@ typedef struct {
     uint8_t bms_scan_candidate_count;
     uint8_t http_pending_brightness_percent;
     uint8_t http_pending_volume_percent;
+    uint8_t http_pending_bms_type;
     char http_pending_setup_ap_password[9];
     char http_pending_external_ssid[33];
     char http_pending_external_password[65];

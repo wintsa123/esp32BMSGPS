@@ -13,6 +13,7 @@
     p { margin: 0; color: #53636b; }
     section { margin-top: 18px; padding-top: 18px; border-top: 1px solid #cad4d9; }
     h2 { font-size: 1rem; margin: 0 0 12px; letter-spacing: 0; }
+    .section-note { margin-bottom: 12px; }
     label { display: grid; gap: 6px; margin: 12px 0; font-size: .92rem; }
     input, select, button {
       border: 1px solid #9caab2;
@@ -26,10 +27,13 @@
     button { background: #176b87; border-color: #176b87; color: white; cursor: pointer; }
     button.secondary { background: transparent; color: #176b87; }
     .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+    form + .grid { margin-top: 12px; }
     .status { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); margin-top: 16px; }
     .metric { border-left: 3px solid #2d8a66; padding-left: 10px; }
     .metric strong { display: block; font-size: 1.2rem; }
     .candidate-list { display: grid; gap: 8px; margin: 12px 0; }
+    .refs { display: flex; flex-wrap: wrap; gap: 8px 12px; margin: 8px 0 12px; font-size: .88rem; }
+    .refs a { color: #176b87; }
     .candidate {
       align-items: center;
       background: transparent;
@@ -75,7 +79,8 @@
     </div>
 
     <section>
-      <h2>Wi-Fi</h2>
+      <h2 data-i18n="wirelessNetwork">无线网络</h2>
+      <p class="section-note" data-i18n="wifiPurpose">连接外部 Wi-Fi，用于联网和检查更新。</p>
       <form id="wifi-form">
         <div class="grid">
           <label><span data-i18n="externalSsid">外部 Wi-Fi SSID</span><input name="ssid" autocomplete="off" maxlength="32"></label>
@@ -83,13 +88,41 @@
         </div>
         <button type="submit" data-i18n="saveWifi">保存 Wi-Fi</button>
       </form>
+      <div class="grid">
+        <button id="ota-check" type="button" data-i18n="checkUpdate">检查更新</button>
+        <button id="ota-start" type="button" data-i18n="startUpdate">开始更新</button>
+      </div>
     </section>
 
     <section>
       <h2 data-i18n="setupAp">设置热点</h2>
+      <p class="section-note"><span data-i18n="setupApPurpose">手机连接热点后访问</span> <strong>192.168.4.1</strong></p>
       <form id="ap-form">
         <label><span data-i18n="setupApPassword">设置热点密码</span><input name="password" type="password" autocomplete="new-password" inputmode="numeric" minlength="8" maxlength="8" pattern="[0-9]{8}"></label>
         <button type="submit" data-i18n="saveApPassword">保存热点密码</button>
+      </form>
+    </section>
+
+    <section>
+      <h2 data-i18n="bmsBoard">保护板</h2>
+      <p class="section-note" data-i18n="bmsPurpose">选择保护板类型，再扫描或填入蓝牙 MAC 绑定。</p>
+      <form id="bms-form">
+        <div class="grid">
+          <label><span data-i18n="bmsType">保护板类型</span><select name="bms_type"><option value="ant" data-i18n="antBms">蚂蚁 ANT</option><option value="jk" data-i18n="jkBms">极空 JK</option><option value="jbd" data-i18n="jbdBms">嘉佰达 JBD</option><option value="daly" data-i18n="dalyBms">达锂 Daly</option></select></label>
+          <label><span data-i18n="bmsBleMac">蓝牙连接</span><input name="bms_mac" placeholder="AA:BB:CC:DD:EE:FF" autocomplete="off"></label>
+        </div>
+        <div class="refs">
+          <span data-i18n="protocolRefs">协议参考</span>
+          <a href="https://github.com/syssi/esphome-ant-bms" target="_blank" rel="noopener">ANT</a>
+          <a href="https://github.com/mintnguyenn/esp32-jkbms-ble" target="_blank" rel="noopener">JK</a>
+          <a href="https://github.com/syssi/esphome-jbd-bms" target="_blank" rel="noopener">JBD</a>
+          <a href="https://github.com/syssi/esphome-daly-bms" target="_blank" rel="noopener">Daly</a>
+        </div>
+        <div class="grid">
+          <button id="bms-scan" type="button" data-i18n="scanBms">扫描 BMS</button>
+          <button id="bms-bind" class="secondary" type="button" data-i18n="bindBms">绑定 BMS</button>
+        </div>
+        <div id="bms-candidates" class="candidate-list"></div>
       </form>
     </section>
 
@@ -101,23 +134,9 @@
           <label><span data-i18n="screenRotation">屏幕方向</span><select name="display_rotation"><option value="portrait" data-i18n="portrait">竖屏</option><option value="landscape" selected data-i18n="landscape">横屏</option><option value="inverted_portrait" data-i18n="invertedPortrait">反向竖屏</option><option value="inverted_landscape" data-i18n="invertedLandscape">反向横屏</option></select></label>
           <label><span data-i18n="speedUnit">速度单位</span><select name="speed_unit"><option>km/h</option><option>mph</option></select></label>
           <label><span data-i18n="language">语言</span><select name="language"><option value="zh" selected>中文</option><option value="en">English</option></select></label>
-          <label>BMS MAC<input name="bms_mac" placeholder="AA:BB:CC:DD:EE:FF" autocomplete="off"></label>
         </div>
-        <div class="grid">
-          <button id="bms-scan" type="button" data-i18n="scanBms">扫描 BMS</button>
-          <button id="bms-bind" class="secondary" type="button" data-i18n="bindBms">绑定 BMS</button>
-        </div>
-        <div id="bms-candidates" class="candidate-list"></div>
         <button type="submit" data-i18n="saveDevice">保存设备设置</button>
       </form>
-    </section>
-
-    <section>
-      <h2>OTA</h2>
-      <div class="grid">
-        <button id="ota-check" type="button" data-i18n="checkUpdate">检查更新</button>
-        <button id="ota-start" type="button" data-i18n="startUpdate">开始更新</button>
-      </div>
     </section>
   </main>
 
@@ -126,16 +145,24 @@
     const I18N = {
       zh: {
         battery: "电池",
+        antBms: "蚂蚁 ANT",
         bindBms: "绑定 BMS",
+        bmsBleMac: "蓝牙连接",
+        bmsBoard: "保护板",
+        bmsPurpose: "选择保护板类型，再扫描或填入蓝牙 MAC 绑定。",
+        bmsType: "保护板类型",
         brightness: "亮度",
         checkUpdate: "检查更新",
         connected: "已连接",
         connecting: "连接中",
+        dalyBms: "达锂 Daly",
         device: "设备",
         externalPassword: "外部 Wi-Fi 密码",
         externalSsid: "外部 Wi-Fi SSID",
         failed: "失败",
         firmware: "固件",
+        jbdBms: "嘉佰达 JBD",
+        jkBms: "极空 JK",
         invertedLandscape: "反向横屏",
         invertedPortrait: "反向竖屏",
         landscape: "横屏",
@@ -147,6 +174,7 @@
         passwordWrong: "密码错误",
         portrait: "竖屏",
         protections: "保护",
+        protocolRefs: "协议参考",
         refresh: "刷新",
         saveApPassword: "保存热点密码",
         saveDevice: "保存设备设置",
@@ -156,23 +184,34 @@
         setup: "设置",
         setupAp: "设置热点",
         setupApPassword: "设置热点密码",
+        setupApPurpose: "手机连接热点后访问",
         speed: "速度",
         speedUnit: "速度单位",
         startUpdate: "开始更新",
-        warnings: "告警"
+        warnings: "告警",
+        wifiPurpose: "连接外部 Wi-Fi，用于联网和检查更新。",
+        wirelessNetwork: "无线网络"
       },
       en: {
         battery: "Battery",
+        antBms: "ANT",
         bindBms: "Bind BMS",
+        bmsBleMac: "Bluetooth connection",
+        bmsBoard: "BMS",
+        bmsPurpose: "Choose a BMS type, then scan or enter a Bluetooth MAC to bind.",
+        bmsType: "BMS type",
         brightness: "Brightness",
         checkUpdate: "Check Update",
         connected: "connected",
         connecting: "connecting",
+        dalyBms: "Daly",
         device: "Device",
         externalPassword: "External password",
         externalSsid: "External SSID",
         failed: "failed",
         firmware: "Firmware",
+        jbdBms: "JBD",
+        jkBms: "JK",
         invertedLandscape: "Inverted landscape",
         invertedPortrait: "Inverted portrait",
         landscape: "Landscape",
@@ -184,6 +223,7 @@
         passwordWrong: "Wrong password",
         portrait: "Portrait",
         protections: "Protections",
+        protocolRefs: "Protocol refs",
         refresh: "Refresh",
         saveApPassword: "Save AP Password",
         saveDevice: "Save Device Settings",
@@ -193,10 +233,13 @@
         setup: "setup",
         setupAp: "Setup AP",
         setupApPassword: "Setup AP password",
+        setupApPurpose: "Connect to the hotspot, then open",
         speed: "Speed",
         speedUnit: "Speed unit",
         startUpdate: "Start Update",
-        warnings: "Warnings"
+        warnings: "Warnings",
+        wifiPurpose: "Connect external Wi-Fi for internet access and update checks.",
+        wirelessNetwork: "Wireless Network"
       }
     };
     let uiLanguage = "zh";
@@ -288,7 +331,7 @@
       rssi.textContent = Number.isFinite(candidate.rssi) ? `${candidate.rssi} dBm` : "";
       button.append(label, rssi);
       button.addEventListener("click", () => {
-        $("device-form").elements.bms_mac.value = candidate.mac || "";
+        $("bms-form").elements.bms_mac.value = candidate.mac || "";
       });
       return button;
     }
@@ -316,19 +359,34 @@
         const config = await api("/api/config");
         const wifi = $("wifi-form").elements;
         const device = $("device-form").elements;
+        const bms = $("bms-form").elements;
         applyLanguage(config.language ?? "zh");
         wifi.ssid.value = config.external_ssid ?? "";
         device.brightness.value = config.brightness ?? 80;
         device.display_rotation.value = config.display_rotation ?? "landscape";
         device.speed_unit.value = config.speed_unit ?? "km/h";
         device.language.value = config.language ?? "zh";
-        device.bms_mac.value = config.bms_mac ?? "";
+        bms.bms_mac.value = config.bms_mac ?? "";
+        const bmsType = config.bms_type ?? "ant";
+        bms.bms_type.value = ["ant", "jk", "jbd", "daly"].includes(bmsType) ? bmsType : "ant";
       } catch {
       }
     }
 
+    async function saveBmsType() {
+      const bmsType = $("bms-form").elements.bms_type.value;
+      await api("/api/config", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ bms_type: bmsType })
+      });
+      await loadConfig();
+    }
+
     async function bindBmsMac() {
-      const mac = $("device-form").elements.bms_mac.value.trim();
+      const bms = $("bms-form").elements;
+      const mac = bms.bms_mac.value.trim();
+      await saveBmsType();
       if (!mac) return;
       await api("/api/bms/bind", {
         method: "POST",
@@ -357,6 +415,11 @@
     $("ota-start").addEventListener("click", () => api("/api/ota/start", { method: "POST" }).then(refresh));
     $("bms-scan").addEventListener("click", () => api("/api/bms/scan", { method: "POST" }).then(loadBmsCandidates));
     $("bms-bind").addEventListener("click", () => bindBmsMac().then(refresh));
+    $("bms-form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      bindBmsMac().then(refresh);
+    });
+    $("bms-form").elements.bms_type.addEventListener("change", () => saveBmsType().then(refresh));
     $("device-form").elements.language.addEventListener("change", (event) => applyLanguage(event.target.value));
     bindJsonForm("wifi-form", "/api/wifi");
     bindJsonForm("ap-form", "/api/ap-password");

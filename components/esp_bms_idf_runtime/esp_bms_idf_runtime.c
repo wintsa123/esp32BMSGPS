@@ -80,6 +80,7 @@ static const char *TAG = "bms_idf_runtime";
 #define DISPLAY_NVS_ROTATION_KEY "disp_rot"
 #define DISPLAY_NVS_SPEED_UNIT_KEY "speed_unit"
 #define DISPLAY_NVS_LANGUAGE_KEY "lang"
+#define DISPLAY_NVS_BMS_TYPE_KEY "bms_type"
 #define HTTP_BODY_MAX_LEN 384U
 #define HTTP_JSON_MAX_LEN 1024U
 #define HTTP_AUTH_MAX_LEN 48U
@@ -1015,6 +1016,57 @@ static bool runtime_parse_speed_unit_config_text(const char *text, esp_bms_speed
     return false;
 }
 
+static const char *runtime_bms_type_config_text(esp_bms_idf_bms_type_t type)
+{
+    switch (type) {
+    case ESP_BMS_IDF_BMS_TYPE_JK:
+        return "jk";
+    case ESP_BMS_IDF_BMS_TYPE_JBD:
+        return "jbd";
+    case ESP_BMS_IDF_BMS_TYPE_DALY:
+        return "daly";
+    case ESP_BMS_IDF_BMS_TYPE_ANT:
+    default:
+        return "ant";
+    }
+}
+
+static bool runtime_parse_bms_type_config_text(const char *text, esp_bms_idf_bms_type_t *out_type)
+{
+    if (strcmp(text, "ant") == 0) {
+        *out_type = ESP_BMS_IDF_BMS_TYPE_ANT;
+        return true;
+    }
+    if (strcmp(text, "jk") == 0) {
+        *out_type = ESP_BMS_IDF_BMS_TYPE_JK;
+        return true;
+    }
+    if (strcmp(text, "jbd") == 0) {
+        *out_type = ESP_BMS_IDF_BMS_TYPE_JBD;
+        return true;
+    }
+    if (strcmp(text, "daly") == 0) {
+        *out_type = ESP_BMS_IDF_BMS_TYPE_DALY;
+        return true;
+    }
+    return false;
+}
+
+static const char *runtime_bms_type_status_text(esp_bms_idf_bms_type_t type)
+{
+    switch (type) {
+    case ESP_BMS_IDF_BMS_TYPE_JK:
+        return "BMS JK";
+    case ESP_BMS_IDF_BMS_TYPE_JBD:
+        return "BMS JBD";
+    case ESP_BMS_IDF_BMS_TYPE_DALY:
+        return "BMS DALY";
+    case ESP_BMS_IDF_BMS_TYPE_ANT:
+    default:
+        return "BMS ANT";
+    }
+}
+
 static const char *runtime_wifi_config_text(esp_bms_wifi_state_t wifi)
 {
     switch (wifi) {
@@ -1095,6 +1147,25 @@ static bool runtime_speed_unit_matches_policy(uint8_t speed_unit)
 static bool runtime_language_matches_policy(uint8_t language)
 {
     return language <= 1U;
+}
+
+static bool runtime_bms_type_matches_policy(uint8_t bms_type)
+{
+    return bms_type <= (uint8_t)ESP_BMS_IDF_BMS_TYPE_DALY;
+}
+
+static bool runtime_select_bms_type(esp_bms_idf_runtime_t *runtime, esp_bms_idf_bms_type_t bms_type)
+{
+    if (!runtime || !runtime_bms_type_matches_policy((uint8_t)bms_type)) {
+        return false;
+    }
+    if (runtime->bms_type == (uint8_t)bms_type) {
+        return false;
+    }
+
+    runtime->bms_type = (uint8_t)bms_type;
+    runtime_set_error(runtime, runtime_bms_type_status_text(bms_type));
+    return true;
 }
 
 static bool runtime_json_write_u32_or_null(char *out, size_t out_len, bool valid, uint32_t value)
@@ -1218,6 +1289,7 @@ static void runtime_reset_state(esp_bms_idf_runtime_t *runtime)
     runtime->snapshot.setup_ap_enabled = true;
     runtime->snapshot.wifi = ESP_BMS_WIFI_SETUP_AP;
     runtime->snapshot.ota = ESP_BMS_OTA_IDLE;
+    runtime->bms_type = (uint8_t)ESP_BMS_IDF_BMS_TYPE_ANT;
     (void)runtime_set_brightness_percent(runtime, 85U);
     (void)runtime_set_volume_percent(runtime, 65U);
     runtime->display_rotation = ESP_BMS_IDF_DISPLAY_ROTATION_LANDSCAPE;
@@ -1366,6 +1438,7 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
     uint8_t rotation = 0;
     uint8_t speed_unit = 0;
     uint8_t language = 0;
+    uint8_t bms_type = (uint8_t)ESP_BMS_IDF_BMS_TYPE_ANT;
 
     ret = nvs_get_u8(handle, DISPLAY_NVS_BRIGHTNESS_KEY, &brightness_percent);
     if (ret == ESP_OK) {
@@ -1385,6 +1458,12 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
     if (ret == ESP_OK) {
         ret = nvs_get_u8(handle, DISPLAY_NVS_LANGUAGE_KEY, &language);
     }
+    if (ret == ESP_OK) {
+        const esp_err_t bms_type_ret = nvs_get_u8(handle, DISPLAY_NVS_BMS_TYPE_KEY, &bms_type);
+        if (bms_type_ret != ESP_ERR_NVS_NOT_FOUND) {
+            ret = bms_type_ret;
+        }
+    }
     nvs_close(handle);
     if (ret != ESP_OK) {
         return ret;
@@ -1394,7 +1473,8 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
         !runtime_volume_matches_policy(volume_percent) ||
         !runtime_rotation_matches_policy(rotation) ||
         !runtime_speed_unit_matches_policy(speed_unit) ||
-        !runtime_language_matches_policy(language)) {
+        !runtime_language_matches_policy(language) ||
+        !runtime_bms_type_matches_policy(bms_type)) {
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -1403,6 +1483,7 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
     runtime->display_rotation = (esp_bms_idf_display_rotation_t)rotation;
     runtime->snapshot.speed_unit = (esp_bms_speed_unit_t)speed_unit;
     runtime->language_zh = language != 0U;
+    runtime->bms_type = bms_type;
     runtime_update_snapshot_speed(runtime);
     *loaded = true;
     return ESP_OK;
@@ -1419,6 +1500,8 @@ esp_err_t esp_bms_idf_runtime_save_display_settings(esp_bms_idf_runtime_t *runti
                         ESP_ERR_INVALID_STATE, TAG, "invalid display rotation");
     ESP_RETURN_ON_FALSE(runtime_speed_unit_matches_policy((uint8_t)runtime->snapshot.speed_unit),
                         ESP_ERR_INVALID_STATE, TAG, "invalid speed unit");
+    ESP_RETURN_ON_FALSE(runtime_bms_type_matches_policy(runtime->bms_type),
+                        ESP_ERR_INVALID_STATE, TAG, "invalid BMS type");
 
     ESP_RETURN_ON_ERROR(runtime_init_nvs(runtime), TAG, "NVS init failed");
 
@@ -1442,6 +1525,9 @@ esp_err_t esp_bms_idf_runtime_save_display_settings(esp_bms_idf_runtime_t *runti
         ret = nvs_set_u8(handle, DISPLAY_NVS_LANGUAGE_KEY, runtime->language_zh ? 1U : 0U);
     }
     if (ret == ESP_OK) {
+        ret = nvs_set_u8(handle, DISPLAY_NVS_BMS_TYPE_KEY, runtime->bms_type);
+    }
+    if (ret == ESP_OK) {
         ret = nvs_commit(handle);
     }
     nvs_close(handle);
@@ -1453,7 +1539,8 @@ static bool runtime_set_pending_http_config(esp_bms_idf_runtime_t *runtime,
                                             uint8_t volume_percent,
                                             esp_bms_idf_display_rotation_t rotation,
                                             esp_bms_speed_unit_t speed_unit,
-                                            bool language_zh)
+                                            bool language_zh,
+                                            esp_bms_idf_bms_type_t bms_type)
 {
     if (!runtime->http_pending_lock) {
         return false;
@@ -1467,6 +1554,7 @@ static bool runtime_set_pending_http_config(esp_bms_idf_runtime_t *runtime,
     runtime->http_pending_display_rotation = rotation;
     runtime->http_pending_speed_unit = speed_unit;
     runtime->http_pending_language_zh = language_zh;
+    runtime->http_pending_bms_type = (uint8_t)bms_type;
     runtime->http_config_pending = true;
 
     xSemaphoreGive(runtime->http_pending_lock);
@@ -1488,6 +1576,7 @@ static bool runtime_apply_pending_http_config(esp_bms_idf_runtime_t *runtime)
     const esp_bms_idf_display_rotation_t rotation = runtime->http_pending_display_rotation;
     const esp_bms_speed_unit_t speed_unit = runtime->http_pending_speed_unit;
     const bool language_zh = runtime->http_pending_language_zh;
+    const uint8_t bms_type = runtime->http_pending_bms_type;
     runtime->http_config_pending = false;
     xSemaphoreGive(runtime->http_pending_lock);
 
@@ -1499,7 +1588,8 @@ static bool runtime_apply_pending_http_config(esp_bms_idf_runtime_t *runtime)
                          runtime->volume_percent != volume_percent ||
                          runtime->display_rotation != rotation ||
                          runtime->snapshot.speed_unit != speed_unit ||
-                         runtime->language_zh != language_zh;
+                         runtime->language_zh != language_zh ||
+                         runtime->bms_type != bms_type;
     if (!changed) {
         return false;
     }
@@ -1509,6 +1599,7 @@ static bool runtime_apply_pending_http_config(esp_bms_idf_runtime_t *runtime)
     runtime->display_rotation = rotation;
     runtime->snapshot.speed_unit = speed_unit;
     runtime->language_zh = language_zh;
+    runtime->bms_type = bms_type;
     runtime_update_snapshot_speed(runtime);
     runtime_set_error(runtime, "HTTP CFG");
 
@@ -1961,7 +2052,7 @@ static esp_err_t runtime_http_config_handler(httpd_req_t *req, esp_bms_idf_runti
                                  "\"speed_unit\":\"%s\",\"language\":\"%s\","
                                  "\"setup_ap_ssid\":\"%s\",\"external_wifi_saved\":%s,"
                                  "\"external_ssid\":\"%s\",\"setup_ap_password_saved\":%s,"
-                                 "\"setup_ap_state\":\"%s\",\"bms_mac\":%s}",
+                                 "\"setup_ap_state\":\"%s\",\"bms_mac\":%s,\"bms_type\":\"%s\"}",
                                  runtime->brightness_percent,
                                  runtime->volume_percent,
                                  runtime_rotation_config_text(runtime->display_rotation),
@@ -1972,7 +2063,8 @@ static esp_err_t runtime_http_config_handler(httpd_req_t *req, esp_bms_idf_runti
                                  external_ssid,
                                  runtime->setup_ap_password[0] == '\0' ? "false" : "true",
                                  runtime->snapshot.setup_ap_enabled ? "enabled" : "disabled",
-                                 bms_mac);
+                                 bms_mac,
+                                 runtime_bms_type_config_text((esp_bms_idf_bms_type_t)runtime->bms_type));
     if (written < 0 || (size_t)written >= sizeof(json)) {
         return runtime_http_send_text(req, "500 Internal Server Error", "json too large");
     }
@@ -2078,6 +2170,7 @@ static esp_err_t runtime_http_post_config_handler(httpd_req_t *req, esp_bms_idf_
     esp_bms_idf_display_rotation_t rotation = runtime->display_rotation;
     esp_bms_speed_unit_t speed_unit = runtime->snapshot.speed_unit;
     bool language_zh = runtime->language_zh;
+    esp_bms_idf_bms_type_t bms_type = (esp_bms_idf_bms_type_t)runtime->bms_type;
 
     bool found = false;
     uint8_t parsed_u8 = 0;
@@ -2131,8 +2224,16 @@ static esp_err_t runtime_http_post_config_handler(httpd_req_t *req, esp_bms_idf_
         }
     }
 
+    memset(parsed_text, 0, sizeof(parsed_text));
+    if (!runtime_json_get_string(body, "bms_type", parsed_text, sizeof(parsed_text), &found)) {
+        return runtime_http_send_text(req, "400 Bad Request", "invalid BMS type");
+    }
+    if (found && !runtime_parse_bms_type_config_text(parsed_text, &bms_type)) {
+        return runtime_http_send_text(req, "400 Bad Request", "invalid BMS type");
+    }
+
     if (!runtime_set_pending_http_config(runtime, brightness_percent, volume_percent,
-                                         rotation, speed_unit, language_zh)) {
+                                         rotation, speed_unit, language_zh, bms_type)) {
         return runtime_http_send_text(req, "500 Internal Server Error", "config queue failed");
     }
     return runtime_http_send_no_content(req);
@@ -4020,6 +4121,14 @@ bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,
             runtime_set_bms_info(runtime, "BMS Q FAIL");
         }
         return true;
+    case ESP_BMS_LVGL_ACTION_SELECT_BMS_ANT:
+        return runtime_select_bms_type(runtime, ESP_BMS_IDF_BMS_TYPE_ANT);
+    case ESP_BMS_LVGL_ACTION_SELECT_BMS_JK:
+        return runtime_select_bms_type(runtime, ESP_BMS_IDF_BMS_TYPE_JK);
+    case ESP_BMS_LVGL_ACTION_SELECT_BMS_JBD:
+        return runtime_select_bms_type(runtime, ESP_BMS_IDF_BMS_TYPE_JBD);
+    case ESP_BMS_LVGL_ACTION_SELECT_BMS_DALY:
+        return runtime_select_bms_type(runtime, ESP_BMS_IDF_BMS_TYPE_DALY);
     case ESP_BMS_LVGL_ACTION_RESTORE_DEFAULTS:
         runtime_reset_state(runtime);
         (void)runtime_sample_battery(runtime);
@@ -4068,6 +4177,14 @@ const char *esp_bms_idf_runtime_action_name(esp_bms_lvgl_action_t action)
         return "toggle-language";
     case ESP_BMS_LVGL_ACTION_START_BMS_BIND:
         return "start-bms-bind";
+    case ESP_BMS_LVGL_ACTION_SELECT_BMS_ANT:
+        return "select-bms-ant";
+    case ESP_BMS_LVGL_ACTION_SELECT_BMS_JK:
+        return "select-bms-jk";
+    case ESP_BMS_LVGL_ACTION_SELECT_BMS_JBD:
+        return "select-bms-jbd";
+    case ESP_BMS_LVGL_ACTION_SELECT_BMS_DALY:
+        return "select-bms-daly";
     case ESP_BMS_LVGL_ACTION_RESTORE_DEFAULTS:
         return "restore-defaults";
     case ESP_BMS_LVGL_ACTION_NONE:
