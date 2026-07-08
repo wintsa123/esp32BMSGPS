@@ -16,6 +16,7 @@
 /firmware-packages/
 /release-images/
 /ota-images/
+/preview/
 /vercel/
 *.bin
 *.elf
