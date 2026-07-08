@@ -160,8 +160,8 @@ void app_main(void)
             action_event.committed && !display_apply_failed && action_should_save_display_settings(action);
         esp_bms_lvgl_bridge_unlock();
 
-        if (action == ESP_BMS_LVGL_ACTION_SET_VOLUME && action_event.volume_percent_valid) {
-            esp_bms_audio_feedback_play_volume(runtime.volume_percent);
+        if (action_event.volume_feedback_valid) {
+            esp_bms_audio_feedback_play_volume(action_event.volume_feedback_percent);
         }
 
         if (should_save_display_settings) {

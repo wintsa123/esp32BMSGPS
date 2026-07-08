@@ -1,6 +1,16 @@
 # LVGL MicroPython preview for components/esp_bms_lvgl_ui/esp_bms_lvgl_ui.c.
 import lvgl as lv
 
+try:
+    import lvkit as K
+except ImportError:
+    K = None
+
+try:
+    from settings_text_bitmaps import SETTINGS_TEXT_BITMAPS
+except ImportError:
+    SETTINGS_TEXT_BITMAPS = {}
+
 
 COLOR_BG = 0x080A0E
 COLOR_PANEL = 0x121820
@@ -12,6 +22,13 @@ COLOR_MUTED = 0xA9B4C8
 COLOR_ACCENT = 0x74D6B5
 COLOR_WARN = 0xFFC857
 COLOR_BAD = 0xFF6B6B
+COLOR_SETTINGS_BG = 0xEAF7F8
+COLOR_SETTINGS_CARD = 0xFFFFFF
+COLOR_SETTINGS_ICON_BG = 0xDBEFF2
+COLOR_SETTINGS_BORDER = 0xC8DADF
+COLOR_SETTINGS_TEXT = 0x101A2B
+COLOR_SETTINGS_MUTED = 0x556876
+COLOR_SETTINGS_ACCENT = 0x0E9C95
 SOC_WAVE_PERIOD = 32
 SOC_WAVE_W = 192
 SOC_WAVE_H = 18
@@ -23,6 +40,7 @@ QUICK_ITEMS = (
     ("hotspot", HOTSPOT_SYMBOL, True),
     ("wifi", lv.SYMBOL.WIFI, False),
     ("rotate", lv.SYMBOL.LOOP, False),
+    ("speed", getattr(lv.SYMBOL, "GPS", "G"), False),
     ("settings", lv.SYMBOL.SETTINGS, False),
 )
 
@@ -78,6 +96,7 @@ if _PT is None:
     _PT = lv.point_t
 _LINE_POINTS = []
 _CANVAS_BUFS = []
+_CJK_FONT = None
 
 CN_KEY_BITMAPS = {
     "最高": (28, 16, (
@@ -109,6 +128,18 @@ CN_KEY_BITMAPS = {
         0x1C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     )),
 }
+
+
+def _cjk_font(size=16):
+    global _CJK_FONT
+    if _CJK_FONT is not None:
+        return _CJK_FONT
+    if K is not None:
+        try:
+            _CJK_FONT = K.cjk_font(size)
+        except Exception:
+            _CJK_FONT = None
+    return _CJK_FONT or lv.font_montserrat_14
 
 
 def _clean(obj):
@@ -264,6 +295,23 @@ def _canvas_bitmap_1bpp(canvas, bitmap, bitmap_w, bitmap_h, x0, y0, color):
                 canvas.set_px(x0 + x, y0 + y, lv.color_hex(color), lv.OPA.COVER)
 
 
+def _settings_label(parent, x, y, w, h, text, align=None, color=COLOR_SETTINGS_TEXT):
+    bitmap = SETTINGS_TEXT_BITMAPS.get(text)
+    if bitmap:
+        bitmap_w, bitmap_h, bitmap_data = bitmap
+        dx = 0
+        if align == lv.TEXT_ALIGN.CENTER:
+            dx = max(0, (int(w) - bitmap_w) // 2)
+        elif align == lv.TEXT_ALIGN.RIGHT:
+            dx = max(0, int(w) - bitmap_w)
+        dy = max(0, (int(h) - bitmap_h) // 2)
+        canvas = _canvas(parent, bitmap_w, bitmap_h)
+        canvas.set_pos(int(x) + dx, int(y) + dy)
+        _canvas_bitmap_1bpp(canvas, bitmap_data, bitmap_w, bitmap_h, 0, 0, color)
+        return canvas
+    return _label(parent, x, y, w, h, text, align, color, _cjk_font())
+
+
 def _cn_key(parent, x, y, text, color=COLOR_TEXT):
     bitmap_w, bitmap_h, bitmap = CN_KEY_BITMAPS[text]
     canvas = _canvas(parent, bitmap_w, bitmap_h)
@@ -337,39 +385,28 @@ def _quick_orientation_value(portrait, common_value, portrait_value, landscape_v
 
 
 def _quick_default_layout(w, h, tools_vertical):
-    portrait = w < h
+    _ = tools_vertical
     gap = 8
     layout = {"items": []}
-    if tools_vertical:
-        tool_w = 104 if portrait else 126
-        tool_h = 56
-        icon_w = 72 if portrait else 52
-        icon_h = 42 if portrait else 32
-        grid_w = tool_w + gap + icon_w
-        grid_h = len(QUICK_ITEMS) * icon_h + (len(QUICK_ITEMS) - 1) * gap
-        left = (w - grid_w) // 2
-        top = (h - grid_h) // 2
-        icon_x = left + tool_w + gap
-        layout["brightness"] = [left, top, tool_w, tool_h]
-        layout["volume"] = [left, top + tool_h + gap, tool_w, tool_h]
-        for index in range(len(QUICK_ITEMS)):
-            layout["items"].append([icon_x, top + index * (icon_h + gap), icon_w, icon_h])
-        return layout
-
-    cols = len(QUICK_ITEMS)
+    cols = 4
     rows = 2
     pad = 16
-    tile_h = 56 if portrait else 64
     tile_w = (w - pad * 2 - (cols - 1) * gap) // cols
-    grid_w = cols * tile_w + (cols - 1) * gap
-    grid_h = rows * tile_h + (rows - 1) * gap
+    tile_h = (h - pad * 2 - (rows - 1) * gap) // rows
+    tile = max(1, min(tile_w, tile_h))
+    grid_w = cols * tile + (cols - 1) * gap
+    grid_h = rows * tile + (rows - 1) * gap
     left = (w - grid_w) // 2
     top = (h - grid_h) // 2
-    control_w = (grid_w - gap) // 2
-    layout["brightness"] = [left, top, control_w, tile_h]
-    layout["volume"] = [left + control_w + gap, top, control_w, tile_h]
+    slots = []
+    for slot in range(cols * rows):
+        col = slot % cols
+        row = slot // cols
+        slots.append([left + col * (tile + gap), top + row * (tile + gap), tile, tile])
+    layout["brightness"] = slots[0]
+    layout["volume"] = slots[1]
     for index in range(len(QUICK_ITEMS)):
-        layout["items"].append([left + index * (tile_w + gap), top + tile_h + gap, tile_w, tile_h])
+        layout["items"].append(slots[index + 2])
     return layout
 
 
@@ -594,24 +631,13 @@ def _draw_dashboard(scr, w, h, sample=False, soc_percent=72, charging=True,
 
 
 def _draw_pull_handle(scr, w):
-    pull_w = 116 if w < 320 else 140
-    zone = lv.obj(scr)
-    _clean(zone)
-    zone.set_pos((w - pull_w) // 2, 0)
-    zone.set_size(pull_w, 34)
-    zone.set_style_bg_opa(lv.OPA.TRANSP, 0)
-    handle = lv.obj(zone)
-    _clean(handle)
-    handle.set_pos((pull_w - 36) // 2, 3)
-    handle.set_size(36, 4)
-    handle.set_style_radius(2, 0)
-    handle.set_style_bg_color(lv.color_hex(COLOR_MUTED), 0)
-    handle.set_style_bg_opa(lv.OPA.COVER, 0)
+    _ = (scr, w)
 
 
 def _draw_level_tile(parent, x, y, w, h, icon, value=85, value_min=0, vertical=False):
     _ = (value, value_min, vertical)
     box = _panel(parent, x, y, w, h, COLOR_PANEL_ALT)
+    box.set_style_radius(8, 0)
     _symbol_icon(box, w - 8, h - 8, icon, COLOR_TEXT, lv.font_montserrat_24)
 
 
@@ -640,23 +666,25 @@ def _draw_quick_panel(scr, w, h, brightness=85, volume=65,
     _draw_level_tile(scr, vx, vy, vw, vh,
                      lv.SYMBOL.VOLUME_MID, volume, 0, vertical)
 
-    edit_box = _panel(scr, w - 34, 8, 26, 24, COLOR_PANEL_ALT)
+    edit_box = _panel(scr, w - 36, 8, 28, 28, COLOR_PANEL_ALT)
+    edit_box.set_style_radius(8, 0)
     edit_box.set_style_border_width(1 if edit else 0, 0)
     edit_box.set_style_border_color(lv.color_hex(COLOR_SOC), 0)
     edit_box.set_style_border_opa(lv.OPA.COVER, 0)
-    _symbol_icon(edit_box, 18, 16, lv.SYMBOL.EDIT, COLOR_SOC if edit else COLOR_MUTED,
+    _symbol_icon(edit_box, 20, 20, lv.SYMBOL.EDIT, COLOR_SOC if edit else COLOR_MUTED,
                  lv.font_montserrat_14, 16)
 
     active = {"bt": bt, "hotspot": hotspot, "wifi": wifi}
     for index, (name, icon, is_hotspot) in enumerate(QUICK_ITEMS):
         x, y, item_w, item_h = layout["items"][index]
         if pressed == name:
-            x += 2
-            y += 2
-            item_w -= 4
-            item_h -= 4
+            x += 4
+            y += 4
+            item_w -= 8
+            item_h -= 8
         color = COLOR_SOC if active.get(name, False) else COLOR_TEXT
         box = _panel(scr, x, y, item_w, item_h, COLOR_PANEL_ALT)
+        box.set_style_radius(8, 0)
         if name == "bt":
             _bluetooth_icon(box, item_w, item_h, active.get(name, False))
         elif is_hotspot:
@@ -665,51 +693,123 @@ def _draw_quick_panel(scr, w, h, brightness=85, volume=65,
             _symbol_icon(box, item_w - 8, item_h - 8, icon, color, lv.font_montserrat_24)
 
 
-def _draw_settings(scr, w, h):
-    portrait = w < h
-    back = _panel(scr, 8, 8, 54, 24, COLOR_PANEL_ALT)
-    back.set_style_radius(8, 0)
-    _label(back, 6, 4, 42, 16, "BACK", lv.TEXT_ALIGN.CENTER, COLOR_ACCENT)
-    _label(scr, 72, 10, w - 80, 20, "SETTINGS", None, COLOR_TEXT)
+SETTINGS_OPTIONS = (
+    ("wifi", lv.SYMBOL.WIFI, "无线网络", "WiFi 配置"),
+    ("hotspot", HOTSPOT_SYMBOL, "热点共享", "Setup AP"),
+    ("bt", BT_SYMBOL, "蓝牙", "BLE 绑定"),
+    ("bms", getattr(lv.SYMBOL, "CHARGE", "B"), "保护板设置", "BMS 状态"),
+    ("system", lv.SYMBOL.SETTINGS, "系统", "显示与控制"),
+    ("about", "i", "关于本机", "设备信息"),
+)
 
-    charge = getattr(lv.SYMBOL, "CHARGE", "B")
-    options = (
-        ("wifi", lv.SYMBOL.WIFI, "WIFI", "STA NETWORK"),
-        ("hotspot", HOTSPOT_SYMBOL, "HOTSPOT", "SETUP AP"),
-        ("bt", BT_SYMBOL, "BT", "BLE RADIO"),
-        ("symbol", charge, "BMS", "PROTECT BOARD"),
-        ("symbol", lv.SYMBOL.SETTINGS, "SYSTEM", "DISPLAY"),
-        ("symbol", "i", "ABOUT", "DEVICE"),
-    )
+SETTINGS_DETAIL_ROWS = {
+    "wifi": (
+        ("状态", "当前: Setup AP", False),
+        ("配置入口", "开启配网入口", True),
+        ("手机页面", "192.168.4.1 网页配置", False),
+    ),
+    "hotspot": (
+        ("状态", "热点已打开", False),
+        ("名称", "fuckingBms_xxxxxx", False),
+        ("密码", "8 位数字", False),
+        ("二维码", "网页查看", True),
+    ),
+    "bt": (
+        ("状态", "未连接", False),
+        ("扫描绑定", "扫描保护板", True),
+    ),
+    "bms": (
+        ("连接状态", "未连接", False),
+        ("保护信息", "暂无告警", False),
+        ("扫描绑定", "扫描保护板", True),
+    ),
+    "system": (
+        ("亮度", "快捷面板调节", False),
+        ("音量", "快捷面板调节", False),
+        ("旋转屏幕", "点击操作", True),
+        ("语言切换", "点击操作", True),
+        ("恢复默认", "点击操作", True),
+    ),
+    "about": (
+        ("设备", "ESP32 BMS GPS", False),
+        ("固件版本", "本地构建", False),
+        ("屏幕", "ST7789", False),
+    ),
+}
+
+
+def _settings_icon(parent, kind, icon, w, h, color=COLOR_SETTINGS_ACCENT):
+    if kind == "bt":
+        _bluetooth_icon(parent, w, h, color=color)
+    elif kind == "hotspot":
+        _hotspot_icon(parent, w, h, color)
+    else:
+        _symbol_icon(parent, w - 8, h - 8, icon, color, lv.font_montserrat_24)
+
+
+def _draw_settings_root_card(scr, x, y, w, h, item):
+    kind, icon, title, subtitle = item
+    box = _panel(scr, x, y, w, h, COLOR_SETTINGS_CARD)
+    box.set_style_radius(8, 0)
+    box.set_style_border_width(1, 0)
+    box.set_style_border_color(lv.color_hex(COLOR_SETTINGS_BORDER), 0)
+    box.set_style_border_opa(lv.OPA.COVER, 0)
+    icon_box = lv.obj(box)
+    _clean(icon_box)
+    icon_box.set_pos(10, 8)
+    icon_box.set_size(36, h - 16)
+    icon_box.set_style_radius(8, 0)
+    icon_box.set_style_bg_color(lv.color_hex(COLOR_SETTINGS_ICON_BG), 0)
+    icon_box.set_style_bg_opa(lv.OPA.COVER, 0)
+    _settings_icon(icon_box, kind, icon, 36, h - 16)
+    _settings_label(box, 58, 7, w - 88, 18, title, None, COLOR_SETTINGS_TEXT)
+    _settings_label(box, 58, 29, w - 88, 16, subtitle, None, COLOR_SETTINGS_MUTED)
+    _label(box, w - 22, (h - 16) // 2, 14, 16, ">", lv.TEXT_ALIGN.CENTER,
+           COLOR_SETTINGS_MUTED, lv.font_montserrat_14)
+
+
+def _draw_settings_detail_row(scr, x, y, w, h, title, subtitle, action):
+    box = _panel(scr, x, y, w, h, COLOR_SETTINGS_CARD)
+    box.set_style_radius(8, 0)
+    box.set_style_border_width(1, 0)
+    box.set_style_border_color(lv.color_hex(COLOR_SETTINGS_BORDER), 0)
+    box.set_style_border_opa(lv.OPA.COVER, 0)
+    _settings_label(box, 12, 7, w - 42, 18, title, None, COLOR_SETTINGS_TEXT)
+    _settings_label(box, 12, 30, w - 42, 16, subtitle, None, COLOR_SETTINGS_MUTED)
+    if action:
+        _label(box, w - 24, (h - 16) // 2, 14, 16, ">", lv.TEXT_ALIGN.CENTER,
+               COLOR_SETTINGS_ACCENT, lv.font_montserrat_14)
+
+
+def _draw_settings(scr, w, h, settings_page="root"):
+    portrait = w < h
+    scr.set_style_bg_color(lv.color_hex(COLOR_SETTINGS_BG), 0)
+    scr.set_style_bg_opa(lv.OPA.COVER, 0)
     card_x = 8
     card_w = w - 16
-    card_h = 50 if portrait else 44
     gap = 8
-    first_y = 42
-    for index, (kind, icon, title, subtitle) in enumerate(options):
-        y = first_y + index * (card_h + gap)
-        box = _panel(scr, card_x, y, card_w, card_h, COLOR_PANEL)
-        box.set_style_radius(8, 0)
-        box.set_style_border_width(1, 0)
-        box.set_style_border_color(lv.color_hex(COLOR_PANEL_ALT), 0)
-        box.set_style_border_opa(lv.OPA.COVER, 0)
-        icon_box = lv.obj(box)
-        _clean(icon_box)
-        icon_box.set_pos(10, 7)
-        icon_box.set_size(34, card_h - 14)
-        icon_box.set_style_bg_opa(lv.OPA.TRANSP, 0)
-        if kind == "bt":
-            _bluetooth_icon(icon_box, 42, card_h - 6, color=COLOR_ACCENT)
-        elif kind == "hotspot":
-            _hotspot_icon(icon_box, 42, card_h - 6, COLOR_ACCENT)
-        else:
-            _symbol_icon(icon_box, 34, card_h - 14, icon, COLOR_ACCENT,
-                         lv.font_montserrat_24)
-        _label(box, 54, 7, card_w - 84, 18, title, None, COLOR_TEXT)
-        _label(box, 54, 27, card_w - 84, 16, subtitle, None, COLOR_MUTED)
-        if index < 4:
-            _label(box, card_w - 22, (card_h - 16) // 2, 14, 16, ">",
-                   lv.TEXT_ALIGN.CENTER, COLOR_MUTED)
+    if settings_page in (None, "", "root"):
+        _settings_label(scr, 16, 12, w - 32, 22, "设置", None, COLOR_SETTINGS_TEXT)
+        card_h = 56 if portrait else 48
+        first_y = 48 if portrait else 42
+        for index, item in enumerate(SETTINGS_OPTIONS):
+            _draw_settings_root_card(scr, card_x, first_y + index * (card_h + gap),
+                                     card_w, card_h, item)
+        return
+
+    page = str(settings_page)
+    title = "设置"
+    for item in SETTINGS_OPTIONS:
+        if item[0] == page:
+            title = item[2]
+            break
+    rows = SETTINGS_DETAIL_ROWS.get(page, ())
+    _settings_label(scr, 16, 12, w - 32, 22, title, None, COLOR_SETTINGS_TEXT)
+    row_h = 56 if portrait else 48
+    first_y = 48 if portrait else 42
+    for index, row in enumerate(rows):
+        _draw_settings_detail_row(scr, card_x, first_y + index * (row_h + gap),
+                                  card_w, row_h, row[0], row[1], row[2])
 
 
 def build(scr, view="home", sample=False, brightness=85, volume=65,
@@ -718,7 +818,7 @@ def build(scr, view="home", sample=False, brightness=85, volume=65,
           tool_axis=None, portrait_tool_axis=None, landscape_tool_axis=None,
           icon_offsets=None, portrait_icon_offsets=None, landscape_icon_offsets=None,
           tool_offsets=None, portrait_tool_offsets=None, landscape_tool_offsets=None,
-          pressed=None):
+          pressed=None, settings_page="root"):
     try:
         w = scr.get_width()
         h = scr.get_height()
@@ -750,9 +850,7 @@ def build(scr, view="home", sample=False, brightness=85, volume=65,
                           pressed)
     elif view == "settings":
         scr.clean()
-        scr.set_style_bg_color(lv.color_hex(COLOR_BG), 0)
-        scr.set_style_bg_opa(lv.OPA.COVER, 0)
-        _draw_settings(scr, w, h)
+        _draw_settings(scr, w, h, settings_page)
     else:
         _draw_dashboard(scr, w, h, sample, soc_percent, charging, bms_mode, wave_offset)
         _draw_pull_handle(scr, w)

@@ -37,6 +37,8 @@ typedef struct {
     uint8_t brightness_percent;
     bool volume_percent_valid;
     uint8_t volume_percent;
+    bool volume_feedback_valid;
+    uint8_t volume_feedback_percent;
 } esp_bms_lvgl_action_event_t;
 
 typedef enum {

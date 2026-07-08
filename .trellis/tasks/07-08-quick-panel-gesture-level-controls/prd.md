@@ -104,6 +104,18 @@ Make the TFT quick panel feel direct and consistent:
 - R35. The root settings page should be a stacked-card scrolling list with only
   these top-level options: Wi-Fi, hotspot, Bluetooth, BMS/protection board,
   system, and about device.
+- R36. The TFT settings page should use Chinese labels and a light stacked-card
+  UI with a small compiled font subset for the required glyphs.
+- R37. The settings page should return with a left-to-right swipe: detail pages
+  return to the settings root, and the settings root returns to the dashboard.
+  It should not use a visible BACK button or upward-swipe return.
+- R38. Each settings category should have a detail page with status rows and
+  basic function rows for Wi-Fi reprovisioning, hotspot/config entry, Bluetooth
+  or BMS binding scan, display rotation, language toggle, restore defaults, and
+  about-device information.
+- R39. Volume feedback should be carried as an explicit UI action-event feedback
+  field so fast drag feedback still plays even when the runtime volume value did
+  not change on the final event.
 
 ## Acceptance Criteria
 
@@ -155,11 +167,20 @@ Make the TFT quick panel feel direct and consistent:
 - [ ] AC25. Settings preview and firmware show a scrollable stacked-card root
       settings page with only Wi-Fi, hotspot, Bluetooth, BMS, system, and about
       options.
+- [ ] AC26. Settings root and detail pages are Chinese, have no BACK button,
+      and use left-to-right swipe for return.
+- [ ] AC27. Settings detail pages exist for Wi-Fi, hotspot, Bluetooth,
+      protection board, system, and about device, with the expected basic
+      action/status rows.
+- [ ] AC28. Volume drag events request audio feedback through
+      `volume_feedback_valid`/`volume_feedback_percent`, independent of whether
+      the runtime state changed.
 
 ## Out Of Scope
 
 - Replacing the current GPIO26/GPIO4 audio feedback hardware path.
-- Adding new fonts or non-ASCII TFT labels.
+- Adding a full CJK font; only the explicit settings-page glyph subset is in
+  scope.
 - Adding LVGL opacity/transform animations or bitmap assets for this interaction.
 - Changing Web UI configuration behavior.
 

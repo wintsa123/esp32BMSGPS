@@ -217,8 +217,10 @@ idf.py -p /dev/ttyUSB0 flash
   button redraw can stall the LVGL worker and trip the task watchdog. Use
   border/color state changes unless the effect is validated on hardware with
   Wi-Fi, HTTP, NimBLE, and touch active.
-- Keep visible TFT text ASCII until a separate font task approves a wider font
-  plan.
+- Keep visible TFT text ASCII by default. A feature may use Chinese or other
+  non-ASCII TFT text only when it ships an explicit compiled LVGL font subset
+  for the required glyphs, keeps the glyph list scoped to that feature, and is
+  validated with preview plus `./scripts/esp-idf-env.sh build`.
 
 ## Web API Contract
 
