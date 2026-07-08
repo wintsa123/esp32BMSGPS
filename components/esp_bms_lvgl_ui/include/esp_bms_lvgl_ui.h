@@ -32,6 +32,7 @@ typedef enum {
 
 typedef struct {
     esp_bms_lvgl_action_t action;
+    bool committed;
     bool brightness_percent_valid;
     uint8_t brightness_percent;
     bool volume_percent_valid;

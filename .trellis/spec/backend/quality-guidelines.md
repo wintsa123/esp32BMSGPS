@@ -178,15 +178,45 @@ idf.py -p /dev/ttyUSB0 flash
 - Dynamic LVGL labels and QR widgets should update only when their rendered
   value changes.
 - Runtime snapshot updates should be deferred while page drag/settle is active.
+- After the first UI is visible, touch/UI action failures must not use
+  `ESP_ERROR_CHECK` in the main loop for brightness, rotation, or snapshot
+  refresh. Log `esp_err_to_name(ret)`, keep the loop alive, and do not persist
+  display settings when the hardware/UI apply step failed.
 - LVGL long-press handlers that must not also run the click action should call
   `lv_indev_wait_release(lv_indev_active())` from `LV_EVENT_LONG_PRESSED`;
   LVGL 9 can still emit `LV_EVENT_CLICKED` when the pointer is released after a
   long press.
+- LVGL timers that hide transient UI objects must be deleted before deleting or
+  rebuilding the screen root. Otherwise a rotation rebuild can leave a timer
+  callback pointing at a deleted object.
+- Quick-panel return gestures should start from the panel/background return
+  area, not from ordinary quick button events. Button press/release/click paths
+  should not share a broad upward-return start condition, or normal taps can be
+  swallowed as panel-return drags.
+- Quick-panel controls should be interactive only after the panel is fully open
+  and settled. During pull-to-open, return-to-home, or y-position settle
+  animation, quick button and level-control event handlers should ignore
+  actions to avoid touch drift firing a button through a partially visible
+  panel.
+- The root TFT settings page should stay a stacked-card scrolling category
+  list. Do not fill it with unrelated one-off action buttons; top-level
+  entries should stay limited to Wi-Fi, hotspot, Bluetooth, BMS/protection
+  board, system, and about-device categories until dedicated subpages exist.
 - TFT icon controls should prefer LVGL built-in `LV_SYMBOL_*` glyphs from the
   enabled Montserrat/FontAwesome fonts, or simple LVGL primitives for tiny
   custom icons. Enable any required built-in font size in both `sdkconfig` and
   `sdkconfig.defaults`. Do not depend on external iconfont assets until a
   device-side font/image loading path is explicitly added.
+- User-provided/generated LVGL font C files may be compiled into a component
+  and referenced with `LV_FONT_DECLARE` for explicit icon requirements. Keep
+  the glyph range and UTF-8 literal in the same change, and validate with
+  `./scripts/esp-idf-env.sh build`.
+- Do not use LVGL `transform_scale`, animated object opacity, or other effects
+  that force off-screen draw layers for TFT quick controls. After Wi-Fi and
+  NimBLE start, free heap is tight enough that layer allocation during a quick
+  button redraw can stall the LVGL worker and trip the task watchdog. Use
+  border/color state changes unless the effect is validated on hardware with
+  Wi-Fi, HTTP, NimBLE, and touch active.
 - Keep visible TFT text ASCII until a separate font task approves a wider font
   plan.
 

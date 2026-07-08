@@ -1,3 +1,4 @@
+#include "esp_bms_audio_feedback.h"
 #include "esp_bms_idf_runtime.h"
 #include "esp_bms_lvgl_bridge.h"
 #include "esp_bms_lvgl_ui.h"
@@ -58,6 +59,10 @@ void app_main(void)
 
     esp_bms_idf_runtime_t runtime;
     esp_bms_idf_runtime_init(&runtime);
+    const esp_err_t audio_ret = esp_bms_audio_feedback_init();
+    if (audio_ret != ESP_OK) {
+        ESP_LOGW(TAG, "audio feedback init failed: %s", esp_err_to_name(audio_ret));
+    }
     log_heap_state("runtime_init");
 
     const esp_bms_lvgl_bridge_config_t config = ESP_BMS_LVGL_BRIDGE_DEFAULT_CONFIG();
@@ -105,29 +110,59 @@ void app_main(void)
 
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(50));
+        esp_bms_audio_feedback_tick();
         const uint8_t previous_brightness = runtime.brightness_percent;
         const esp_bms_idf_display_rotation_t previous_rotation = runtime.display_rotation;
         const bool tick_changed = esp_bms_idf_runtime_tick(&runtime, 50);
 
-        ESP_ERROR_CHECK(esp_bms_lvgl_bridge_lock(-1));
+        esp_err_t ret = esp_bms_lvgl_bridge_lock(-1);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "LVGL lock failed while handling UI action: %s", esp_err_to_name(ret));
+            continue;
+        }
         esp_bms_lvgl_action_event_t action_event = { 0 };
-        ESP_ERROR_CHECK(esp_bms_lvgl_ui_take_action_event(&action_event));
+        ret = esp_bms_lvgl_ui_take_action_event(&action_event);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "take UI action failed: %s", esp_err_to_name(ret));
+            esp_bms_lvgl_bridge_unlock();
+            continue;
+        }
         const esp_bms_lvgl_action_t action = action_event.action;
         const bool should_start_setup_ap =
             action == ESP_BMS_LVGL_ACTION_ENABLE_WIFI_REPROVISIONING && !runtime.setup_ap_started;
         const bool action_changed = esp_bms_idf_runtime_apply_action_event(&runtime, &action_event);
+        bool display_apply_failed = false;
         if ((tick_changed || action_changed) && runtime.brightness_percent != previous_brightness) {
-            ESP_ERROR_CHECK(esp_bms_lvgl_bridge_set_brightness(runtime.brightness_percent));
+            ret = esp_bms_lvgl_bridge_set_brightness(runtime.brightness_percent);
+            if (ret != ESP_OK) {
+                ESP_LOGE(TAG, "apply brightness action failed: %s", esp_err_to_name(ret));
+                runtime.brightness_percent = previous_brightness;
+                runtime.snapshot.brightness_percent = previous_brightness;
+                display_apply_failed = true;
+            }
         }
         if ((tick_changed || action_changed) && runtime.display_rotation != previous_rotation) {
-            ESP_ERROR_CHECK(esp_bms_lvgl_bridge_set_rotation(bridge_rotation_from_runtime(runtime.display_rotation)));
+            ret = esp_bms_lvgl_bridge_set_rotation(bridge_rotation_from_runtime(runtime.display_rotation));
+            if (ret != ESP_OK) {
+                ESP_LOGE(TAG, "apply rotation action failed: %s", esp_err_to_name(ret));
+                runtime.display_rotation = previous_rotation;
+                display_apply_failed = true;
+            }
         }
-        if (tick_changed || action_changed) {
-            ESP_ERROR_CHECK(esp_bms_lvgl_ui_update(&runtime.snapshot));
+        if (tick_changed || action_changed || display_apply_failed) {
+            ret = esp_bms_lvgl_ui_update(&runtime.snapshot);
+            if (ret != ESP_OK) {
+                ESP_LOGE(TAG, "update UI after action failed: %s", esp_err_to_name(ret));
+                display_apply_failed = true;
+            }
         }
         const bool should_save_display_settings =
-            action_changed && action_should_save_display_settings(action);
+            action_event.committed && !display_apply_failed && action_should_save_display_settings(action);
         esp_bms_lvgl_bridge_unlock();
+
+        if (action == ESP_BMS_LVGL_ACTION_SET_VOLUME && action_event.volume_percent_valid) {
+            esp_bms_audio_feedback_play_volume(runtime.volume_percent);
+        }
 
         if (should_save_display_settings) {
             const esp_err_t save_ret = esp_bms_idf_runtime_save_display_settings(&runtime);
@@ -137,13 +172,20 @@ void app_main(void)
         }
 
         if (should_start_setup_ap) {
-            const esp_err_t ret = esp_bms_idf_runtime_start_setup_ap(&runtime);
+            ret = esp_bms_idf_runtime_start_setup_ap(&runtime);
             if (ret != ESP_OK) {
                 ESP_LOGE(TAG, "setup AP start failed: %s", esp_err_to_name(ret));
             }
-            ESP_ERROR_CHECK(esp_bms_lvgl_bridge_lock(-1));
-            ESP_ERROR_CHECK(esp_bms_lvgl_ui_update(&runtime.snapshot));
-            esp_bms_lvgl_bridge_unlock();
+            ret = esp_bms_lvgl_bridge_lock(-1);
+            if (ret == ESP_OK) {
+                const esp_err_t update_ret = esp_bms_lvgl_ui_update(&runtime.snapshot);
+                if (update_ret != ESP_OK) {
+                    ESP_LOGE(TAG, "update UI after setup AP action failed: %s", esp_err_to_name(update_ret));
+                }
+                esp_bms_lvgl_bridge_unlock();
+            } else {
+                ESP_LOGE(TAG, "LVGL lock after setup AP action failed: %s", esp_err_to_name(ret));
+            }
         }
 
         if (action != ESP_BMS_LVGL_ACTION_NONE) {
