@@ -107,7 +107,7 @@ void app_main(void)
     if (bms_ble_ret != ESP_OK) {
         ESP_LOGW(TAG, "BMS BLE optional startup failed: %s", esp_err_to_name(bms_ble_ret));
     }
-    if (runtime.bms_ble_ready) {
+    if (esp_bms_idf_runtime_flag_get(&runtime, ESP_BMS_IDF_RUNTIME_FLAG_BMS_BLE_READY)) {
         ESP_ERROR_CHECK(esp_bms_lvgl_bridge_lock(-1));
         ESP_ERROR_CHECK(esp_bms_lvgl_ui_update(&runtime.snapshot));
         esp_bms_lvgl_bridge_unlock();
@@ -136,7 +136,8 @@ void app_main(void)
         const esp_bms_lvgl_action_t action = action_event.action;
         const bool should_start_setup_services =
             action == ESP_BMS_LVGL_ACTION_ENABLE_WIFI_REPROVISIONING &&
-            (!runtime.setup_ap_started || !runtime.http_server_started);
+            (!esp_bms_idf_runtime_flag_get(&runtime, ESP_BMS_IDF_RUNTIME_FLAG_SETUP_AP_STARTED) ||
+             !esp_bms_idf_runtime_flag_get(&runtime, ESP_BMS_IDF_RUNTIME_FLAG_HTTP_SERVER_STARTED));
         const bool action_changed = esp_bms_idf_runtime_apply_action_event(&runtime, &action_event);
         bool display_apply_failed = false;
         if ((tick_changed || action_changed) && runtime.brightness_percent != previous_brightness) {
@@ -163,11 +164,14 @@ void app_main(void)
                 display_apply_failed = true;
             }
         }
+        const bool action_committed =
+            esp_bms_lvgl_action_event_flag_get(&action_event, ESP_BMS_LVGL_ACTION_EVENT_FLAG_COMMITTED);
         const bool should_save_display_settings =
-            action_event.committed && !display_apply_failed && action_should_save_display_settings(action);
+            action_committed && !display_apply_failed && action_should_save_display_settings(action);
         esp_bms_lvgl_bridge_unlock();
 
-        if (action_event.volume_feedback_valid) {
+        if (esp_bms_lvgl_action_event_flag_get(&action_event,
+                                               ESP_BMS_LVGL_ACTION_EVENT_FLAG_VOLUME_FEEDBACK_VALID)) {
             esp_bms_audio_feedback_play_volume(action_event.volume_feedback_percent);
         }
 

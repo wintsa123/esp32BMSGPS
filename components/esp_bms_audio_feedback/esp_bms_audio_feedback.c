@@ -1,5 +1,7 @@
 #include "esp_bms_audio_feedback.h"
 
+#include <stdbool.h>
+
 #include "driver/gpio.h"
 #include "driver/ledc.h"
 #include "esp_check.h"
@@ -17,21 +19,36 @@ static const char *TAG = "bms_audio_feedback";
 #define AUDIO_PWM_MAX_DUTY 512U
 #define AUDIO_PWM_MIN_AUDIBLE_DUTY 24U
 #define AUDIO_VOLUME_BEEP_US 90000LL
+#define AUDIO_FLAG_READY (UINT8_C(1) << 0)
+#define AUDIO_FLAG_ACTIVE (UINT8_C(1) << 1)
 
-static bool s_audio_ready;
-static bool s_audio_active;
+static uint8_t s_audio_flags;
 static int64_t s_audio_until_us;
+
+static bool audio_flag_get(uint8_t flag)
+{
+    return (s_audio_flags & flag) != 0U;
+}
+
+static void audio_flag_set(uint8_t flag, bool enabled)
+{
+    if (enabled) {
+        s_audio_flags |= flag;
+    } else {
+        s_audio_flags &= (uint8_t)~flag;
+    }
+}
 
 static void audio_feedback_stop(void)
 {
-    if (!s_audio_ready || !s_audio_active) {
+    if (!audio_flag_get(AUDIO_FLAG_READY) || !audio_flag_get(AUDIO_FLAG_ACTIVE)) {
         return;
     }
 
     (void)ledc_set_duty(AUDIO_PWM_MODE, AUDIO_PWM_CHANNEL, 0);
     (void)ledc_update_duty(AUDIO_PWM_MODE, AUDIO_PWM_CHANNEL);
     (void)gpio_set_level(AUDIO_ENABLE_GPIO, 0);
-    s_audio_active = false;
+    audio_flag_set(AUDIO_FLAG_ACTIVE, false);
     s_audio_until_us = 0;
 }
 
@@ -71,8 +88,8 @@ esp_err_t esp_bms_audio_feedback_init(void)
     };
     ESP_RETURN_ON_ERROR(ledc_channel_config(&channel_config), TAG, "configure audio PWM channel failed");
 
-    s_audio_ready = true;
-    s_audio_active = false;
+    audio_flag_set(AUDIO_FLAG_READY, true);
+    audio_flag_set(AUDIO_FLAG_ACTIVE, false);
     s_audio_until_us = 0;
     ESP_LOGI(TAG, "audio feedback ready: pwm_gpio=%d enable_gpio=%d freq=%u",
              AUDIO_PWM_GPIO, AUDIO_ENABLE_GPIO, AUDIO_PWM_FREQ_HZ);
@@ -81,7 +98,7 @@ esp_err_t esp_bms_audio_feedback_init(void)
 
 void esp_bms_audio_feedback_play_volume(uint8_t volume_percent)
 {
-    if (!s_audio_ready) {
+    if (!audio_flag_get(AUDIO_FLAG_READY)) {
         return;
     }
 
@@ -104,13 +121,13 @@ void esp_bms_audio_feedback_play_volume(uint8_t volume_percent)
         return;
     }
 
-    s_audio_active = true;
+    audio_flag_set(AUDIO_FLAG_ACTIVE, true);
     s_audio_until_us = esp_timer_get_time() + AUDIO_VOLUME_BEEP_US;
 }
 
 void esp_bms_audio_feedback_tick(void)
 {
-    if (s_audio_active && esp_timer_get_time() >= s_audio_until_us) {
+    if (audio_flag_get(AUDIO_FLAG_ACTIVE) && esp_timer_get_time() >= s_audio_until_us) {
         audio_feedback_stop();
     }
 }

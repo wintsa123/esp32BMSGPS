@@ -130,6 +130,18 @@ static esp_err_t runtime_save_setup_ap_credentials(const esp_bms_idf_runtime_t *
 static void runtime_ensure_setup_ap_credentials(esp_bms_idf_runtime_t *runtime);
 static char runtime_hex_char(uint8_t value);
 
+#define RUNTIME_FLAG(runtime, name) \
+    esp_bms_idf_runtime_flag_get((runtime), ESP_BMS_IDF_RUNTIME_FLAG_##name)
+#define RUNTIME_SET_FLAG(runtime, name, enabled) \
+    esp_bms_idf_runtime_flag_set((runtime), ESP_BMS_IDF_RUNTIME_FLAG_##name, (enabled))
+#define RUNTIME_SNAPSHOT(runtime) ((runtime) ? &(runtime)->snapshot : NULL)
+#define RUNTIME_SNAPSHOT_FLAG(runtime, name) \
+    esp_bms_dashboard_snapshot_flag_get(RUNTIME_SNAPSHOT(runtime), ESP_BMS_DASHBOARD_FLAG_##name)
+#define RUNTIME_SET_SNAPSHOT_FLAG(runtime, name, enabled) \
+    esp_bms_dashboard_snapshot_flag_set(RUNTIME_SNAPSHOT(runtime), ESP_BMS_DASHBOARD_FLAG_##name, (enabled))
+#define ACTION_EVENT_FLAG(event, name) \
+    esp_bms_lvgl_action_event_flag_get((event), ESP_BMS_LVGL_ACTION_EVENT_FLAG_##name)
+
 static esp_bms_idf_runtime_t *s_bms_ble_runtime;
 
 static void runtime_set_error(esp_bms_idf_runtime_t *runtime, const char *text)
@@ -165,22 +177,24 @@ static bool runtime_project_bluetooth_snapshot(esp_bms_idf_runtime_t *runtime)
         return false;
     }
 
-    const bool enabled = runtime->bluetooth_advertise_requested ||
-                         runtime->bluetooth_advertising ||
-                         runtime->bluetooth_connected;
-    const bool changed = runtime->snapshot.bluetooth_enabled != enabled ||
-                         runtime->snapshot.bluetooth_advertising != runtime->bluetooth_advertising ||
-                         runtime->snapshot.bluetooth_connected != runtime->bluetooth_connected ||
+    const bool enabled = RUNTIME_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED) ||
+                         RUNTIME_FLAG(runtime, BLUETOOTH_ADVERTISING) ||
+                         RUNTIME_FLAG(runtime, BLUETOOTH_CONNECTED);
+    const bool changed = RUNTIME_SNAPSHOT_FLAG(runtime, BLUETOOTH_ENABLED) != enabled ||
+                         RUNTIME_SNAPSHOT_FLAG(runtime, BLUETOOTH_ADVERTISING) !=
+                             RUNTIME_FLAG(runtime, BLUETOOTH_ADVERTISING) ||
+                         RUNTIME_SNAPSHOT_FLAG(runtime, BLUETOOTH_CONNECTED) !=
+                             RUNTIME_FLAG(runtime, BLUETOOTH_CONNECTED) ||
                          strcmp(runtime->snapshot.bluetooth_name, runtime->bluetooth_name) != 0;
 
-    runtime->snapshot.bluetooth_enabled = enabled;
-    runtime->snapshot.bluetooth_advertising = runtime->bluetooth_advertising;
-    runtime->snapshot.bluetooth_connected = runtime->bluetooth_connected;
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, BLUETOOTH_ENABLED, enabled);
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, BLUETOOTH_ADVERTISING, RUNTIME_FLAG(runtime, BLUETOOTH_ADVERTISING));
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, BLUETOOTH_CONNECTED, RUNTIME_FLAG(runtime, BLUETOOTH_CONNECTED));
     runtime_copy_snapshot_text(runtime->snapshot.bluetooth_name,
                                sizeof(runtime->snapshot.bluetooth_name),
                                runtime->bluetooth_name);
     if (changed) {
-        runtime->bluetooth_snapshot_dirty = true;
+        RUNTIME_SET_FLAG(runtime, BLUETOOTH_SNAPSHOT_DIRTY, true);
     }
     return changed;
 }
@@ -310,8 +324,8 @@ static void runtime_wifi_scan_project_snapshot(esp_bms_idf_runtime_t *runtime)
     for (uint8_t index = 0; index < runtime->snapshot.wifi_scan_count; ++index) {
         runtime->snapshot.wifi_scan_candidates[index] = runtime->wifi_scan_candidates[index];
     }
-    runtime->snapshot.wifi_scan_active = runtime->wifi_scan_active;
-    runtime->snapshot.wifi_scan_complete = runtime->wifi_scan_complete;
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, WIFI_SCAN_ACTIVE, RUNTIME_FLAG(runtime, WIFI_SCAN_ACTIVE));
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, WIFI_SCAN_COMPLETE, RUNTIME_FLAG(runtime, WIFI_SCAN_COMPLETE));
 
     if (runtime->wifi_scan_lock) {
         xSemaphoreGive(runtime->wifi_scan_lock);
@@ -330,8 +344,8 @@ static void runtime_wifi_scan_set_state(esp_bms_idf_runtime_t *runtime,
         xSemaphoreTake(runtime->wifi_scan_lock, pdMS_TO_TICKS(100)) != pdTRUE) {
         return;
     }
-    runtime->wifi_scan_active = active;
-    runtime->wifi_scan_complete = complete;
+    RUNTIME_SET_FLAG(runtime, WIFI_SCAN_ACTIVE, active);
+    RUNTIME_SET_FLAG(runtime, WIFI_SCAN_COMPLETE, complete);
     runtime->snapshot.wifi_scan_generation++;
     if (!active && !complete) {
         runtime->wifi_scan_candidate_count = 0;
@@ -588,30 +602,32 @@ static void runtime_bms_scan_store_candidate(esp_bms_idf_runtime_t *runtime,
 
 static void runtime_clear_bms_telemetry(esp_bms_idf_runtime_t *runtime)
 {
-    runtime->snapshot.bms_online = false;
-    runtime->snapshot.pack_voltage_valid = false;
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, BMS_ONLINE, false);
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, PACK_VOLTAGE_VALID, false);
     runtime->snapshot.pack_voltage_mv = 0;
-    runtime->snapshot.current_valid = false;
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, CURRENT_VALID, false);
     runtime->snapshot.current_deci_amps = 0;
-    runtime->snapshot.soc_valid = false;
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, SOC_VALID, false);
     runtime->snapshot.soc_percent = 0;
-    runtime->snapshot.min_cell_valid = false;
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, MIN_CELL_VALID, false);
     runtime->snapshot.min_cell_voltage_mv = 0;
-    runtime->snapshot.average_cell_valid = false;
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, AVERAGE_CELL_VALID, false);
     runtime->snapshot.average_cell_voltage_mv = 0;
-    runtime->snapshot.max_cell_valid = false;
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, MAX_CELL_VALID, false);
     runtime->snapshot.max_cell_voltage_mv = 0;
-    runtime->snapshot.delta_cell_valid = false;
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, DELTA_CELL_VALID, false);
     runtime->snapshot.delta_cell_voltage_mv = 0;
-    runtime->snapshot.total_capacity_valid = false;
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, TOTAL_CAPACITY_VALID, false);
     runtime->snapshot.total_capacity_mah = 0;
-    runtime->snapshot.capacity_remaining_valid = false;
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, CAPACITY_REMAINING_VALID, false);
     runtime->snapshot.capacity_remaining_mah = 0;
     runtime->snapshot.bms_protection_count = 0;
     memset(runtime->snapshot.bms_protection_codes, 0, sizeof(runtime->snapshot.bms_protection_codes));
     runtime->snapshot.bms_warning_count = 0;
     memset(runtime->snapshot.bms_warning_codes, 0, sizeof(runtime->snapshot.bms_warning_codes));
-    memset(runtime->snapshot.bms_temperature_valid, 0, sizeof(runtime->snapshot.bms_temperature_valid));
+    for (uint8_t index = 0; index < ESP_BMS_BMS_TEMP_MAX_COUNT; ++index) {
+        esp_bms_dashboard_snapshot_temperature_valid_set(&runtime->snapshot, index, false);
+    }
     memset(runtime->snapshot.bms_temperature_celsius, 0, sizeof(runtime->snapshot.bms_temperature_celsius));
     runtime_copy_snapshot_text(runtime->snapshot.bms_info_text,
                                sizeof(runtime->snapshot.bms_info_text),
@@ -639,28 +655,34 @@ static void runtime_apply_bms_fault_masks(esp_bms_dashboard_snapshot_t *snapshot
     snapshot->bms_warning_count = 0;
     memset(snapshot->bms_warning_codes, 0, sizeof(snapshot->bms_warning_codes));
 
-    for (uint8_t bit = 0; bit < 64U; bit++) {
-        const uint64_t mask = 1ULL << bit;
-        if ((protection_mask & mask) != 0ULL) {
-            runtime_append_bms_code(snapshot->bms_protection_codes,
-                                    &snapshot->bms_protection_count,
-                                    'P',
-                                    bit);
-        }
-        if ((warning_mask & mask) != 0ULL) {
-            runtime_append_bms_code(snapshot->bms_warning_codes,
-                                    &snapshot->bms_warning_count,
-                                    'W',
-                                    bit);
-        }
+    uint64_t remaining = protection_mask;
+    while (remaining != 0ULL && snapshot->bms_protection_count < ESP_BMS_BMS_CODE_MAX_COUNT) {
+        const uint8_t bit = (uint8_t)__builtin_ctzll(remaining);
+        runtime_append_bms_code(snapshot->bms_protection_codes,
+                                &snapshot->bms_protection_count,
+                                'P',
+                                bit);
+        remaining &= remaining - 1ULL;
+    }
+
+    remaining = warning_mask;
+    while (remaining != 0ULL && snapshot->bms_warning_count < ESP_BMS_BMS_CODE_MAX_COUNT) {
+        const uint8_t bit = (uint8_t)__builtin_ctzll(remaining);
+        runtime_append_bms_code(snapshot->bms_warning_codes,
+                                &snapshot->bms_warning_count,
+                                'W',
+                                bit);
+        remaining &= remaining - 1ULL;
     }
 }
 
 static uint16_t runtime_crc16_modbus(const uint8_t *bytes, size_t len)
 {
     uint16_t crc = 0xFFFFU;
-    for (size_t index = 0; index < len; index++) {
-        crc ^= bytes[index];
+    const uint8_t *cursor = bytes;
+    const uint8_t *const end = bytes + len;
+    while (cursor < end) {
+        crc ^= *cursor++;
         for (uint8_t bit = 0; bit < 8U; bit++) {
             crc = (crc & 0x0001U) ? (uint16_t)((crc >> 1) ^ 0xA001U)
                                   : (uint16_t)(crc >> 1);
@@ -671,10 +693,11 @@ static uint16_t runtime_crc16_modbus(const uint8_t *bytes, size_t len)
 
 static bool runtime_read_u16_le(const uint8_t *data, size_t len, size_t index, uint16_t *out)
 {
-    if (!data || !out || index + 1U >= len) {
+    if (!data || !out || len < 2U || index > len - 2U) {
         return false;
     }
-    *out = (uint16_t)data[index] | ((uint16_t)data[index + 1U] << 8);
+    const uint8_t *const cursor = data + index;
+    *out = (uint16_t)cursor[0] | ((uint16_t)cursor[1] << 8);
     return true;
 }
 
@@ -690,24 +713,26 @@ static bool runtime_read_i16_le(const uint8_t *data, size_t len, size_t index, i
 
 static bool runtime_read_u32_le(const uint8_t *data, size_t len, size_t index, uint32_t *out)
 {
-    if (!data || !out || index + 3U >= len) {
+    if (!data || !out || len < 4U || index > len - 4U) {
         return false;
     }
-    *out = (uint32_t)data[index] |
-           ((uint32_t)data[index + 1U] << 8) |
-           ((uint32_t)data[index + 2U] << 16) |
-           ((uint32_t)data[index + 3U] << 24);
+    const uint8_t *const cursor = data + index;
+    *out = (uint32_t)cursor[0] |
+           ((uint32_t)cursor[1] << 8) |
+           ((uint32_t)cursor[2] << 16) |
+           ((uint32_t)cursor[3] << 24);
     return true;
 }
 
 static bool runtime_read_u64_le(const uint8_t *data, size_t len, size_t index, uint64_t *out)
 {
-    if (!data || !out || index + 7U >= len) {
+    if (!data || !out || len < 8U || index > len - 8U) {
         return false;
     }
     uint64_t value = 0;
-    for (uint8_t byte = 0; byte < 8U; byte++) {
-        value |= ((uint64_t)data[index + byte]) << (byte * 8U);
+    const uint8_t *cursor = data + index;
+    for (uint8_t shift = 0; shift < 64U; shift += 8U) {
+        value |= ((uint64_t)*cursor++) << shift;
     }
     *out = value;
     return true;
@@ -808,28 +833,28 @@ static bool runtime_apply_bms_status_frame(esp_bms_idf_runtime_t *runtime,
     temperature_valid[4] = true;
     temperature_valid[5] = true;
 
-    runtime->snapshot.bms_online = true;
-    runtime->snapshot.pack_voltage_valid = true;
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, BMS_ONLINE, true);
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, PACK_VOLTAGE_VALID, true);
     runtime->snapshot.pack_voltage_mv = (uint32_t)pack_voltage_dv * 10U;
-    runtime->snapshot.current_valid = true;
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, CURRENT_VALID, true);
     runtime->snapshot.current_deci_amps = current_deci_amps;
-    runtime->snapshot.soc_valid = true;
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, SOC_VALID, true);
     runtime->snapshot.soc_percent = soc_percent;
-    runtime->snapshot.max_cell_valid = true;
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, MAX_CELL_VALID, true);
     runtime->snapshot.max_cell_voltage_mv = max_cell_mv;
-    runtime->snapshot.min_cell_valid = true;
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, MIN_CELL_VALID, true);
     runtime->snapshot.min_cell_voltage_mv = min_cell_mv;
-    runtime->snapshot.delta_cell_valid = true;
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, DELTA_CELL_VALID, true);
     runtime->snapshot.delta_cell_voltage_mv = delta_cell_mv;
-    runtime->snapshot.average_cell_valid = true;
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, AVERAGE_CELL_VALID, true);
     runtime->snapshot.average_cell_voltage_mv = average_cell_mv;
-    runtime->snapshot.total_capacity_valid = true;
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, TOTAL_CAPACITY_VALID, true);
     runtime->snapshot.total_capacity_mah = total_capacity_uah / 1000U;
-    runtime->snapshot.capacity_remaining_valid = true;
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, CAPACITY_REMAINING_VALID, true);
     runtime->snapshot.capacity_remaining_mah = capacity_remaining_uah / 1000U;
-    memcpy(runtime->snapshot.bms_temperature_valid,
-           temperature_valid,
-           sizeof(runtime->snapshot.bms_temperature_valid));
+    for (uint8_t index = 0; index < ESP_BMS_BMS_TEMP_MAX_COUNT; ++index) {
+        esp_bms_dashboard_snapshot_temperature_valid_set(&runtime->snapshot, index, temperature_valid[index]);
+    }
     memcpy(runtime->snapshot.bms_temperature_celsius,
            temperatures,
            sizeof(runtime->snapshot.bms_temperature_celsius));
@@ -852,7 +877,7 @@ static bool runtime_apply_bms_frame(esp_bms_idf_runtime_t *runtime,
         return runtime_apply_bms_status_frame(runtime, data, len);
     }
     if (function == BMS_FRAME_TYPE_DEVICE_INFO) {
-        runtime->bms_device_info_known = true;
+        RUNTIME_SET_FLAG(runtime, BMS_DEVICE_INFO_KNOWN, true);
         return true;
     }
     return false;
@@ -1004,8 +1029,10 @@ static bool runtime_validate_nmea_checksum(const char *payload, size_t payload_l
     }
 
     uint8_t actual = 0;
-    for (size_t index = 0; index < payload_len; index++) {
-        actual ^= (uint8_t)payload[index];
+    const char *cursor = payload;
+    const char *const end = payload + payload_len;
+    while (cursor < end) {
+        actual ^= (uint8_t)*cursor++;
     }
     return actual == (uint8_t)((high << 4) | low);
 }
@@ -1110,8 +1137,9 @@ static uint16_t runtime_speed_deci_units(esp_bms_speed_unit_t unit, uint32_t spe
 
 static void runtime_update_snapshot_speed(esp_bms_idf_runtime_t *runtime)
 {
-    runtime->snapshot.speed_valid = runtime->snapshot.gps_fix_valid;
-    runtime->snapshot.speed_deci_units = runtime->snapshot.speed_valid
+    const bool speed_valid = RUNTIME_SNAPSHOT_FLAG(runtime, GPS_FIX_VALID);
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, SPEED_VALID, speed_valid);
+    runtime->snapshot.speed_deci_units = speed_valid
                                              ? runtime_speed_deci_units(runtime->snapshot.speed_unit,
                                                                         runtime->gps_speed_knots_milli)
                                              : 0;
@@ -1470,15 +1498,15 @@ static void runtime_reset_state(esp_bms_idf_runtime_t *runtime)
     runtime->bluetooth_own_addr_type = 0;
     runtime->bluetooth_conn_handle = 0xFFFFU;
     runtime->bms_ble_phase = BMS_BLE_PHASE_IDLE;
-    runtime->bms_write_in_flight = false;
-    runtime->bms_device_info_requested = false;
-    runtime->bms_device_info_known = false;
+    RUNTIME_SET_FLAG(runtime, BMS_WRITE_IN_FLIGHT, false);
+    RUNTIME_SET_FLAG(runtime, BMS_DEVICE_INFO_REQUESTED, false);
+    RUNTIME_SET_FLAG(runtime, BMS_DEVICE_INFO_KNOWN, false);
     runtime_copy_snapshot_text(runtime->bluetooth_name,
                                sizeof(runtime->bluetooth_name),
                                LOCAL_BLUETOOTH_NAME);
 
     runtime->snapshot.speed_unit = ESP_BMS_SPEED_UNIT_KMH;
-    runtime->snapshot.setup_ap_enabled = false;
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, SETUP_AP_ENABLED, false);
     runtime->snapshot.wifi = ESP_BMS_WIFI_OFFLINE;
     runtime->snapshot.ota = ESP_BMS_OTA_IDLE;
     runtime->bms_type = (uint8_t)ESP_BMS_IDF_BMS_TYPE_ANT;
@@ -1486,21 +1514,21 @@ static void runtime_reset_state(esp_bms_idf_runtime_t *runtime)
     (void)runtime_set_brightness_percent(runtime, 85U);
     (void)runtime_set_volume_percent(runtime, 65U);
     runtime->display_rotation = ESP_BMS_IDF_DISPLAY_ROTATION_LANDSCAPE;
-    runtime->language_zh = true;
-    runtime->bms_bind_active = false;
+    RUNTIME_SET_FLAG(runtime, LANGUAGE_ZH, true);
+    RUNTIME_SET_FLAG(runtime, BMS_BIND_ACTIVE, false);
     runtime->station_retry_count = 0;
-    runtime->station_connected = false;
-    runtime->station_has_ip = false;
-    runtime->station_connect_requested = false;
-    runtime->http_bms_scan_pending = false;
-    runtime->bms_scan_requested = false;
-    runtime->bms_scan_active = false;
-    runtime->wifi_scan_requested = false;
-    runtime->wifi_scan_active = false;
-    runtime->wifi_scan_complete = false;
-    runtime->bluetooth_advertise_requested = false;
-    runtime->bluetooth_advertising = false;
-    runtime->bluetooth_connected = false;
+    RUNTIME_SET_FLAG(runtime, STATION_CONNECTED, false);
+    RUNTIME_SET_FLAG(runtime, STATION_HAS_IP, false);
+    RUNTIME_SET_FLAG(runtime, STATION_CONNECT_REQUESTED, false);
+    RUNTIME_SET_FLAG(runtime, HTTP_BMS_SCAN_PENDING, false);
+    RUNTIME_SET_FLAG(runtime, BMS_SCAN_REQUESTED, false);
+    RUNTIME_SET_FLAG(runtime, BMS_SCAN_ACTIVE, false);
+    RUNTIME_SET_FLAG(runtime, WIFI_SCAN_REQUESTED, false);
+    RUNTIME_SET_FLAG(runtime, WIFI_SCAN_ACTIVE, false);
+    RUNTIME_SET_FLAG(runtime, WIFI_SCAN_COMPLETE, false);
+    RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, false);
+    RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISING, false);
+    RUNTIME_SET_FLAG(runtime, BLUETOOTH_CONNECTED, false);
     (void)runtime_project_bluetooth_snapshot(runtime);
     runtime_bms_scan_clear_candidates(runtime);
     runtime_wifi_scan_clear_candidates(runtime);
@@ -1548,7 +1576,7 @@ static void runtime_init_battery_adc(esp_bms_idf_runtime_t *runtime)
     }
 
     runtime->battery_adc_channel = channel;
-    runtime->battery_adc_ready = true;
+    RUNTIME_SET_FLAG(runtime, BATTERY_ADC_READY, true);
     ESP_LOGI(TAG, "battery ADC ready: gpio=%d unit=ADC1 channel=%d", BATTERY_GPIO, channel);
 }
 
@@ -1595,14 +1623,14 @@ static void runtime_init_gps_uart(esp_bms_idf_runtime_t *runtime)
         }
     }
 
-    runtime->gps_uart_ready = true;
+    RUNTIME_SET_FLAG(runtime, GPS_UART_READY, true);
     ESP_LOGI(TAG, "GPS UART ready: uart=%d rx=%d tx=%d baud=%d",
              runtime->gps_uart, GPS_UART_RX_GPIO, GPS_UART_TX_GPIO, GPS_UART_BAUD);
 }
 
 static esp_err_t runtime_init_nvs(esp_bms_idf_runtime_t *runtime)
 {
-    if (runtime && runtime->nvs_ready) {
+    if (runtime && RUNTIME_FLAG(runtime, NVS_READY)) {
         return ESP_OK;
     }
 
@@ -1615,7 +1643,7 @@ static esp_err_t runtime_init_nvs(esp_bms_idf_runtime_t *runtime)
         ret = ESP_OK;
     }
     if (ret == ESP_OK && runtime) {
-        runtime->nvs_ready = true;
+        RUNTIME_SET_FLAG(runtime, NVS_READY, true);
     }
     return ret;
 }
@@ -1683,7 +1711,7 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
     (void)runtime_set_volume_percent(runtime, volume_percent);
     runtime->display_rotation = (esp_bms_idf_display_rotation_t)rotation;
     runtime->snapshot.speed_unit = (esp_bms_speed_unit_t)speed_unit;
-    runtime->language_zh = language != 0U;
+    RUNTIME_SET_FLAG(runtime, LANGUAGE_ZH, language != 0U);
     runtime->bms_type = bms_type;
     runtime->snapshot.bms_type = runtime->bms_type;
     runtime_update_snapshot_speed(runtime);
@@ -1724,7 +1752,7 @@ esp_err_t esp_bms_idf_runtime_save_display_settings(esp_bms_idf_runtime_t *runti
         ret = nvs_set_u8(handle, DISPLAY_NVS_SPEED_UNIT_KEY, (uint8_t)runtime->snapshot.speed_unit);
     }
     if (ret == ESP_OK) {
-        ret = nvs_set_u8(handle, DISPLAY_NVS_LANGUAGE_KEY, runtime->language_zh ? 1U : 0U);
+        ret = nvs_set_u8(handle, DISPLAY_NVS_LANGUAGE_KEY, RUNTIME_FLAG(runtime, LANGUAGE_ZH) ? 1U : 0U);
     }
     if (ret == ESP_OK) {
         ret = nvs_set_u8(handle, DISPLAY_NVS_BMS_TYPE_KEY, runtime->bms_type);
@@ -1755,9 +1783,9 @@ static bool runtime_set_pending_http_config(esp_bms_idf_runtime_t *runtime,
     runtime->http_pending_volume_percent = volume_percent;
     runtime->http_pending_display_rotation = rotation;
     runtime->http_pending_speed_unit = speed_unit;
-    runtime->http_pending_language_zh = language_zh;
+    RUNTIME_SET_FLAG(runtime, HTTP_PENDING_LANGUAGE_ZH, language_zh);
     runtime->http_pending_bms_type = (uint8_t)bms_type;
-    runtime->http_config_pending = true;
+    RUNTIME_SET_FLAG(runtime, HTTP_CONFIG_PENDING, true);
 
     xSemaphoreGive(runtime->http_pending_lock);
     return true;
@@ -1772,14 +1800,14 @@ static bool runtime_apply_pending_http_config(esp_bms_idf_runtime_t *runtime)
         return false;
     }
 
-    const bool pending = runtime->http_config_pending;
+    const bool pending = RUNTIME_FLAG(runtime, HTTP_CONFIG_PENDING);
     const uint8_t brightness_percent = runtime->http_pending_brightness_percent;
     const uint8_t volume_percent = runtime->http_pending_volume_percent;
     const esp_bms_idf_display_rotation_t rotation = runtime->http_pending_display_rotation;
     const esp_bms_speed_unit_t speed_unit = runtime->http_pending_speed_unit;
-    const bool language_zh = runtime->http_pending_language_zh;
+    const bool language_zh = RUNTIME_FLAG(runtime, HTTP_PENDING_LANGUAGE_ZH);
     const uint8_t bms_type = runtime->http_pending_bms_type;
-    runtime->http_config_pending = false;
+    RUNTIME_SET_FLAG(runtime, HTTP_CONFIG_PENDING, false);
     xSemaphoreGive(runtime->http_pending_lock);
 
     if (!pending) {
@@ -1790,7 +1818,7 @@ static bool runtime_apply_pending_http_config(esp_bms_idf_runtime_t *runtime)
                          runtime->volume_percent != volume_percent ||
                          runtime->display_rotation != rotation ||
                          runtime->snapshot.speed_unit != speed_unit ||
-                         runtime->language_zh != language_zh ||
+                         RUNTIME_FLAG(runtime, LANGUAGE_ZH) != language_zh ||
                          runtime->bms_type != bms_type;
     if (!changed) {
         return false;
@@ -1800,7 +1828,7 @@ static bool runtime_apply_pending_http_config(esp_bms_idf_runtime_t *runtime)
     (void)runtime_set_volume_percent(runtime, volume_percent);
     runtime->display_rotation = rotation;
     runtime->snapshot.speed_unit = speed_unit;
-    runtime->language_zh = language_zh;
+    RUNTIME_SET_FLAG(runtime, LANGUAGE_ZH, language_zh);
     runtime->bms_type = bms_type;
     runtime->snapshot.bms_type = runtime->bms_type;
     runtime_update_snapshot_speed(runtime);
@@ -1837,11 +1865,14 @@ static size_t runtime_base64_encode(const uint8_t *input, size_t input_len, char
 {
     static const char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     size_t out_index = 0;
-    for (size_t index = 0; index < input_len; index += 3U) {
-        const size_t remaining = input_len - index;
-        const uint32_t triple = ((uint32_t)input[index] << 16) |
-                                ((remaining > 1U ? (uint32_t)input[index + 1] : 0U) << 8) |
-                                (remaining > 2U ? (uint32_t)input[index + 2] : 0U);
+    const uint8_t *cursor = input;
+    const uint8_t *const end = input + input_len;
+    while (cursor < end) {
+        const size_t remaining = (size_t)(end - cursor);
+        const uint32_t first = *cursor++;
+        const uint32_t second = remaining > 1U ? *cursor++ : 0U;
+        const uint32_t third = remaining > 2U ? *cursor++ : 0U;
+        const uint32_t triple = (first << 16) | (second << 8) | third;
         if (out_index + 4U >= out_len) {
             return 0;
         }
@@ -1880,7 +1911,7 @@ static void runtime_copy_auth_passwords(const esp_bms_idf_runtime_t *runtime,
         return;
     }
     runtime_copy_snapshot_text(current, current_len, runtime->setup_ap_password);
-    if (runtime->http_setup_ap_password_pending) {
+    if (RUNTIME_FLAG(runtime, HTTP_SETUP_AP_PASSWORD_PENDING)) {
         runtime_copy_snapshot_text(pending, pending_len, runtime->http_pending_setup_ap_password);
         *has_pending = true;
     }
@@ -2041,7 +2072,7 @@ static bool runtime_json_write_bms_temperatures(char *out,
     offset = (size_t)written;
 
     for (uint8_t index = 0; index < ESP_BMS_BMS_TEMP_MAX_COUNT; index++) {
-        if (snapshot->bms_temperature_valid[index]) {
+        if (esp_bms_dashboard_snapshot_temperature_valid(snapshot, index)) {
             written = snprintf(out + offset,
                                out_len - offset,
                                "%s%d",
@@ -2071,19 +2102,19 @@ static esp_err_t runtime_http_status_handler(httpd_req_t *req, esp_bms_idf_runti
     char temperatures[80] = { 0 };
     if (!runtime_json_write_u32_or_null(pack_voltage,
                                         sizeof(pack_voltage),
-                                        runtime->snapshot.pack_voltage_valid,
+                                        RUNTIME_SNAPSHOT_FLAG(runtime, PACK_VOLTAGE_VALID),
                                         runtime->snapshot.pack_voltage_mv) ||
         !runtime_json_write_i32_or_null(current,
                                         sizeof(current),
-                                        runtime->snapshot.current_valid,
+                                        RUNTIME_SNAPSHOT_FLAG(runtime, CURRENT_VALID),
                                         runtime->snapshot.current_deci_amps) ||
         !runtime_json_write_u32_or_null(soc,
                                         sizeof(soc),
-                                        runtime->snapshot.soc_valid,
+                                        RUNTIME_SNAPSHOT_FLAG(runtime, SOC_VALID),
                                         runtime->snapshot.soc_percent) ||
         !runtime_json_write_u32_or_null(local_battery,
                                         sizeof(local_battery),
-                                        runtime->snapshot.local_battery_valid,
+                                        RUNTIME_SNAPSHOT_FLAG(runtime, LOCAL_BATTERY_VALID),
                                         runtime->snapshot.local_battery_mv) ||
         !runtime_json_write_bms_codes(protections,
                                       sizeof(protections),
@@ -2098,7 +2129,7 @@ static esp_err_t runtime_http_status_handler(httpd_req_t *req, esp_bms_idf_runti
     }
 
     char speed[16] = "--";
-    if (runtime->snapshot.speed_valid) {
+    if (RUNTIME_SNAPSHOT_FLAG(runtime, SPEED_VALID)) {
         const unsigned value = runtime->snapshot.speed_deci_units;
         (void)snprintf(speed, sizeof(speed), "%u.%u", value / 10U, value % 10U);
     }
@@ -2115,8 +2146,8 @@ static esp_err_t runtime_http_status_handler(httpd_req_t *req, esp_bms_idf_runti
                                  "\"setup_ap_enabled\":%s,\"ota\":\"%s\"}",
                                  speed,
                                  runtime_speed_unit_config_text(runtime->snapshot.speed_unit),
-                                 runtime->snapshot.gps_fix_valid ? "true" : "false",
-                                 runtime->snapshot.bms_online ? "online" : "offline",
+                                 RUNTIME_SNAPSHOT_FLAG(runtime, GPS_FIX_VALID) ? "true" : "false",
+                                 RUNTIME_SNAPSHOT_FLAG(runtime, BMS_ONLINE) ? "online" : "offline",
                                  pack_voltage,
                                  current,
                                  soc,
@@ -2126,7 +2157,7 @@ static esp_err_t runtime_http_status_handler(httpd_req_t *req, esp_bms_idf_runti
                                  warnings,
                                  temperatures,
                                  runtime_wifi_config_text(runtime->snapshot.wifi),
-                                 runtime->snapshot.setup_ap_enabled ? "true" : "false",
+                                 RUNTIME_SNAPSHOT_FLAG(runtime, SETUP_AP_ENABLED) ? "true" : "false",
                                  runtime_ota_config_text(runtime->snapshot.ota));
     if (written < 0 || (size_t)written >= sizeof(json)) {
         return runtime_http_send_text(req, "500 Internal Server Error", "json too large");
@@ -2209,7 +2240,7 @@ static void runtime_config_bms_mac_json(const esp_bms_idf_runtime_t *runtime, ch
     if (runtime->http_pending_lock &&
         xSemaphoreTake(runtime->http_pending_lock, pdMS_TO_TICKS(100)) == pdTRUE) {
         runtime_copy_snapshot_text(mac, sizeof(mac), runtime->bms_bound_mac);
-        if (runtime->http_bms_bind_pending) {
+        if (RUNTIME_FLAG(runtime, HTTP_BMS_BIND_PENDING)) {
             runtime_copy_snapshot_text(mac, sizeof(mac), runtime->http_pending_bms_bound_mac);
         }
         xSemaphoreGive(runtime->http_pending_lock);
@@ -2231,7 +2262,7 @@ static void runtime_config_external_ssid_copy(const esp_bms_idf_runtime_t *runti
     if (runtime->http_pending_lock &&
         xSemaphoreTake(runtime->http_pending_lock, pdMS_TO_TICKS(100)) == pdTRUE) {
         runtime_copy_snapshot_text(out, out_len, runtime->external_ssid);
-        if (runtime->http_external_wifi_pending) {
+        if (RUNTIME_FLAG(runtime, HTTP_EXTERNAL_WIFI_PENDING)) {
             runtime_copy_snapshot_text(out, out_len, runtime->http_pending_external_ssid);
         }
         xSemaphoreGive(runtime->http_pending_lock);
@@ -2260,12 +2291,12 @@ static esp_err_t runtime_http_config_handler(httpd_req_t *req, esp_bms_idf_runti
                                  runtime->volume_percent,
                                  runtime_rotation_config_text(runtime->display_rotation),
                                  runtime_speed_unit_config_text(runtime->snapshot.speed_unit),
-                                 runtime->language_zh ? "zh" : "en",
+                                 RUNTIME_FLAG(runtime, LANGUAGE_ZH) ? "zh" : "en",
                                  runtime->setup_ap_ssid,
                                  external_ssid[0] == '\0' ? "false" : "true",
                                  external_ssid,
                                  runtime->setup_ap_password[0] == '\0' ? "false" : "true",
-                                 runtime->snapshot.setup_ap_enabled ? "enabled" : "disabled",
+                                 RUNTIME_SNAPSHOT_FLAG(runtime, SETUP_AP_ENABLED) ? "enabled" : "disabled",
                                  bms_mac,
                                  runtime_bms_type_config_text((esp_bms_idf_bms_type_t)runtime->bms_type));
     if (written < 0 || (size_t)written >= sizeof(json)) {
@@ -2305,7 +2336,7 @@ static bool runtime_set_pending_http_ap_password(esp_bms_idf_runtime_t *runtime,
     runtime_copy_snapshot_text(runtime->http_pending_setup_ap_password,
                                sizeof(runtime->http_pending_setup_ap_password),
                                password);
-    runtime->http_setup_ap_password_pending = true;
+    RUNTIME_SET_FLAG(runtime, HTTP_SETUP_AP_PASSWORD_PENDING, true);
     xSemaphoreGive(runtime->http_pending_lock);
     return true;
 }
@@ -2326,7 +2357,7 @@ static bool runtime_set_pending_http_external_wifi(esp_bms_idf_runtime_t *runtim
     runtime_copy_snapshot_text(runtime->http_pending_external_password,
                                sizeof(runtime->http_pending_external_password),
                                password);
-    runtime->http_external_wifi_pending = true;
+    RUNTIME_SET_FLAG(runtime, HTTP_EXTERNAL_WIFI_PENDING, true);
     xSemaphoreGive(runtime->http_pending_lock);
     return true;
 }
@@ -2342,7 +2373,7 @@ static bool runtime_set_pending_http_bms_bind(esp_bms_idf_runtime_t *runtime, co
     runtime_copy_snapshot_text(runtime->http_pending_bms_bound_mac,
                                sizeof(runtime->http_pending_bms_bound_mac),
                                mac);
-    runtime->http_bms_bind_pending = true;
+    RUNTIME_SET_FLAG(runtime, HTTP_BMS_BIND_PENDING, true);
     xSemaphoreGive(runtime->http_pending_lock);
     return true;
 }
@@ -2355,7 +2386,7 @@ static bool runtime_set_pending_http_bms_scan(esp_bms_idf_runtime_t *runtime)
     if (xSemaphoreTake(runtime->http_pending_lock, pdMS_TO_TICKS(100)) != pdTRUE) {
         return false;
     }
-    runtime->http_bms_scan_pending = true;
+    RUNTIME_SET_FLAG(runtime, HTTP_BMS_SCAN_PENDING, true);
     xSemaphoreGive(runtime->http_pending_lock);
     return true;
 }
@@ -2372,7 +2403,7 @@ static esp_err_t runtime_http_post_config_handler(httpd_req_t *req, esp_bms_idf_
     uint8_t volume_percent = runtime->volume_percent;
     esp_bms_idf_display_rotation_t rotation = runtime->display_rotation;
     esp_bms_speed_unit_t speed_unit = runtime->snapshot.speed_unit;
-    bool language_zh = runtime->language_zh;
+    bool language_zh = RUNTIME_FLAG(runtime, LANGUAGE_ZH);
     esp_bms_idf_bms_type_t bms_type = (esp_bms_idf_bms_type_t)runtime->bms_type;
 
     bool found = false;
@@ -2612,7 +2643,7 @@ static esp_err_t runtime_http_api_handler(httpd_req_t *req)
 
 static esp_err_t runtime_start_http_server(esp_bms_idf_runtime_t *runtime)
 {
-    if (runtime->http_server_started) {
+    if (RUNTIME_FLAG(runtime, HTTP_SERVER_STARTED)) {
         return ESP_OK;
     }
 
@@ -2651,7 +2682,7 @@ static esp_err_t runtime_start_http_server(esp_bms_idf_runtime_t *runtime)
         return ret;
     }
 
-    runtime->http_server_started = true;
+    RUNTIME_SET_FLAG(runtime, HTTP_SERVER_STARTED, true);
     ESP_LOGI(TAG, "[http] server started: port=80 routes=/,/api/*");
     return ESP_OK;
 }
@@ -2851,7 +2882,7 @@ static bool runtime_get_pending_http_ap_password(esp_bms_idf_runtime_t *runtime,
     if (xSemaphoreTake(runtime->http_pending_lock, 0) != pdTRUE) {
         return false;
     }
-    const bool pending = runtime->http_setup_ap_password_pending;
+    const bool pending = RUNTIME_FLAG(runtime, HTTP_SETUP_AP_PASSWORD_PENDING);
     if (pending) {
         runtime_copy_snapshot_text(password, password_len, runtime->http_pending_setup_ap_password);
     }
@@ -2867,10 +2898,10 @@ static void runtime_clear_pending_http_ap_password(esp_bms_idf_runtime_t *runtim
     if (xSemaphoreTake(runtime->http_pending_lock, pdMS_TO_TICKS(100)) != pdTRUE) {
         return;
     }
-    if (runtime->http_setup_ap_password_pending &&
+    if (RUNTIME_FLAG(runtime, HTTP_SETUP_AP_PASSWORD_PENDING) &&
         strcmp(runtime->http_pending_setup_ap_password, password) == 0) {
         runtime->http_pending_setup_ap_password[0] = '\0';
-        runtime->http_setup_ap_password_pending = false;
+        RUNTIME_SET_FLAG(runtime, HTTP_SETUP_AP_PASSWORD_PENDING, false);
     }
     xSemaphoreGive(runtime->http_pending_lock);
 }
@@ -2897,7 +2928,7 @@ static bool runtime_apply_pending_http_ap_password(esp_bms_idf_runtime_t *runtim
     runtime_update_setup_ap_snapshot(runtime);
 
     esp_err_t ret = ESP_OK;
-    if (runtime->setup_ap_started) {
+    if (RUNTIME_FLAG(runtime, SETUP_AP_STARTED)) {
         ret = runtime_apply_setup_ap_wifi_config(runtime);
     }
     if (ret == ESP_OK) {
@@ -2918,7 +2949,7 @@ static bool runtime_apply_pending_http_ap_password(esp_bms_idf_runtime_t *runtim
         xSemaphoreGive(runtime->http_pending_lock);
     }
     runtime_update_setup_ap_snapshot(runtime);
-    if (runtime->setup_ap_started) {
+    if (RUNTIME_FLAG(runtime, SETUP_AP_STARTED)) {
         ESP_ERROR_CHECK_WITHOUT_ABORT(runtime_apply_setup_ap_wifi_config(runtime));
     }
     runtime_set_error(runtime, "AP PW FAIL");
@@ -2938,7 +2969,7 @@ static bool runtime_get_pending_http_external_wifi(esp_bms_idf_runtime_t *runtim
     if (xSemaphoreTake(runtime->http_pending_lock, 0) != pdTRUE) {
         return false;
     }
-    const bool pending = runtime->http_external_wifi_pending;
+    const bool pending = RUNTIME_FLAG(runtime, HTTP_EXTERNAL_WIFI_PENDING);
     if (pending) {
         runtime_copy_snapshot_text(ssid, ssid_len, runtime->http_pending_external_ssid);
         runtime_copy_snapshot_text(password, password_len, runtime->http_pending_external_password);
@@ -2956,11 +2987,11 @@ static void runtime_clear_pending_http_external_wifi(esp_bms_idf_runtime_t *runt
     if (xSemaphoreTake(runtime->http_pending_lock, pdMS_TO_TICKS(100)) != pdTRUE) {
         return;
     }
-    if (runtime->http_external_wifi_pending &&
+    if (RUNTIME_FLAG(runtime, HTTP_EXTERNAL_WIFI_PENDING) &&
         strcmp(runtime->http_pending_external_ssid, ssid) == 0) {
         runtime->http_pending_external_ssid[0] = '\0';
         runtime->http_pending_external_password[0] = '\0';
-        runtime->http_external_wifi_pending = false;
+        RUNTIME_SET_FLAG(runtime, HTTP_EXTERNAL_WIFI_PENDING, false);
     }
     xSemaphoreGive(runtime->http_pending_lock);
 }
@@ -3029,8 +3060,8 @@ static bool runtime_get_pending_http_bms_scan(esp_bms_idf_runtime_t *runtime)
     if (xSemaphoreTake(runtime->http_pending_lock, 0) != pdTRUE) {
         return false;
     }
-    const bool pending = runtime->http_bms_scan_pending;
-    runtime->http_bms_scan_pending = false;
+    const bool pending = RUNTIME_FLAG(runtime, HTTP_BMS_SCAN_PENDING);
+    RUNTIME_SET_FLAG(runtime, HTTP_BMS_SCAN_PENDING, false);
     xSemaphoreGive(runtime->http_pending_lock);
     return pending;
 }
@@ -3041,7 +3072,7 @@ static bool runtime_apply_pending_http_bms_scan(esp_bms_idf_runtime_t *runtime)
         return false;
     }
 
-    runtime->bms_bind_active = true;
+    RUNTIME_SET_FLAG(runtime, BMS_BIND_ACTIVE, true);
     runtime_clear_bms_telemetry(runtime);
     runtime_bms_scan_clear_candidates(runtime);
 
@@ -3065,7 +3096,7 @@ static bool runtime_get_pending_http_bms_bind(esp_bms_idf_runtime_t *runtime,
     if (xSemaphoreTake(runtime->http_pending_lock, 0) != pdTRUE) {
         return false;
     }
-    const bool pending = runtime->http_bms_bind_pending;
+    const bool pending = RUNTIME_FLAG(runtime, HTTP_BMS_BIND_PENDING);
     if (pending) {
         runtime_copy_snapshot_text(mac, mac_len, runtime->http_pending_bms_bound_mac);
     }
@@ -3081,10 +3112,10 @@ static void runtime_clear_pending_http_bms_bind(esp_bms_idf_runtime_t *runtime, 
     if (xSemaphoreTake(runtime->http_pending_lock, pdMS_TO_TICKS(100)) != pdTRUE) {
         return;
     }
-    if (runtime->http_bms_bind_pending &&
+    if (RUNTIME_FLAG(runtime, HTTP_BMS_BIND_PENDING) &&
         strcmp(runtime->http_pending_bms_bound_mac, mac) == 0) {
         runtime->http_pending_bms_bound_mac[0] = '\0';
-        runtime->http_bms_bind_pending = false;
+        RUNTIME_SET_FLAG(runtime, HTTP_BMS_BIND_PENDING, false);
     }
     xSemaphoreGive(runtime->http_pending_lock);
 }
@@ -3109,7 +3140,7 @@ static bool runtime_apply_pending_http_bms_bind(esp_bms_idf_runtime_t *runtime)
     esp_err_t ret = runtime_save_bms_binding(runtime);
     if (ret == ESP_OK) {
         runtime_clear_pending_http_bms_bind(runtime, mac);
-        runtime->bms_bind_active = true;
+        RUNTIME_SET_FLAG(runtime, BMS_BIND_ACTIVE, true);
         runtime_clear_bms_telemetry(runtime);
         ESP_LOGI(TAG, "[bms] bound MAC saved: mac=%s", mac);
         const esp_err_t scan_ret = esp_bms_idf_runtime_start_bms_ble_for_bind(runtime);
@@ -3133,10 +3164,10 @@ static bool runtime_apply_pending_http_bms_bind(esp_bms_idf_runtime_t *runtime)
 
 static bool runtime_apply_pending_wifi_scan(esp_bms_idf_runtime_t *runtime)
 {
-    if (!runtime || !runtime->wifi_scan_requested) {
+    if (!runtime || !RUNTIME_FLAG(runtime, WIFI_SCAN_REQUESTED)) {
         return false;
     }
-    runtime->wifi_scan_requested = false;
+    RUNTIME_SET_FLAG(runtime, WIFI_SCAN_REQUESTED, false);
 
     const esp_err_t ret = esp_bms_idf_runtime_start_wifi_scan(runtime);
     if (ret == ESP_OK) {
@@ -3209,9 +3240,9 @@ static void runtime_bms_ble_reset_connection_state(esp_bms_idf_runtime_t *runtim
     runtime->bms_cccd_handle = 0;
     runtime->bms_frame_len = 0;
     runtime->bms_status_poll_elapsed_ms = 0;
-    runtime->bms_write_in_flight = false;
-    runtime->bms_device_info_requested = false;
-    runtime->bms_device_info_known = false;
+    RUNTIME_SET_FLAG(runtime, BMS_WRITE_IN_FLIGHT, false);
+    RUNTIME_SET_FLAG(runtime, BMS_DEVICE_INFO_REQUESTED, false);
+    RUNTIME_SET_FLAG(runtime, BMS_DEVICE_INFO_KNOWN, false);
 }
 
 static int runtime_bms_ble_write_cb(uint16_t conn_handle,
@@ -3225,7 +3256,7 @@ static int runtime_bms_ble_write_cb(uint16_t conn_handle,
         return 0;
     }
 
-    runtime->bms_write_in_flight = false;
+    RUNTIME_SET_FLAG(runtime, BMS_WRITE_IN_FLIGHT, false);
     if (error && error->status != 0) {
         runtime_set_bms_info(runtime, "BMS WR");
         ESP_LOGW(TAG, "[bms] GATT write failed: conn=%u status=%u",
@@ -3249,7 +3280,7 @@ static esp_err_t runtime_bms_ble_write_frame(esp_bms_idf_runtime_t *runtime,
     if (!runtime || !frame || frame_len == 0U ||
         runtime->bms_conn_handle == 0xFFFFU ||
         runtime->bms_char_val_handle == 0U ||
-        runtime->bms_write_in_flight) {
+        RUNTIME_FLAG(runtime, BMS_WRITE_IN_FLIGHT)) {
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -3263,7 +3294,7 @@ static esp_err_t runtime_bms_ble_write_frame(esp_bms_idf_runtime_t *runtime,
         return ESP_FAIL;
     }
 
-    runtime->bms_write_in_flight = true;
+    RUNTIME_SET_FLAG(runtime, BMS_WRITE_IN_FLIGHT, true);
     return ESP_OK;
 }
 
@@ -3282,7 +3313,7 @@ static esp_err_t runtime_bms_ble_send_poll_request(esp_bms_idf_runtime_t *runtim
 
     const uint8_t *frame = status_request;
     size_t frame_len = sizeof(status_request);
-    const bool send_device_info = !runtime->bms_device_info_requested;
+    const bool send_device_info = !RUNTIME_FLAG(runtime, BMS_DEVICE_INFO_REQUESTED);
     if (send_device_info) {
         frame = device_info_request;
         frame_len = sizeof(device_info_request);
@@ -3292,7 +3323,7 @@ static esp_err_t runtime_bms_ble_send_poll_request(esp_bms_idf_runtime_t *runtim
     if (ret == ESP_OK) {
         runtime->bms_status_poll_elapsed_ms = 0;
         if (send_device_info) {
-            runtime->bms_device_info_requested = true;
+            RUNTIME_SET_FLAG(runtime, BMS_DEVICE_INFO_REQUESTED, true);
         }
     }
     return ret;
@@ -3306,7 +3337,7 @@ static esp_err_t runtime_bms_ble_subscribe(esp_bms_idf_runtime_t *runtime)
 
     uint8_t value[2] = { 1, 0 };
     runtime->bms_ble_phase = (uint8_t)BMS_BLE_PHASE_SUBSCRIBING;
-    runtime->bms_write_in_flight = true;
+    RUNTIME_SET_FLAG(runtime, BMS_WRITE_IN_FLIGHT, true);
     const int rc = ble_gattc_write_flat(runtime->bms_conn_handle,
                                         runtime->bms_cccd_handle,
                                         value,
@@ -3314,7 +3345,7 @@ static esp_err_t runtime_bms_ble_subscribe(esp_bms_idf_runtime_t *runtime)
                                         runtime_bms_ble_write_cb,
                                         runtime);
     if (rc != 0) {
-        runtime->bms_write_in_flight = false;
+        RUNTIME_SET_FLAG(runtime, BMS_WRITE_IN_FLIGHT, false);
         return ESP_FAIL;
     }
     return ESP_OK;
@@ -3527,7 +3558,7 @@ static esp_err_t runtime_bms_ble_connect_to_disc(esp_bms_idf_runtime_t *runtime,
 
     runtime->bms_own_addr_type = own_addr_type;
     runtime->bms_ble_phase = (uint8_t)BMS_BLE_PHASE_CONNECTING;
-    runtime->bms_scan_active = false;
+    RUNTIME_SET_FLAG(runtime, BMS_SCAN_ACTIVE, false);
     runtime_set_bms_info(runtime, "BMS CONN");
     ESP_LOGI(TAG, "[bms] connecting to bound BMS: mac=%s addr_type=%u",
              mac, disc->addr.type);
@@ -3596,7 +3627,7 @@ static int runtime_bms_ble_gap_event(struct ble_gap_event *event, void *arg)
     case BLE_GAP_EVENT_CONNECT:
         if (event->connect.status == 0) {
             runtime->bms_conn_handle = event->connect.conn_handle;
-            runtime->bms_scan_active = false;
+            RUNTIME_SET_FLAG(runtime, BMS_SCAN_ACTIVE, false);
             runtime->bms_ble_phase = (uint8_t)BMS_BLE_PHASE_DISCOVERING_SERVICE;
             runtime_set_bms_info(runtime, "BMS DISC");
             ESP_LOGI(TAG, "[bms] connected: conn=%u", event->connect.conn_handle);
@@ -3616,13 +3647,13 @@ static int runtime_bms_ble_gap_event(struct ble_gap_event *event, void *arg)
     case BLE_GAP_EVENT_DISCONNECT:
         if (event->disconnect.conn.conn_handle == runtime->bms_conn_handle ||
             runtime->bms_ble_phase != (uint8_t)BMS_BLE_PHASE_SCANNING) {
-            const bool scan_requested = runtime->bms_scan_requested;
+            const bool scan_requested = RUNTIME_FLAG(runtime, BMS_SCAN_REQUESTED);
             runtime_bms_ble_reset_connection_state(runtime, BMS_BLE_PHASE_BACKOFF);
             runtime_clear_bms_telemetry(runtime);
             runtime_set_bms_info(runtime, "BMS OFF");
             ESP_LOGW(TAG, "[bms] disconnected: reason=%d", event->disconnect.reason);
             if (scan_requested) {
-                runtime->bms_scan_requested = true;
+                RUNTIME_SET_FLAG(runtime, BMS_SCAN_REQUESTED, true);
                 const esp_err_t ret = runtime_bms_ble_start_scan(runtime);
                 if (ret != ESP_OK) {
                     ESP_LOGW(TAG, "[bms] deferred scan after disconnect failed: %s",
@@ -3634,7 +3665,7 @@ static int runtime_bms_ble_gap_event(struct ble_gap_event *event, void *arg)
     case BLE_GAP_EVENT_DISC_COMPLETE:
         if (runtime->bms_ble_phase == (uint8_t)BMS_BLE_PHASE_SCANNING) {
             runtime->bms_ble_phase = (uint8_t)BMS_BLE_PHASE_IDLE;
-            runtime->bms_scan_active = false;
+            RUNTIME_SET_FLAG(runtime, BMS_SCAN_ACTIVE, false);
             runtime_set_bms_info(runtime, "BMS DONE");
         }
         ESP_LOGI(TAG, "[bms] BLE scan complete: reason=%d candidates=%u",
@@ -3654,19 +3685,19 @@ static int runtime_bms_ble_gap_event(struct ble_gap_event *event, void *arg)
 
 static esp_err_t runtime_bms_ble_start_scan(esp_bms_idf_runtime_t *runtime)
 {
-    if (!runtime->bms_ble_ready || !runtime->bms_ble_synced) {
-        runtime->bms_scan_requested = true;
+    if (!RUNTIME_FLAG(runtime, BMS_BLE_READY) || !RUNTIME_FLAG(runtime, BMS_BLE_SYNCED)) {
+        RUNTIME_SET_FLAG(runtime, BMS_SCAN_REQUESTED, true);
         return ESP_ERR_INVALID_STATE;
     }
 
     const esp_err_t local_bt_ret = runtime_bluetooth_stop_for_bms_scan(runtime);
     if (local_bt_ret != ESP_OK) {
-        runtime->bms_scan_requested = true;
+        RUNTIME_SET_FLAG(runtime, BMS_SCAN_REQUESTED, true);
         return local_bt_ret;
     }
 
     if (runtime->bms_conn_handle != 0xFFFFU) {
-        runtime->bms_scan_requested = true;
+        RUNTIME_SET_FLAG(runtime, BMS_SCAN_REQUESTED, true);
         (void)ble_gap_terminate(runtime->bms_conn_handle, BLE_ERR_REM_USER_CONN_TERM);
         return ESP_ERR_INVALID_STATE;
     }
@@ -3677,7 +3708,7 @@ static esp_err_t runtime_bms_ble_start_scan(esp_bms_idf_runtime_t *runtime)
     uint8_t own_addr_type = 0;
     const int addr_rc = ble_hs_id_infer_auto(0, &own_addr_type);
     if (addr_rc != 0) {
-        runtime->bms_scan_requested = true;
+        RUNTIME_SET_FLAG(runtime, BMS_SCAN_REQUESTED, true);
         return ESP_FAIL;
     }
 
@@ -3694,13 +3725,13 @@ static esp_err_t runtime_bms_ble_start_scan(esp_bms_idf_runtime_t *runtime)
                                 runtime_bms_ble_gap_event,
                                 runtime);
     if (rc != 0) {
-        runtime->bms_scan_requested = true;
+        RUNTIME_SET_FLAG(runtime, BMS_SCAN_REQUESTED, true);
         runtime_bms_ble_reset_connection_state(runtime, BMS_BLE_PHASE_BACKOFF);
         return ESP_FAIL;
     }
 
-    runtime->bms_scan_requested = false;
-    runtime->bms_scan_active = true;
+    RUNTIME_SET_FLAG(runtime, BMS_SCAN_REQUESTED, false);
+    RUNTIME_SET_FLAG(runtime, BMS_SCAN_ACTIVE, true);
     runtime->bms_ble_phase = (uint8_t)BMS_BLE_PHASE_SCANNING;
     runtime_set_bms_info(runtime, "BMS SCAN");
     ESP_LOGI(TAG, "[bms] BLE scan started: duration_ms=%u", (unsigned)BMS_SCAN_DURATION_MS);
@@ -3718,28 +3749,28 @@ static int runtime_bluetooth_gap_event(struct ble_gap_event *event, void *arg)
     case BLE_GAP_EVENT_CONNECT:
         if (event->connect.status == 0) {
             runtime->bluetooth_conn_handle = event->connect.conn_handle;
-            runtime->bluetooth_connected = true;
-            runtime->bluetooth_advertising = false;
-            runtime->bluetooth_advertise_requested = false;
+            RUNTIME_SET_FLAG(runtime, BLUETOOTH_CONNECTED, true);
+            RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISING, false);
+            RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, false);
             (void)runtime_project_bluetooth_snapshot(runtime);
             runtime_set_error(runtime, "BT CONN");
             ESP_LOGI(TAG, "[bt] local Bluetooth connected: conn=%u", event->connect.conn_handle);
         } else {
             runtime->bluetooth_conn_handle = 0xFFFFU;
-            runtime->bluetooth_connected = false;
-            runtime->bluetooth_advertising = false;
-            runtime->bluetooth_advertise_requested = true;
+            RUNTIME_SET_FLAG(runtime, BLUETOOTH_CONNECTED, false);
+            RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISING, false);
+            RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, true);
             (void)runtime_project_bluetooth_snapshot(runtime);
             ESP_LOGW(TAG, "[bt] local Bluetooth connection failed: status=%d", event->connect.status);
         }
         return 0;
     case BLE_GAP_EVENT_DISCONNECT:
         if (event->disconnect.conn.conn_handle == runtime->bluetooth_conn_handle) {
-            const bool start_bms_scan = runtime->bms_scan_requested;
+            const bool start_bms_scan = RUNTIME_FLAG(runtime, BMS_SCAN_REQUESTED);
             runtime->bluetooth_conn_handle = 0xFFFFU;
-            runtime->bluetooth_connected = false;
-            runtime->bluetooth_advertising = false;
-            runtime->bluetooth_advertise_requested = !start_bms_scan;
+            RUNTIME_SET_FLAG(runtime, BLUETOOTH_CONNECTED, false);
+            RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISING, false);
+            RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, !start_bms_scan);
             (void)runtime_project_bluetooth_snapshot(runtime);
             runtime_set_error(runtime, "BT OFF");
             ESP_LOGI(TAG, "[bt] local Bluetooth disconnected: reason=%d", event->disconnect.reason);
@@ -3753,12 +3784,12 @@ static int runtime_bluetooth_gap_event(struct ble_gap_event *event, void *arg)
         }
         return 0;
     case BLE_GAP_EVENT_ADV_COMPLETE:
-        runtime->bluetooth_advertising = false;
-        if (!runtime->bluetooth_connected &&
-            !runtime->bms_scan_requested &&
-            !runtime->bms_scan_active &&
+        RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISING, false);
+        if (!RUNTIME_FLAG(runtime, BLUETOOTH_CONNECTED) &&
+            !RUNTIME_FLAG(runtime, BMS_SCAN_REQUESTED) &&
+            !RUNTIME_FLAG(runtime, BMS_SCAN_ACTIVE) &&
             runtime->bms_conn_handle == 0xFFFFU) {
-            runtime->bluetooth_advertise_requested = true;
+            RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, true);
         }
         (void)runtime_project_bluetooth_snapshot(runtime);
         ESP_LOGI(TAG, "[bt] local Bluetooth advertising complete: reason=%d",
@@ -3774,18 +3805,18 @@ static esp_err_t runtime_bluetooth_start_advertising_now(esp_bms_idf_runtime_t *
     if (!runtime) {
         return ESP_ERR_INVALID_ARG;
     }
-    if (!runtime->bms_ble_ready || !runtime->bms_ble_synced) {
-        runtime->bluetooth_advertise_requested = true;
+    if (!RUNTIME_FLAG(runtime, BMS_BLE_READY) || !RUNTIME_FLAG(runtime, BMS_BLE_SYNCED)) {
+        RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, true);
         (void)runtime_project_bluetooth_snapshot(runtime);
         return ESP_ERR_INVALID_STATE;
     }
-    if (runtime->bluetooth_connected || runtime->bluetooth_advertising || ble_gap_adv_active()) {
-        runtime->bluetooth_advertise_requested = false;
-        runtime->bluetooth_advertising = ble_gap_adv_active() != 0;
+    if (RUNTIME_FLAG(runtime, BLUETOOTH_CONNECTED) || RUNTIME_FLAG(runtime, BLUETOOTH_ADVERTISING) || ble_gap_adv_active()) {
+        RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, false);
+        RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISING, ble_gap_adv_active() != 0);
         (void)runtime_project_bluetooth_snapshot(runtime);
         return ESP_OK;
     }
-    if (runtime->bms_scan_active || runtime->bms_conn_handle != 0xFFFFU || ble_gap_disc_active()) {
+    if (RUNTIME_FLAG(runtime, BMS_SCAN_ACTIVE) || runtime->bms_conn_handle != 0xFFFFU || ble_gap_disc_active()) {
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -3837,9 +3868,9 @@ static esp_err_t runtime_bluetooth_start_advertising_now(esp_bms_idf_runtime_t *
     }
 
     runtime->bluetooth_own_addr_type = own_addr_type;
-    runtime->bluetooth_advertise_requested = false;
-    runtime->bluetooth_advertising = true;
-    runtime->bluetooth_connected = false;
+    RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, false);
+    RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISING, true);
+    RUNTIME_SET_FLAG(runtime, BLUETOOTH_CONNECTED, false);
     runtime_project_bluetooth_snapshot(runtime);
     runtime_set_error(runtime, "BT ON");
     ESP_LOGI(TAG, "[bt] local Bluetooth advertising started: name='%s'", runtime->snapshot.bluetooth_name);
@@ -3852,19 +3883,19 @@ static esp_err_t runtime_bluetooth_stop_for_bms_scan(esp_bms_idf_runtime_t *runt
         return ESP_ERR_INVALID_ARG;
     }
 
-    runtime->bluetooth_advertise_requested = false;
+    RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, false);
     if (runtime->bluetooth_conn_handle != 0xFFFFU) {
         (void)ble_gap_terminate(runtime->bluetooth_conn_handle, BLE_ERR_REM_USER_CONN_TERM);
-        runtime->bms_scan_requested = true;
+        RUNTIME_SET_FLAG(runtime, BMS_SCAN_REQUESTED, true);
         runtime_project_bluetooth_snapshot(runtime);
         return ESP_ERR_INVALID_STATE;
     }
-    if (runtime->bluetooth_advertising || ble_gap_adv_active()) {
+    if (RUNTIME_FLAG(runtime, BLUETOOTH_ADVERTISING) || ble_gap_adv_active()) {
         const int rc = ble_gap_adv_stop();
         if (rc != 0 && rc != BLE_HS_EALREADY) {
             return ESP_FAIL;
         }
-        runtime->bluetooth_advertising = false;
+        RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISING, false);
         runtime_project_bluetooth_snapshot(runtime);
     }
     return ESP_OK;
@@ -3873,7 +3904,7 @@ static esp_err_t runtime_bluetooth_stop_for_bms_scan(esp_bms_idf_runtime_t *runt
 static esp_err_t runtime_bms_ble_start_scan_or_defer(esp_bms_idf_runtime_t *runtime)
 {
     const esp_err_t ret = runtime_bms_ble_start_scan(runtime);
-    if (ret == ESP_ERR_INVALID_STATE && runtime && runtime->bms_scan_requested) {
+    if (ret == ESP_ERR_INVALID_STATE && runtime && RUNTIME_FLAG(runtime, BMS_SCAN_REQUESTED)) {
         return ESP_OK;
     }
     return ret;
@@ -3883,10 +3914,10 @@ static void runtime_bms_ble_on_reset(int reason)
 {
     esp_bms_idf_runtime_t *runtime = s_bms_ble_runtime;
     if (runtime) {
-        runtime->bms_ble_synced = false;
-        runtime->bms_scan_active = false;
-        runtime->bluetooth_advertising = false;
-        runtime->bluetooth_connected = false;
+        RUNTIME_SET_FLAG(runtime, BMS_BLE_SYNCED, false);
+        RUNTIME_SET_FLAG(runtime, BMS_SCAN_ACTIVE, false);
+        RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISING, false);
+        RUNTIME_SET_FLAG(runtime, BLUETOOTH_CONNECTED, false);
         runtime->bluetooth_conn_handle = 0xFFFFU;
         (void)runtime_project_bluetooth_snapshot(runtime);
     }
@@ -3899,14 +3930,14 @@ static void runtime_bms_ble_on_sync(void)
     if (!runtime) {
         return;
     }
-    runtime->bms_ble_synced = true;
+    RUNTIME_SET_FLAG(runtime, BMS_BLE_SYNCED, true);
     ESP_LOGI(TAG, "[bms] NimBLE synced");
-    if (runtime->bms_scan_requested) {
+    if (RUNTIME_FLAG(runtime, BMS_SCAN_REQUESTED)) {
         const esp_err_t ret = runtime_bms_ble_start_scan(runtime);
         if (ret != ESP_OK) {
             ESP_LOGW(TAG, "[bms] deferred BLE scan start failed: %s", esp_err_to_name(ret));
         }
-    } else if (runtime->bluetooth_advertise_requested) {
+    } else if (RUNTIME_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED)) {
         const esp_err_t ret = runtime_bluetooth_start_advertising_now(runtime);
         if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
             ESP_LOGW(TAG, "[bt] deferred local Bluetooth advertising failed: %s",
@@ -3925,7 +3956,7 @@ static void runtime_bms_ble_host_task(void *param)
 
 static esp_err_t runtime_init_bms_ble(esp_bms_idf_runtime_t *runtime)
 {
-    if (runtime->bms_ble_ready) {
+    if (RUNTIME_FLAG(runtime, BMS_BLE_READY)) {
         return ESP_OK;
     }
 
@@ -3962,8 +3993,8 @@ static esp_err_t runtime_init_bms_ble(esp_bms_idf_runtime_t *runtime)
         return ESP_ERR_NO_MEM;
     }
 
-    runtime->bms_ble_ready = true;
-    runtime->bms_ble_host_started = true;
+    RUNTIME_SET_FLAG(runtime, BMS_BLE_READY, true);
+    RUNTIME_SET_FLAG(runtime, BMS_BLE_HOST_STARTED, true);
     ESP_LOGI(TAG, "[bms] NimBLE initialized");
     return ESP_OK;
 }
@@ -3979,12 +4010,12 @@ static void runtime_wifi_event_handler(void *arg,
     }
 
     if (event_id == WIFI_EVENT_AP_START) {
-        runtime->setup_ap_started = true;
+        RUNTIME_SET_FLAG(runtime, SETUP_AP_STARTED, true);
         ESP_LOGI(TAG, "[wifi] AP started: ip=192.168.4.1 dhcp=on");
         return;
     }
     if (event_id == WIFI_EVENT_AP_STOP) {
-        runtime->setup_ap_started = false;
+        RUNTIME_SET_FLAG(runtime, SETUP_AP_STARTED, false);
         runtime->setup_ap_clients = 0;
         ESP_LOGI(TAG, "[wifi] AP stopped");
         return;
@@ -4012,8 +4043,8 @@ static void runtime_wifi_event_handler(void *arg,
         return;
     }
     if (event_id == WIFI_EVENT_STA_START) {
-        runtime->station_started = true;
-        if (runtime->station_connect_requested && runtime_has_external_wifi_credentials(runtime)) {
+        RUNTIME_SET_FLAG(runtime, STATION_STARTED, true);
+        if (RUNTIME_FLAG(runtime, STATION_CONNECT_REQUESTED) && runtime_has_external_wifi_credentials(runtime)) {
             runtime->snapshot.wifi = ESP_BMS_WIFI_CONNECTING;
             const esp_err_t ret = esp_wifi_connect();
             if (ret != ESP_OK) {
@@ -4023,24 +4054,24 @@ static void runtime_wifi_event_handler(void *arg,
         return;
     }
     if (event_id == WIFI_EVENT_STA_STOP) {
-        runtime->station_started = false;
-        runtime->station_connected = false;
-        runtime->station_has_ip = false;
+        RUNTIME_SET_FLAG(runtime, STATION_STARTED, false);
+        RUNTIME_SET_FLAG(runtime, STATION_CONNECTED, false);
+        RUNTIME_SET_FLAG(runtime, STATION_HAS_IP, false);
         ESP_LOGI(TAG, "[wifi] STA stopped");
         return;
     }
     if (event_id == WIFI_EVENT_STA_CONNECTED) {
-        runtime->station_connected = true;
-        runtime->station_has_ip = false;
+        RUNTIME_SET_FLAG(runtime, STATION_CONNECTED, true);
+        RUNTIME_SET_FLAG(runtime, STATION_HAS_IP, false);
         runtime->snapshot.wifi = ESP_BMS_WIFI_CONNECTING;
         ESP_LOGI(TAG, "[wifi] STA connected: ssid='%s'", runtime->external_ssid);
         return;
     }
     if (event_id == WIFI_EVENT_STA_DISCONNECTED) {
         const wifi_event_sta_disconnected_t *event = (const wifi_event_sta_disconnected_t *)event_data;
-        runtime->station_connected = false;
-        runtime->station_has_ip = false;
-        if (runtime->station_connect_requested &&
+        RUNTIME_SET_FLAG(runtime, STATION_CONNECTED, false);
+        RUNTIME_SET_FLAG(runtime, STATION_HAS_IP, false);
+        if (RUNTIME_FLAG(runtime, STATION_CONNECT_REQUESTED) &&
             runtime_has_external_wifi_credentials(runtime) &&
             runtime->station_retry_count < STATION_RECONNECT_MAX) {
             runtime->station_retry_count++;
@@ -4088,8 +4119,8 @@ static void runtime_ip_event_handler(void *arg,
     if (event_id == IP_EVENT_STA_GOT_IP && runtime) {
         const ip_event_got_ip_t *event = (const ip_event_got_ip_t *)event_data;
         char ip[16] = { 0 };
-        runtime->station_connected = true;
-        runtime->station_has_ip = true;
+        RUNTIME_SET_FLAG(runtime, STATION_CONNECTED, true);
+        RUNTIME_SET_FLAG(runtime, STATION_HAS_IP, true);
         runtime->station_retry_count = 0;
         runtime->snapshot.wifi = ESP_BMS_WIFI_CONNECTED;
         runtime_set_error(runtime, "STA IP");
@@ -4101,7 +4132,7 @@ static void runtime_ip_event_handler(void *arg,
 
 static esp_err_t runtime_register_wifi_handlers(esp_bms_idf_runtime_t *runtime)
 {
-    if (runtime->wifi_handlers_registered) {
+    if (RUNTIME_FLAG(runtime, WIFI_HANDLERS_REGISTERED)) {
         return ESP_OK;
     }
 
@@ -4119,13 +4150,13 @@ static esp_err_t runtime_register_wifi_handlers(esp_bms_idf_runtime_t *runtime)
                                                             NULL),
                         TAG,
                         "IP event handler registration failed");
-    runtime->wifi_handlers_registered = true;
+    RUNTIME_SET_FLAG(runtime, WIFI_HANDLERS_REGISTERED, true);
     return ESP_OK;
 }
 
 static esp_err_t runtime_init_wifi_stack(esp_bms_idf_runtime_t *runtime)
 {
-    if (!runtime->wifi_stack_ready) {
+    if (!RUNTIME_FLAG(runtime, WIFI_STACK_READY)) {
         ESP_RETURN_ON_ERROR(runtime_init_nvs(runtime), TAG, "NVS init failed");
 
         esp_err_t ret = esp_netif_init();
@@ -4153,13 +4184,13 @@ static esp_err_t runtime_init_wifi_stack(esp_bms_idf_runtime_t *runtime)
             return ESP_ERR_NO_MEM;
         }
 
-        runtime->wifi_stack_ready = true;
+        RUNTIME_SET_FLAG(runtime, WIFI_STACK_READY, true);
     }
 
-    if (!runtime->wifi_driver_ready) {
+    if (!RUNTIME_FLAG(runtime, WIFI_DRIVER_READY)) {
         wifi_init_config_t init_config = WIFI_INIT_CONFIG_DEFAULT();
         ESP_RETURN_ON_ERROR(esp_wifi_init(&init_config), TAG, "esp_wifi_init failed");
-        runtime->wifi_driver_ready = true;
+        RUNTIME_SET_FLAG(runtime, WIFI_DRIVER_READY, true);
     }
 
     return runtime_register_wifi_handlers(runtime);
@@ -4205,10 +4236,10 @@ static esp_err_t runtime_apply_external_wifi_config(esp_bms_idf_runtime_t *runti
 
     const esp_err_t ret = esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
     if (ret == ESP_OK) {
-        runtime->station_connect_requested = true;
+        RUNTIME_SET_FLAG(runtime, STATION_CONNECT_REQUESTED, true);
         runtime->station_retry_count = 0;
-        runtime->station_connected = false;
-        runtime->station_has_ip = false;
+        RUNTIME_SET_FLAG(runtime, STATION_CONNECTED, false);
+        RUNTIME_SET_FLAG(runtime, STATION_HAS_IP, false);
         runtime->snapshot.wifi = ESP_BMS_WIFI_CONNECTING;
         ESP_LOGI(TAG, "[wifi] STA config applied: ssid='%s' sta_pw_len=%u",
                  runtime->external_ssid, (unsigned)password_len);
@@ -4218,7 +4249,7 @@ static esp_err_t runtime_apply_external_wifi_config(esp_bms_idf_runtime_t *runti
 
 static bool runtime_wifi_started(const esp_bms_idf_runtime_t *runtime)
 {
-    return runtime && (runtime->setup_ap_started || runtime->station_started);
+    return runtime && (RUNTIME_FLAG(runtime, SETUP_AP_STARTED) || RUNTIME_FLAG(runtime, STATION_STARTED));
 }
 
 static esp_err_t runtime_start_station_connect(esp_bms_idf_runtime_t *runtime)
@@ -4233,8 +4264,8 @@ static esp_err_t runtime_start_station_connect(esp_bms_idf_runtime_t *runtime)
     ESP_RETURN_ON_ERROR(runtime_init_wifi_stack(runtime), TAG, "Wi-Fi stack init failed");
 
     const bool wifi_was_started = runtime_wifi_started(runtime);
-    esp_err_t ret = esp_wifi_set_mode(runtime->setup_ap_started ? WIFI_MODE_APSTA : WIFI_MODE_STA);
-    if (ret == ESP_OK && runtime->setup_ap_started) {
+    esp_err_t ret = esp_wifi_set_mode(RUNTIME_FLAG(runtime, SETUP_AP_STARTED) ? WIFI_MODE_APSTA : WIFI_MODE_STA);
+    if (ret == ESP_OK && RUNTIME_FLAG(runtime, SETUP_AP_STARTED)) {
         ret = runtime_apply_setup_ap_wifi_config(runtime);
     }
     if (ret == ESP_OK) {
@@ -4242,7 +4273,7 @@ static esp_err_t runtime_start_station_connect(esp_bms_idf_runtime_t *runtime)
     }
     if (ret == ESP_OK && !wifi_was_started) {
         ret = esp_wifi_start();
-    } else if (ret == ESP_OK && runtime->station_started) {
+    } else if (ret == ESP_OK && RUNTIME_FLAG(runtime, STATION_STARTED)) {
         (void)esp_wifi_disconnect();
         ret = esp_wifi_connect();
     }
@@ -4254,18 +4285,18 @@ static esp_err_t runtime_wifi_start_scan(esp_bms_idf_runtime_t *runtime)
     if (!runtime) {
         return ESP_ERR_INVALID_ARG;
     }
-    if (runtime->wifi_scan_active) {
+    if (RUNTIME_FLAG(runtime, WIFI_SCAN_ACTIVE)) {
         return ESP_OK;
     }
 
     ESP_RETURN_ON_ERROR(runtime_init_wifi_stack(runtime), TAG, "Wi-Fi stack init failed");
 
     const bool wifi_was_started = runtime_wifi_started(runtime);
-    esp_err_t ret = esp_wifi_set_mode(runtime->setup_ap_started ? WIFI_MODE_APSTA : WIFI_MODE_STA);
+    esp_err_t ret = esp_wifi_set_mode(RUNTIME_FLAG(runtime, SETUP_AP_STARTED) ? WIFI_MODE_APSTA : WIFI_MODE_STA);
     if (ret != ESP_OK) {
         return ret;
     }
-    if (runtime->setup_ap_started) {
+    if (RUNTIME_FLAG(runtime, SETUP_AP_STARTED)) {
         ret = runtime_apply_setup_ap_wifi_config(runtime);
         if (ret != ESP_OK) {
             return ret;
@@ -4347,7 +4378,7 @@ static void runtime_wifi_scan_handle_done(esp_bms_idf_runtime_t *runtime)
 
 static bool runtime_sample_battery(esp_bms_idf_runtime_t *runtime)
 {
-    if (!runtime->battery_adc_ready || !runtime->battery_adc) {
+    if (!RUNTIME_FLAG(runtime, BATTERY_ADC_READY) || !runtime->battery_adc) {
         return false;
     }
 
@@ -4370,8 +4401,8 @@ static bool runtime_sample_battery(esp_bms_idf_runtime_t *runtime)
 
     const uint32_t battery_mv = runtime_battery_mv_from_raw((uint16_t)raw);
     const bool changed =
-        !runtime->snapshot.local_battery_valid || runtime->snapshot.local_battery_mv != battery_mv;
-    runtime->snapshot.local_battery_valid = true;
+        !RUNTIME_SNAPSHOT_FLAG(runtime, LOCAL_BATTERY_VALID) || runtime->snapshot.local_battery_mv != battery_mv;
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, LOCAL_BATTERY_VALID, true);
     runtime->snapshot.local_battery_mv = battery_mv;
     runtime->battery_samples_seen++;
     return changed;
@@ -4395,7 +4426,7 @@ static bool runtime_apply_gps_line(esp_bms_idf_runtime_t *runtime)
         return false;
     }
 
-    runtime->snapshot.gps_fix_valid = fix_valid;
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, GPS_FIX_VALID, fix_valid);
     runtime->gps_speed_knots_milli = speed_knots_milli;
     runtime->snapshot.gps_sentences_seen++;
     runtime_update_snapshot_speed(runtime);
@@ -4429,7 +4460,7 @@ static bool runtime_feed_gps_byte(esp_bms_idf_runtime_t *runtime, uint8_t byte)
 
 static bool runtime_poll_gps_uart(esp_bms_idf_runtime_t *runtime)
 {
-    if (!runtime->gps_uart_ready) {
+    if (!RUNTIME_FLAG(runtime, GPS_UART_READY)) {
         return false;
     }
 
@@ -4451,8 +4482,10 @@ static bool runtime_poll_gps_uart(esp_bms_idf_runtime_t *runtime)
 
     bool changed = false;
     runtime->gps_bytes_seen += (uint32_t)read;
-    for (int index = 0; index < read; index++) {
-        changed = runtime_feed_gps_byte(runtime, bytes[index]) || changed;
+    const uint8_t *cursor = bytes;
+    const uint8_t *const end = bytes + read;
+    while (cursor < end) {
+        changed = runtime_feed_gps_byte(runtime, *cursor++) || changed;
     }
     return changed;
 }
@@ -4488,7 +4521,7 @@ esp_err_t esp_bms_idf_runtime_start_setup_ap(esp_bms_idf_runtime_t *runtime)
     if (!runtime) {
         return ESP_ERR_INVALID_ARG;
     }
-    if (runtime->setup_ap_started) {
+    if (RUNTIME_FLAG(runtime, SETUP_AP_STARTED)) {
         return ESP_OK;
     }
     runtime_ensure_setup_ap_credentials(runtime);
@@ -4499,13 +4532,13 @@ esp_err_t esp_bms_idf_runtime_start_setup_ap(esp_bms_idf_runtime_t *runtime)
     esp_err_t ret = runtime_init_wifi_stack(runtime);
     if (ret != ESP_OK) {
         runtime->snapshot.wifi = ESP_BMS_WIFI_OFFLINE;
-        runtime->snapshot.setup_ap_enabled = false;
+        RUNTIME_SET_SNAPSHOT_FLAG(runtime, SETUP_AP_ENABLED, false);
         runtime_set_error(runtime, "AP FAIL");
         return ret;
     }
 
     const bool wifi_was_started = runtime_wifi_started(runtime);
-    const bool keep_station = runtime->station_started || runtime->station_connect_requested;
+    const bool keep_station = RUNTIME_FLAG(runtime, STATION_STARTED) || RUNTIME_FLAG(runtime, STATION_CONNECT_REQUESTED);
     ret = esp_wifi_set_mode(keep_station ? WIFI_MODE_APSTA : WIFI_MODE_AP);
     if (ret == ESP_OK) {
         ret = runtime_apply_setup_ap_wifi_config(runtime);
@@ -4515,17 +4548,17 @@ esp_err_t esp_bms_idf_runtime_start_setup_ap(esp_bms_idf_runtime_t *runtime)
     }
     if (ret != ESP_OK) {
         runtime->snapshot.wifi = ESP_BMS_WIFI_OFFLINE;
-        runtime->snapshot.setup_ap_enabled = false;
+        RUNTIME_SET_SNAPSHOT_FLAG(runtime, SETUP_AP_ENABLED, false);
         runtime_set_error(runtime, "AP FAIL");
         ESP_LOGE(TAG, "[wifi] AP start failed: %s", esp_err_to_name(ret));
         return ret;
     }
 
-    runtime->setup_ap_started = true;
-    runtime->snapshot.setup_ap_enabled = true;
-    runtime->snapshot.wifi = runtime->station_has_ip
+    RUNTIME_SET_FLAG(runtime, SETUP_AP_STARTED, true);
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, SETUP_AP_ENABLED, true);
+    runtime->snapshot.wifi = RUNTIME_FLAG(runtime, STATION_HAS_IP)
                                   ? ESP_BMS_WIFI_CONNECTED
-                                  : (runtime->station_connect_requested ? ESP_BMS_WIFI_CONNECTING
+                                  : (RUNTIME_FLAG(runtime, STATION_CONNECT_REQUESTED) ? ESP_BMS_WIFI_CONNECTING
                                                                         : ESP_BMS_WIFI_SETUP_AP);
     runtime_set_error(runtime, "AP READY");
     return ESP_OK;
@@ -4536,7 +4569,7 @@ esp_err_t esp_bms_idf_runtime_start_http_server(esp_bms_idf_runtime_t *runtime)
     if (!runtime) {
         return ESP_ERR_INVALID_ARG;
     }
-    if (!runtime->setup_ap_started) {
+    if (!RUNTIME_FLAG(runtime, SETUP_AP_STARTED)) {
         return ESP_ERR_INVALID_STATE;
     }
     runtime_ensure_setup_ap_credentials(runtime);
@@ -4616,28 +4649,28 @@ esp_err_t esp_bms_idf_runtime_start_bluetooth_advertising(esp_bms_idf_runtime_t 
                                    sizeof(runtime->bluetooth_name),
                                    LOCAL_BLUETOOTH_NAME);
     }
-    runtime->bluetooth_advertise_requested = true;
+    RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, true);
     runtime_project_bluetooth_snapshot(runtime);
 
     esp_err_t ret = runtime_init_bms_ble(runtime);
     if (ret != ESP_OK) {
-        runtime->bluetooth_advertise_requested = false;
+        RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, false);
         runtime_project_bluetooth_snapshot(runtime);
         runtime_set_error(runtime, "BT FAIL");
         return ret;
     }
-    if (!runtime->bms_ble_synced) {
+    if (!RUNTIME_FLAG(runtime, BMS_BLE_SYNCED)) {
         runtime_set_error(runtime, "BT WAIT");
         return ESP_OK;
     }
 
     ret = runtime_bluetooth_start_advertising_now(runtime);
     if (ret == ESP_ERR_INVALID_STATE) {
-        runtime->bluetooth_advertise_requested = false;
+        RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, false);
         runtime_project_bluetooth_snapshot(runtime);
         runtime_set_error(runtime, "BT BUSY");
     } else if (ret != ESP_OK) {
-        runtime->bluetooth_advertise_requested = false;
+        RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, false);
         runtime_project_bluetooth_snapshot(runtime);
         runtime_set_error(runtime, "BT FAIL");
     }
@@ -4650,15 +4683,15 @@ bool esp_bms_idf_runtime_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_m
         return false;
     }
 
-    bool changed = runtime->bluetooth_snapshot_dirty;
-    runtime->bluetooth_snapshot_dirty = false;
+    bool changed = RUNTIME_FLAG(runtime, BLUETOOTH_SNAPSHOT_DIRTY);
+    RUNTIME_SET_FLAG(runtime, BLUETOOTH_SNAPSHOT_DIRTY, false);
     changed = runtime_apply_pending_http_config(runtime) || changed;
     changed = runtime_apply_pending_http_ap_password(runtime) || changed;
     changed = runtime_apply_pending_http_external_wifi(runtime) || changed;
     changed = runtime_apply_pending_http_bms_scan(runtime) || changed;
     changed = runtime_apply_pending_http_bms_bind(runtime) || changed;
     changed = runtime_apply_pending_wifi_scan(runtime) || changed;
-    if (runtime->bluetooth_advertise_requested && !runtime->bms_scan_requested) {
+    if (RUNTIME_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED) && !RUNTIME_FLAG(runtime, BMS_SCAN_REQUESTED)) {
         const esp_err_t ret = esp_bms_idf_runtime_start_bluetooth_advertising(runtime);
         if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
             ESP_LOGW(TAG, "[bt] local Bluetooth advertising start failed: %s",
@@ -4669,7 +4702,7 @@ bool esp_bms_idf_runtime_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_m
     if (runtime->bms_ble_phase == (uint8_t)BMS_BLE_PHASE_ONLINE) {
         runtime->bms_status_poll_elapsed_ms += elapsed_ms;
         if (runtime->bms_status_poll_elapsed_ms >= BMS_STATUS_POLL_PERIOD_MS &&
-            !runtime->bms_write_in_flight) {
+            !RUNTIME_FLAG(runtime, BMS_WRITE_IN_FLIGHT)) {
             const esp_err_t poll_ret = runtime_bms_ble_send_poll_request(runtime);
             if (poll_ret != ESP_OK) {
                 runtime_set_bms_info(runtime, "BMS POLL");
@@ -4702,7 +4735,7 @@ bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,
 
     switch (event->action) {
     case ESP_BMS_LVGL_ACTION_ENABLE_WIFI_REPROVISIONING:
-        runtime->snapshot.setup_ap_enabled = true;
+        RUNTIME_SET_SNAPSHOT_FLAG(runtime, SETUP_AP_ENABLED, true);
         runtime->snapshot.wifi = ESP_BMS_WIFI_SETUP_AP;
         runtime_set_error(runtime, "SETUP AP");
         return true;
@@ -4714,7 +4747,7 @@ bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,
                                    runtime->brightness_percent >= 60 ? "BRIGHT 60" : "BRIGHT 30");
         return true;
     case ESP_BMS_LVGL_ACTION_SET_BRIGHTNESS:
-        if (!event->brightness_percent_valid ||
+        if (!ACTION_EVENT_FLAG(event, BRIGHTNESS_PERCENT_VALID) ||
             !runtime_brightness_matches_policy(event->brightness_percent)) {
             return false;
         }
@@ -4725,7 +4758,7 @@ bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,
         runtime_set_error(runtime, "BRIGHT SET");
         return true;
     case ESP_BMS_LVGL_ACTION_SET_VOLUME:
-        if (!event->volume_percent_valid ||
+        if (!ACTION_EVENT_FLAG(event, VOLUME_PERCENT_VALID) ||
             !runtime_volume_matches_policy(event->volume_percent)) {
             return false;
         }
@@ -4747,8 +4780,8 @@ bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,
         runtime_set_error(runtime, runtime->snapshot.speed_unit == ESP_BMS_SPEED_UNIT_MPH ? "SPEED MPH" : "SPEED KMH");
         return true;
     case ESP_BMS_LVGL_ACTION_TOGGLE_LANGUAGE:
-        runtime->language_zh = !runtime->language_zh;
-        runtime_set_error(runtime, runtime->language_zh ? "LANG ZH" : "LANG EN");
+        RUNTIME_SET_FLAG(runtime, LANGUAGE_ZH, !RUNTIME_FLAG(runtime, LANGUAGE_ZH));
+        runtime_set_error(runtime, RUNTIME_FLAG(runtime, LANGUAGE_ZH) ? "LANG ZH" : "LANG EN");
         return true;
     case ESP_BMS_LVGL_ACTION_START_BMS_BIND:
         if (!runtime_set_pending_http_bms_scan(runtime)) {
@@ -4756,21 +4789,21 @@ bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,
         }
         return true;
     case ESP_BMS_LVGL_ACTION_ENABLE_BLUETOOTH_ADVERTISING:
-        runtime->bluetooth_advertise_requested = true;
+        RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, true);
         runtime_project_bluetooth_snapshot(runtime);
         runtime_set_error(runtime, "BT ON");
         return true;
     case ESP_BMS_LVGL_ACTION_SCAN_WIFI:
-        runtime->wifi_scan_requested = true;
-        runtime->wifi_scan_complete = false;
-        runtime->snapshot.wifi_scan_active = true;
-        runtime->snapshot.wifi_scan_complete = false;
+        RUNTIME_SET_FLAG(runtime, WIFI_SCAN_REQUESTED, true);
+        RUNTIME_SET_FLAG(runtime, WIFI_SCAN_COMPLETE, false);
+        RUNTIME_SET_SNAPSHOT_FLAG(runtime, WIFI_SCAN_ACTIVE, true);
+        RUNTIME_SET_SNAPSHOT_FLAG(runtime, WIFI_SCAN_COMPLETE, false);
         runtime->snapshot.wifi_scan_generation++;
         runtime_set_error(runtime, "SCAN WIFI");
         return true;
     case ESP_BMS_LVGL_ACTION_CONNECT_WIFI:
-        if (!event->wifi_ssid_valid ||
-            !event->wifi_password_valid ||
+        if (!ACTION_EVENT_FLAG(event, WIFI_SSID_VALID) ||
+            !ACTION_EVENT_FLAG(event, WIFI_PASSWORD_VALID) ||
             !runtime_external_wifi_credentials_match_policy(event->wifi_ssid, event->wifi_password)) {
             runtime_set_error(runtime, "WIFI BAD");
             return true;

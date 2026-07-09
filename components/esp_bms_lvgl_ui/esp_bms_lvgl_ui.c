@@ -83,6 +83,42 @@ typedef enum {
 
 _Static_assert(QUICK_PANEL_CONTROL_COUNT == QUICK_PANEL_GRID_SLOT_COUNT,
                "quick panel defaults must fill a 2x4 grid");
+_Static_assert(QUICK_PANEL_BUTTON_COUNT <= 8,
+               "quick panel item masks are stored in uint8_t");
+_Static_assert(DASHBOARD_CELL_STAT_COUNT <= 8,
+               "dashboard cell draw buffer masks are stored in uint8_t");
+
+typedef enum {
+    UI_STATE_FLAG_DRAGGING = UINT32_C(1) << 0,
+    UI_STATE_FLAG_SETTLING = UINT32_C(1) << 1,
+    UI_STATE_FLAG_DEFERRED_SNAPSHOT_VALID = UINT32_C(1) << 2,
+    UI_STATE_FLAG_LAST_SNAPSHOT_VALID = UINT32_C(1) << 3,
+    UI_STATE_FLAG_QUICK_PANEL_OPEN = UINT32_C(1) << 4,
+    UI_STATE_FLAG_QUICK_PANEL_INTERACTIVE = UINT32_C(1) << 5,
+    UI_STATE_FLAG_QUICK_PANEL_SETTLING = UINT32_C(1) << 6,
+    UI_STATE_FLAG_QUICK_PANEL_ANIMATION_TARGET_OPEN = UINT32_C(1) << 7,
+    UI_STATE_FLAG_QUICK_PULL_TRACKING = UINT32_C(1) << 8,
+    UI_STATE_FLAG_RETURN_SWIPE_TRACKING = UINT32_C(1) << 9,
+    UI_STATE_FLAG_RETURN_SWIPE_CANCELLED = UINT32_C(1) << 10,
+    UI_STATE_FLAG_SETTINGS_SWIPE_TRACKING = UINT32_C(1) << 11,
+    UI_STATE_FLAG_SETTINGS_SWIPE_CONSUMED = UINT32_C(1) << 12,
+    UI_STATE_FLAG_QUICK_EDIT_MODE = UINT32_C(1) << 13,
+    UI_STATE_FLAG_QUICK_DRAG_MOVED = UINT32_C(1) << 14,
+    UI_STATE_FLAG_QUICK_LONG_TRIGGERED = UINT32_C(1) << 15,
+    UI_STATE_FLAG_QUICK_HOLD_ACTIVE = UINT32_C(1) << 16,
+    UI_STATE_FLAG_QUICK_HOLD_COMPLETED = UINT32_C(1) << 17,
+    UI_STATE_FLAG_QUICK_HOLD_SUPPRESS_CLICK = UINT32_C(1) << 18,
+    UI_STATE_FLAG_WIFI_PASSWORD_SHIFTED = UINT32_C(1) << 19,
+    UI_STATE_FLAG_WIFI_PASSWORD_SYMBOLS = UINT32_C(1) << 20,
+    UI_STATE_FLAG_QUICK_LEVEL_OVERLAY_ACTIVE = UINT32_C(1) << 21,
+    UI_STATE_FLAG_QUICK_LEVEL_OVERLAY_DRAGGED = UINT32_C(1) << 22,
+    UI_STATE_FLAG_QUICK_LEVEL_OVERLAY_HORIZONTAL = UINT32_C(1) << 23,
+    UI_STATE_FLAG_QUICK_LEVEL_LONG_TRIGGERED = UINT32_C(1) << 24,
+    UI_STATE_FLAG_SOC_FILL_HORIZONTAL = UINT32_C(1) << 25,
+    UI_STATE_FLAG_SOC_WAVE_ACTIVE = UINT32_C(1) << 26,
+    UI_STATE_FLAG_SOC_WAVE_VERTICAL = UINT32_C(1) << 27,
+    UI_STATE_FLAG_INITIALIZED = UINT32_C(1) << 28,
+} ui_state_flag_t;
 
 typedef enum {
     QUICK_DRAG_TARGET_NONE = 0,
@@ -106,8 +142,35 @@ typedef struct {
     quick_tile_rect_t items[QUICK_PANEL_BUTTON_COUNT];
 } quick_panel_layout_t;
 
-_Static_assert(sizeof(esp_bms_dashboard_snapshot_t) == 644,
+static uint8_t ui_flag_bit(uint32_t index)
+{
+    return (uint8_t)(1U << index);
+}
+
+static bool ui_flag_get(uint8_t flags, uint32_t index)
+{
+    return (flags & ui_flag_bit(index)) != 0U;
+}
+
+static void ui_flag_set(uint8_t *flags, uint32_t index, bool enabled)
+{
+    const uint8_t bit = ui_flag_bit(index);
+    if (enabled) {
+        *flags |= bit;
+    } else {
+        *flags &= (uint8_t)~bit;
+    }
+}
+
+#define SNAPSHOT_FLAG(snapshot, name) \
+    esp_bms_dashboard_snapshot_flag_get((snapshot), ESP_BMS_DASHBOARD_FLAG_##name)
+#define ACTION_EVENT_SET_FLAG(event, name, enabled) \
+    esp_bms_lvgl_action_event_flag_set((event), ESP_BMS_LVGL_ACTION_EVENT_FLAG_##name, (enabled))
+
+_Static_assert(sizeof(esp_bms_dashboard_snapshot_t) == 604,
                "esp_bms_dashboard_snapshot_t ABI size changed; update C snapshot consumers too");
+_Static_assert(sizeof(esp_bms_lvgl_action_event_t) == 108,
+               "esp_bms_lvgl_action_event_t ABI size changed; update C action consumers too");
 _Static_assert(sizeof(esp_bms_lvgl_action_t) == 4,
                "esp_bms_lvgl_action_t ABI size changed; update C action consumers too");
 _Static_assert(ESP_BMS_LVGL_ACTION_NONE == 0,
@@ -191,9 +254,9 @@ typedef struct {
     lv_obj_t *quick_edit_button;
     lv_obj_t *quick_edit_icon;
     lv_obj_t *quick_panel_item_icons[QUICK_PANEL_BUTTON_COUNT];
-    bool quick_panel_item_active[QUICK_PANEL_BUTTON_COUNT];
-    bool quick_panel_item_local_active[QUICK_PANEL_BUTTON_COUNT];
-    bool quick_panel_item_local_override[QUICK_PANEL_BUTTON_COUNT];
+    uint8_t quick_panel_item_active_flags;
+    uint8_t quick_panel_item_local_active_flags;
+    uint8_t quick_panel_item_local_override_flags;
     quick_panel_layout_t quick_layouts[QUICK_LAYOUT_COUNT];
 
     lv_obj_t *speed;
@@ -247,42 +310,33 @@ typedef struct {
     uint8_t quick_volume_percent;
     uint32_t wifi_detail_generation;
     uint32_t quick_hold_elapsed_ms;
-    bool deferred_snapshot_valid;
-    bool last_snapshot_valid;
-    bool quick_panel_open;
-    bool quick_panel_interactive;
-    bool quick_panel_settling;
-    bool quick_panel_animation_target_open;
-    bool quick_pull_tracking;
-    bool return_swipe_tracking;
-    bool return_swipe_cancelled;
-    bool settings_swipe_tracking;
-    bool settings_swipe_consumed;
-    bool quick_edit_mode;
-    bool quick_drag_moved;
-    bool quick_long_triggered;
-    bool quick_hold_active;
-    bool quick_hold_completed;
-    bool quick_hold_suppress_click;
-    bool wifi_password_shifted;
-    bool wifi_password_symbols;
-    bool quick_level_overlay_active;
-    bool quick_level_overlay_dragged;
-    bool quick_level_overlay_horizontal;
-    bool quick_level_long_triggered;
-    bool soc_fill_horizontal;
-    bool soc_wave_active;
-    bool soc_wave_vertical;
+    uint32_t flags;
     int32_t soc_wave_span;
     esp_bms_dashboard_snapshot_t last_snapshot;
     esp_bms_dashboard_snapshot_t deferred_snapshot;
     char current_setup_ap_qr_payload[sizeof(((esp_bms_dashboard_snapshot_t *)0)->setup_ap_qr_payload)];
     char wifi_selected_ssid[ESP_BMS_WIFI_SCAN_SSID_LEN + 1U];
     char wifi_password[WIFI_PASSWORD_MAX_LEN + 1U];
-    bool initialized;
 } esp_bms_lvgl_ui_t;
 
 static esp_bms_lvgl_ui_t s_ui;
+
+static bool ui_state_flag_get(ui_state_flag_t flag)
+{
+    return (s_ui.flags & (uint32_t)flag) != 0U;
+}
+
+static void ui_state_flag_set(ui_state_flag_t flag, bool enabled)
+{
+    if (enabled) {
+        s_ui.flags |= (uint32_t)flag;
+    } else {
+        s_ui.flags &= ~(uint32_t)flag;
+    }
+}
+
+#define UI_FLAG(name) ui_state_flag_get(UI_STATE_FLAG_##name)
+#define UI_SET_FLAG(name, enabled) ui_state_flag_set(UI_STATE_FLAG_##name, (enabled))
 LV_DRAW_BUF_DEFINE_STATIC(s_dashboard_cell_key_0_draw_buf,
                           DASHBOARD_CELL_KEY_BITMAP_W,
                           DASHBOARD_CELL_KEY_BITMAP_H,
@@ -299,7 +353,7 @@ LV_DRAW_BUF_DEFINE_STATIC(s_dashboard_cell_key_3_draw_buf,
                           DASHBOARD_CELL_KEY_BITMAP_W,
                           DASHBOARD_CELL_KEY_BITMAP_H,
                           LV_COLOR_FORMAT_ARGB8888);
-static bool s_dashboard_cell_key_draw_buf_initialized[DASHBOARD_CELL_STAT_COUNT];
+static uint8_t s_dashboard_cell_key_draw_buf_initialized_flags;
 
 static void finish_page_scroll_state(bool flush_snapshot);
 static void move_to_page(esp_bms_lvgl_page_t page, bool animated);
@@ -484,28 +538,28 @@ static lv_draw_buf_t *dashboard_cell_key_draw_buf(uint8_t index)
 {
     switch (index) {
     case 0:
-        if (!s_dashboard_cell_key_draw_buf_initialized[0]) {
+        if (!ui_flag_get(s_dashboard_cell_key_draw_buf_initialized_flags, 0U)) {
             LV_DRAW_BUF_INIT_STATIC(s_dashboard_cell_key_0_draw_buf);
-            s_dashboard_cell_key_draw_buf_initialized[0] = true;
+            ui_flag_set(&s_dashboard_cell_key_draw_buf_initialized_flags, 0U, true);
         }
         return &s_dashboard_cell_key_0_draw_buf;
     case 1:
-        if (!s_dashboard_cell_key_draw_buf_initialized[1]) {
+        if (!ui_flag_get(s_dashboard_cell_key_draw_buf_initialized_flags, 1U)) {
             LV_DRAW_BUF_INIT_STATIC(s_dashboard_cell_key_1_draw_buf);
-            s_dashboard_cell_key_draw_buf_initialized[1] = true;
+            ui_flag_set(&s_dashboard_cell_key_draw_buf_initialized_flags, 1U, true);
         }
         return &s_dashboard_cell_key_1_draw_buf;
     case 2:
-        if (!s_dashboard_cell_key_draw_buf_initialized[2]) {
+        if (!ui_flag_get(s_dashboard_cell_key_draw_buf_initialized_flags, 2U)) {
             LV_DRAW_BUF_INIT_STATIC(s_dashboard_cell_key_2_draw_buf);
-            s_dashboard_cell_key_draw_buf_initialized[2] = true;
+            ui_flag_set(&s_dashboard_cell_key_draw_buf_initialized_flags, 2U, true);
         }
         return &s_dashboard_cell_key_2_draw_buf;
     case 3:
     default:
-        if (!s_dashboard_cell_key_draw_buf_initialized[3]) {
+        if (!ui_flag_get(s_dashboard_cell_key_draw_buf_initialized_flags, 3U)) {
             LV_DRAW_BUF_INIT_STATIC(s_dashboard_cell_key_3_draw_buf);
-            s_dashboard_cell_key_draw_buf_initialized[3] = true;
+            ui_flag_set(&s_dashboard_cell_key_draw_buf_initialized_flags, 3U, true);
         }
         return &s_dashboard_cell_key_3_draw_buf;
     }
@@ -761,7 +815,7 @@ static void quick_layout_find_drop_target(quick_panel_layout_t *layout,
 
 static void quick_layout_commit_drag_sort(void)
 {
-    if (!s_ui.quick_drag_obj || !s_ui.quick_drag_moved) {
+    if (!s_ui.quick_drag_obj || !UI_FLAG(QUICK_DRAG_MOVED)) {
         quick_layout_apply_current();
         return;
     }
@@ -809,7 +863,7 @@ static void dashboard_soc_wave_stop(void)
     }
     lv_anim_delete(s_ui.soc_wave, dashboard_soc_wave_x_anim_cb);
     lv_anim_delete(s_ui.soc_wave, dashboard_soc_wave_y_anim_cb);
-    s_ui.soc_wave_active = false;
+    UI_SET_FLAG(SOC_WAVE_ACTIVE, false);
     s_ui.soc_wave_span = 0;
 }
 
@@ -818,15 +872,15 @@ static void dashboard_soc_wave_start(bool vertical, int32_t span)
     if (!s_ui.soc_wave) {
         return;
     }
-    if (s_ui.soc_wave_active &&
-        s_ui.soc_wave_vertical == vertical &&
+    if (UI_FLAG(SOC_WAVE_ACTIVE) &&
+        UI_FLAG(SOC_WAVE_VERTICAL) == vertical &&
         (!vertical || abs_i32(s_ui.soc_wave_span - span) <= 2)) {
         return;
     }
 
     dashboard_soc_wave_stop();
-    s_ui.soc_wave_active = true;
-    s_ui.soc_wave_vertical = vertical;
+    UI_SET_FLAG(SOC_WAVE_ACTIVE, true);
+    UI_SET_FLAG(SOC_WAVE_VERTICAL, vertical);
     s_ui.soc_wave_span = span;
 
     lv_anim_t anim;
@@ -873,7 +927,7 @@ static void update_dashboard_soc_fill(uint8_t soc_percent, bool valid, bool char
     const bool show_fill = valid && soc > 0U;
 
     lv_obj_set_style_bg_color(s_ui.soc_fill, dashboard_soc_fill_color(soc, valid, charging), LV_PART_MAIN);
-    if (s_ui.soc_fill_horizontal) {
+    if (UI_FLAG(SOC_FILL_HORIZONTAL)) {
         const int32_t fill_w = show_fill ? ((panel_w * (int32_t)soc) / 100) : 0;
         lv_obj_set_pos(s_ui.soc_fill, 0, 0);
         lv_obj_set_size(s_ui.soc_fill, fill_w, panel_h);
@@ -927,7 +981,7 @@ static bool settings_view_is_visible(void)
 
 static bool quick_pull_start_allowed(const lv_point_t *point)
 {
-    if (!point || s_ui.quick_panel_open || settings_view_is_visible()) {
+    if (!point || UI_FLAG(QUICK_PANEL_OPEN) || settings_view_is_visible()) {
         return false;
     }
 
@@ -960,7 +1014,7 @@ static void show_settings_view(void)
     lv_obj_add_flag(s_ui.header, LV_OBJ_FLAG_HIDDEN);
     set_quick_panel_open(false);
     set_obj_hidden(s_ui.quick_pull_zone, true);
-    s_ui.settings_swipe_consumed = false;
+    UI_SET_FLAG(SETTINGS_SWIPE_CONSUMED, false);
     settings_show_root();
     lv_obj_move_foreground(s_ui.settings_page);
 }
@@ -970,7 +1024,7 @@ static void queue_action(esp_bms_lvgl_action_t action)
     if (action != ESP_BMS_LVGL_ACTION_NONE) {
         memset(&s_ui.pending_event, 0, sizeof(s_ui.pending_event));
         s_ui.pending_event.action = action;
-        s_ui.pending_event.committed = true;
+        ACTION_EVENT_SET_FLAG(&s_ui.pending_event, COMMITTED, true);
     }
 }
 
@@ -1048,12 +1102,12 @@ static void quick_level_queue_value(quick_level_kind_t kind, uint8_t value, bool
     memset(&s_ui.pending_event, 0, sizeof(s_ui.pending_event));
     s_ui.pending_event.action = kind == QUICK_LEVEL_VOLUME ? ESP_BMS_LVGL_ACTION_SET_VOLUME :
                                                              ESP_BMS_LVGL_ACTION_SET_BRIGHTNESS;
-    s_ui.pending_event.committed = committed;
-    s_ui.pending_event.brightness_percent_valid = kind == QUICK_LEVEL_BRIGHTNESS;
+    ACTION_EVENT_SET_FLAG(&s_ui.pending_event, COMMITTED, committed);
+    ACTION_EVENT_SET_FLAG(&s_ui.pending_event, BRIGHTNESS_PERCENT_VALID, kind == QUICK_LEVEL_BRIGHTNESS);
     s_ui.pending_event.brightness_percent = kind == QUICK_LEVEL_BRIGHTNESS ? value : 0;
-    s_ui.pending_event.volume_percent_valid = kind == QUICK_LEVEL_VOLUME;
+    ACTION_EVENT_SET_FLAG(&s_ui.pending_event, VOLUME_PERCENT_VALID, kind == QUICK_LEVEL_VOLUME);
     s_ui.pending_event.volume_percent = kind == QUICK_LEVEL_VOLUME ? value : 0;
-    s_ui.pending_event.volume_feedback_valid = kind == QUICK_LEVEL_VOLUME;
+    ACTION_EVENT_SET_FLAG(&s_ui.pending_event, VOLUME_FEEDBACK_VALID, kind == QUICK_LEVEL_VOLUME);
     s_ui.pending_event.volume_feedback_percent = kind == QUICK_LEVEL_VOLUME ? value : 0;
 }
 
@@ -1070,7 +1124,7 @@ static uint8_t quick_level_snap_drag_value(quick_level_kind_t kind, int32_t valu
 
 static void quick_level_overlay_update(quick_level_kind_t kind, uint8_t value)
 {
-    if (!s_ui.quick_level_overlay_active ||
+    if (!UI_FLAG(QUICK_LEVEL_OVERLAY_ACTIVE) ||
         s_ui.quick_level_overlay_kind != (uint8_t)kind ||
         !s_ui.quick_level_overlay_track ||
         !s_ui.quick_level_overlay_fill ||
@@ -1091,7 +1145,7 @@ static void quick_level_overlay_update(quick_level_kind_t kind, uint8_t value)
 
     const int32_t track_x = lv_obj_get_x(s_ui.quick_level_overlay_track);
     const int32_t track_y = lv_obj_get_y(s_ui.quick_level_overlay_track);
-    if (s_ui.quick_level_overlay_horizontal) {
+    if (UI_FLAG(QUICK_LEVEL_OVERLAY_HORIZONTAL)) {
         int32_t fill_w = ((clamped - min_value) * track_w) / range;
         fill_w = clamp_i32(fill_w, 4, track_w);
         lv_obj_set_pos(s_ui.quick_level_overlay_fill, 0, 0);
@@ -1159,13 +1213,13 @@ static void quick_panel_stop_settle_anim(void)
     if (s_ui.quick_panel) {
         lv_anim_delete(s_ui.quick_panel, quick_panel_y_anim_cb);
     }
-    s_ui.quick_panel_settling = false;
+    UI_SET_FLAG(QUICK_PANEL_SETTLING, false);
 }
 
 static void quick_panel_settle_anim_completed_cb(lv_anim_t *anim)
 {
     (void)anim;
-    set_quick_panel_open(s_ui.quick_panel_animation_target_open);
+    set_quick_panel_open(UI_FLAG(QUICK_PANEL_ANIMATION_TARGET_OPEN));
 }
 
 static int32_t quick_pull_open_threshold(void)
@@ -1188,14 +1242,14 @@ static void quick_panel_animate_to_open_state(bool open)
     }
 
     lv_anim_delete(s_ui.quick_panel, quick_panel_y_anim_cb);
-    s_ui.quick_panel_open = open;
-    s_ui.quick_panel_interactive = false;
-    s_ui.quick_panel_settling = true;
-    s_ui.quick_panel_animation_target_open = open;
+    UI_SET_FLAG(QUICK_PANEL_OPEN, open);
+    UI_SET_FLAG(QUICK_PANEL_INTERACTIVE, false);
+    UI_SET_FLAG(QUICK_PANEL_SETTLING, true);
+    UI_SET_FLAG(QUICK_PANEL_ANIMATION_TARGET_OPEN, open);
     s_ui.quick_pull_drag_dy = 0;
     s_ui.return_swipe_drag_dy = 0;
-    s_ui.return_swipe_tracking = false;
-    s_ui.return_swipe_cancelled = false;
+    UI_SET_FLAG(RETURN_SWIPE_TRACKING, false);
+    UI_SET_FLAG(RETURN_SWIPE_CANCELLED, false);
     set_obj_hidden(s_ui.quick_panel, false);
     set_obj_hidden(s_ui.quick_pull_zone, true);
     lv_obj_move_foreground(s_ui.quick_panel);
@@ -1257,18 +1311,18 @@ static void quick_toast_show(quick_level_kind_t kind, uint8_t value)
 static void set_quick_panel_open(bool open)
 {
     quick_panel_stop_settle_anim();
-    s_ui.quick_panel_open = open;
-    s_ui.quick_panel_interactive = open;
-    s_ui.quick_panel_animation_target_open = open;
+    UI_SET_FLAG(QUICK_PANEL_OPEN, open);
+    UI_SET_FLAG(QUICK_PANEL_INTERACTIVE, open);
+    UI_SET_FLAG(QUICK_PANEL_ANIMATION_TARGET_OPEN, open);
     s_ui.quick_pull_drag_dy = 0;
     s_ui.return_swipe_drag_dy = 0;
     if (!open) {
         s_ui.quick_drag_obj = NULL;
-        s_ui.quick_drag_moved = false;
-        s_ui.quick_long_triggered = false;
-        s_ui.quick_level_overlay_active = false;
-        s_ui.quick_level_overlay_dragged = false;
-        s_ui.quick_level_long_triggered = false;
+        UI_SET_FLAG(QUICK_DRAG_MOVED, false);
+        UI_SET_FLAG(QUICK_LONG_TRIGGERED, false);
+        UI_SET_FLAG(QUICK_LEVEL_OVERLAY_ACTIVE, false);
+        UI_SET_FLAG(QUICK_LEVEL_OVERLAY_DRAGGED, false);
+        UI_SET_FLAG(QUICK_LEVEL_LONG_TRIGGERED, false);
         quick_hold_cancel(false);
         quick_toast_cancel();
         set_obj_hidden(s_ui.quick_toast, true);
@@ -1292,8 +1346,8 @@ static void set_quick_panel_open(bool open)
 
 static void set_quick_edit_mode(bool edit_mode)
 {
-    const bool changed = s_ui.quick_edit_mode != edit_mode;
-    s_ui.quick_edit_mode = edit_mode;
+    const bool changed = UI_FLAG(QUICK_EDIT_MODE) != edit_mode;
+    UI_SET_FLAG(QUICK_EDIT_MODE, edit_mode);
     if (s_ui.quick_edit_icon) {
         lv_obj_set_style_text_color(s_ui.quick_edit_icon, edit_mode ? COLOR_SOC : COLOR_MUTED, LV_PART_MAIN);
     }
@@ -1317,7 +1371,7 @@ static void quick_edit_event_cb(lv_event_t *event)
     } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
         quick_tile_set_scale(s_ui.quick_edit_button, QUICK_TILE_SCALE_NORMAL);
     } else if (code == LV_EVENT_CLICKED) {
-        set_quick_edit_mode(!s_ui.quick_edit_mode);
+        set_quick_edit_mode(!UI_FLAG(QUICK_EDIT_MODE));
     }
 }
 
@@ -1328,7 +1382,7 @@ static void perform_ui_action(esp_bms_lvgl_action_t action, bool close_quick_pan
     }
 
     if (action == ESP_BMS_LVGL_ACTION_SHOW_QUICK_MENU) {
-        set_quick_panel_open(!s_ui.quick_panel_open);
+        set_quick_panel_open(!UI_FLAG(QUICK_PANEL_OPEN));
         return;
     }
 
@@ -1361,31 +1415,32 @@ static void action_event_cb(lv_event_t *event)
 
 static bool process_return_swipe_event(lv_event_code_t code, bool allow_start)
 {
-    if (s_ui.quick_level_overlay_active) {
-        s_ui.return_swipe_tracking = false;
+    if (UI_FLAG(QUICK_LEVEL_OVERLAY_ACTIVE)) {
+        UI_SET_FLAG(RETURN_SWIPE_TRACKING, false);
         s_ui.return_swipe_drag_dy = 0;
-        s_ui.return_swipe_cancelled = false;
+        UI_SET_FLAG(RETURN_SWIPE_CANCELLED, false);
         return false;
     }
 
     if (code == LV_EVENT_PRESSED) {
-        s_ui.return_swipe_cancelled = false;
+        UI_SET_FLAG(RETURN_SWIPE_CANCELLED, false);
         s_ui.return_swipe_drag_dy = 0;
-        s_ui.return_swipe_tracking = allow_start &&
-                                     get_active_pointer(&s_ui.return_swipe_start) &&
-                                     return_home_start_allowed(&s_ui.return_swipe_start);
+        UI_SET_FLAG(RETURN_SWIPE_TRACKING,
+                    allow_start &&
+                        get_active_pointer(&s_ui.return_swipe_start) &&
+                        return_home_start_allowed(&s_ui.return_swipe_start));
         return false;
     }
 
-    if (s_ui.return_swipe_cancelled) {
+    if (UI_FLAG(RETURN_SWIPE_CANCELLED)) {
         if (code == LV_EVENT_PRESS_LOST || code == LV_EVENT_CLICKED) {
-            s_ui.return_swipe_cancelled = false;
-            s_ui.return_swipe_tracking = false;
+            UI_SET_FLAG(RETURN_SWIPE_CANCELLED, false);
+            UI_SET_FLAG(RETURN_SWIPE_TRACKING, false);
         }
         return true;
     }
 
-    if (code == LV_EVENT_PRESSING && s_ui.return_swipe_tracking) {
+    if (code == LV_EVENT_PRESSING && UI_FLAG(RETURN_SWIPE_TRACKING)) {
         lv_point_t point = { 0 };
         if (!get_active_pointer(&point)) {
             return false;
@@ -1395,28 +1450,28 @@ static bool process_return_swipe_event(lv_event_code_t code, bool allow_start)
         const int32_t dy = point.y - s_ui.return_swipe_start.y;
         if (dx >= RETURN_HOME_RIGHT_CANCEL_MIN_DX &&
             abs_i32(dy) <= RETURN_HOME_RIGHT_CANCEL_MAX_DY) {
-            s_ui.return_swipe_tracking = false;
+            UI_SET_FLAG(RETURN_SWIPE_TRACKING, false);
             s_ui.return_swipe_drag_dy = 0;
-            s_ui.return_swipe_cancelled = true;
-            s_ui.quick_panel_interactive = s_ui.quick_panel_open && !s_ui.quick_panel_settling;
-            if (s_ui.quick_panel_open && s_ui.quick_panel) {
+            UI_SET_FLAG(RETURN_SWIPE_CANCELLED, true);
+            UI_SET_FLAG(QUICK_PANEL_INTERACTIVE, UI_FLAG(QUICK_PANEL_OPEN) && !UI_FLAG(QUICK_PANEL_SETTLING));
+            if (UI_FLAG(QUICK_PANEL_OPEN) && s_ui.quick_panel) {
                 lv_obj_set_y(s_ui.quick_panel, 0);
             }
             lv_indev_wait_release(lv_indev_active());
             return true;
         }
-        if (s_ui.quick_panel_open && dy < 0 && abs_i32(dx) <= RETURN_HOME_SWIPE_MAX_DX) {
+        if (UI_FLAG(QUICK_PANEL_OPEN) && dy < 0 && abs_i32(dx) <= RETURN_HOME_SWIPE_MAX_DX) {
             s_ui.return_swipe_drag_dy = clamp_i32(-dy, 0, s_ui.height);
-            s_ui.quick_panel_interactive = false;
+            UI_SET_FLAG(QUICK_PANEL_INTERACTIVE, false);
             if (s_ui.quick_panel) {
                 lv_obj_set_y(s_ui.quick_panel, -s_ui.return_swipe_drag_dy);
             }
             return true;
         }
         if (dy <= -RETURN_HOME_SWIPE_MIN_DY && abs_i32(dx) <= RETURN_HOME_SWIPE_MAX_DX) {
-            s_ui.return_swipe_tracking = false;
+            UI_SET_FLAG(RETURN_SWIPE_TRACKING, false);
             s_ui.return_swipe_drag_dy = 0;
-            if (s_ui.quick_panel_open) {
+            if (UI_FLAG(QUICK_PANEL_OPEN)) {
                 quick_panel_animate_to_open_state(false);
             } else if (s_ui.page != ESP_BMS_LVGL_PAGE_BATTERY) {
                 move_to_page(ESP_BMS_LVGL_PAGE_BATTERY, true);
@@ -1426,10 +1481,10 @@ static bool process_return_swipe_event(lv_event_code_t code, bool allow_start)
         }
     }
 
-    if (code == LV_EVENT_RELEASED && s_ui.return_swipe_tracking && s_ui.quick_panel_open) {
+    if (code == LV_EVENT_RELEASED && UI_FLAG(RETURN_SWIPE_TRACKING) && UI_FLAG(QUICK_PANEL_OPEN)) {
         const bool should_return = s_ui.return_swipe_drag_dy >= RETURN_HOME_SWIPE_MIN_DY;
         const bool moved = s_ui.return_swipe_drag_dy > 3;
-        s_ui.return_swipe_tracking = false;
+        UI_SET_FLAG(RETURN_SWIPE_TRACKING, false);
         s_ui.return_swipe_drag_dy = 0;
         if (should_return) {
             quick_panel_animate_to_open_state(false);
@@ -1437,17 +1492,17 @@ static bool process_return_swipe_event(lv_event_code_t code, bool allow_start)
             quick_panel_animate_to_open_state(true);
         }
         if (moved) {
-            s_ui.return_swipe_cancelled = true;
+            UI_SET_FLAG(RETURN_SWIPE_CANCELLED, true);
         }
         return moved || should_return;
     }
 
     if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
-        s_ui.return_swipe_tracking = false;
+        UI_SET_FLAG(RETURN_SWIPE_TRACKING, false);
         s_ui.return_swipe_drag_dy = 0;
-        if (code == LV_EVENT_PRESS_LOST && s_ui.quick_panel_open && s_ui.quick_panel) {
+        if (code == LV_EVENT_PRESS_LOST && UI_FLAG(QUICK_PANEL_OPEN) && s_ui.quick_panel) {
             lv_obj_set_y(s_ui.quick_panel, 0);
-            s_ui.quick_panel_interactive = !s_ui.quick_panel_settling;
+            UI_SET_FLAG(QUICK_PANEL_INTERACTIVE, !UI_FLAG(QUICK_PANEL_SETTLING));
         }
     }
     return false;
@@ -1462,9 +1517,9 @@ static void quick_pull_event_cb(lv_event_t *event)
 {
     const lv_event_code_t code = lv_event_get_code(event);
     if (settings_view_is_visible()) {
-        s_ui.quick_pull_tracking = false;
+        UI_SET_FLAG(QUICK_PULL_TRACKING, false);
         s_ui.quick_pull_drag_dy = 0;
-        if (s_ui.quick_panel && !s_ui.quick_panel_open) {
+        if (s_ui.quick_panel && !UI_FLAG(QUICK_PANEL_OPEN)) {
             lv_obj_set_y(s_ui.quick_panel, 0);
             set_obj_hidden(s_ui.quick_panel, true);
         }
@@ -1473,11 +1528,12 @@ static void quick_pull_event_cb(lv_event_t *event)
 
     if (code == LV_EVENT_PRESSED) {
         s_ui.quick_pull_drag_dy = 0;
-        s_ui.quick_pull_tracking = get_active_pointer(&s_ui.quick_pull_start) &&
-                                   quick_pull_start_allowed(&s_ui.quick_pull_start);
-        if (s_ui.quick_pull_tracking && s_ui.quick_panel) {
+        UI_SET_FLAG(QUICK_PULL_TRACKING,
+                    get_active_pointer(&s_ui.quick_pull_start) &&
+                        quick_pull_start_allowed(&s_ui.quick_pull_start));
+        if (UI_FLAG(QUICK_PULL_TRACKING) && s_ui.quick_panel) {
             quick_panel_stop_settle_anim();
-            s_ui.quick_panel_interactive = false;
+            UI_SET_FLAG(QUICK_PANEL_INTERACTIVE, false);
             lv_obj_set_y(s_ui.quick_panel, -s_ui.height);
             set_obj_hidden(s_ui.quick_panel, false);
             lv_obj_move_foreground(s_ui.quick_panel);
@@ -1485,7 +1541,7 @@ static void quick_pull_event_cb(lv_event_t *event)
         return;
     }
 
-    if (code == LV_EVENT_PRESSING && s_ui.quick_pull_tracking) {
+    if (code == LV_EVENT_PRESSING && UI_FLAG(QUICK_PULL_TRACKING)) {
         lv_point_t point = { 0 };
         if (!get_active_pointer(&point)) {
             return;
@@ -1494,7 +1550,7 @@ static void quick_pull_event_cb(lv_event_t *event)
         const int32_t dx = point.x - s_ui.quick_pull_start.x;
         const int32_t dy = point.y - s_ui.quick_pull_start.y;
         if (abs_i32(dx) > QUICK_PULL_MAX_DX) {
-            s_ui.quick_pull_tracking = false;
+            UI_SET_FLAG(QUICK_PULL_TRACKING, false);
             s_ui.quick_pull_drag_dy = 0;
             if (s_ui.quick_panel) {
                 lv_obj_set_y(s_ui.quick_panel, 0);
@@ -1512,9 +1568,9 @@ static void quick_pull_event_cb(lv_event_t *event)
         return;
     }
 
-    if (code == LV_EVENT_RELEASED && s_ui.quick_pull_tracking) {
+    if (code == LV_EVENT_RELEASED && UI_FLAG(QUICK_PULL_TRACKING)) {
         const bool should_open = s_ui.quick_pull_drag_dy >= quick_pull_open_threshold();
-        s_ui.quick_pull_tracking = false;
+        UI_SET_FLAG(QUICK_PULL_TRACKING, false);
         if (s_ui.quick_panel) {
             quick_panel_animate_to_open_state(should_open);
         }
@@ -1526,9 +1582,9 @@ static void quick_pull_event_cb(lv_event_t *event)
     }
 
     if (code == LV_EVENT_PRESS_LOST) {
-        s_ui.quick_pull_tracking = false;
+        UI_SET_FLAG(QUICK_PULL_TRACKING, false);
         s_ui.quick_pull_drag_dy = 0;
-        if (s_ui.quick_panel && !s_ui.quick_panel_open) {
+        if (s_ui.quick_panel && !UI_FLAG(QUICK_PANEL_OPEN)) {
             quick_panel_animate_to_open_state(false);
         }
         if (s_ui.quick_pull_zone) {
@@ -1769,7 +1825,7 @@ static void quick_panel_item_apply_active(uint32_t index, bool active)
     }
 
     const quick_panel_item_t *item = &QUICK_PANEL_ITEMS[index];
-    s_ui.quick_panel_item_active[index] = active;
+    ui_flag_set(&s_ui.quick_panel_item_active_flags, index, active);
     if (s_ui.quick_panel_items[index]) {
         lv_obj_set_style_bg_color(s_ui.quick_panel_items[index], COLOR_PANEL_ALT, LV_PART_MAIN);
     }
@@ -1910,7 +1966,7 @@ static void quick_hold_clear_segments(void)
 
 static void quick_hold_update_segments(uint8_t progress_percent)
 {
-    if (!s_ui.quick_hold_active || s_ui.quick_hold_index >= QUICK_PANEL_BUTTON_COUNT) {
+    if (!UI_FLAG(QUICK_HOLD_ACTIVE) || s_ui.quick_hold_index >= QUICK_PANEL_BUTTON_COUNT) {
         return;
     }
     lv_obj_t *tile = s_ui.quick_panel_items[s_ui.quick_hold_index];
@@ -1974,20 +2030,20 @@ static void quick_hold_cancel(bool suppress_click)
     }
 
     const uint8_t index = s_ui.quick_hold_index;
-    const bool keep_suppress = suppress_click || (s_ui.quick_hold_completed &&
-                                                  s_ui.quick_hold_suppress_click);
+    const bool keep_suppress = suppress_click || (UI_FLAG(QUICK_HOLD_COMPLETED) &&
+                                                  UI_FLAG(QUICK_HOLD_SUPPRESS_CLICK));
     quick_hold_clear_segments();
     if (index < QUICK_PANEL_BUTTON_COUNT) {
         quick_panel_item_set_pressed(index, false);
         quick_tile_set_scale(s_ui.quick_panel_items[index], QUICK_TILE_SCALE_NORMAL);
     }
-    s_ui.quick_hold_active = false;
+    UI_SET_FLAG(QUICK_HOLD_ACTIVE, false);
     s_ui.quick_hold_elapsed_ms = 0;
     if (keep_suppress) {
-        s_ui.quick_hold_suppress_click = true;
+        UI_SET_FLAG(QUICK_HOLD_SUPPRESS_CLICK, true);
     } else {
-        s_ui.quick_hold_suppress_click = false;
-        s_ui.quick_hold_completed = false;
+        UI_SET_FLAG(QUICK_HOLD_SUPPRESS_CLICK, false);
+        UI_SET_FLAG(QUICK_HOLD_COMPLETED, false);
     }
 }
 
@@ -2000,8 +2056,8 @@ static void quick_hold_complete_navigation(void)
 
     const settings_detail_id_t detail_id =
         quick_panel_item_detail_id(&QUICK_PANEL_ITEMS[s_ui.quick_hold_index]);
-    s_ui.quick_hold_completed = true;
-    s_ui.quick_hold_suppress_click = true;
+    UI_SET_FLAG(QUICK_HOLD_COMPLETED, true);
+    UI_SET_FLAG(QUICK_HOLD_SUPPRESS_CLICK, true);
     quick_hold_cancel(true);
     if (detail_id != SETTINGS_DETAIL_NONE) {
         show_settings_view();
@@ -2013,7 +2069,7 @@ static void quick_hold_complete_navigation(void)
 static void quick_hold_timer_cb(lv_timer_t *timer)
 {
     (void)timer;
-    if (!s_ui.quick_hold_active) {
+    if (!UI_FLAG(QUICK_HOLD_ACTIVE)) {
         quick_hold_cancel(false);
         return;
     }
@@ -2037,9 +2093,9 @@ static void quick_hold_start(uint32_t index)
 
     quick_hold_cancel(false);
     s_ui.quick_hold_index = (uint8_t)index;
-    s_ui.quick_hold_active = true;
-    s_ui.quick_hold_completed = false;
-    s_ui.quick_hold_suppress_click = true;
+    UI_SET_FLAG(QUICK_HOLD_ACTIVE, true);
+    UI_SET_FLAG(QUICK_HOLD_COMPLETED, false);
+    UI_SET_FLAG(QUICK_HOLD_SUPPRESS_CLICK, true);
     s_ui.quick_hold_elapsed_ms = 0;
     quick_panel_item_set_pressed(index, true);
     quick_tile_set_scale(s_ui.quick_panel_items[index], QUICK_TILE_SCALE_LONG);
@@ -2057,7 +2113,7 @@ static void quick_drag_begin(lv_obj_t *obj, quick_drag_target_kind_t target_kind
     s_ui.quick_drag_obj_y = lv_obj_get_y(obj);
     s_ui.quick_drag_target_kind = target_kind;
     s_ui.quick_drag_target_index = target_index;
-    s_ui.quick_drag_moved = false;
+    UI_SET_FLAG(QUICK_DRAG_MOVED, false);
 }
 
 static void quick_drag_update(void)
@@ -2072,7 +2128,7 @@ static void quick_drag_update(void)
     const int32_t dx = point.x - s_ui.quick_drag_start.x;
     const int32_t dy = point.y - s_ui.quick_drag_start.y;
     if (abs_i32(dx) > 3 || abs_i32(dy) > 3) {
-        s_ui.quick_drag_moved = true;
+        UI_SET_FLAG(QUICK_DRAG_MOVED, true);
     }
     const int32_t max_x = s_ui.width - lv_obj_get_width(s_ui.quick_drag_obj);
     const int32_t max_y = s_ui.height - lv_obj_get_height(s_ui.quick_drag_obj);
@@ -2083,12 +2139,12 @@ static void quick_drag_update(void)
 
 static bool quick_drag_end(void)
 {
-    const bool moved = s_ui.quick_drag_moved;
+    const bool moved = UI_FLAG(QUICK_DRAG_MOVED);
     quick_layout_commit_drag_sort();
     s_ui.quick_drag_obj = NULL;
     s_ui.quick_drag_target_kind = QUICK_DRAG_TARGET_NONE;
     s_ui.quick_drag_target_index = 0;
-    s_ui.quick_drag_moved = false;
+    UI_SET_FLAG(QUICK_DRAG_MOVED, false);
     return moved;
 }
 
@@ -2106,7 +2162,7 @@ static void quick_panel_item_event_cb(lv_event_t *event)
 
     lv_obj_t *tile = (lv_obj_t *)lv_event_get_target(event);
     const uint32_t index = quick_panel_item_index(item);
-    if (!s_ui.quick_panel_interactive) {
+    if (!UI_FLAG(QUICK_PANEL_INTERACTIVE)) {
         if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
             quick_hold_cancel(false);
             quick_panel_item_set_pressed(index, false);
@@ -2116,58 +2172,58 @@ static void quick_panel_item_event_cb(lv_event_t *event)
     }
 
     if (code == LV_EVENT_PRESSED) {
-        s_ui.quick_hold_completed = false;
-        s_ui.quick_hold_suppress_click = false;
-        if (!s_ui.quick_edit_mode) {
+        UI_SET_FLAG(QUICK_HOLD_COMPLETED, false);
+        UI_SET_FLAG(QUICK_HOLD_SUPPRESS_CLICK, false);
+        if (!UI_FLAG(QUICK_EDIT_MODE)) {
             quick_panel_item_set_pressed(index, true);
         }
         quick_tile_set_scale(tile, QUICK_TILE_SCALE_PRESSED);
         return;
     }
 
-    if (code == LV_EVENT_PRESSING && s_ui.quick_edit_mode) {
+    if (code == LV_EVENT_PRESSING && UI_FLAG(QUICK_EDIT_MODE)) {
         quick_drag_update();
         return;
     }
 
     if (code == LV_EVENT_LONG_PRESSED) {
         quick_tile_set_scale(tile, QUICK_TILE_SCALE_LONG);
-        if (s_ui.quick_edit_mode) {
+        if (UI_FLAG(QUICK_EDIT_MODE)) {
             quick_drag_begin(tile, QUICK_DRAG_TARGET_ITEM, (uint8_t)index);
         } else if (quick_panel_item_can_hold_navigate(item)) {
-            s_ui.quick_long_triggered = true;
+            UI_SET_FLAG(QUICK_LONG_TRIGGERED, true);
             quick_toast_cancel();
             set_obj_hidden(s_ui.quick_toast, true);
             quick_hold_start(index);
         } else {
             quick_toast_show_text(item->toast_text);
-            s_ui.quick_long_triggered = true;
+            UI_SET_FLAG(QUICK_LONG_TRIGGERED, true);
         }
         return;
     }
 
     if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
-        if (s_ui.quick_hold_active) {
+        if (UI_FLAG(QUICK_HOLD_ACTIVE)) {
             quick_hold_cancel(true);
         } else {
             quick_panel_item_set_pressed(index, false);
             quick_tile_set_scale(tile, QUICK_TILE_SCALE_NORMAL);
         }
-        if (s_ui.quick_edit_mode) {
+        if (UI_FLAG(QUICK_EDIT_MODE)) {
             (void)quick_drag_end();
             return;
         }
         if (code == LV_EVENT_PRESS_LOST) {
-            s_ui.quick_long_triggered = false;
+            UI_SET_FLAG(QUICK_LONG_TRIGGERED, false);
         }
         return;
     }
 
     if (code == LV_EVENT_CLICKED) {
-        if (s_ui.quick_edit_mode || s_ui.quick_long_triggered || s_ui.quick_hold_suppress_click) {
-            s_ui.quick_long_triggered = false;
-            s_ui.quick_hold_completed = false;
-            s_ui.quick_hold_suppress_click = false;
+        if (UI_FLAG(QUICK_EDIT_MODE) || UI_FLAG(QUICK_LONG_TRIGGERED) || UI_FLAG(QUICK_HOLD_SUPPRESS_CLICK)) {
+            UI_SET_FLAG(QUICK_LONG_TRIGGERED, false);
+            UI_SET_FLAG(QUICK_HOLD_COMPLETED, false);
+            UI_SET_FLAG(QUICK_HOLD_SUPPRESS_CLICK, false);
             return;
         }
         const bool rebuilds_view = item->click_action == ESP_BMS_LVGL_ACTION_ROTATE_DISPLAY ||
@@ -2176,14 +2232,14 @@ static void quick_panel_item_event_cb(lv_event_t *event)
         bool should_perform_action = true;
         if (!rebuilds_view && index < QUICK_PANEL_BUTTON_COUNT) {
             if (quick_panel_item_can_stay_active(item)) {
-                const bool next_active = !s_ui.quick_panel_item_active[index];
-                s_ui.quick_panel_item_local_override[index] = true;
-                s_ui.quick_panel_item_local_active[index] = next_active;
+                const bool next_active = !ui_flag_get(s_ui.quick_panel_item_active_flags, index);
+                ui_flag_set(&s_ui.quick_panel_item_local_override_flags, index, true);
+                ui_flag_set(&s_ui.quick_panel_item_local_active_flags, index, next_active);
                 should_perform_action = next_active;
             }
-            quick_panel_item_apply_active(index, s_ui.quick_panel_item_local_override[index] ?
-                                                 s_ui.quick_panel_item_local_active[index] :
-                                                 s_ui.quick_panel_item_active[index]);
+            quick_panel_item_apply_active(index, ui_flag_get(s_ui.quick_panel_item_local_override_flags, index) ?
+                                                 ui_flag_get(s_ui.quick_panel_item_local_active_flags, index) :
+                                                 ui_flag_get(s_ui.quick_panel_item_active_flags, index));
         }
         const bool close_panel = item->click_action == ESP_BMS_LVGL_ACTION_ROTATE_DISPLAY ||
                                  item->click_action == ESP_BMS_LVGL_ACTION_SHOW_SETTINGS ||
@@ -2283,7 +2339,7 @@ static lv_obj_t *quick_symbol_icon(lv_obj_t *parent,
 static void settings_show_root(void)
 {
     s_ui.settings_detail_id = (uint8_t)SETTINGS_DETAIL_NONE;
-    s_ui.settings_swipe_tracking = false;
+    UI_SET_FLAG(SETTINGS_SWIPE_TRACKING, false);
     set_obj_hidden(s_ui.settings_detail, true);
     set_obj_hidden(s_ui.settings_root, false);
     if (s_ui.settings_carousel) {
@@ -2295,13 +2351,14 @@ static void settings_swipe_event_cb(lv_event_t *event)
 {
     const lv_event_code_t code = lv_event_get_code(event);
     if (code == LV_EVENT_PRESSED) {
-        s_ui.settings_swipe_consumed = false;
-        s_ui.settings_swipe_tracking = settings_view_is_visible() &&
-                                      get_active_pointer(&s_ui.settings_swipe_start);
+        UI_SET_FLAG(SETTINGS_SWIPE_CONSUMED, false);
+        UI_SET_FLAG(SETTINGS_SWIPE_TRACKING,
+                    settings_view_is_visible() &&
+                        get_active_pointer(&s_ui.settings_swipe_start));
         return;
     }
 
-    if (code == LV_EVENT_PRESSING && s_ui.settings_swipe_tracking) {
+    if (code == LV_EVENT_PRESSING && UI_FLAG(SETTINGS_SWIPE_TRACKING)) {
         lv_point_t point = { 0 };
         if (!get_active_pointer(&point)) {
             return;
@@ -2311,14 +2368,14 @@ static void settings_swipe_event_cb(lv_event_t *event)
         const int32_t dy = point.y - s_ui.settings_swipe_start.y;
         if (abs_i32(dy) > SETTINGS_SWIPE_BACK_MAX_DY &&
             abs_i32(dy) > abs_i32(dx)) {
-            s_ui.settings_swipe_tracking = false;
+            UI_SET_FLAG(SETTINGS_SWIPE_TRACKING, false);
             return;
         }
 
         if (dx >= SETTINGS_SWIPE_BACK_MIN_DX &&
             abs_i32(dy) <= SETTINGS_SWIPE_BACK_MAX_DY) {
-            s_ui.settings_swipe_tracking = false;
-            s_ui.settings_swipe_consumed = true;
+            UI_SET_FLAG(SETTINGS_SWIPE_TRACKING, false);
+            UI_SET_FLAG(SETTINGS_SWIPE_CONSUMED, true);
             if (s_ui.settings_detail_id != (uint8_t)SETTINGS_DETAIL_NONE) {
                 settings_show_root();
             } else {
@@ -2330,7 +2387,7 @@ static void settings_swipe_event_cb(lv_event_t *event)
     }
 
     if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
-        s_ui.settings_swipe_tracking = false;
+        UI_SET_FLAG(SETTINGS_SWIPE_TRACKING, false);
     }
 }
 
@@ -2349,13 +2406,13 @@ static void queue_wifi_connect_action(void)
 {
     memset(&s_ui.pending_event, 0, sizeof(s_ui.pending_event));
     s_ui.pending_event.action = ESP_BMS_LVGL_ACTION_CONNECT_WIFI;
-    s_ui.pending_event.committed = true;
-    s_ui.pending_event.wifi_ssid_valid = s_ui.wifi_selected_ssid[0] != '\0';
+    ACTION_EVENT_SET_FLAG(&s_ui.pending_event, COMMITTED, true);
+    ACTION_EVENT_SET_FLAG(&s_ui.pending_event, WIFI_SSID_VALID, s_ui.wifi_selected_ssid[0] != '\0');
     snprintf(s_ui.pending_event.wifi_ssid,
              sizeof(s_ui.pending_event.wifi_ssid),
              "%s",
              s_ui.wifi_selected_ssid);
-    s_ui.pending_event.wifi_password_valid = true;
+    ACTION_EVENT_SET_FLAG(&s_ui.pending_event, WIFI_PASSWORD_VALID, true);
     snprintf(s_ui.pending_event.wifi_password,
              sizeof(s_ui.pending_event.wifi_password),
              "%s",
@@ -2441,7 +2498,7 @@ static void settings_wifi_password_update(void)
 
 static void settings_wifi_scan_event_cb(lv_event_t *event)
 {
-    if (lv_event_get_code(event) != LV_EVENT_CLICKED || s_ui.settings_swipe_consumed) {
+    if (lv_event_get_code(event) != LV_EVENT_CLICKED || UI_FLAG(SETTINGS_SWIPE_CONSUMED)) {
         return;
     }
     s_ui.wifi_detail_mode = (uint8_t)SETTINGS_WIFI_DETAIL_LIST;
@@ -2451,12 +2508,12 @@ static void settings_wifi_scan_event_cb(lv_event_t *event)
 
 static void settings_wifi_candidate_event_cb(lv_event_t *event)
 {
-    if (lv_event_get_code(event) != LV_EVENT_CLICKED || s_ui.settings_swipe_consumed) {
+    if (lv_event_get_code(event) != LV_EVENT_CLICKED || UI_FLAG(SETTINGS_SWIPE_CONSUMED)) {
         return;
     }
 
     const uint32_t index = (uint32_t)(uintptr_t)lv_event_get_user_data(event);
-    if (!s_ui.last_snapshot_valid || index >= s_ui.last_snapshot.wifi_scan_count ||
+    if (!UI_FLAG(LAST_SNAPSHOT_VALID) || index >= s_ui.last_snapshot.wifi_scan_count ||
         index >= ESP_BMS_WIFI_SCAN_MAX_CANDIDATES) {
         return;
     }
@@ -2466,15 +2523,15 @@ static void settings_wifi_candidate_event_cb(lv_event_t *event)
              "%s",
              s_ui.last_snapshot.wifi_scan_candidates[index].ssid);
     s_ui.wifi_password[0] = '\0';
-    s_ui.wifi_password_shifted = false;
-    s_ui.wifi_password_symbols = false;
+    UI_SET_FLAG(WIFI_PASSWORD_SHIFTED, false);
+    UI_SET_FLAG(WIFI_PASSWORD_SYMBOLS, false);
     s_ui.wifi_detail_mode = (uint8_t)SETTINGS_WIFI_DETAIL_PASSWORD;
     settings_show_detail(SETTINGS_DETAIL_WIFI);
 }
 
 static void settings_wifi_key_event_cb(lv_event_t *event)
 {
-    if (lv_event_get_code(event) != LV_EVENT_CLICKED || s_ui.settings_swipe_consumed) {
+    if (lv_event_get_code(event) != LV_EVENT_CLICKED || UI_FLAG(SETTINGS_SWIPE_CONSUMED)) {
         return;
     }
 
@@ -2487,12 +2544,12 @@ static void settings_wifi_key_event_cb(lv_event_t *event)
     } else if (key == WIFI_KEY_CLEAR) {
         s_ui.wifi_password[0] = '\0';
     } else if (key == WIFI_KEY_MODE) {
-        s_ui.wifi_password_symbols = !s_ui.wifi_password_symbols;
-        s_ui.wifi_password_shifted = false;
+        UI_SET_FLAG(WIFI_PASSWORD_SYMBOLS, !UI_FLAG(WIFI_PASSWORD_SYMBOLS));
+        UI_SET_FLAG(WIFI_PASSWORD_SHIFTED, false);
         settings_show_detail(SETTINGS_DETAIL_WIFI);
         return;
     } else if (key == WIFI_KEY_SHIFT) {
-        s_ui.wifi_password_shifted = !s_ui.wifi_password_shifted;
+        UI_SET_FLAG(WIFI_PASSWORD_SHIFTED, !UI_FLAG(WIFI_PASSWORD_SHIFTED));
         settings_show_detail(SETTINGS_DETAIL_WIFI);
         return;
     } else if (key == WIFI_KEY_CANCEL) {
@@ -2511,7 +2568,7 @@ static void settings_wifi_key_event_cb(lv_event_t *event)
         return;
     } else if (key >= 0x20U && key <= 0x7eU && password_len < WIFI_PASSWORD_MAX_LEN) {
         char ch = (char)key;
-        if (!s_ui.wifi_password_symbols && s_ui.wifi_password_shifted &&
+        if (!UI_FLAG(WIFI_PASSWORD_SYMBOLS) && UI_FLAG(WIFI_PASSWORD_SHIFTED) &&
             ch >= 'a' && ch <= 'z') {
             ch = (char)(ch - ('a' - 'A'));
         }
@@ -2573,7 +2630,7 @@ static void settings_wifi_control_key(lv_obj_t *parent,
 static const esp_bms_dashboard_snapshot_t *settings_current_snapshot(void)
 {
     static const esp_bms_dashboard_snapshot_t empty_snapshot = { 0 };
-    return s_ui.last_snapshot_valid ? &s_ui.last_snapshot : &empty_snapshot;
+    return UI_FLAG(LAST_SNAPSHOT_VALID) ? &s_ui.last_snapshot : &empty_snapshot;
 }
 
 static void settings_show_wifi_password_detail(void)
@@ -2596,21 +2653,21 @@ static void settings_show_wifi_password_detail(void)
     lv_obj_set_style_text_color(s_ui.wifi_password_label, COLOR_SETTINGS_TEXT, LV_PART_MAIN);
     settings_wifi_password_update();
 
-    const char *row1 = s_ui.wifi_password_symbols ? "1234567890" : "qwertyuiop";
-    const char *row2 = s_ui.wifi_password_symbols ? "-_@#$%&*+" : "asdfghjkl";
-    const char *row3 = s_ui.wifi_password_symbols ? ".:/!?=,;" : "zxcvbnm";
-    settings_wifi_key_row(s_ui.settings_detail, keyboard_y, row1, s_ui.wifi_password_shifted, left, width, key_h);
-    settings_wifi_key_row(s_ui.settings_detail, keyboard_y + key_h + gap, row2, s_ui.wifi_password_shifted,
+    const char *row1 = UI_FLAG(WIFI_PASSWORD_SYMBOLS) ? "1234567890" : "qwertyuiop";
+    const char *row2 = UI_FLAG(WIFI_PASSWORD_SYMBOLS) ? "-_@#$%&*+" : "asdfghjkl";
+    const char *row3 = UI_FLAG(WIFI_PASSWORD_SYMBOLS) ? ".:/!?=,;" : "zxcvbnm";
+    settings_wifi_key_row(s_ui.settings_detail, keyboard_y, row1, UI_FLAG(WIFI_PASSWORD_SHIFTED), left, width, key_h);
+    settings_wifi_key_row(s_ui.settings_detail, keyboard_y + key_h + gap, row2, UI_FLAG(WIFI_PASSWORD_SHIFTED),
                           left + (portrait ? 9 : 18), width - (portrait ? 18 : 36), key_h);
     settings_wifi_key_row(s_ui.settings_detail, keyboard_y + ((key_h + gap) * 2), row3,
-                          s_ui.wifi_password_shifted,
+                          UI_FLAG(WIFI_PASSWORD_SHIFTED),
                           left + (portrait ? 18 : 36), width - (portrait ? 36 : 72), key_h);
 
     const int32_t y4 = keyboard_y + ((key_h + gap) * 3);
     const int32_t control_gap = 4;
     const int32_t control_w = (width - (3 * control_gap)) / 4;
     settings_wifi_control_key(s_ui.settings_detail, left, y4, control_w, key_h,
-                              s_ui.wifi_password_symbols ? "ABC" : "123", WIFI_KEY_MODE);
+                              UI_FLAG(WIFI_PASSWORD_SYMBOLS) ? "ABC" : "123", WIFI_KEY_MODE);
     settings_wifi_control_key(s_ui.settings_detail, left + control_w + control_gap, y4,
                               control_w, key_h, "A/a", WIFI_KEY_SHIFT);
     settings_wifi_control_key(s_ui.settings_detail, left + ((control_w + control_gap) * 2), y4,
@@ -2643,7 +2700,7 @@ static void settings_show_wifi_list_detail(void)
     settings_detail_row(s_ui.settings_detail, card_x, y, card_w, row_h, &status_row);
     y += row_h + gap;
 
-    const char *scan_text = snapshot->wifi_scan_active ? "扫描" : "扫描网络";
+    const char *scan_text = SNAPSHOT_FLAG(snapshot, WIFI_SCAN_ACTIVE) ? "扫描" : "扫描网络";
     settings_action_button(s_ui.settings_detail,
                            card_x,
                            y,
@@ -2654,7 +2711,7 @@ static void settings_show_wifi_list_detail(void)
                            NULL);
     y += row_h + gap;
 
-    if (snapshot->wifi_scan_active && snapshot->wifi_scan_count == 0U) {
+    if (SNAPSHOT_FLAG(snapshot, WIFI_SCAN_ACTIVE) && snapshot->wifi_scan_count == 0U) {
         const settings_detail_row_t scan_row = {
             .title = "网络",
             .subtitle = "扫描",
@@ -2664,7 +2721,7 @@ static void settings_show_wifi_list_detail(void)
         return;
     }
 
-    if (snapshot->wifi_scan_complete && snapshot->wifi_scan_count == 0U) {
+    if (SNAPSHOT_FLAG(snapshot, WIFI_SCAN_COMPLETE) && snapshot->wifi_scan_count == 0U) {
         const settings_detail_row_t empty_row = {
             .title = "网络",
             .subtitle = "暂无网络",
@@ -2758,13 +2815,13 @@ static const char *bluetooth_status_text(const esp_bms_dashboard_snapshot_t *sna
     if (!snapshot) {
         return "未连接";
     }
-    if (snapshot->bluetooth_connected) {
+    if (SNAPSHOT_FLAG(snapshot, BLUETOOTH_CONNECTED)) {
         return "已连接";
     }
-    if (snapshot->bluetooth_advertising) {
+    if (SNAPSHOT_FLAG(snapshot, BLUETOOTH_ADVERTISING)) {
         return "已打开";
     }
-    if (snapshot->bluetooth_enabled) {
+    if (SNAPSHOT_FLAG(snapshot, BLUETOOTH_ENABLED)) {
         return "打开";
     }
     return "未连接";
@@ -2844,7 +2901,7 @@ static void settings_show_bms_detail(void)
 
 static void settings_detail_action_event_cb(lv_event_t *event)
 {
-    if (lv_event_get_code(event) != LV_EVENT_CLICKED || s_ui.settings_swipe_consumed) {
+    if (lv_event_get_code(event) != LV_EVENT_CLICKED || UI_FLAG(SETTINGS_SWIPE_CONSUMED)) {
         return;
     }
 
@@ -2987,7 +3044,7 @@ static void settings_show_detail(settings_detail_id_t detail_id)
 
 static void settings_option_event_cb(lv_event_t *event)
 {
-    if (lv_event_get_code(event) != LV_EVENT_CLICKED || s_ui.settings_swipe_consumed) {
+    if (lv_event_get_code(event) != LV_EVENT_CLICKED || UI_FLAG(SETTINGS_SWIPE_CONSUMED)) {
         return;
     }
 
@@ -3117,11 +3174,11 @@ static bool quick_item_active_from_snapshot(const quick_panel_item_t *item,
     }
     switch (item->kind) {
     case QUICK_ITEM_BLUETOOTH:
-        return snapshot->bluetooth_enabled ||
-               snapshot->bluetooth_advertising ||
-               snapshot->bluetooth_connected;
+        return SNAPSHOT_FLAG(snapshot, BLUETOOTH_ENABLED) ||
+               SNAPSHOT_FLAG(snapshot, BLUETOOTH_ADVERTISING) ||
+               SNAPSHOT_FLAG(snapshot, BLUETOOTH_CONNECTED);
     case QUICK_ITEM_HOTSPOT:
-        return snapshot->setup_ap_enabled || snapshot->wifi == ESP_BMS_WIFI_SETUP_AP;
+        return SNAPSHOT_FLAG(snapshot, SETUP_AP_ENABLED) || snapshot->wifi == ESP_BMS_WIFI_SETUP_AP;
     case QUICK_ITEM_WIFI:
         return snapshot->wifi == ESP_BMS_WIFI_CONNECTING ||
                snapshot->wifi == ESP_BMS_WIFI_CONNECTED;
@@ -3136,8 +3193,8 @@ static void update_quick_item_colors(const esp_bms_dashboard_snapshot_t *snapsho
 {
     for (uint32_t index = 0; index < QUICK_PANEL_BUTTON_COUNT; ++index) {
         const bool snapshot_active = quick_item_active_from_snapshot(&QUICK_PANEL_ITEMS[index], snapshot);
-        const bool active = s_ui.quick_panel_item_local_override[index] ?
-                                s_ui.quick_panel_item_local_active[index] :
+        const bool active = ui_flag_get(s_ui.quick_panel_item_local_override_flags, index) ?
+                                ui_flag_get(s_ui.quick_panel_item_local_active_flags, index) :
                                 snapshot_active;
         quick_panel_item_apply_active(index, active);
     }
@@ -3150,19 +3207,19 @@ static lv_obj_t *quick_level_tile_for_kind(quick_level_kind_t kind)
 
 static bool quick_level_overlay_matches(quick_level_kind_t kind)
 {
-    return s_ui.quick_level_overlay_active &&
+    return UI_FLAG(QUICK_LEVEL_OVERLAY_ACTIVE) &&
            s_ui.quick_level_overlay_kind == (uint8_t)kind;
 }
 
 static void quick_level_overlay_show(quick_level_kind_t kind)
 {
     s_ui.quick_level_overlay_kind = (uint8_t)kind;
-    s_ui.quick_level_overlay_active = true;
-    s_ui.quick_level_overlay_dragged = false;
-    s_ui.return_swipe_tracking = false;
+    UI_SET_FLAG(QUICK_LEVEL_OVERLAY_ACTIVE, true);
+    UI_SET_FLAG(QUICK_LEVEL_OVERLAY_DRAGGED, false);
+    UI_SET_FLAG(RETURN_SWIPE_TRACKING, false);
     s_ui.return_swipe_drag_dy = 0;
-    s_ui.return_swipe_cancelled = false;
-    s_ui.quick_panel_interactive = false;
+    UI_SET_FLAG(RETURN_SWIPE_CANCELLED, false);
+    UI_SET_FLAG(QUICK_PANEL_INTERACTIVE, false);
     if (s_ui.quick_level_overlay) {
         set_obj_hidden(s_ui.quick_level_overlay, false);
         lv_obj_move_foreground(s_ui.quick_level_overlay);
@@ -3172,9 +3229,9 @@ static void quick_level_overlay_show(quick_level_kind_t kind)
 
 static void quick_level_overlay_hide(void)
 {
-    s_ui.quick_level_overlay_active = false;
-    s_ui.quick_level_overlay_dragged = false;
-    s_ui.quick_panel_interactive = s_ui.quick_panel_open && !s_ui.quick_panel_settling;
+    UI_SET_FLAG(QUICK_LEVEL_OVERLAY_ACTIVE, false);
+    UI_SET_FLAG(QUICK_LEVEL_OVERLAY_DRAGGED, false);
+    UI_SET_FLAG(QUICK_PANEL_INTERACTIVE, UI_FLAG(QUICK_PANEL_OPEN) && !UI_FLAG(QUICK_PANEL_SETTLING));
     set_obj_hidden(s_ui.quick_level_overlay, true);
 }
 
@@ -3192,7 +3249,7 @@ static bool quick_level_set_from_pointer(quick_level_kind_t kind, bool committed
     const int32_t max_value = kind == QUICK_LEVEL_VOLUME ? QUICK_VOLUME_MAX : QUICK_BRIGHTNESS_MAX;
     const int32_t range = max_value - min_value;
     int32_t percent = min_value;
-    if (s_ui.quick_level_overlay_horizontal) {
+    if (UI_FLAG(QUICK_LEVEL_OVERLAY_HORIZONTAL)) {
         const int32_t track_w = area.x2 - area.x1 + 1;
         const int32_t offset = point.x - area.x1;
         percent = min_value + ((offset * range) / (track_w > 1 ? track_w - 1 : 1));
@@ -3202,7 +3259,7 @@ static bool quick_level_set_from_pointer(quick_level_kind_t kind, bool committed
         percent = min_value + ((offset * range) / (track_h > 1 ? track_h - 1 : 1));
     }
     const uint8_t snapped = quick_level_snap_drag_value(kind, percent);
-    s_ui.quick_level_overlay_dragged = true;
+    UI_SET_FLAG(QUICK_LEVEL_OVERLAY_DRAGGED, true);
 
     if (kind == QUICK_LEVEL_VOLUME) {
         set_quick_volume_value(snapped, true, committed);
@@ -3214,7 +3271,7 @@ static bool quick_level_set_from_pointer(quick_level_kind_t kind, bool committed
 
 static void quick_level_overlay_event_cb(lv_event_t *event)
 {
-    if (!s_ui.quick_level_overlay_active) {
+    if (!UI_FLAG(QUICK_LEVEL_OVERLAY_ACTIVE)) {
         return;
     }
 
@@ -3223,13 +3280,13 @@ static void quick_level_overlay_event_cb(lv_event_t *event)
     if (code == LV_EVENT_PRESSING) {
         (void)quick_level_set_from_pointer(kind, false);
     } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
-        if (code == LV_EVENT_RELEASED && s_ui.quick_level_overlay_dragged) {
+        if (code == LV_EVENT_RELEASED && UI_FLAG(QUICK_LEVEL_OVERLAY_DRAGGED)) {
             (void)quick_level_set_from_pointer(kind, true);
         }
         quick_level_overlay_hide();
         quick_level_set_pressed(kind, false);
         quick_tile_set_scale(quick_level_tile_for_kind(kind), QUICK_TILE_SCALE_NORMAL);
-        s_ui.quick_level_long_triggered = false;
+        UI_SET_FLAG(QUICK_LEVEL_LONG_TRIGGERED, false);
     }
 }
 
@@ -3254,7 +3311,7 @@ static void quick_level_event_cb(lv_event_t *event)
     }
 
     const bool overlay_for_this_tile = quick_level_overlay_matches(kind);
-    if (!overlay_for_this_tile && !s_ui.quick_panel_interactive) {
+    if (!overlay_for_this_tile && !UI_FLAG(QUICK_PANEL_INTERACTIVE)) {
         if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
             quick_level_set_pressed(kind, false);
             quick_tile_set_scale(tile, QUICK_TILE_SCALE_NORMAL);
@@ -3266,7 +3323,7 @@ static void quick_level_event_cb(lv_event_t *event)
         return;
     }
 
-    if (s_ui.quick_edit_mode) {
+    if (UI_FLAG(QUICK_EDIT_MODE)) {
         if (code == LV_EVENT_PRESSED) {
             quick_tile_set_scale(tile, QUICK_TILE_SCALE_PRESSED);
         } else if (code == LV_EVENT_PRESSING) {
@@ -3285,11 +3342,11 @@ static void quick_level_event_cb(lv_event_t *event)
     }
 
     if (code == LV_EVENT_PRESSED) {
-        s_ui.quick_level_long_triggered = false;
+        UI_SET_FLAG(QUICK_LEVEL_LONG_TRIGGERED, false);
         quick_level_set_pressed(kind, true);
         quick_tile_set_scale(tile, QUICK_TILE_SCALE_PRESSED);
     } else if (code == LV_EVENT_LONG_PRESSED) {
-        s_ui.quick_level_long_triggered = true;
+        UI_SET_FLAG(QUICK_LEVEL_LONG_TRIGGERED, true);
         quick_tile_set_scale(tile, QUICK_TILE_SCALE_LONG);
         quick_toast_cancel();
         set_obj_hidden(s_ui.quick_toast, true);
@@ -3298,25 +3355,25 @@ static void quick_level_event_cb(lv_event_t *event)
         (void)quick_level_set_from_pointer(kind, false);
     } else if (overlay_for_this_tile &&
                (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST)) {
-        if (code == LV_EVENT_RELEASED && s_ui.quick_level_overlay_dragged) {
+        if (code == LV_EVENT_RELEASED && UI_FLAG(QUICK_LEVEL_OVERLAY_DRAGGED)) {
             (void)quick_level_set_from_pointer(kind, true);
         }
         quick_level_overlay_hide();
         quick_level_set_pressed(kind, false);
         quick_tile_set_scale(tile, QUICK_TILE_SCALE_NORMAL);
         if (code == LV_EVENT_PRESS_LOST) {
-            s_ui.quick_level_long_triggered = false;
+            UI_SET_FLAG(QUICK_LEVEL_LONG_TRIGGERED, false);
         }
     } else if (code == LV_EVENT_PRESS_LOST) {
         quick_level_set_pressed(kind, false);
         quick_tile_set_scale(tile, QUICK_TILE_SCALE_NORMAL);
-        s_ui.quick_level_long_triggered = false;
+        UI_SET_FLAG(QUICK_LEVEL_LONG_TRIGGERED, false);
     } else if (code == LV_EVENT_RELEASED) {
         quick_level_set_pressed(kind, false);
         quick_tile_set_scale(tile, QUICK_TILE_SCALE_NORMAL);
     } else if (code == LV_EVENT_CLICKED) {
-        if (s_ui.quick_level_long_triggered) {
-            s_ui.quick_level_long_triggered = false;
+        if (UI_FLAG(QUICK_LEVEL_LONG_TRIGGERED)) {
+            UI_SET_FLAG(QUICK_LEVEL_LONG_TRIGGERED, false);
             return;
         }
         quick_level_cycle_preset(kind);
@@ -3382,11 +3439,11 @@ static void quick_level_overlay_create(lv_obj_t *parent)
     lv_obj_add_event_cb(s_ui.quick_level_overlay, quick_level_overlay_event_cb, LV_EVENT_PRESS_LOST, NULL);
     lv_obj_add_flag(s_ui.quick_level_overlay, LV_OBJ_FLAG_HIDDEN);
 
-    s_ui.quick_level_overlay_horizontal = s_ui.width > s_ui.height;
-    const int32_t track_w = s_ui.quick_level_overlay_horizontal ?
+    UI_SET_FLAG(QUICK_LEVEL_OVERLAY_HORIZONTAL, s_ui.width > s_ui.height);
+    const int32_t track_w = UI_FLAG(QUICK_LEVEL_OVERLAY_HORIZONTAL) ?
                             clamp_i32((s_ui.width * 2) / 3, 120, s_ui.width - 48) :
                             22;
-    const int32_t track_h = s_ui.quick_level_overlay_horizontal ?
+    const int32_t track_h = UI_FLAG(QUICK_LEVEL_OVERLAY_HORIZONTAL) ?
                             22 :
                             clamp_i32((s_ui.height * 2) / 3, 112, s_ui.height - 64);
     const int32_t track_x = (s_ui.width - track_w) / 2;
@@ -3407,7 +3464,7 @@ static void quick_level_overlay_create(lv_obj_t *parent)
     lv_obj_set_pos(s_ui.quick_level_overlay_track, track_x, track_y);
     lv_obj_set_size(s_ui.quick_level_overlay_track, track_w, track_h);
     lv_obj_set_style_radius(s_ui.quick_level_overlay_track,
-                            (s_ui.quick_level_overlay_horizontal ? track_h : track_w) / 2,
+                            (UI_FLAG(QUICK_LEVEL_OVERLAY_HORIZONTAL) ? track_h : track_w) / 2,
                             LV_PART_MAIN);
     lv_obj_set_style_bg_color(s_ui.quick_level_overlay_track, COLOR_PANEL_ALT, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_ui.quick_level_overlay_track, LV_OPA_COVER, LV_PART_MAIN);
@@ -3416,7 +3473,7 @@ static void quick_level_overlay_create(lv_obj_t *parent)
     s_ui.quick_level_overlay_fill = lv_obj_create(s_ui.quick_level_overlay_track);
     clear_style(s_ui.quick_level_overlay_fill);
     lv_obj_set_style_radius(s_ui.quick_level_overlay_fill,
-                            (s_ui.quick_level_overlay_horizontal ? track_h : track_w) / 2,
+                            (UI_FLAG(QUICK_LEVEL_OVERLAY_HORIZONTAL) ? track_h : track_w) / 2,
                             LV_PART_MAIN);
     lv_obj_set_style_bg_color(s_ui.quick_level_overlay_fill, COLOR_ACCENT, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_ui.quick_level_overlay_fill, LV_OPA_COVER, LV_PART_MAIN);
@@ -3526,11 +3583,14 @@ static void format_temp_c(char *out, size_t len, bool valid, int16_t celsius)
 
 static void set_header(const esp_bms_dashboard_snapshot_t *snapshot)
 {
-    label_set_text_color_if_changed(s_ui.gps_state, snapshot->gps_fix_valid ? COLOR_ACCENT : COLOR_WARN);
-    label_set_text_if_changed(s_ui.gps_state, snapshot->gps_fix_valid ? "GPS OK" : "GPS --");
+    const bool gps_fix_valid = SNAPSHOT_FLAG(snapshot, GPS_FIX_VALID);
+    const bool bms_online = SNAPSHOT_FLAG(snapshot, BMS_ONLINE);
 
-    label_set_text_color_if_changed(s_ui.bms_state, snapshot->bms_online ? COLOR_ACCENT : COLOR_BAD);
-    label_set_text_if_changed(s_ui.bms_state, snapshot->bms_online ? "BMS OK" : "BMS OFF");
+    label_set_text_color_if_changed(s_ui.gps_state, gps_fix_valid ? COLOR_ACCENT : COLOR_WARN);
+    label_set_text_if_changed(s_ui.gps_state, gps_fix_valid ? "GPS OK" : "GPS --");
+
+    label_set_text_color_if_changed(s_ui.bms_state, bms_online ? COLOR_ACCENT : COLOR_BAD);
+    label_set_text_if_changed(s_ui.bms_state, bms_online ? "BMS OK" : "BMS OFF");
 
     label_set_text_color_if_changed(s_ui.wifi_state,
                                     snapshot->wifi == ESP_BMS_WIFI_OFFLINE ? COLOR_WARN : COLOR_ACCENT);
@@ -3546,7 +3606,7 @@ static void set_setup_ap(const esp_bms_dashboard_snapshot_t *snapshot)
         const char *ssid = snapshot->setup_ap_ssid[0] != '\0' ? snapshot->setup_ap_ssid : "--";
         const char *password = snapshot->setup_ap_password[0] != '\0' ? snapshot->setup_ap_password : "--";
         label_set_text_fmt_if_changed(s_ui.setup_ap_info, "SETUP %s\nSSID %.31s\nPW %.8s",
-                                      snapshot->setup_ap_enabled ? "ON" : "OFF",
+                                      SNAPSHOT_FLAG(snapshot, SETUP_AP_ENABLED) ? "ON" : "OFF",
                                       ssid,
                                       password);
     }
@@ -3590,11 +3650,12 @@ static void set_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
     uint8_t soc_percent = 0U;
     bool soc_valid = false;
 
-    if (snapshot->soc_valid) {
+    if (SNAPSHOT_FLAG(snapshot, SOC_VALID)) {
         const uint16_t soc = snapshot->soc_percent > 100 ? 100 : snapshot->soc_percent;
         soc_percent = (uint8_t)soc;
         soc_valid = true;
-        if (snapshot->capacity_remaining_valid && snapshot->total_capacity_valid) {
+        if (SNAPSHOT_FLAG(snapshot, CAPACITY_REMAINING_VALID) &&
+            SNAPSHOT_FLAG(snapshot, TOTAL_CAPACITY_VALID)) {
             (void)snprintf(ah,
                            sizeof(ah),
                            "%lu.%02lu/%lu.%02luAh",
@@ -3612,18 +3673,19 @@ static void set_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
     }
     label_set_text_if_changed(s_ui.capacity, ah);
 
-    format_mv(voltage, sizeof(voltage), snapshot->pack_voltage_valid, snapshot->pack_voltage_mv);
-    format_deci_amps(current, sizeof(current), snapshot->current_valid, snapshot->current_deci_amps);
+    const bool current_valid = SNAPSHOT_FLAG(snapshot, CURRENT_VALID);
+    format_mv(voltage, sizeof(voltage), SNAPSHOT_FLAG(snapshot, PACK_VOLTAGE_VALID), snapshot->pack_voltage_mv);
+    format_deci_amps(current, sizeof(current), current_valid, snapshot->current_deci_amps);
     update_dashboard_soc_fill(soc_percent,
                               soc_valid,
-                              snapshot->current_valid && snapshot->current_deci_amps > 0);
+                              current_valid && snapshot->current_deci_amps > 0);
     label_set_text_if_changed(s_ui.pack_voltage, voltage);
     label_set_text_if_changed(s_ui.current, current);
 
-    format_cell_v(min_cell, sizeof(min_cell), snapshot->min_cell_valid, snapshot->min_cell_voltage_mv);
-    format_cell_v(avg_cell, sizeof(avg_cell), snapshot->average_cell_valid, snapshot->average_cell_voltage_mv);
-    format_cell_v(max_cell, sizeof(max_cell), snapshot->max_cell_valid, snapshot->max_cell_voltage_mv);
-    if (snapshot->delta_cell_valid) {
+    format_cell_v(min_cell, sizeof(min_cell), SNAPSHOT_FLAG(snapshot, MIN_CELL_VALID), snapshot->min_cell_voltage_mv);
+    format_cell_v(avg_cell, sizeof(avg_cell), SNAPSHOT_FLAG(snapshot, AVERAGE_CELL_VALID), snapshot->average_cell_voltage_mv);
+    format_cell_v(max_cell, sizeof(max_cell), SNAPSHOT_FLAG(snapshot, MAX_CELL_VALID), snapshot->max_cell_voltage_mv);
+    if (SNAPSHOT_FLAG(snapshot, DELTA_CELL_VALID)) {
         (void)snprintf(delta_cell, sizeof(delta_cell), "%umV", snapshot->delta_cell_voltage_mv);
     } else {
         (void)snprintf(delta_cell, sizeof(delta_cell), "--");
@@ -3647,12 +3709,12 @@ static void set_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
         label_set_text_if_changed(s_ui.bms_error, "BMS INFO\nOK");
     }
 
-    format_temp_c(t1, sizeof(t1), snapshot->bms_temperature_valid[0], snapshot->bms_temperature_celsius[0]);
-    format_temp_c(t2, sizeof(t2), snapshot->bms_temperature_valid[1], snapshot->bms_temperature_celsius[1]);
-    format_temp_c(t3, sizeof(t3), snapshot->bms_temperature_valid[2], snapshot->bms_temperature_celsius[2]);
-    format_temp_c(t4, sizeof(t4), snapshot->bms_temperature_valid[3], snapshot->bms_temperature_celsius[3]);
-    format_temp_c(mos, sizeof(mos), snapshot->bms_temperature_valid[4], snapshot->bms_temperature_celsius[4]);
-    format_temp_c(bal, sizeof(bal), snapshot->bms_temperature_valid[5], snapshot->bms_temperature_celsius[5]);
+    format_temp_c(t1, sizeof(t1), esp_bms_dashboard_snapshot_temperature_valid(snapshot, 0U), snapshot->bms_temperature_celsius[0]);
+    format_temp_c(t2, sizeof(t2), esp_bms_dashboard_snapshot_temperature_valid(snapshot, 1U), snapshot->bms_temperature_celsius[1]);
+    format_temp_c(t3, sizeof(t3), esp_bms_dashboard_snapshot_temperature_valid(snapshot, 2U), snapshot->bms_temperature_celsius[2]);
+    format_temp_c(t4, sizeof(t4), esp_bms_dashboard_snapshot_temperature_valid(snapshot, 3U), snapshot->bms_temperature_celsius[3]);
+    format_temp_c(mos, sizeof(mos), esp_bms_dashboard_snapshot_temperature_valid(snapshot, 4U), snapshot->bms_temperature_celsius[4]);
+    format_temp_c(bal, sizeof(bal), esp_bms_dashboard_snapshot_temperature_valid(snapshot, 5U), snapshot->bms_temperature_celsius[5]);
     label_set_text_if_changed(s_ui.temperature_values[0], t1);
     label_set_text_if_changed(s_ui.temperature_values[1], t2);
     label_set_text_if_changed(s_ui.temperature_values[2], t3);
@@ -3668,12 +3730,12 @@ static void set_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
 
 static void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapshot)
 {
-    const bool had_last_snapshot = s_ui.last_snapshot_valid;
-    const bool previous_bms_online = s_ui.last_snapshot.bms_online;
+    const bool had_last_snapshot = UI_FLAG(LAST_SNAPSHOT_VALID);
+    const bool previous_bms_online = SNAPSHOT_FLAG(&s_ui.last_snapshot, BMS_ONLINE);
     const uint8_t previous_bms_type = s_ui.last_snapshot.bms_type;
-    const bool previous_bluetooth_enabled = s_ui.last_snapshot.bluetooth_enabled;
-    const bool previous_bluetooth_advertising = s_ui.last_snapshot.bluetooth_advertising;
-    const bool previous_bluetooth_connected = s_ui.last_snapshot.bluetooth_connected;
+    const bool previous_bluetooth_enabled = SNAPSHOT_FLAG(&s_ui.last_snapshot, BLUETOOTH_ENABLED);
+    const bool previous_bluetooth_advertising = SNAPSHOT_FLAG(&s_ui.last_snapshot, BLUETOOTH_ADVERTISING);
+    const bool previous_bluetooth_connected = SNAPSHOT_FLAG(&s_ui.last_snapshot, BLUETOOTH_CONNECTED);
     char previous_bluetooth_name[sizeof(s_ui.last_snapshot.bluetooth_name)] = { 0 };
     if (had_last_snapshot) {
         snprintf(previous_bluetooth_name,
@@ -3682,16 +3744,16 @@ static void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapsho
                  s_ui.last_snapshot.bluetooth_name);
     }
     const uint32_t previous_wifi_generation = s_ui.last_snapshot.wifi_scan_generation;
-    const bool previous_wifi_active = s_ui.last_snapshot.wifi_scan_active;
-    const bool previous_wifi_complete = s_ui.last_snapshot.wifi_scan_complete;
+    const bool previous_wifi_active = SNAPSHOT_FLAG(&s_ui.last_snapshot, WIFI_SCAN_ACTIVE);
+    const bool previous_wifi_complete = SNAPSHOT_FLAG(&s_ui.last_snapshot, WIFI_SCAN_COMPLETE);
     const uint8_t previous_wifi_count = s_ui.last_snapshot.wifi_scan_count;
 
     memcpy(&s_ui.last_snapshot, snapshot, sizeof(s_ui.last_snapshot));
-    s_ui.last_snapshot_valid = true;
+    UI_SET_FLAG(LAST_SNAPSHOT_VALID, true);
 
     set_header(snapshot);
     set_dashboard(snapshot);
-    if (had_last_snapshot && !previous_bms_online && snapshot->bms_online) {
+    if (had_last_snapshot && !previous_bms_online && SNAPSHOT_FLAG(snapshot, BMS_ONLINE)) {
         quick_toast_show_text("绑定成功");
     }
 
@@ -3699,16 +3761,16 @@ static void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapsho
         s_ui.wifi_detail_mode == (uint8_t)SETTINGS_WIFI_DETAIL_LIST &&
         (!had_last_snapshot ||
          previous_wifi_generation != snapshot->wifi_scan_generation ||
-         previous_wifi_active != snapshot->wifi_scan_active ||
-         previous_wifi_complete != snapshot->wifi_scan_complete ||
+         previous_wifi_active != SNAPSHOT_FLAG(snapshot, WIFI_SCAN_ACTIVE) ||
+         previous_wifi_complete != SNAPSHOT_FLAG(snapshot, WIFI_SCAN_COMPLETE) ||
          previous_wifi_count != snapshot->wifi_scan_count)) {
         settings_show_detail(SETTINGS_DETAIL_WIFI);
     }
     if (s_ui.settings_detail_id == (uint8_t)SETTINGS_DETAIL_BLUETOOTH &&
         (!had_last_snapshot ||
-         previous_bluetooth_enabled != snapshot->bluetooth_enabled ||
-         previous_bluetooth_advertising != snapshot->bluetooth_advertising ||
-         previous_bluetooth_connected != snapshot->bluetooth_connected ||
+         previous_bluetooth_enabled != SNAPSHOT_FLAG(snapshot, BLUETOOTH_ENABLED) ||
+         previous_bluetooth_advertising != SNAPSHOT_FLAG(snapshot, BLUETOOTH_ADVERTISING) ||
+         previous_bluetooth_connected != SNAPSHOT_FLAG(snapshot, BLUETOOTH_CONNECTED) ||
          strcmp(previous_bluetooth_name, snapshot->bluetooth_name) != 0)) {
         settings_show_detail(SETTINGS_DETAIL_BLUETOOTH);
     }
@@ -3721,18 +3783,18 @@ static void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapsho
 static void defer_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapshot)
 {
     memcpy(&s_ui.deferred_snapshot, snapshot, sizeof(s_ui.deferred_snapshot));
-    s_ui.deferred_snapshot_valid = true;
+    UI_SET_FLAG(DEFERRED_SNAPSHOT_VALID, true);
 }
 
 static void flush_deferred_dashboard_snapshot(void)
 {
-    if (!s_ui.deferred_snapshot_valid) {
+    if (!UI_FLAG(DEFERRED_SNAPSHOT_VALID)) {
         return;
     }
 
     esp_bms_dashboard_snapshot_t snapshot;
     memcpy(&snapshot, &s_ui.deferred_snapshot, sizeof(snapshot));
-    s_ui.deferred_snapshot_valid = false;
+    UI_SET_FLAG(DEFERRED_SNAPSHOT_VALID, false);
     apply_dashboard_snapshot(&snapshot);
 }
 
@@ -3772,8 +3834,8 @@ static void finish_page_scroll_state(bool flush_snapshot)
         invalidate_dashboard_viewport();
     }
 
-    s_ui.dragging = false;
-    s_ui.settling = false;
+    UI_SET_FLAG(DRAGGING, false);
+    UI_SET_FLAG(SETTLING, false);
     if (flush_snapshot) {
         flush_deferred_dashboard_snapshot();
     }
@@ -3786,15 +3848,15 @@ static void move_to_page(esp_bms_lvgl_page_t page, bool animated)
     const int32_t current_x = lv_obj_get_scroll_x(s_ui.pages);
     if (current_x == target_x) {
         s_ui.page = page;
-        s_ui.dragging = false;
-        s_ui.settling = false;
+        UI_SET_FLAG(DRAGGING, false);
+        UI_SET_FLAG(SETTLING, false);
         flush_deferred_dashboard_snapshot();
         return;
     }
 
     s_ui.page = page;
-    s_ui.dragging = false;
-    s_ui.settling = animated;
+    UI_SET_FLAG(DRAGGING, false);
+    UI_SET_FLAG(SETTLING, animated);
     lv_obj_scroll_to_x(s_ui.pages, target_x, animated ? LV_ANIM_ON : LV_ANIM_OFF);
     if (!animated) {
         flush_deferred_dashboard_snapshot();
@@ -3819,7 +3881,7 @@ static void page_scroll_event_cb(lv_event_t *event)
     }
 
     if (code == LV_EVENT_SCROLL_BEGIN) {
-        s_ui.dragging = true;
+        UI_SET_FLAG(DRAGGING, true);
         s_ui.drag_start_pages_x = lv_obj_get_scroll_x(s_ui.pages);
         s_ui.drag_last_sample_log_ms = lv_tick_get();
 #if CONFIG_ESP_BMS_LVGL_UI_DRAG_DIAGNOSTICS
@@ -3847,8 +3909,8 @@ static void page_scroll_event_cb(lv_event_t *event)
     if (code == LV_EVENT_SCROLL_END) {
         const int32_t scroll_x = lv_obj_get_scroll_x(s_ui.pages);
         const esp_bms_lvgl_page_t target = page_from_scroll_x(scroll_x);
-        s_ui.dragging = false;
-        s_ui.settling = false;
+        UI_SET_FLAG(DRAGGING, false);
+        UI_SET_FLAG(SETTLING, false);
         s_ui.page = target;
 #if CONFIG_ESP_BMS_LVGL_UI_DRAG_DIAGNOSTICS
         ESP_LOGI(TAG, "[drag] scroll_end scroll_x=%ld target=%d",
@@ -3939,7 +4001,7 @@ static void create_screen(lv_display_t *display)
 
     if (portrait) {
         lv_obj_t *soc_panel = panel(s_ui.battery_page, 8, 8, 108, 112, COLOR_PANEL);
-        s_ui.soc_fill_horizontal = false;
+        UI_SET_FLAG(SOC_FILL_HORIZONTAL, false);
         dashboard_soc_fill_create(soc_panel);
         s_ui.soc = label(soc_panel, 4, 38, 100, 30, &lv_font_montserrat_24);
         s_ui.capacity = label(soc_panel, 4, 70, 100, 20, &lv_font_montserrat_14);
@@ -3976,7 +4038,7 @@ static void create_screen(lv_display_t *display)
         }
     } else {
         lv_obj_t *soc_panel = panel(s_ui.battery_page, 8, 8, 148, 84, COLOR_PANEL);
-        s_ui.soc_fill_horizontal = true;
+        UI_SET_FLAG(SOC_FILL_HORIZONTAL, true);
         dashboard_soc_fill_create(soc_panel);
         s_ui.soc = label(soc_panel, 4, 25, 140, 30, &lv_font_montserrat_24);
         s_ui.capacity = label(soc_panel, 4, 54, 140, 20, &lv_font_montserrat_14);
@@ -4192,7 +4254,7 @@ static esp_err_t rebuild_screen_if_resolution_changed(void)
     s_ui.display = display;
     s_ui.pending_event = pending_event;
     memcpy(s_ui.quick_layouts, quick_layouts, sizeof(s_ui.quick_layouts));
-    s_ui.initialized = true;
+    UI_SET_FLAG(INITIALIZED, true);
     create_screen(display);
     move_to_page(page, false);
     if (settings_visible) {
@@ -4206,18 +4268,18 @@ static esp_err_t rebuild_screen_if_resolution_changed(void)
 esp_err_t esp_bms_lvgl_ui_init(lv_display_t *display)
 {
     ESP_RETURN_ON_FALSE(display, ESP_ERR_INVALID_ARG, TAG, "display is required");
-    ESP_RETURN_ON_FALSE(!s_ui.initialized, ESP_ERR_INVALID_STATE, TAG, "UI already initialized");
+    ESP_RETURN_ON_FALSE(!UI_FLAG(INITIALIZED), ESP_ERR_INVALID_STATE, TAG, "UI already initialized");
     create_screen(display);
-    s_ui.initialized = true;
+    UI_SET_FLAG(INITIALIZED, true);
     return ESP_OK;
 }
 
 esp_err_t esp_bms_lvgl_ui_update(const esp_bms_dashboard_snapshot_t *snapshot)
 {
     ESP_RETURN_ON_FALSE(snapshot, ESP_ERR_INVALID_ARG, TAG, "snapshot is required");
-    ESP_RETURN_ON_FALSE(s_ui.initialized, ESP_ERR_INVALID_STATE, TAG, "UI is not initialized");
+    ESP_RETURN_ON_FALSE(UI_FLAG(INITIALIZED), ESP_ERR_INVALID_STATE, TAG, "UI is not initialized");
     ESP_RETURN_ON_ERROR(rebuild_screen_if_resolution_changed(), TAG, "rebuild UI after resolution change failed");
-    if (s_ui.dragging || s_ui.settling) {
+    if (UI_FLAG(DRAGGING) || UI_FLAG(SETTLING)) {
         defer_dashboard_snapshot(snapshot);
         return ESP_OK;
     }
@@ -4228,7 +4290,7 @@ esp_err_t esp_bms_lvgl_ui_update(const esp_bms_dashboard_snapshot_t *snapshot)
 
 esp_err_t esp_bms_lvgl_ui_set_page(esp_bms_lvgl_page_t page, bool animated)
 {
-    ESP_RETURN_ON_FALSE(s_ui.initialized, ESP_ERR_INVALID_STATE, TAG, "UI is not initialized");
+    ESP_RETURN_ON_FALSE(UI_FLAG(INITIALIZED), ESP_ERR_INVALID_STATE, TAG, "UI is not initialized");
     ESP_RETURN_ON_FALSE(page == ESP_BMS_LVGL_PAGE_BATTERY || page == ESP_BMS_LVGL_PAGE_GPS,
                         ESP_ERR_INVALID_ARG, TAG, "invalid page");
 
@@ -4239,7 +4301,7 @@ esp_err_t esp_bms_lvgl_ui_set_page(esp_bms_lvgl_page_t page, bool animated)
 esp_err_t esp_bms_lvgl_ui_take_action_event(esp_bms_lvgl_action_event_t *event)
 {
     ESP_RETURN_ON_FALSE(event, ESP_ERR_INVALID_ARG, TAG, "action event output is required");
-    ESP_RETURN_ON_FALSE(s_ui.initialized, ESP_ERR_INVALID_STATE, TAG, "UI is not initialized");
+    ESP_RETURN_ON_FALSE(UI_FLAG(INITIALIZED), ESP_ERR_INVALID_STATE, TAG, "UI is not initialized");
 
     *event = s_ui.pending_event;
     memset(&s_ui.pending_event, 0, sizeof(s_ui.pending_event));

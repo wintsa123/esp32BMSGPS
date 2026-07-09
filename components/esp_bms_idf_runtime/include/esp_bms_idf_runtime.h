@@ -32,6 +32,42 @@ typedef enum {
 #define ESP_BMS_IDF_BMS_SCAN_NAME_LEN 24U
 #define ESP_BMS_IDF_BMS_FRAME_MAX_LEN 192U
 
+#define ESP_BMS_IDF_RUNTIME_FLAG_BATTERY_ADC_READY (UINT64_C(1) << 0)
+#define ESP_BMS_IDF_RUNTIME_FLAG_GPS_UART_READY (UINT64_C(1) << 1)
+#define ESP_BMS_IDF_RUNTIME_FLAG_NVS_READY (UINT64_C(1) << 2)
+#define ESP_BMS_IDF_RUNTIME_FLAG_WIFI_STACK_READY (UINT64_C(1) << 3)
+#define ESP_BMS_IDF_RUNTIME_FLAG_WIFI_DRIVER_READY (UINT64_C(1) << 4)
+#define ESP_BMS_IDF_RUNTIME_FLAG_WIFI_HANDLERS_REGISTERED (UINT64_C(1) << 5)
+#define ESP_BMS_IDF_RUNTIME_FLAG_SETUP_AP_STARTED (UINT64_C(1) << 6)
+#define ESP_BMS_IDF_RUNTIME_FLAG_STATION_STARTED (UINT64_C(1) << 7)
+#define ESP_BMS_IDF_RUNTIME_FLAG_STATION_CONNECTED (UINT64_C(1) << 8)
+#define ESP_BMS_IDF_RUNTIME_FLAG_STATION_HAS_IP (UINT64_C(1) << 9)
+#define ESP_BMS_IDF_RUNTIME_FLAG_STATION_CONNECT_REQUESTED (UINT64_C(1) << 10)
+#define ESP_BMS_IDF_RUNTIME_FLAG_HTTP_CONFIG_PENDING (UINT64_C(1) << 11)
+#define ESP_BMS_IDF_RUNTIME_FLAG_HTTP_SETUP_AP_PASSWORD_PENDING (UINT64_C(1) << 12)
+#define ESP_BMS_IDF_RUNTIME_FLAG_HTTP_EXTERNAL_WIFI_PENDING (UINT64_C(1) << 13)
+#define ESP_BMS_IDF_RUNTIME_FLAG_HTTP_BMS_SCAN_PENDING (UINT64_C(1) << 14)
+#define ESP_BMS_IDF_RUNTIME_FLAG_HTTP_BMS_BIND_PENDING (UINT64_C(1) << 15)
+#define ESP_BMS_IDF_RUNTIME_FLAG_HTTP_SERVER_STARTED (UINT64_C(1) << 16)
+#define ESP_BMS_IDF_RUNTIME_FLAG_BMS_BLE_READY (UINT64_C(1) << 17)
+#define ESP_BMS_IDF_RUNTIME_FLAG_BMS_BLE_SYNCED (UINT64_C(1) << 18)
+#define ESP_BMS_IDF_RUNTIME_FLAG_BMS_BLE_HOST_STARTED (UINT64_C(1) << 19)
+#define ESP_BMS_IDF_RUNTIME_FLAG_BMS_SCAN_REQUESTED (UINT64_C(1) << 20)
+#define ESP_BMS_IDF_RUNTIME_FLAG_BMS_SCAN_ACTIVE (UINT64_C(1) << 21)
+#define ESP_BMS_IDF_RUNTIME_FLAG_WIFI_SCAN_REQUESTED (UINT64_C(1) << 22)
+#define ESP_BMS_IDF_RUNTIME_FLAG_WIFI_SCAN_ACTIVE (UINT64_C(1) << 23)
+#define ESP_BMS_IDF_RUNTIME_FLAG_WIFI_SCAN_COMPLETE (UINT64_C(1) << 24)
+#define ESP_BMS_IDF_RUNTIME_FLAG_BLUETOOTH_ADVERTISE_REQUESTED (UINT64_C(1) << 25)
+#define ESP_BMS_IDF_RUNTIME_FLAG_BLUETOOTH_ADVERTISING (UINT64_C(1) << 26)
+#define ESP_BMS_IDF_RUNTIME_FLAG_BLUETOOTH_CONNECTED (UINT64_C(1) << 27)
+#define ESP_BMS_IDF_RUNTIME_FLAG_BLUETOOTH_SNAPSHOT_DIRTY (UINT64_C(1) << 28)
+#define ESP_BMS_IDF_RUNTIME_FLAG_BMS_WRITE_IN_FLIGHT (UINT64_C(1) << 29)
+#define ESP_BMS_IDF_RUNTIME_FLAG_BMS_DEVICE_INFO_REQUESTED (UINT64_C(1) << 30)
+#define ESP_BMS_IDF_RUNTIME_FLAG_BMS_DEVICE_INFO_KNOWN (UINT64_C(1) << 31)
+#define ESP_BMS_IDF_RUNTIME_FLAG_HTTP_PENDING_LANGUAGE_ZH (UINT64_C(1) << 32)
+#define ESP_BMS_IDF_RUNTIME_FLAG_LANGUAGE_ZH (UINT64_C(1) << 33)
+#define ESP_BMS_IDF_RUNTIME_FLAG_BMS_BIND_ACTIVE (UINT64_C(1) << 34)
+
 typedef struct {
     char mac[18];
     char name[ESP_BMS_IDF_BMS_SCAN_NAME_LEN + 1U];
@@ -94,45 +130,31 @@ typedef struct {
     char http_pending_external_ssid[33];
     char http_pending_external_password[65];
     char http_pending_bms_bound_mac[18];
-    bool battery_adc_ready;
-    bool gps_uart_ready;
-    bool nvs_ready;
-    bool wifi_stack_ready;
-    bool wifi_driver_ready;
-    bool wifi_handlers_registered;
-    bool setup_ap_started;
-    bool station_started;
-    bool station_connected;
-    bool station_has_ip;
-    bool station_connect_requested;
-    bool http_config_pending;
-    bool http_setup_ap_password_pending;
-    bool http_external_wifi_pending;
-    bool http_bms_scan_pending;
-    bool http_bms_bind_pending;
-    bool http_server_started;
-    bool bms_ble_ready;
-    bool bms_ble_synced;
-    bool bms_ble_host_started;
-    bool bms_scan_requested;
-    bool bms_scan_active;
-    bool wifi_scan_requested;
-    bool wifi_scan_active;
-    bool wifi_scan_complete;
-    bool bluetooth_advertise_requested;
-    bool bluetooth_advertising;
-    bool bluetooth_connected;
-    bool bluetooth_snapshot_dirty;
-    bool bms_write_in_flight;
-    bool bms_device_info_requested;
-    bool bms_device_info_known;
-    bool http_pending_language_zh;
+    uint64_t flags;
     esp_bms_idf_display_rotation_t display_rotation;
     esp_bms_idf_display_rotation_t http_pending_display_rotation;
     esp_bms_speed_unit_t http_pending_speed_unit;
-    bool language_zh;
-    bool bms_bind_active;
 } esp_bms_idf_runtime_t;
+
+static inline bool esp_bms_idf_runtime_flag_get(const esp_bms_idf_runtime_t *runtime,
+                                                uint64_t flag)
+{
+    return runtime && (runtime->flags & flag) != 0ULL;
+}
+
+static inline void esp_bms_idf_runtime_flag_set(esp_bms_idf_runtime_t *runtime,
+                                                uint64_t flag,
+                                                bool enabled)
+{
+    if (!runtime) {
+        return;
+    }
+    if (enabled) {
+        runtime->flags |= flag;
+    } else {
+        runtime->flags &= ~flag;
+    }
+}
 
 void esp_bms_idf_runtime_init(esp_bms_idf_runtime_t *runtime);
 esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runtime, bool *loaded);

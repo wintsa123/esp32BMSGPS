@@ -37,20 +37,42 @@ typedef enum {
     ESP_BMS_LVGL_ACTION_ENABLE_BLUETOOTH_ADVERTISING = 19,
 } esp_bms_lvgl_action_t;
 
+#define ESP_BMS_LVGL_ACTION_EVENT_FLAG_COMMITTED (UINT8_C(1) << 0)
+#define ESP_BMS_LVGL_ACTION_EVENT_FLAG_BRIGHTNESS_PERCENT_VALID (UINT8_C(1) << 1)
+#define ESP_BMS_LVGL_ACTION_EVENT_FLAG_VOLUME_PERCENT_VALID (UINT8_C(1) << 2)
+#define ESP_BMS_LVGL_ACTION_EVENT_FLAG_VOLUME_FEEDBACK_VALID (UINT8_C(1) << 3)
+#define ESP_BMS_LVGL_ACTION_EVENT_FLAG_WIFI_SSID_VALID (UINT8_C(1) << 4)
+#define ESP_BMS_LVGL_ACTION_EVENT_FLAG_WIFI_PASSWORD_VALID (UINT8_C(1) << 5)
+
 typedef struct {
     esp_bms_lvgl_action_t action;
-    bool committed;
-    bool brightness_percent_valid;
+    uint8_t flags;
     uint8_t brightness_percent;
-    bool volume_percent_valid;
     uint8_t volume_percent;
-    bool volume_feedback_valid;
     uint8_t volume_feedback_percent;
-    bool wifi_ssid_valid;
     char wifi_ssid[33];
-    bool wifi_password_valid;
     char wifi_password[65];
 } esp_bms_lvgl_action_event_t;
+
+static inline bool esp_bms_lvgl_action_event_flag_get(const esp_bms_lvgl_action_event_t *event,
+                                                       uint8_t flag)
+{
+    return event && (event->flags & flag) != 0U;
+}
+
+static inline void esp_bms_lvgl_action_event_flag_set(esp_bms_lvgl_action_event_t *event,
+                                                       uint8_t flag,
+                                                       bool enabled)
+{
+    if (!event) {
+        return;
+    }
+    if (enabled) {
+        event->flags |= flag;
+    } else {
+        event->flags &= (uint8_t)~flag;
+    }
+}
 
 typedef enum {
     ESP_BMS_SPEED_UNIT_KMH = 0,
@@ -80,6 +102,27 @@ typedef enum {
 #define ESP_BMS_WIFI_SCAN_MAX_CANDIDATES 6U
 #define ESP_BMS_WIFI_SCAN_SSID_LEN 32U
 
+#define ESP_BMS_DASHBOARD_FLAG_SPEED_VALID (UINT32_C(1) << 0)
+#define ESP_BMS_DASHBOARD_FLAG_GPS_FIX_VALID (UINT32_C(1) << 1)
+#define ESP_BMS_DASHBOARD_FLAG_BMS_ONLINE (UINT32_C(1) << 2)
+#define ESP_BMS_DASHBOARD_FLAG_PACK_VOLTAGE_VALID (UINT32_C(1) << 3)
+#define ESP_BMS_DASHBOARD_FLAG_CURRENT_VALID (UINT32_C(1) << 4)
+#define ESP_BMS_DASHBOARD_FLAG_SOC_VALID (UINT32_C(1) << 5)
+#define ESP_BMS_DASHBOARD_FLAG_MIN_CELL_VALID (UINT32_C(1) << 6)
+#define ESP_BMS_DASHBOARD_FLAG_AVERAGE_CELL_VALID (UINT32_C(1) << 7)
+#define ESP_BMS_DASHBOARD_FLAG_MAX_CELL_VALID (UINT32_C(1) << 8)
+#define ESP_BMS_DASHBOARD_FLAG_DELTA_CELL_VALID (UINT32_C(1) << 9)
+#define ESP_BMS_DASHBOARD_FLAG_TOTAL_CAPACITY_VALID (UINT32_C(1) << 10)
+#define ESP_BMS_DASHBOARD_FLAG_CAPACITY_REMAINING_VALID (UINT32_C(1) << 11)
+#define ESP_BMS_DASHBOARD_FLAG_LOCAL_BATTERY_VALID (UINT32_C(1) << 12)
+#define ESP_BMS_DASHBOARD_FLAG_BLUETOOTH_ENABLED (UINT32_C(1) << 13)
+#define ESP_BMS_DASHBOARD_FLAG_BLUETOOTH_ADVERTISING (UINT32_C(1) << 14)
+#define ESP_BMS_DASHBOARD_FLAG_BLUETOOTH_CONNECTED (UINT32_C(1) << 15)
+#define ESP_BMS_DASHBOARD_FLAG_SETUP_AP_ENABLED (UINT32_C(1) << 16)
+#define ESP_BMS_DASHBOARD_FLAG_WIFI_SCAN_ACTIVE (UINT32_C(1) << 17)
+#define ESP_BMS_DASHBOARD_FLAG_WIFI_SCAN_COMPLETE (UINT32_C(1) << 18)
+#define ESP_BMS_DASHBOARD_FLAG_BMS_TEMPERATURE_VALID_SHIFT 19U
+
 typedef struct {
     char ssid[ESP_BMS_WIFI_SCAN_SSID_LEN + 1U];
     int8_t rssi;
@@ -88,64 +131,84 @@ typedef struct {
 } esp_bms_wifi_scan_candidate_t;
 
 typedef struct {
-    bool speed_valid;
-    uint16_t speed_deci_units;
-    esp_bms_speed_unit_t speed_unit;
-    bool gps_fix_valid;
+    uint32_t flags;
     uint32_t gps_sentences_seen;
-
-    bool bms_online;
-    bool pack_voltage_valid;
     uint32_t pack_voltage_mv;
-    bool current_valid;
-    int16_t current_deci_amps;
-    bool soc_valid;
-    uint16_t soc_percent;
-
-    bool min_cell_valid;
-    uint16_t min_cell_voltage_mv;
-    bool average_cell_valid;
-    uint16_t average_cell_voltage_mv;
-    bool max_cell_valid;
-    uint16_t max_cell_voltage_mv;
-    bool delta_cell_valid;
-    uint16_t delta_cell_voltage_mv;
-
-    bool total_capacity_valid;
     uint32_t total_capacity_mah;
-    bool capacity_remaining_valid;
     uint32_t capacity_remaining_mah;
-    bool local_battery_valid;
     uint32_t local_battery_mv;
+    uint32_t wifi_scan_generation;
+    esp_bms_speed_unit_t speed_unit;
+    esp_bms_wifi_state_t wifi;
+    esp_bms_ota_state_t ota;
+    uint16_t speed_deci_units;
+    int16_t current_deci_amps;
+    uint16_t soc_percent;
+    uint16_t min_cell_voltage_mv;
+    uint16_t average_cell_voltage_mv;
+    uint16_t max_cell_voltage_mv;
+    uint16_t delta_cell_voltage_mv;
+    int16_t bms_temperature_celsius[ESP_BMS_BMS_TEMP_MAX_COUNT];
     uint8_t brightness_percent;
     uint8_t volume_percent;
     uint8_t bms_type;
-    bool bluetooth_enabled;
-    bool bluetooth_advertising;
-    bool bluetooth_connected;
-    char bluetooth_name[32];
-
-    char bms_info_text[16];
     uint8_t bms_protection_count;
     char bms_protection_codes[ESP_BMS_BMS_CODE_MAX_COUNT][ESP_BMS_BMS_CODE_TEXT_LEN];
     uint8_t bms_warning_count;
     char bms_warning_codes[ESP_BMS_BMS_CODE_MAX_COUNT][ESP_BMS_BMS_CODE_TEXT_LEN];
-    bool bms_temperature_valid[ESP_BMS_BMS_TEMP_MAX_COUNT];
-    int16_t bms_temperature_celsius[ESP_BMS_BMS_TEMP_MAX_COUNT];
-
-    bool setup_ap_enabled;
-    esp_bms_wifi_state_t wifi;
-    esp_bms_ota_state_t ota;
+    uint8_t wifi_scan_count;
+    char bluetooth_name[32];
+    char bms_info_text[16];
     char bms_error_text[32];
     char setup_ap_ssid[32];
     char setup_ap_password[9];
     char setup_ap_qr_payload[96];
-    bool wifi_scan_active;
-    bool wifi_scan_complete;
-    uint8_t wifi_scan_count;
-    uint32_t wifi_scan_generation;
     esp_bms_wifi_scan_candidate_t wifi_scan_candidates[ESP_BMS_WIFI_SCAN_MAX_CANDIDATES];
 } esp_bms_dashboard_snapshot_t;
+
+static inline bool esp_bms_dashboard_snapshot_flag_get(const esp_bms_dashboard_snapshot_t *snapshot,
+                                                        uint32_t flag)
+{
+    return snapshot && (snapshot->flags & flag) != 0U;
+}
+
+static inline void esp_bms_dashboard_snapshot_flag_set(esp_bms_dashboard_snapshot_t *snapshot,
+                                                        uint32_t flag,
+                                                        bool enabled)
+{
+    if (!snapshot) {
+        return;
+    }
+    if (enabled) {
+        snapshot->flags |= flag;
+    } else {
+        snapshot->flags &= ~flag;
+    }
+}
+
+static inline uint32_t esp_bms_dashboard_snapshot_temperature_flag(uint8_t index)
+{
+    return (uint32_t)(UINT32_C(1) << (ESP_BMS_DASHBOARD_FLAG_BMS_TEMPERATURE_VALID_SHIFT + index));
+}
+
+static inline bool esp_bms_dashboard_snapshot_temperature_valid(const esp_bms_dashboard_snapshot_t *snapshot,
+                                                                uint8_t index)
+{
+    return index < ESP_BMS_BMS_TEMP_MAX_COUNT &&
+           esp_bms_dashboard_snapshot_flag_get(snapshot,
+                                               esp_bms_dashboard_snapshot_temperature_flag(index));
+}
+
+static inline void esp_bms_dashboard_snapshot_temperature_valid_set(esp_bms_dashboard_snapshot_t *snapshot,
+                                                                    uint8_t index,
+                                                                    bool enabled)
+{
+    if (index < ESP_BMS_BMS_TEMP_MAX_COUNT) {
+        esp_bms_dashboard_snapshot_flag_set(snapshot,
+                                            esp_bms_dashboard_snapshot_temperature_flag(index),
+                                            enabled);
+    }
+}
 
 esp_err_t esp_bms_lvgl_ui_init(lv_display_t *display);
 esp_err_t esp_bms_lvgl_ui_update(const esp_bms_dashboard_snapshot_t *snapshot);
