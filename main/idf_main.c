@@ -61,7 +61,7 @@ void app_main(void)
 {
     ESP_LOGI(TAG, "starting ESP-IDF LVGL adapter display path");
 
-    esp_bms_idf_runtime_t runtime;
+    static esp_bms_idf_runtime_t runtime;
     esp_bms_idf_runtime_init(&runtime);
     const esp_err_t audio_ret = esp_bms_audio_feedback_init();
     if (audio_ret != ESP_OK) {
@@ -103,14 +103,16 @@ void app_main(void)
     }
     log_heap_state("display_settings");
 
-    const esp_err_t setup_ap_ret = esp_bms_idf_runtime_start_setup_ap(&runtime);
-    if (setup_ap_ret != ESP_OK) {
-        ESP_LOGE(TAG, "setup AP start failed: %s", esp_err_to_name(setup_ap_ret));
+    const esp_err_t bms_ble_ret = esp_bms_idf_runtime_start_bms_ble_if_bound(&runtime);
+    if (bms_ble_ret != ESP_OK) {
+        ESP_LOGW(TAG, "BMS BLE optional startup failed: %s", esp_err_to_name(bms_ble_ret));
     }
-    ESP_ERROR_CHECK(esp_bms_lvgl_bridge_lock(-1));
-    ESP_ERROR_CHECK(esp_bms_lvgl_ui_update(&runtime.snapshot));
-    esp_bms_lvgl_bridge_unlock();
-    log_heap_state("setup_ap_http");
+    if (runtime.bms_ble_ready) {
+        ESP_ERROR_CHECK(esp_bms_lvgl_bridge_lock(-1));
+        ESP_ERROR_CHECK(esp_bms_lvgl_ui_update(&runtime.snapshot));
+        esp_bms_lvgl_bridge_unlock();
+    }
+    log_heap_state("optional_bms_ble");
 
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(50));
@@ -132,8 +134,9 @@ void app_main(void)
             continue;
         }
         const esp_bms_lvgl_action_t action = action_event.action;
-        const bool should_start_setup_ap =
-            action == ESP_BMS_LVGL_ACTION_ENABLE_WIFI_REPROVISIONING && !runtime.setup_ap_started;
+        const bool should_start_setup_services =
+            action == ESP_BMS_LVGL_ACTION_ENABLE_WIFI_REPROVISIONING &&
+            (!runtime.setup_ap_started || !runtime.http_server_started);
         const bool action_changed = esp_bms_idf_runtime_apply_action_event(&runtime, &action_event);
         bool display_apply_failed = false;
         if ((tick_changed || action_changed) && runtime.brightness_percent != previous_brightness) {
@@ -175,10 +178,15 @@ void app_main(void)
             }
         }
 
-        if (should_start_setup_ap) {
+        if (should_start_setup_services) {
             ret = esp_bms_idf_runtime_start_setup_ap(&runtime);
             if (ret != ESP_OK) {
                 ESP_LOGE(TAG, "setup AP start failed: %s", esp_err_to_name(ret));
+            } else {
+                ret = esp_bms_idf_runtime_start_http_server(&runtime);
+                if (ret != ESP_OK) {
+                    ESP_LOGE(TAG, "HTTP server start failed: %s", esp_err_to_name(ret));
+                }
             }
             ret = esp_bms_lvgl_bridge_lock(-1);
             if (ret == ESP_OK) {
@@ -190,6 +198,7 @@ void app_main(void)
             } else {
                 ESP_LOGE(TAG, "LVGL lock after setup AP action failed: %s", esp_err_to_name(ret));
             }
+            log_heap_state("setup_ap_http");
         }
 
         if (action != ESP_BMS_LVGL_ACTION_NONE) {

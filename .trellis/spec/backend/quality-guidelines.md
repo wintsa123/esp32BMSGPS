@@ -141,12 +141,92 @@ idf.py -p /dev/ttyUSB0 flash
   and `esp_bms_lvgl_ui`.
 - Log secrets only as lengths or presence flags.
 
+## Scenario: On-Demand Runtime Service Startup
+
+### 1. Scope / Trigger
+
+- Trigger: ESP-IDF runtime services that allocate Wi-Fi, HTTP server, or NimBLE
+  resources.
+- Boot should keep LVGL, touch, base runtime, ADC, GPS, and audio alive without
+  starting Setup AP, HTTP, Wi-Fi STA scan/connect, or NimBLE unless the service
+  is explicitly needed.
+
+### 2. Signatures
+
+- `esp_bms_idf_runtime_start_setup_ap(runtime)` starts SoftAP only.
+- `esp_bms_idf_runtime_start_http_server(runtime)` starts HTTP only after
+  Setup AP is active.
+- `esp_bms_idf_runtime_start_bms_ble_if_bound(runtime)` starts NimBLE only
+  when a bound BMS MAC is present in NVS.
+- `esp_bms_idf_runtime_start_bms_ble_for_bind(runtime)` starts NimBLE for a
+  user-triggered bind or refresh scan.
+- `esp_bms_idf_runtime_start_wifi_scan(runtime)` starts Wi-Fi STA/APSTA for a
+  user-triggered Wi-Fi scan.
+
+### 3. Contracts
+
+- `app_main()` must not unconditionally start Setup AP, HTTP, Wi-Fi STA, or
+  NimBLE after the first UI draw.
+- Setup AP credentials may be loaded, regenerated, and saved during runtime
+  initialization so the QR page has stable current values, but this must not
+  start Wi-Fi.
+- Setup AP and HTTP are started from the hotspot/config entry action.
+- BMS BLE is started on boot only through the bound-MAC path; no bound MAC means
+  NimBLE stays off until bind or refresh.
+- Wi-Fi STA scan/connect is started from Wi-Fi settings actions only.
+
+### 4. Validation & Error Matrix
+
+- No bound BMS MAC -> return `ESP_OK`, leave NimBLE off, log that no bound MAC is
+  configured.
+- HTTP requested before Setup AP -> return `ESP_ERR_INVALID_STATE`.
+- Wi-Fi scan requested while Wi-Fi stack is off -> initialize Wi-Fi stack and
+  start STA, or APSTA when Setup AP is already active.
+- NimBLE scan requested before host sync -> mark scan requested and treat it as
+  deferred, not a fatal startup failure.
+
+### 5. Good/Base/Bad Cases
+
+- Good: boot logs show `first_ui`, display settings, optional BMS check, and no
+  AP/HTTP/NimBLE startup when no BMS MAC is bound.
+- Base: tapping hotspot starts SoftAP and HTTP; tapping Wi-Fi scan starts Wi-Fi
+  scan; tapping BMS bind starts NimBLE scan.
+- Bad: calling `esp_bms_idf_runtime_start_setup_ap()` from boot as a catch-all
+  initializer that also starts HTTP, Wi-Fi STA, or NimBLE.
+
+### 6. Tests Required
+
+- Build with `./scripts/esp-idf-env.sh build`.
+- Flash and inspect boot logs for absence of automatic AP/HTTP/NimBLE startup
+  when no BMS MAC is bound.
+- Exercise hotspot, Wi-Fi scan/connect, and BMS bind paths on hardware.
+- Run `node .gitnexus/run.cjs detect-changes -r esp32BMSGPS` before commit.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```c
+ESP_ERROR_CHECK(esp_bms_idf_runtime_start_setup_ap(&runtime));
+```
+
+#### Correct
+
+```c
+if (action == ESP_BMS_LVGL_ACTION_ENABLE_WIFI_REPROVISIONING) {
+    ESP_ERROR_CHECK(esp_bms_idf_runtime_start_setup_ap(&runtime));
+    ESP_ERROR_CHECK(esp_bms_idf_runtime_start_http_server(&runtime));
+}
+```
+
 ## Forbidden Patterns
 
 - Do not reintroduce a target Cargo firmware path.
 - Do not log setup AP passwords, external Wi-Fi passwords, OTA credentials,
   private token-bearing URLs, or raw request bodies.
 - Do not start Wi-Fi before the first LVGL screen is drawn.
+- Do not start Setup AP, HTTP, Wi-Fi STA scan/connect, or NimBLE from boot unless
+  the on-demand service startup contract above explicitly allows it.
 - Do not add a second local Web UI asset; the embedded page is the single local
   UI source.
 - Do not synthesize BMS telemetry. BMS fields stay offline/invalid until a real
@@ -202,6 +282,11 @@ idf.py -p /dev/ttyUSB0 flash
   list. Do not fill it with unrelated one-off action buttons; top-level
   entries should stay limited to Wi-Fi, hotspot, Bluetooth, BMS/protection
   board, system, and about-device categories until dedicated subpages exist.
+- Settings carousel scroll handlers must not refresh every card during
+  `LV_EVENT_SCROLL`. Register expensive style refresh only on
+  `LV_EVENT_SCROLL_END`; carousel refresh may update lightweight
+  translate/border state, but must not use transform scale/width/height effects
+  that force extra redraw work while the user is dragging.
 - TFT icon controls should prefer LVGL built-in `LV_SYMBOL_*` glyphs from the
   enabled Montserrat/FontAwesome fonts, or simple LVGL primitives for tiny
   custom icons. Enable any required built-in font size in both `sdkconfig` and

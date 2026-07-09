@@ -48,6 +48,9 @@ static bool s_touch_base_mirror_x;
 static bool s_touch_base_mirror_y;
 static bool s_backlight_pwm_ready;
 static bool s_initialized;
+static TickType_t s_touch_last_log_tick;
+static bool s_touch_read_callback_logged;
+static bool s_touch_was_pressed;
 
 static uint16_t logical_hres(const esp_bms_lvgl_bridge_config_t *config)
 {
@@ -265,6 +268,65 @@ esp_err_t esp_bms_lvgl_bridge_set_rotation(esp_bms_display_rotation_t rotation)
     return ESP_OK;
 }
 
+static esp_err_t touch_read_with_diagnostics(esp_lcd_touch_handle_t tp,
+                                             esp_lcd_touch_point_data_t *points,
+                                             uint8_t *count,
+                                             uint8_t max_count,
+                                             void *user_ctx)
+{
+    (void)user_ctx;
+    if (count) {
+        *count = 0;
+    }
+
+    const TickType_t now = xTaskGetTickCount();
+    if (!s_touch_read_callback_logged) {
+        ESP_LOGI(TAG, "touch read callback active");
+        s_touch_read_callback_logged = true;
+    }
+
+    esp_err_t ret = esp_lcd_touch_read_data(tp);
+    if (ret != ESP_OK) {
+        if (s_touch_last_log_tick == 0 ||
+            now - s_touch_last_log_tick >= pdMS_TO_TICKS(1000)) {
+            ESP_LOGW(TAG, "touch read failed: %s", esp_err_to_name(ret));
+            s_touch_last_log_tick = now;
+        }
+        return ret;
+    }
+
+    ret = esp_lcd_touch_get_data(tp, points, count, max_count);
+    if (ret != ESP_OK) {
+        if (s_touch_last_log_tick == 0 ||
+            now - s_touch_last_log_tick >= pdMS_TO_TICKS(1000)) {
+            ESP_LOGW(TAG, "touch data failed: %s", esp_err_to_name(ret));
+            s_touch_last_log_tick = now;
+        }
+        return ret;
+    }
+
+    const bool pressed = count && *count > 0U;
+    if (pressed) {
+        if (!s_touch_was_pressed ||
+            s_touch_last_log_tick == 0 ||
+            now - s_touch_last_log_tick >= pdMS_TO_TICKS(300)) {
+            ESP_LOGI(TAG, "touch sample count=%u x=%u y=%u strength=%u",
+                     (unsigned)*count,
+                     (unsigned)points[0].x,
+                     (unsigned)points[0].y,
+                     (unsigned)points[0].strength);
+            s_touch_last_log_tick = now;
+        }
+        s_touch_was_pressed = true;
+    } else if (s_touch_was_pressed) {
+        ESP_LOGI(TAG, "touch released");
+        s_touch_was_pressed = false;
+        s_touch_last_log_tick = now;
+    }
+
+    return ESP_OK;
+}
+
 static esp_err_t init_touch(const esp_bms_lvgl_bridge_config_t *config, uint16_t hres, uint16_t vres)
 {
     if (config->pin_touch_cs == GPIO_NUM_NC) {
@@ -335,6 +397,7 @@ static esp_err_t init_touch(const esp_bms_lvgl_bridge_config_t *config, uint16_t
 
     esp_lv_adapter_touch_config_t adapter_touch_config =
         ESP_LV_ADAPTER_TOUCH_DEFAULT_CONFIG(s_display, s_touch);
+    adapter_touch_config.callbacks.custom_touch_read = touch_read_with_diagnostics;
     s_touch_indev = esp_lv_adapter_register_touch(&adapter_touch_config);
     ESP_RETURN_ON_FALSE(s_touch_indev, ESP_FAIL, TAG, "register LVGL touch failed");
 
