@@ -6,6 +6,7 @@
 #include "driver/ledc.h"
 #include "driver/spi_master.h"
 #include "esp_check.h"
+#include "esp_heap_caps.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_panel_vendor.h"
 #include "esp_lcd_touch.h"
@@ -51,6 +52,32 @@ static bool s_initialized;
 static TickType_t s_touch_last_log_tick;
 static bool s_touch_read_callback_logged;
 static bool s_touch_was_pressed;
+
+static bool psram_can_hold_lvgl_buffers(size_t required_buffer_bytes,
+                                        bool require_double_buffer,
+                                        size_t *free_out,
+                                        size_t *largest_out)
+{
+    const uint32_t psram_caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
+    const size_t psram_free = heap_caps_get_free_size(psram_caps);
+    const size_t psram_largest = heap_caps_get_largest_free_block(psram_caps);
+    if (free_out) {
+        *free_out = psram_free;
+    }
+    if (largest_out) {
+        *largest_out = psram_largest;
+    }
+
+#if CONFIG_SPIRAM
+    const size_t buffer_count = require_double_buffer ? 2U : 1U;
+    return psram_largest >= required_buffer_bytes &&
+           psram_free >= required_buffer_bytes * buffer_count;
+#else
+    (void)required_buffer_bytes;
+    (void)require_double_buffer;
+    return false;
+#endif
+}
 
 static uint16_t logical_hres(const esp_bms_lvgl_bridge_config_t *config)
 {
@@ -414,16 +441,27 @@ esp_err_t esp_bms_lvgl_bridge_init(const esp_bms_lvgl_bridge_config_t *config)
     const uint16_t hres = logical_hres(config);
     const uint16_t vres = logical_vres(config);
     const int max_transfer_sz = hres * LVGL_SPI_DRAW_BUFFER_HEIGHT * sizeof(uint16_t);
+    const size_t draw_buffer_bytes = (size_t)max_transfer_sz;
+    size_t psram_free = 0;
+    size_t psram_largest = 0;
+    const bool use_psram_buffers = psram_can_hold_lvgl_buffers(draw_buffer_bytes,
+                                                               LVGL_REQUIRE_DOUBLE_BUFFER,
+                                                               &psram_free,
+                                                               &psram_largest);
     s_physical_width = config->physical_width;
     s_physical_height = config->physical_height;
 
     ESP_LOGI(TAG, "init ST7789 SPI display hres=%u vres=%u pclk=%lu",
              hres, vres, (unsigned long)config->pixel_clock_hz);
-    ESP_LOGI(TAG, "LVGL adapter tuning buffer_height=%u max_transfer=%d task_max_delay_ms=%u double_buffer=%s",
+    ESP_LOGI(TAG,
+             "LVGL adapter tuning buffer_height=%u max_transfer=%d task_max_delay_ms=%u double_buffer=%s psram_free=%u psram_largest=%u psram_buffers=%s",
              (unsigned)LVGL_SPI_DRAW_BUFFER_HEIGHT,
              max_transfer_sz,
              (unsigned)LVGL_TASK_MAX_DELAY_MS,
-             LVGL_REQUIRE_DOUBLE_BUFFER ? "yes" : "no");
+             LVGL_REQUIRE_DOUBLE_BUFFER ? "yes" : "no",
+             (unsigned)psram_free,
+             (unsigned)psram_largest,
+             use_psram_buffers ? "yes" : "no");
 
     ESP_RETURN_ON_ERROR(configure_backlight(config->pin_backlight, config->backlight_on_level),
                         TAG, "configure backlight failed");
@@ -477,11 +515,15 @@ esp_err_t esp_bms_lvgl_bridge_init(const esp_bms_lvgl_bridge_config_t *config)
 
     esp_lv_adapter_config_t adapter_config = ESP_LV_ADAPTER_DEFAULT_CONFIG();
     adapter_config.task_max_delay_ms = LVGL_TASK_MAX_DELAY_MS;
+#if CONFIG_ESP_LVGL_ADAPTER_LVGL_THREAD_STACK_IN_PSRAM
+    adapter_config.stack_in_psram = use_psram_buffers;
+#endif
     ESP_RETURN_ON_ERROR(esp_lv_adapter_init(&adapter_config), TAG, "init LVGL adapter failed");
 
     esp_lv_adapter_display_config_t display_config =
         ESP_LV_ADAPTER_DISPLAY_SPI_WITHOUT_PSRAM_DEFAULT_CONFIG(
             s_panel, s_panel_io, hres, vres, ESP_LV_ADAPTER_ROTATE_0);
+    display_config.profile.use_psram = use_psram_buffers;
     display_config.profile.buffer_height = LVGL_SPI_DRAW_BUFFER_HEIGHT;
     display_config.profile.require_double_buffer = LVGL_REQUIRE_DOUBLE_BUFFER;
     s_display = esp_lv_adapter_register_display(&display_config);

@@ -32,17 +32,16 @@ typedef enum {
     ESP_BMS_LVGL_ACTION_SELECT_BMS_JK = 14,
     ESP_BMS_LVGL_ACTION_SELECT_BMS_JBD = 15,
     ESP_BMS_LVGL_ACTION_SELECT_BMS_DALY = 16,
-    ESP_BMS_LVGL_ACTION_SCAN_WIFI = 17,
-    ESP_BMS_LVGL_ACTION_CONNECT_WIFI = 18,
-    ESP_BMS_LVGL_ACTION_ENABLE_BLUETOOTH_ADVERTISING = 19,
+    ESP_BMS_LVGL_ACTION_ENABLE_BLUETOOTH_ADVERTISING = 17,
+    ESP_BMS_LVGL_ACTION_CYCLE_LEVEL_POSITION = 18,
 } esp_bms_lvgl_action_t;
 
 #define ESP_BMS_LVGL_ACTION_EVENT_FLAG_COMMITTED (UINT8_C(1) << 0)
 #define ESP_BMS_LVGL_ACTION_EVENT_FLAG_BRIGHTNESS_PERCENT_VALID (UINT8_C(1) << 1)
 #define ESP_BMS_LVGL_ACTION_EVENT_FLAG_VOLUME_PERCENT_VALID (UINT8_C(1) << 2)
 #define ESP_BMS_LVGL_ACTION_EVENT_FLAG_VOLUME_FEEDBACK_VALID (UINT8_C(1) << 3)
-#define ESP_BMS_LVGL_ACTION_EVENT_FLAG_WIFI_SSID_VALID (UINT8_C(1) << 4)
-#define ESP_BMS_LVGL_ACTION_EVENT_FLAG_WIFI_PASSWORD_VALID (UINT8_C(1) << 5)
+#define ESP_BMS_LVGL_ACTION_EVENT_FLAG_BMS_MAC_VALID (UINT8_C(1) << 4)
+#define ESP_BMS_LVGL_ROTATE_SAVE_DELAY_MS 2000U
 
 typedef struct {
     esp_bms_lvgl_action_t action;
@@ -50,8 +49,7 @@ typedef struct {
     uint8_t brightness_percent;
     uint8_t volume_percent;
     uint8_t volume_feedback_percent;
-    char wifi_ssid[33];
-    char wifi_password[65];
+    char bms_mac[18];
 } esp_bms_lvgl_action_event_t;
 
 static inline bool esp_bms_lvgl_action_event_flag_get(const esp_bms_lvgl_action_event_t *event,
@@ -81,26 +79,14 @@ typedef enum {
 
 typedef enum {
     ESP_BMS_WIFI_SETUP_AP = 0,
-    ESP_BMS_WIFI_CONNECTING = 1,
-    ESP_BMS_WIFI_CONNECTED = 2,
-    ESP_BMS_WIFI_OFFLINE = 3,
+    ESP_BMS_WIFI_OFFLINE = 1,
 } esp_bms_wifi_state_t;
-
-typedef enum {
-    ESP_BMS_OTA_IDLE = 0,
-    ESP_BMS_OTA_CHECKING = 1,
-    ESP_BMS_OTA_AVAILABLE = 2,
-    ESP_BMS_OTA_DOWNLOADING = 3,
-    ESP_BMS_OTA_VERIFYING = 4,
-    ESP_BMS_OTA_READY = 5,
-    ESP_BMS_OTA_FAILED = 6,
-} esp_bms_ota_state_t;
 
 #define ESP_BMS_BMS_CODE_MAX_COUNT 6U
 #define ESP_BMS_BMS_CODE_TEXT_LEN 8U
 #define ESP_BMS_BMS_TEMP_MAX_COUNT 6U
-#define ESP_BMS_WIFI_SCAN_MAX_CANDIDATES 6U
-#define ESP_BMS_WIFI_SCAN_SSID_LEN 32U
+#define ESP_BMS_BMS_SCAN_MAX_CANDIDATES 6U
+#define ESP_BMS_BMS_SCAN_NAME_LEN 24U
 
 #define ESP_BMS_DASHBOARD_FLAG_SPEED_VALID (UINT32_C(1) << 0)
 #define ESP_BMS_DASHBOARD_FLAG_GPS_FIX_VALID (UINT32_C(1) << 1)
@@ -119,16 +105,14 @@ typedef enum {
 #define ESP_BMS_DASHBOARD_FLAG_BLUETOOTH_ADVERTISING (UINT32_C(1) << 14)
 #define ESP_BMS_DASHBOARD_FLAG_BLUETOOTH_CONNECTED (UINT32_C(1) << 15)
 #define ESP_BMS_DASHBOARD_FLAG_SETUP_AP_ENABLED (UINT32_C(1) << 16)
-#define ESP_BMS_DASHBOARD_FLAG_WIFI_SCAN_ACTIVE (UINT32_C(1) << 17)
-#define ESP_BMS_DASHBOARD_FLAG_WIFI_SCAN_COMPLETE (UINT32_C(1) << 18)
-#define ESP_BMS_DASHBOARD_FLAG_BMS_TEMPERATURE_VALID_SHIFT 19U
+#define ESP_BMS_DASHBOARD_FLAG_BMS_TEMPERATURE_VALID_SHIFT 17U
 
 typedef struct {
-    char ssid[ESP_BMS_WIFI_SCAN_SSID_LEN + 1U];
+    char mac[18];
+    char name[ESP_BMS_BMS_SCAN_NAME_LEN + 1U];
     int8_t rssi;
-    uint8_t auth_mode;
-    bool open;
-} esp_bms_wifi_scan_candidate_t;
+    bool has_name;
+} esp_bms_bms_scan_candidate_t;
 
 typedef struct {
     uint32_t flags;
@@ -137,10 +121,8 @@ typedef struct {
     uint32_t total_capacity_mah;
     uint32_t capacity_remaining_mah;
     uint32_t local_battery_mv;
-    uint32_t wifi_scan_generation;
     esp_bms_speed_unit_t speed_unit;
     esp_bms_wifi_state_t wifi;
-    esp_bms_ota_state_t ota;
     uint16_t speed_deci_units;
     int16_t current_deci_amps;
     uint16_t soc_percent;
@@ -156,14 +138,14 @@ typedef struct {
     char bms_protection_codes[ESP_BMS_BMS_CODE_MAX_COUNT][ESP_BMS_BMS_CODE_TEXT_LEN];
     uint8_t bms_warning_count;
     char bms_warning_codes[ESP_BMS_BMS_CODE_MAX_COUNT][ESP_BMS_BMS_CODE_TEXT_LEN];
-    uint8_t wifi_scan_count;
     char bluetooth_name[32];
     char bms_info_text[16];
     char bms_error_text[32];
     char setup_ap_ssid[32];
     char setup_ap_password[9];
     char setup_ap_qr_payload[96];
-    esp_bms_wifi_scan_candidate_t wifi_scan_candidates[ESP_BMS_WIFI_SCAN_MAX_CANDIDATES];
+    uint8_t bms_scan_candidate_count;
+    esp_bms_bms_scan_candidate_t bms_scan_candidates[ESP_BMS_BMS_SCAN_MAX_CANDIDATES];
 } esp_bms_dashboard_snapshot_t;
 
 static inline bool esp_bms_dashboard_snapshot_flag_get(const esp_bms_dashboard_snapshot_t *snapshot,

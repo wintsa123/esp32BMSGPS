@@ -79,22 +79,6 @@
     </div>
 
     <section>
-      <h2 data-i18n="wirelessNetwork">无线网络</h2>
-      <p class="section-note" data-i18n="wifiPurpose">连接外部 Wi-Fi，用于联网和检查更新。</p>
-      <form id="wifi-form">
-        <div class="grid">
-          <label><span data-i18n="externalSsid">外部 Wi-Fi SSID</span><input name="ssid" autocomplete="off" maxlength="32"></label>
-          <label><span data-i18n="externalPassword">外部 Wi-Fi 密码</span><input name="password" type="password" autocomplete="new-password" maxlength="64"></label>
-        </div>
-        <button type="submit" data-i18n="saveWifi">保存 Wi-Fi</button>
-      </form>
-      <div class="grid">
-        <button id="ota-check" type="button" data-i18n="checkUpdate">检查更新</button>
-        <button id="ota-start" type="button" data-i18n="startUpdate">开始更新</button>
-      </div>
-    </section>
-
-    <section>
       <h2 data-i18n="setupAp">设置热点</h2>
       <p class="section-note"><span data-i18n="setupApPurpose">手机连接热点后访问</span> <strong>192.168.4.1</strong></p>
       <form id="ap-form">
@@ -152,13 +136,10 @@
         bmsPurpose: "选择保护板类型，再扫描或填入蓝牙 MAC 绑定。",
         bmsType: "保护板类型",
         brightness: "亮度",
-        checkUpdate: "检查更新",
         connected: "已连接",
         connecting: "连接中",
         dalyBms: "达锂 Daly",
         device: "设备",
-        externalPassword: "外部 Wi-Fi 密码",
-        externalSsid: "外部 Wi-Fi SSID",
         failed: "失败",
         firmware: "固件",
         jbdBms: "嘉佰达 JBD",
@@ -178,7 +159,6 @@
         refresh: "刷新",
         saveApPassword: "保存热点密码",
         saveDevice: "保存设备设置",
-        saveWifi: "保存 Wi-Fi",
         scanBms: "扫描 BMS",
         screenRotation: "屏幕方向",
         setup: "设置",
@@ -187,10 +167,7 @@
         setupApPurpose: "手机连接热点后访问",
         speed: "速度",
         speedUnit: "速度单位",
-        startUpdate: "开始更新",
-        warnings: "告警",
-        wifiPurpose: "连接外部 Wi-Fi，用于联网和检查更新。",
-        wirelessNetwork: "无线网络"
+        warnings: "告警"
       },
       en: {
         battery: "Battery",
@@ -201,13 +178,10 @@
         bmsPurpose: "Choose a BMS type, then scan or enter a Bluetooth MAC to bind.",
         bmsType: "BMS type",
         brightness: "Brightness",
-        checkUpdate: "Check Update",
         connected: "connected",
         connecting: "connecting",
         dalyBms: "Daly",
         device: "Device",
-        externalPassword: "External password",
-        externalSsid: "External SSID",
         failed: "failed",
         firmware: "Firmware",
         jbdBms: "JBD",
@@ -227,7 +201,6 @@
         refresh: "Refresh",
         saveApPassword: "Save AP Password",
         saveDevice: "Save Device Settings",
-        saveWifi: "Save Wi-Fi",
         scanBms: "Scan BMS",
         screenRotation: "Screen rotation",
         setup: "setup",
@@ -236,10 +209,7 @@
         setupApPurpose: "Connect to the hotspot, then open",
         speed: "Speed",
         speedUnit: "Speed unit",
-        startUpdate: "Start Update",
-        warnings: "Warnings",
-        wifiPurpose: "Connect external Wi-Fi for internet access and update checks.",
-        wirelessNetwork: "Wireless Network"
+        warnings: "Warnings"
       }
     };
     let uiLanguage = "zh";
@@ -357,11 +327,9 @@
     async function loadConfig() {
       try {
         const config = await api("/api/config");
-        const wifi = $("wifi-form").elements;
         const device = $("device-form").elements;
         const bms = $("bms-form").elements;
         applyLanguage(config.language ?? "zh");
-        wifi.ssid.value = config.external_ssid ?? "";
         device.brightness.value = config.brightness ?? 80;
         device.display_rotation.value = config.display_rotation ?? "landscape";
         device.speed_unit.value = config.speed_unit ?? "km/h";
@@ -411,8 +379,6 @@
     }
 
     $("refresh").addEventListener("click", refresh);
-    $("ota-check").addEventListener("click", () => api("/api/ota/check", { method: "POST" }).then(refresh));
-    $("ota-start").addEventListener("click", () => api("/api/ota/start", { method: "POST" }).then(refresh));
     $("bms-scan").addEventListener("click", () => api("/api/bms/scan", { method: "POST" }).then(loadBmsCandidates));
     $("bms-bind").addEventListener("click", () => bindBmsMac().then(refresh));
     $("bms-form").addEventListener("submit", (event) => {
@@ -421,7 +387,6 @@
     });
     $("bms-form").elements.bms_type.addEventListener("change", () => saveBmsType().then(refresh));
     $("device-form").elements.language.addEventListener("change", (event) => applyLanguage(event.target.value));
-    bindJsonForm("wifi-form", "/api/wifi");
     bindJsonForm("ap-form", "/api/ap-password");
     bindJsonForm("device-form", "/api/config");
     loadConfig().then(loadBmsCandidates).then(refresh);

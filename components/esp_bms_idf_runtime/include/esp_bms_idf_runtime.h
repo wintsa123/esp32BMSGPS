@@ -28,8 +28,8 @@ typedef enum {
     ESP_BMS_IDF_BMS_TYPE_DALY = 3,
 } esp_bms_idf_bms_type_t;
 
-#define ESP_BMS_IDF_BMS_SCAN_MAX_CANDIDATES 6U
-#define ESP_BMS_IDF_BMS_SCAN_NAME_LEN 24U
+#define ESP_BMS_IDF_BMS_SCAN_MAX_CANDIDATES ESP_BMS_BMS_SCAN_MAX_CANDIDATES
+#define ESP_BMS_IDF_BMS_SCAN_NAME_LEN ESP_BMS_BMS_SCAN_NAME_LEN
 #define ESP_BMS_IDF_BMS_FRAME_MAX_LEN 192U
 
 #define ESP_BMS_IDF_RUNTIME_FLAG_BATTERY_ADC_READY (UINT64_C(1) << 0)
@@ -39,13 +39,8 @@ typedef enum {
 #define ESP_BMS_IDF_RUNTIME_FLAG_WIFI_DRIVER_READY (UINT64_C(1) << 4)
 #define ESP_BMS_IDF_RUNTIME_FLAG_WIFI_HANDLERS_REGISTERED (UINT64_C(1) << 5)
 #define ESP_BMS_IDF_RUNTIME_FLAG_SETUP_AP_STARTED (UINT64_C(1) << 6)
-#define ESP_BMS_IDF_RUNTIME_FLAG_STATION_STARTED (UINT64_C(1) << 7)
-#define ESP_BMS_IDF_RUNTIME_FLAG_STATION_CONNECTED (UINT64_C(1) << 8)
-#define ESP_BMS_IDF_RUNTIME_FLAG_STATION_HAS_IP (UINT64_C(1) << 9)
-#define ESP_BMS_IDF_RUNTIME_FLAG_STATION_CONNECT_REQUESTED (UINT64_C(1) << 10)
 #define ESP_BMS_IDF_RUNTIME_FLAG_HTTP_CONFIG_PENDING (UINT64_C(1) << 11)
 #define ESP_BMS_IDF_RUNTIME_FLAG_HTTP_SETUP_AP_PASSWORD_PENDING (UINT64_C(1) << 12)
-#define ESP_BMS_IDF_RUNTIME_FLAG_HTTP_EXTERNAL_WIFI_PENDING (UINT64_C(1) << 13)
 #define ESP_BMS_IDF_RUNTIME_FLAG_HTTP_BMS_SCAN_PENDING (UINT64_C(1) << 14)
 #define ESP_BMS_IDF_RUNTIME_FLAG_HTTP_BMS_BIND_PENDING (UINT64_C(1) << 15)
 #define ESP_BMS_IDF_RUNTIME_FLAG_HTTP_SERVER_STARTED (UINT64_C(1) << 16)
@@ -54,9 +49,6 @@ typedef enum {
 #define ESP_BMS_IDF_RUNTIME_FLAG_BMS_BLE_HOST_STARTED (UINT64_C(1) << 19)
 #define ESP_BMS_IDF_RUNTIME_FLAG_BMS_SCAN_REQUESTED (UINT64_C(1) << 20)
 #define ESP_BMS_IDF_RUNTIME_FLAG_BMS_SCAN_ACTIVE (UINT64_C(1) << 21)
-#define ESP_BMS_IDF_RUNTIME_FLAG_WIFI_SCAN_REQUESTED (UINT64_C(1) << 22)
-#define ESP_BMS_IDF_RUNTIME_FLAG_WIFI_SCAN_ACTIVE (UINT64_C(1) << 23)
-#define ESP_BMS_IDF_RUNTIME_FLAG_WIFI_SCAN_COMPLETE (UINT64_C(1) << 24)
 #define ESP_BMS_IDF_RUNTIME_FLAG_BLUETOOTH_ADVERTISE_REQUESTED (UINT64_C(1) << 25)
 #define ESP_BMS_IDF_RUNTIME_FLAG_BLUETOOTH_ADVERTISING (UINT64_C(1) << 26)
 #define ESP_BMS_IDF_RUNTIME_FLAG_BLUETOOTH_CONNECTED (UINT64_C(1) << 27)
@@ -67,13 +59,9 @@ typedef enum {
 #define ESP_BMS_IDF_RUNTIME_FLAG_HTTP_PENDING_LANGUAGE_ZH (UINT64_C(1) << 32)
 #define ESP_BMS_IDF_RUNTIME_FLAG_LANGUAGE_ZH (UINT64_C(1) << 33)
 #define ESP_BMS_IDF_RUNTIME_FLAG_BMS_BIND_ACTIVE (UINT64_C(1) << 34)
+#define ESP_BMS_IDF_RUNTIME_FLAG_BMS_SCAN_SNAPSHOT_DIRTY (UINT64_C(1) << 35)
 
-typedef struct {
-    char mac[18];
-    char name[ESP_BMS_IDF_BMS_SCAN_NAME_LEN + 1U];
-    int8_t rssi;
-    bool has_name;
-} esp_bms_idf_bms_scan_candidate_t;
+typedef esp_bms_bms_scan_candidate_t esp_bms_idf_bms_scan_candidate_t;
 
 typedef struct {
     esp_bms_dashboard_snapshot_t snapshot;
@@ -107,28 +95,19 @@ typedef struct {
     uint8_t bms_frame[ESP_BMS_IDF_BMS_FRAME_MAX_LEN];
     char setup_ap_ssid[32];
     char setup_ap_password[9];
-    char external_ssid[33];
-    char external_password[65];
     char bms_bound_mac[18];
     char bluetooth_name[32];
     esp_netif_t *setup_ap_netif;
-    esp_netif_t *station_netif;
     httpd_handle_t http_server;
     SemaphoreHandle_t http_pending_lock;
     SemaphoreHandle_t bms_scan_lock;
-    SemaphoreHandle_t wifi_scan_lock;
     esp_bms_idf_bms_scan_candidate_t bms_scan_candidates[ESP_BMS_IDF_BMS_SCAN_MAX_CANDIDATES];
-    esp_bms_wifi_scan_candidate_t wifi_scan_candidates[ESP_BMS_WIFI_SCAN_MAX_CANDIDATES];
     uint8_t setup_ap_clients;
-    uint8_t station_retry_count;
     uint8_t bms_scan_candidate_count;
-    uint8_t wifi_scan_candidate_count;
     uint8_t http_pending_brightness_percent;
     uint8_t http_pending_volume_percent;
     uint8_t http_pending_bms_type;
     char http_pending_setup_ap_password[9];
-    char http_pending_external_ssid[33];
-    char http_pending_external_password[65];
     char http_pending_bms_bound_mac[18];
     uint64_t flags;
     esp_bms_idf_display_rotation_t display_rotation;
@@ -161,9 +140,9 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
 esp_err_t esp_bms_idf_runtime_save_display_settings(esp_bms_idf_runtime_t *runtime);
 esp_err_t esp_bms_idf_runtime_start_setup_ap(esp_bms_idf_runtime_t *runtime);
 esp_err_t esp_bms_idf_runtime_start_http_server(esp_bms_idf_runtime_t *runtime);
+esp_err_t esp_bms_idf_runtime_stop_setup_services(esp_bms_idf_runtime_t *runtime);
 esp_err_t esp_bms_idf_runtime_start_bms_ble_if_bound(esp_bms_idf_runtime_t *runtime);
 esp_err_t esp_bms_idf_runtime_start_bms_ble_for_bind(esp_bms_idf_runtime_t *runtime);
-esp_err_t esp_bms_idf_runtime_start_wifi_scan(esp_bms_idf_runtime_t *runtime);
 esp_err_t esp_bms_idf_runtime_start_bluetooth_advertising(esp_bms_idf_runtime_t *runtime);
 bool esp_bms_idf_runtime_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_ms);
 bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,

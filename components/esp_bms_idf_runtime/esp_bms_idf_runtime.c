@@ -3,6 +3,7 @@
 #include "esp_event.h"
 #include "esp_err.h"
 #include "esp_check.h"
+#include "esp_heap_caps.h"
 #include "esp_http_server.h"
 #include "esp_mac.h"
 #include "esp_log.h"
@@ -52,11 +53,6 @@ static const char *TAG = "bms_idf_runtime";
 #define SETUP_AP_NVS_NAMESPACE "esp_bms"
 #define SETUP_AP_NVS_SSID_KEY "setup_ssid"
 #define SETUP_AP_NVS_PASSWORD_KEY "setup_pw"
-#define EXTERNAL_WIFI_NVS_SSID_KEY "external_ssid"
-#define EXTERNAL_WIFI_NVS_PASSWORD_KEY "external_pw"
-#define EXTERNAL_WIFI_SSID_MAX_LEN 32U
-#define EXTERNAL_WIFI_PASSWORD_MAX_LEN 64U
-#define STATION_RECONNECT_MAX 5U
 #define ANT_BMS_SERVICE_UUID_16 0xFFE0U
 #define ANT_BMS_CHARACTERISTIC_UUID_16 0xFFE1U
 #define BMS_SCAN_NAME_PREFIX "ANT-"
@@ -90,6 +86,22 @@ static const char *TAG = "bms_idf_runtime";
 #define HTTP_JSON_MAX_LEN 1024U
 #define HTTP_AUTH_MAX_LEN 48U
 #define HTTP_SETUP_USER "esp32"
+#define HTTP_SERVER_TASK_PRIORITY 3U
+
+static void runtime_log_heap_state(const char *stage)
+{
+    const uint32_t internal_caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+    const uint32_t psram_caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
+    ESP_LOGI(TAG,
+             "[heap] %s default_free=%u default_min=%u internal8_free=%u internal8_min=%u psram_free=%u psram_largest=%u",
+             stage,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_DEFAULT),
+             (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_DEFAULT),
+             (unsigned)heap_caps_get_free_size(internal_caps),
+             (unsigned)heap_caps_get_minimum_free_size(internal_caps),
+             (unsigned)heap_caps_get_free_size(psram_caps),
+             (unsigned)heap_caps_get_largest_free_block(psram_caps));
+}
 
 extern const char web_index_html_start[] asm("_binary_index_html_start");
 extern const char web_index_html_end[] asm("_binary_index_html_end");
@@ -113,7 +125,6 @@ typedef enum {
 } bms_ble_phase_t;
 
 static esp_err_t runtime_apply_setup_ap_wifi_config(const esp_bms_idf_runtime_t *runtime);
-static esp_err_t runtime_apply_external_wifi_config(esp_bms_idf_runtime_t *runtime);
 static int runtime_bms_ble_gap_event(struct ble_gap_event *event, void *arg);
 static int runtime_bluetooth_gap_event(struct ble_gap_event *event, void *arg);
 static esp_err_t runtime_bms_ble_start_scan(esp_bms_idf_runtime_t *runtime);
@@ -121,10 +132,6 @@ static esp_err_t runtime_bluetooth_start_advertising_now(esp_bms_idf_runtime_t *
 static esp_err_t runtime_bluetooth_stop_for_bms_scan(esp_bms_idf_runtime_t *runtime);
 static esp_err_t runtime_bms_ble_send_poll_request(esp_bms_idf_runtime_t *runtime);
 static esp_err_t runtime_init_bms_ble(esp_bms_idf_runtime_t *runtime);
-static esp_err_t runtime_wifi_start_scan(esp_bms_idf_runtime_t *runtime);
-static void runtime_wifi_scan_handle_done(esp_bms_idf_runtime_t *runtime);
-static esp_err_t runtime_start_station_connect(esp_bms_idf_runtime_t *runtime);
-static esp_err_t runtime_save_external_wifi_credentials(esp_bms_idf_runtime_t *runtime);
 static esp_err_t runtime_save_bms_binding(esp_bms_idf_runtime_t *runtime);
 static esp_err_t runtime_save_setup_ap_credentials(const esp_bms_idf_runtime_t *runtime);
 static void runtime_ensure_setup_ap_credentials(esp_bms_idf_runtime_t *runtime);
@@ -177,9 +184,7 @@ static bool runtime_project_bluetooth_snapshot(esp_bms_idf_runtime_t *runtime)
         return false;
     }
 
-    const bool enabled = RUNTIME_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED) ||
-                         RUNTIME_FLAG(runtime, BLUETOOTH_ADVERTISING) ||
-                         RUNTIME_FLAG(runtime, BLUETOOTH_CONNECTED);
+    const bool enabled = true;
     const bool changed = RUNTIME_SNAPSHOT_FLAG(runtime, BLUETOOTH_ENABLED) != enabled ||
                          RUNTIME_SNAPSHOT_FLAG(runtime, BLUETOOTH_ADVERTISING) !=
                              RUNTIME_FLAG(runtime, BLUETOOTH_ADVERTISING) ||
@@ -267,190 +272,6 @@ static bool runtime_setup_ap_password_matches_policy(const char *password)
     return true;
 }
 
-static bool runtime_external_wifi_text_is_json_safe(const char *text)
-{
-    for (const char *cursor = text; *cursor; cursor++) {
-        const unsigned char value = (unsigned char)*cursor;
-        if (value < 0x20U || *cursor == '"' || *cursor == '\\') {
-            return false;
-        }
-    }
-    return true;
-}
-
-static bool runtime_external_wifi_credentials_match_policy(const char *ssid, const char *password)
-{
-    if (!ssid || !password) {
-        return false;
-    }
-
-    const size_t ssid_len = strlen(ssid);
-    const size_t password_len = strlen(password);
-    if (ssid_len == 0U || ssid_len > EXTERNAL_WIFI_SSID_MAX_LEN) {
-        return false;
-    }
-    if (password_len > 0U &&
-        (password_len < 8U || password_len > EXTERNAL_WIFI_PASSWORD_MAX_LEN)) {
-        return false;
-    }
-    return runtime_external_wifi_text_is_json_safe(ssid) &&
-           runtime_external_wifi_text_is_json_safe(password);
-}
-
-static bool runtime_has_external_wifi_credentials(const esp_bms_idf_runtime_t *runtime)
-{
-    return runtime_external_wifi_credentials_match_policy(runtime->external_ssid,
-                                                          runtime->external_password);
-}
-
-static void runtime_wifi_scan_project_snapshot(esp_bms_idf_runtime_t *runtime)
-{
-    if (!runtime) {
-        return;
-    }
-
-    if (runtime->wifi_scan_lock &&
-        xSemaphoreTake(runtime->wifi_scan_lock, pdMS_TO_TICKS(100)) != pdTRUE) {
-        return;
-    }
-
-    memset(runtime->snapshot.wifi_scan_candidates,
-           0,
-           sizeof(runtime->snapshot.wifi_scan_candidates));
-    runtime->snapshot.wifi_scan_count = runtime->wifi_scan_candidate_count;
-    if (runtime->snapshot.wifi_scan_count > ESP_BMS_WIFI_SCAN_MAX_CANDIDATES) {
-        runtime->snapshot.wifi_scan_count = ESP_BMS_WIFI_SCAN_MAX_CANDIDATES;
-    }
-    for (uint8_t index = 0; index < runtime->snapshot.wifi_scan_count; ++index) {
-        runtime->snapshot.wifi_scan_candidates[index] = runtime->wifi_scan_candidates[index];
-    }
-    RUNTIME_SET_SNAPSHOT_FLAG(runtime, WIFI_SCAN_ACTIVE, RUNTIME_FLAG(runtime, WIFI_SCAN_ACTIVE));
-    RUNTIME_SET_SNAPSHOT_FLAG(runtime, WIFI_SCAN_COMPLETE, RUNTIME_FLAG(runtime, WIFI_SCAN_COMPLETE));
-
-    if (runtime->wifi_scan_lock) {
-        xSemaphoreGive(runtime->wifi_scan_lock);
-    }
-}
-
-static void runtime_wifi_scan_set_state(esp_bms_idf_runtime_t *runtime,
-                                        bool active,
-                                        bool complete)
-{
-    if (!runtime) {
-        return;
-    }
-
-    if (runtime->wifi_scan_lock &&
-        xSemaphoreTake(runtime->wifi_scan_lock, pdMS_TO_TICKS(100)) != pdTRUE) {
-        return;
-    }
-    RUNTIME_SET_FLAG(runtime, WIFI_SCAN_ACTIVE, active);
-    RUNTIME_SET_FLAG(runtime, WIFI_SCAN_COMPLETE, complete);
-    runtime->snapshot.wifi_scan_generation++;
-    if (!active && !complete) {
-        runtime->wifi_scan_candidate_count = 0;
-        memset(runtime->wifi_scan_candidates, 0, sizeof(runtime->wifi_scan_candidates));
-    }
-    if (runtime->wifi_scan_lock) {
-        xSemaphoreGive(runtime->wifi_scan_lock);
-    }
-    runtime_wifi_scan_project_snapshot(runtime);
-}
-
-static void runtime_wifi_scan_clear_candidates(esp_bms_idf_runtime_t *runtime)
-{
-    if (!runtime) {
-        return;
-    }
-    if (runtime->wifi_scan_lock &&
-        xSemaphoreTake(runtime->wifi_scan_lock, pdMS_TO_TICKS(100)) != pdTRUE) {
-        return;
-    }
-    memset(runtime->wifi_scan_candidates, 0, sizeof(runtime->wifi_scan_candidates));
-    runtime->wifi_scan_candidate_count = 0;
-    memset(runtime->snapshot.wifi_scan_candidates,
-           0,
-           sizeof(runtime->snapshot.wifi_scan_candidates));
-    runtime->snapshot.wifi_scan_count = 0;
-    if (runtime->wifi_scan_lock) {
-        xSemaphoreGive(runtime->wifi_scan_lock);
-    }
-}
-
-static bool runtime_wifi_scan_ssid_copy(char *out, size_t out_len, const uint8_t *ssid)
-{
-    if (!out || out_len == 0U || !ssid) {
-        return false;
-    }
-    out[0] = '\0';
-    size_t copied = 0;
-    while (copied + 1U < out_len && copied < EXTERNAL_WIFI_SSID_MAX_LEN && ssid[copied] != 0U) {
-        out[copied] = (char)ssid[copied];
-        copied++;
-    }
-    out[copied] = '\0';
-    return copied > 0U;
-}
-
-static void runtime_wifi_scan_store_candidate(esp_bms_idf_runtime_t *runtime,
-                                              const wifi_ap_record_t *record)
-{
-    if (!runtime || !record) {
-        return;
-    }
-
-    char ssid[ESP_BMS_WIFI_SCAN_SSID_LEN + 1U] = { 0 };
-    if (!runtime_wifi_scan_ssid_copy(ssid, sizeof(ssid), record->ssid)) {
-        return;
-    }
-
-    if (runtime->wifi_scan_lock &&
-        xSemaphoreTake(runtime->wifi_scan_lock, pdMS_TO_TICKS(100)) != pdTRUE) {
-        return;
-    }
-
-    size_t index = runtime->wifi_scan_candidate_count;
-    for (size_t candidate = 0; candidate < runtime->wifi_scan_candidate_count; ++candidate) {
-        if (strcmp(runtime->wifi_scan_candidates[candidate].ssid, ssid) == 0) {
-            if (record->rssi <= runtime->wifi_scan_candidates[candidate].rssi) {
-                if (runtime->wifi_scan_lock) {
-                    xSemaphoreGive(runtime->wifi_scan_lock);
-                }
-                return;
-            }
-            index = candidate;
-            break;
-        }
-    }
-
-    if (index >= ESP_BMS_WIFI_SCAN_MAX_CANDIDATES) {
-        index = 0;
-        for (size_t candidate = 1; candidate < ESP_BMS_WIFI_SCAN_MAX_CANDIDATES; ++candidate) {
-            if (runtime->wifi_scan_candidates[candidate].rssi < runtime->wifi_scan_candidates[index].rssi) {
-                index = candidate;
-            }
-        }
-        if (record->rssi <= runtime->wifi_scan_candidates[index].rssi) {
-            if (runtime->wifi_scan_lock) {
-                xSemaphoreGive(runtime->wifi_scan_lock);
-            }
-            return;
-        }
-    } else if (index == runtime->wifi_scan_candidate_count) {
-        runtime->wifi_scan_candidate_count++;
-    }
-
-    runtime_copy_snapshot_text(runtime->wifi_scan_candidates[index].ssid,
-                               sizeof(runtime->wifi_scan_candidates[index].ssid),
-                               ssid);
-    runtime->wifi_scan_candidates[index].rssi = record->rssi;
-    runtime->wifi_scan_candidates[index].auth_mode = (uint8_t)record->authmode;
-    runtime->wifi_scan_candidates[index].open = record->authmode == WIFI_AUTH_OPEN;
-    if (runtime->wifi_scan_lock) {
-        xSemaphoreGive(runtime->wifi_scan_lock);
-    }
-}
-
 static void runtime_ble_addr_to_mac_text(const uint8_t addr[6], char *out, size_t out_len)
 {
     if (!out || out_len < 18U) {
@@ -513,6 +334,38 @@ static bool runtime_bms_adv_has_ant_service(const struct ble_hs_adv_fields *fiel
     return false;
 }
 
+static bool runtime_bms_scan_project_snapshot(esp_bms_idf_runtime_t *runtime)
+{
+    if (!runtime) {
+        return false;
+    }
+    if (runtime->bms_scan_lock &&
+        xSemaphoreTake(runtime->bms_scan_lock, pdMS_TO_TICKS(100)) != pdTRUE) {
+        return false;
+    }
+
+    uint8_t count = runtime->bms_scan_candidate_count;
+    if (count > ESP_BMS_IDF_BMS_SCAN_MAX_CANDIDATES) {
+        count = ESP_BMS_IDF_BMS_SCAN_MAX_CANDIDATES;
+    }
+
+    const bool changed =
+        runtime->snapshot.bms_scan_candidate_count != count ||
+        memcmp(runtime->snapshot.bms_scan_candidates,
+               runtime->bms_scan_candidates,
+               sizeof(runtime->snapshot.bms_scan_candidates)) != 0;
+    runtime->snapshot.bms_scan_candidate_count = count;
+    memset(runtime->snapshot.bms_scan_candidates, 0, sizeof(runtime->snapshot.bms_scan_candidates));
+    memcpy(runtime->snapshot.bms_scan_candidates,
+           runtime->bms_scan_candidates,
+           sizeof(runtime->snapshot.bms_scan_candidates[0]) * count);
+
+    if (runtime->bms_scan_lock) {
+        xSemaphoreGive(runtime->bms_scan_lock);
+    }
+    return changed;
+}
+
 static void runtime_bms_scan_clear_candidates(esp_bms_idf_runtime_t *runtime)
 {
     if (runtime->bms_scan_lock &&
@@ -524,6 +377,8 @@ static void runtime_bms_scan_clear_candidates(esp_bms_idf_runtime_t *runtime)
     if (runtime->bms_scan_lock) {
         xSemaphoreGive(runtime->bms_scan_lock);
     }
+    (void)runtime_bms_scan_project_snapshot(runtime);
+    RUNTIME_SET_FLAG(runtime, BMS_SCAN_SNAPSHOT_DIRTY, true);
 }
 
 static size_t runtime_bms_scan_find_candidate(const esp_bms_idf_runtime_t *runtime, const char *mac)
@@ -572,6 +427,7 @@ static void runtime_bms_scan_store_candidate(esp_bms_idf_runtime_t *runtime,
         if (runtime->bms_scan_lock) {
             xSemaphoreGive(runtime->bms_scan_lock);
         }
+        RUNTIME_SET_FLAG(runtime, BMS_SCAN_SNAPSHOT_DIRTY, true);
         return;
     }
 
@@ -598,6 +454,13 @@ static void runtime_bms_scan_store_candidate(esp_bms_idf_runtime_t *runtime,
     if (runtime->bms_scan_lock) {
         xSemaphoreGive(runtime->bms_scan_lock);
     }
+    RUNTIME_SET_FLAG(runtime, BMS_SCAN_SNAPSHOT_DIRTY, true);
+    ESP_LOGI(TAG,
+             "[bms] scan candidate stored: count=%u mac=%s name=%s rssi=%d",
+             (unsigned)runtime->bms_scan_candidate_count,
+             mac,
+             name && name[0] != '\0' ? name : "-",
+             (int)rssi);
 }
 
 static void runtime_clear_bms_telemetry(esp_bms_idf_runtime_t *runtime)
@@ -1284,36 +1147,11 @@ static const char *runtime_bms_type_status_text(esp_bms_idf_bms_type_t type)
 static const char *runtime_wifi_config_text(esp_bms_wifi_state_t wifi)
 {
     switch (wifi) {
-    case ESP_BMS_WIFI_CONNECTING:
-        return "connecting";
-    case ESP_BMS_WIFI_CONNECTED:
-        return "connected";
     case ESP_BMS_WIFI_OFFLINE:
         return "offline";
     case ESP_BMS_WIFI_SETUP_AP:
     default:
         return "setup";
-    }
-}
-
-static const char *runtime_ota_config_text(esp_bms_ota_state_t ota)
-{
-    switch (ota) {
-    case ESP_BMS_OTA_CHECKING:
-        return "checking";
-    case ESP_BMS_OTA_AVAILABLE:
-        return "available";
-    case ESP_BMS_OTA_DOWNLOADING:
-        return "downloading";
-    case ESP_BMS_OTA_VERIFYING:
-        return "verifying";
-    case ESP_BMS_OTA_READY:
-        return "ready";
-    case ESP_BMS_OTA_FAILED:
-        return "failed";
-    case ESP_BMS_OTA_IDLE:
-    default:
-        return "idle";
     }
 }
 
@@ -1374,12 +1212,14 @@ static bool runtime_select_bms_type(esp_bms_idf_runtime_t *runtime, esp_bms_idf_
         return false;
     }
     if (runtime->bms_type == (uint8_t)bms_type) {
+        ESP_LOGI(TAG, "[bms] type unchanged: %s", runtime_bms_type_config_text(bms_type));
         return false;
     }
 
     runtime->bms_type = (uint8_t)bms_type;
     runtime->snapshot.bms_type = runtime->bms_type;
     runtime_set_error(runtime, runtime_bms_type_status_text(bms_type));
+    ESP_LOGI(TAG, "[bms] type selected: %s", runtime_bms_type_config_text(bms_type));
     return true;
 }
 
@@ -1508,7 +1348,6 @@ static void runtime_reset_state(esp_bms_idf_runtime_t *runtime)
     runtime->snapshot.speed_unit = ESP_BMS_SPEED_UNIT_KMH;
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, SETUP_AP_ENABLED, false);
     runtime->snapshot.wifi = ESP_BMS_WIFI_OFFLINE;
-    runtime->snapshot.ota = ESP_BMS_OTA_IDLE;
     runtime->bms_type = (uint8_t)ESP_BMS_IDF_BMS_TYPE_ANT;
     runtime->snapshot.bms_type = runtime->bms_type;
     (void)runtime_set_brightness_percent(runtime, 85U);
@@ -1516,22 +1355,14 @@ static void runtime_reset_state(esp_bms_idf_runtime_t *runtime)
     runtime->display_rotation = ESP_BMS_IDF_DISPLAY_ROTATION_LANDSCAPE;
     RUNTIME_SET_FLAG(runtime, LANGUAGE_ZH, true);
     RUNTIME_SET_FLAG(runtime, BMS_BIND_ACTIVE, false);
-    runtime->station_retry_count = 0;
-    RUNTIME_SET_FLAG(runtime, STATION_CONNECTED, false);
-    RUNTIME_SET_FLAG(runtime, STATION_HAS_IP, false);
-    RUNTIME_SET_FLAG(runtime, STATION_CONNECT_REQUESTED, false);
     RUNTIME_SET_FLAG(runtime, HTTP_BMS_SCAN_PENDING, false);
     RUNTIME_SET_FLAG(runtime, BMS_SCAN_REQUESTED, false);
     RUNTIME_SET_FLAG(runtime, BMS_SCAN_ACTIVE, false);
-    RUNTIME_SET_FLAG(runtime, WIFI_SCAN_REQUESTED, false);
-    RUNTIME_SET_FLAG(runtime, WIFI_SCAN_ACTIVE, false);
-    RUNTIME_SET_FLAG(runtime, WIFI_SCAN_COMPLETE, false);
     RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, false);
     RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISING, false);
     RUNTIME_SET_FLAG(runtime, BLUETOOTH_CONNECTED, false);
     (void)runtime_project_bluetooth_snapshot(runtime);
     runtime_bms_scan_clear_candidates(runtime);
-    runtime_wifi_scan_clear_candidates(runtime);
     runtime_clear_bms_telemetry(runtime);
     runtime_update_setup_ap_snapshot(runtime);
     runtime_set_bms_info(runtime, "BMS OFF");
@@ -2143,7 +1974,7 @@ static esp_err_t runtime_http_status_handler(httpd_req_t *req, esp_bms_idf_runti
                                  "\"local_battery_mv\":%s,\"bms_info\":\"%s\","
                                  "\"bms_protections\":%s,\"bms_warnings\":%s,"
                                  "\"bms_temperatures_c\":%s,\"wifi\":\"%s\","
-                                 "\"setup_ap_enabled\":%s,\"ota\":\"%s\"}",
+                                 "\"setup_ap_enabled\":%s}",
                                  speed,
                                  runtime_speed_unit_config_text(runtime->snapshot.speed_unit),
                                  RUNTIME_SNAPSHOT_FLAG(runtime, GPS_FIX_VALID) ? "true" : "false",
@@ -2157,8 +1988,7 @@ static esp_err_t runtime_http_status_handler(httpd_req_t *req, esp_bms_idf_runti
                                  warnings,
                                  temperatures,
                                  runtime_wifi_config_text(runtime->snapshot.wifi),
-                                 RUNTIME_SNAPSHOT_FLAG(runtime, SETUP_AP_ENABLED) ? "true" : "false",
-                                 runtime_ota_config_text(runtime->snapshot.ota));
+                                 RUNTIME_SNAPSHOT_FLAG(runtime, SETUP_AP_ENABLED) ? "true" : "false");
     if (written < 0 || (size_t)written >= sizeof(json)) {
         return runtime_http_send_text(req, "500 Internal Server Error", "json too large");
     }
@@ -2255,37 +2085,17 @@ static void runtime_config_bms_mac_json(const esp_bms_idf_runtime_t *runtime, ch
     (void)snprintf(out, out_len, "\"%s\"", mac);
 }
 
-static void runtime_config_external_ssid_copy(const esp_bms_idf_runtime_t *runtime,
-                                              char *out,
-                                              size_t out_len)
-{
-    if (runtime->http_pending_lock &&
-        xSemaphoreTake(runtime->http_pending_lock, pdMS_TO_TICKS(100)) == pdTRUE) {
-        runtime_copy_snapshot_text(out, out_len, runtime->external_ssid);
-        if (RUNTIME_FLAG(runtime, HTTP_EXTERNAL_WIFI_PENDING)) {
-            runtime_copy_snapshot_text(out, out_len, runtime->http_pending_external_ssid);
-        }
-        xSemaphoreGive(runtime->http_pending_lock);
-        return;
-    }
-
-    runtime_copy_snapshot_text(out, out_len, runtime->external_ssid);
-}
-
 static esp_err_t runtime_http_config_handler(httpd_req_t *req, esp_bms_idf_runtime_t *runtime)
 {
     char bms_mac[24] = { 0 };
     runtime_config_bms_mac_json(runtime, bms_mac, sizeof(bms_mac));
-    char external_ssid[sizeof(runtime->external_ssid)] = { 0 };
-    runtime_config_external_ssid_copy(runtime, external_ssid, sizeof(external_ssid));
 
     char json[HTTP_JSON_MAX_LEN] = { 0 };
     const int written = snprintf(json,
                                  sizeof(json),
                                  "{\"brightness\":%u,\"volume\":%u,\"display_rotation\":\"%s\","
                                  "\"speed_unit\":\"%s\",\"language\":\"%s\","
-                                 "\"setup_ap_ssid\":\"%s\",\"external_wifi_saved\":%s,"
-                                 "\"external_ssid\":\"%s\",\"setup_ap_password_saved\":%s,"
+                                 "\"setup_ap_ssid\":\"%s\",\"setup_ap_password_saved\":%s,"
                                  "\"setup_ap_state\":\"%s\",\"bms_mac\":%s,\"bms_type\":\"%s\"}",
                                  runtime->brightness_percent,
                                  runtime->volume_percent,
@@ -2293,8 +2103,6 @@ static esp_err_t runtime_http_config_handler(httpd_req_t *req, esp_bms_idf_runti
                                  runtime_speed_unit_config_text(runtime->snapshot.speed_unit),
                                  RUNTIME_FLAG(runtime, LANGUAGE_ZH) ? "zh" : "en",
                                  runtime->setup_ap_ssid,
-                                 external_ssid[0] == '\0' ? "false" : "true",
-                                 external_ssid,
                                  runtime->setup_ap_password[0] == '\0' ? "false" : "true",
                                  RUNTIME_SNAPSHOT_FLAG(runtime, SETUP_AP_ENABLED) ? "enabled" : "disabled",
                                  bms_mac,
@@ -2337,27 +2145,6 @@ static bool runtime_set_pending_http_ap_password(esp_bms_idf_runtime_t *runtime,
                                sizeof(runtime->http_pending_setup_ap_password),
                                password);
     RUNTIME_SET_FLAG(runtime, HTTP_SETUP_AP_PASSWORD_PENDING, true);
-    xSemaphoreGive(runtime->http_pending_lock);
-    return true;
-}
-
-static bool runtime_set_pending_http_external_wifi(esp_bms_idf_runtime_t *runtime,
-                                                  const char *ssid,
-                                                  const char *password)
-{
-    if (!runtime->http_pending_lock) {
-        return false;
-    }
-    if (xSemaphoreTake(runtime->http_pending_lock, pdMS_TO_TICKS(100)) != pdTRUE) {
-        return false;
-    }
-    runtime_copy_snapshot_text(runtime->http_pending_external_ssid,
-                               sizeof(runtime->http_pending_external_ssid),
-                               ssid);
-    runtime_copy_snapshot_text(runtime->http_pending_external_password,
-                               sizeof(runtime->http_pending_external_password),
-                               password);
-    RUNTIME_SET_FLAG(runtime, HTTP_EXTERNAL_WIFI_PENDING, true);
     xSemaphoreGive(runtime->http_pending_lock);
     return true;
 }
@@ -2473,44 +2260,6 @@ static esp_err_t runtime_http_post_config_handler(httpd_req_t *req, esp_bms_idf_
     return runtime_http_send_no_content(req);
 }
 
-static esp_err_t runtime_http_post_wifi_handler(httpd_req_t *req, esp_bms_idf_runtime_t *runtime)
-{
-    char body[HTTP_BODY_MAX_LEN] = { 0 };
-    esp_err_t ret = runtime_http_read_body(req, body, sizeof(body));
-    if (ret != ESP_OK) {
-        return runtime_http_send_text(req, "400 Bad Request", "invalid body");
-    }
-
-    char parsed_ssid[sizeof(runtime->external_ssid)] = { 0 };
-    char parsed_password[sizeof(runtime->external_password)] = { 0 };
-    bool found = false;
-    if (!runtime_json_get_string(body, "ssid", parsed_ssid, sizeof(parsed_ssid), &found) ||
-        !found) {
-        return runtime_http_send_text(req, "400 Bad Request", "invalid ssid");
-    }
-
-    bool password_found = false;
-    if (!runtime_json_get_string(body,
-                                 "password",
-                                 parsed_password,
-                                 sizeof(parsed_password),
-                                 &password_found)) {
-        return runtime_http_send_text(req, "400 Bad Request", "invalid password");
-    }
-    if (!password_found) {
-        parsed_password[0] = '\0';
-    }
-
-    if (!runtime_external_wifi_credentials_match_policy(parsed_ssid, parsed_password)) {
-        return runtime_http_send_text(req, "400 Bad Request", "invalid wifi credentials");
-    }
-
-    if (!runtime_set_pending_http_external_wifi(runtime, parsed_ssid, parsed_password)) {
-        return runtime_http_send_text(req, "500 Internal Server Error", "wifi queue failed");
-    }
-    return runtime_http_send_no_content(req);
-}
-
 static esp_err_t runtime_http_post_ap_password_handler(httpd_req_t *req, esp_bms_idf_runtime_t *runtime)
 {
     char body[HTTP_BODY_MAX_LEN] = { 0 };
@@ -2567,29 +2316,11 @@ static esp_err_t runtime_http_post_bms_scan_handler(httpd_req_t *req, esp_bms_id
         }
     }
 
+    ESP_LOGI(TAG, "[http] BMS scan requested");
     if (!runtime_set_pending_http_bms_scan(runtime)) {
         return runtime_http_send_text(req, "500 Internal Server Error", "bms scan queue failed");
     }
     return runtime_http_send_no_content(req);
-}
-
-static esp_err_t runtime_http_post_ota_unavailable_handler(httpd_req_t *req,
-                                                           esp_bms_idf_runtime_t *runtime,
-                                                           const char *operation)
-{
-    runtime->snapshot.ota = ESP_BMS_OTA_FAILED;
-    runtime_set_error(runtime, "OTA N/A");
-    ESP_LOGI(TAG, "[ota] %s requested but OTA transport is not implemented", operation);
-
-    char json[160] = { 0 };
-    const int written = snprintf(json,
-                                 sizeof(json),
-                                 "{\"ota\":\"failed\",\"available\":false,"
-                                 "\"message\":\"ota transport not implemented\"}");
-    if (written < 0 || (size_t)written >= sizeof(json)) {
-        return runtime_http_send_text(req, "500 Internal Server Error", "json too large");
-    }
-    return runtime_http_send_json(req, json);
 }
 
 static esp_err_t runtime_http_api_handler(httpd_req_t *req)
@@ -2606,6 +2337,13 @@ static esp_err_t runtime_http_api_handler(httpd_req_t *req)
         return runtime_http_send_unauthorized(req);
     }
 
+    ESP_LOGI(TAG,
+             "[http] api request: method=%d uri=%s clients=%u",
+             req->method,
+             req->uri,
+             (unsigned)runtime->setup_ap_clients);
+    runtime_log_heap_state("http_api");
+
     if (req->method == HTTP_GET && strcmp(req->uri, "/api/status") == 0) {
         return runtime_http_status_handler(req, runtime);
     }
@@ -2618,9 +2356,6 @@ static esp_err_t runtime_http_api_handler(httpd_req_t *req)
     if (req->method == HTTP_POST && strcmp(req->uri, "/api/config") == 0) {
         return runtime_http_post_config_handler(req, runtime);
     }
-    if (req->method == HTTP_POST && strcmp(req->uri, "/api/wifi") == 0) {
-        return runtime_http_post_wifi_handler(req, runtime);
-    }
     if (req->method == HTTP_POST && strcmp(req->uri, "/api/ap-password") == 0) {
         return runtime_http_post_ap_password_handler(req, runtime);
     }
@@ -2630,13 +2365,6 @@ static esp_err_t runtime_http_api_handler(httpd_req_t *req)
     if (req->method == HTTP_POST && strcmp(req->uri, "/api/bms/bind") == 0) {
         return runtime_http_post_bms_bind_handler(req, runtime);
     }
-    if (req->method == HTTP_POST && strcmp(req->uri, "/api/ota/check") == 0) {
-        return runtime_http_post_ota_unavailable_handler(req, runtime, "check");
-    }
-    if (req->method == HTTP_POST && strcmp(req->uri, "/api/ota/start") == 0) {
-        return runtime_http_post_ota_unavailable_handler(req, runtime, "start");
-    }
-
     ESP_LOGI(TAG, "[http] route not implemented: method=%d uri=%s", req->method, req->uri);
     return runtime_http_send_text(req, "501 Not Implemented", "not implemented");
 }
@@ -2651,6 +2379,7 @@ static esp_err_t runtime_start_http_server(esp_bms_idf_runtime_t *runtime)
     config.max_open_sockets = 4;
     config.max_uri_handlers = 4;
     config.stack_size = 4096;
+    config.task_priority = HTTP_SERVER_TASK_PRIORITY;
     config.lru_purge_enable = true;
     config.uri_match_fn = httpd_uri_match_wildcard;
 
@@ -2684,6 +2413,7 @@ static esp_err_t runtime_start_http_server(esp_bms_idf_runtime_t *runtime)
 
     RUNTIME_SET_FLAG(runtime, HTTP_SERVER_STARTED, true);
     ESP_LOGI(TAG, "[http] server started: port=80 routes=/,/api/*");
+    runtime_log_heap_state("http_server_started");
     return ESP_OK;
 }
 
@@ -2736,73 +2466,6 @@ static esp_err_t runtime_save_setup_ap_credentials(const esp_bms_idf_runtime_t *
     ret = nvs_set_str(handle, SETUP_AP_NVS_SSID_KEY, runtime->setup_ap_ssid);
     if (ret == ESP_OK) {
         ret = nvs_set_str(handle, SETUP_AP_NVS_PASSWORD_KEY, runtime->setup_ap_password);
-    }
-    if (ret == ESP_OK) {
-        ret = nvs_commit(handle);
-    }
-    nvs_close(handle);
-    return ret;
-}
-
-static esp_err_t runtime_load_external_wifi_credentials(esp_bms_idf_runtime_t *runtime)
-{
-    esp_err_t ret = runtime_init_nvs(runtime);
-    if (ret != ESP_OK) {
-        return ret;
-    }
-
-    nvs_handle_t handle = 0;
-    ret = nvs_open(SETUP_AP_NVS_NAMESPACE, NVS_READONLY, &handle);
-    if (ret != ESP_OK) {
-        return ret;
-    }
-
-    char ssid[sizeof(runtime->external_ssid)] = { 0 };
-    char password[sizeof(runtime->external_password)] = { 0 };
-    size_t ssid_len = sizeof(ssid);
-    size_t password_len = sizeof(password);
-
-    ret = nvs_get_str(handle, EXTERNAL_WIFI_NVS_SSID_KEY, ssid, &ssid_len);
-    if (ret == ESP_OK) {
-        ret = nvs_get_str(handle, EXTERNAL_WIFI_NVS_PASSWORD_KEY, password, &password_len);
-    }
-    nvs_close(handle);
-    if (ret != ESP_OK) {
-        return ret;
-    }
-
-    if (!runtime_external_wifi_credentials_match_policy(ssid, password)) {
-        runtime->external_ssid[0] = '\0';
-        runtime->external_password[0] = '\0';
-        return ESP_ERR_INVALID_STATE;
-    }
-
-    runtime_copy_snapshot_text(runtime->external_ssid, sizeof(runtime->external_ssid), ssid);
-    runtime_copy_snapshot_text(runtime->external_password, sizeof(runtime->external_password), password);
-    return ESP_OK;
-}
-
-static esp_err_t runtime_save_external_wifi_credentials(esp_bms_idf_runtime_t *runtime)
-{
-    if (!runtime_external_wifi_credentials_match_policy(runtime->external_ssid,
-                                                        runtime->external_password)) {
-        return ESP_ERR_INVALID_STATE;
-    }
-
-    esp_err_t ret = runtime_init_nvs(runtime);
-    if (ret != ESP_OK) {
-        return ret;
-    }
-
-    nvs_handle_t handle = 0;
-    ret = nvs_open(SETUP_AP_NVS_NAMESPACE, NVS_READWRITE, &handle);
-    if (ret != ESP_OK) {
-        return ret;
-    }
-
-    ret = nvs_set_str(handle, EXTERNAL_WIFI_NVS_SSID_KEY, runtime->external_ssid);
-    if (ret == ESP_OK) {
-        ret = nvs_set_str(handle, EXTERNAL_WIFI_NVS_PASSWORD_KEY, runtime->external_password);
     }
     if (ret == ESP_OK) {
         ret = nvs_commit(handle);
@@ -2957,101 +2620,6 @@ static bool runtime_apply_pending_http_ap_password(esp_bms_idf_runtime_t *runtim
     return true;
 }
 
-static bool runtime_get_pending_http_external_wifi(esp_bms_idf_runtime_t *runtime,
-                                                   char *ssid,
-                                                   size_t ssid_len,
-                                                   char *password,
-                                                   size_t password_len)
-{
-    if (!runtime->http_pending_lock) {
-        return false;
-    }
-    if (xSemaphoreTake(runtime->http_pending_lock, 0) != pdTRUE) {
-        return false;
-    }
-    const bool pending = RUNTIME_FLAG(runtime, HTTP_EXTERNAL_WIFI_PENDING);
-    if (pending) {
-        runtime_copy_snapshot_text(ssid, ssid_len, runtime->http_pending_external_ssid);
-        runtime_copy_snapshot_text(password, password_len, runtime->http_pending_external_password);
-    }
-    xSemaphoreGive(runtime->http_pending_lock);
-    return pending;
-}
-
-static void runtime_clear_pending_http_external_wifi(esp_bms_idf_runtime_t *runtime,
-                                                    const char *ssid)
-{
-    if (!runtime->http_pending_lock) {
-        return;
-    }
-    if (xSemaphoreTake(runtime->http_pending_lock, pdMS_TO_TICKS(100)) != pdTRUE) {
-        return;
-    }
-    if (RUNTIME_FLAG(runtime, HTTP_EXTERNAL_WIFI_PENDING) &&
-        strcmp(runtime->http_pending_external_ssid, ssid) == 0) {
-        runtime->http_pending_external_ssid[0] = '\0';
-        runtime->http_pending_external_password[0] = '\0';
-        RUNTIME_SET_FLAG(runtime, HTTP_EXTERNAL_WIFI_PENDING, false);
-    }
-    xSemaphoreGive(runtime->http_pending_lock);
-}
-
-static bool runtime_apply_pending_http_external_wifi(esp_bms_idf_runtime_t *runtime)
-{
-    char ssid[sizeof(runtime->external_ssid)] = { 0 };
-    char password[sizeof(runtime->external_password)] = { 0 };
-    if (!runtime_get_pending_http_external_wifi(runtime,
-                                                ssid,
-                                                sizeof(ssid),
-                                                password,
-                                                sizeof(password))) {
-        return false;
-    }
-    if (!runtime_external_wifi_credentials_match_policy(ssid, password)) {
-        runtime_clear_pending_http_external_wifi(runtime, ssid);
-        runtime_set_error(runtime, "WIFI BAD");
-        return true;
-    }
-
-    char previous_ssid[sizeof(runtime->external_ssid)] = { 0 };
-    char previous_password[sizeof(runtime->external_password)] = { 0 };
-    if (xSemaphoreTake(runtime->http_pending_lock, pdMS_TO_TICKS(100)) != pdTRUE) {
-        return false;
-    }
-    runtime_copy_snapshot_text(previous_ssid, sizeof(previous_ssid), runtime->external_ssid);
-    runtime_copy_snapshot_text(previous_password, sizeof(previous_password), runtime->external_password);
-    runtime_copy_snapshot_text(runtime->external_ssid, sizeof(runtime->external_ssid), ssid);
-    runtime_copy_snapshot_text(runtime->external_password, sizeof(runtime->external_password), password);
-    xSemaphoreGive(runtime->http_pending_lock);
-
-    esp_err_t ret = runtime_save_external_wifi_credentials(runtime);
-    if (ret == ESP_OK) {
-        ret = runtime_start_station_connect(runtime);
-    }
-
-    if (ret == ESP_OK) {
-        runtime_clear_pending_http_external_wifi(runtime, ssid);
-        runtime->snapshot.wifi = ESP_BMS_WIFI_CONNECTING;
-        runtime_set_error(runtime, "WIFI SET");
-        ESP_LOGI(TAG, "[wifi] external credentials saved: ssid='%s' sta_pw_len=%u",
-                 runtime->external_ssid, (unsigned)strlen(runtime->external_password));
-        return true;
-    }
-
-    if (xSemaphoreTake(runtime->http_pending_lock, pdMS_TO_TICKS(100)) == pdTRUE) {
-        runtime_copy_snapshot_text(runtime->external_ssid,
-                                   sizeof(runtime->external_ssid),
-                                   previous_ssid);
-        runtime_copy_snapshot_text(runtime->external_password,
-                                   sizeof(runtime->external_password),
-                                   previous_password);
-        xSemaphoreGive(runtime->http_pending_lock);
-    }
-    runtime_set_error(runtime, "WIFI SAVE");
-    ESP_LOGW(TAG, "[wifi] external credential apply failed: %s", esp_err_to_name(ret));
-    return true;
-}
-
 static bool runtime_get_pending_http_bms_scan(esp_bms_idf_runtime_t *runtime)
 {
     if (!runtime->http_pending_lock) {
@@ -3072,17 +2640,20 @@ static bool runtime_apply_pending_http_bms_scan(esp_bms_idf_runtime_t *runtime)
         return false;
     }
 
+    ESP_LOGI(TAG, "[bms] consume pending BLE scan request");
     RUNTIME_SET_FLAG(runtime, BMS_BIND_ACTIVE, true);
     runtime_clear_bms_telemetry(runtime);
     runtime_bms_scan_clear_candidates(runtime);
 
     const esp_err_t ret = esp_bms_idf_runtime_start_bms_ble_for_bind(runtime);
     if (ret == ESP_OK) {
+        runtime_log_heap_state("bms_scan_started");
         return true;
     }
 
     runtime_set_bms_info(runtime, "BLE FAIL");
     ESP_LOGW(TAG, "[bms] BLE bind scan start failed: %s", esp_err_to_name(ret));
+    runtime_log_heap_state("bms_scan_failed");
     return true;
 }
 
@@ -3162,24 +2733,6 @@ static bool runtime_apply_pending_http_bms_bind(esp_bms_idf_runtime_t *runtime)
     return true;
 }
 
-static bool runtime_apply_pending_wifi_scan(esp_bms_idf_runtime_t *runtime)
-{
-    if (!runtime || !RUNTIME_FLAG(runtime, WIFI_SCAN_REQUESTED)) {
-        return false;
-    }
-    RUNTIME_SET_FLAG(runtime, WIFI_SCAN_REQUESTED, false);
-
-    const esp_err_t ret = esp_bms_idf_runtime_start_wifi_scan(runtime);
-    if (ret == ESP_OK) {
-        return true;
-    }
-
-    runtime_wifi_scan_set_state(runtime, false, true);
-    runtime_set_error(runtime, "WIFI SCAN");
-    ESP_LOGW(TAG, "[wifi] scan start failed: %s", esp_err_to_name(ret));
-    return true;
-}
-
 static void runtime_ensure_setup_ap_credentials(esp_bms_idf_runtime_t *runtime)
 {
     esp_err_t nvs_ret = runtime_init_nvs(runtime);
@@ -3226,7 +2779,16 @@ static esp_err_t runtime_configure_setup_ap_ip(esp_netif_t *netif)
     esp_netif_set_ip4_addr(&ip_info.ip, 192, 168, 4, 1);
     esp_netif_set_ip4_addr(&ip_info.gw, 192, 168, 4, 1);
     esp_netif_set_ip4_addr(&ip_info.netmask, 255, 255, 255, 0);
-    return esp_netif_set_ip_info(netif, &ip_info);
+    ret = esp_netif_set_ip_info(netif, &ip_info);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+
+    ret = esp_netif_dhcps_start(netif);
+    if (ret == ESP_ERR_ESP_NETIF_DHCP_ALREADY_STARTED) {
+        return ESP_OK;
+    }
+    return ret;
 }
 
 static void runtime_bms_ble_reset_connection_state(esp_bms_idf_runtime_t *runtime,
@@ -3666,6 +3228,7 @@ static int runtime_bms_ble_gap_event(struct ble_gap_event *event, void *arg)
         if (runtime->bms_ble_phase == (uint8_t)BMS_BLE_PHASE_SCANNING) {
             runtime->bms_ble_phase = (uint8_t)BMS_BLE_PHASE_IDLE;
             RUNTIME_SET_FLAG(runtime, BMS_SCAN_ACTIVE, false);
+            RUNTIME_SET_FLAG(runtime, BMS_SCAN_SNAPSHOT_DIRTY, true);
             runtime_set_bms_info(runtime, "BMS DONE");
         }
         ESP_LOGI(TAG, "[bms] BLE scan complete: reason=%d candidates=%u",
@@ -3784,8 +3347,11 @@ static int runtime_bluetooth_gap_event(struct ble_gap_event *event, void *arg)
         }
         return 0;
     case BLE_GAP_EVENT_ADV_COMPLETE:
+    {
+        const bool should_resume_advertising = RUNTIME_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED);
         RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISING, false);
-        if (!RUNTIME_FLAG(runtime, BLUETOOTH_CONNECTED) &&
+        if (should_resume_advertising &&
+            !RUNTIME_FLAG(runtime, BLUETOOTH_CONNECTED) &&
             !RUNTIME_FLAG(runtime, BMS_SCAN_REQUESTED) &&
             !RUNTIME_FLAG(runtime, BMS_SCAN_ACTIVE) &&
             runtime->bms_conn_handle == 0xFFFFU) {
@@ -3795,6 +3361,7 @@ static int runtime_bluetooth_gap_event(struct ble_gap_event *event, void *arg)
         ESP_LOGI(TAG, "[bt] local Bluetooth advertising complete: reason=%d",
                  event->adv_complete.reason);
         return 0;
+    }
     default:
         return 0;
     }
@@ -3811,7 +3378,6 @@ static esp_err_t runtime_bluetooth_start_advertising_now(esp_bms_idf_runtime_t *
         return ESP_ERR_INVALID_STATE;
     }
     if (RUNTIME_FLAG(runtime, BLUETOOTH_CONNECTED) || RUNTIME_FLAG(runtime, BLUETOOTH_ADVERTISING) || ble_gap_adv_active()) {
-        RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, false);
         RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISING, ble_gap_adv_active() != 0);
         (void)runtime_project_bluetooth_snapshot(runtime);
         return ESP_OK;
@@ -3868,7 +3434,6 @@ static esp_err_t runtime_bluetooth_start_advertising_now(esp_bms_idf_runtime_t *
     }
 
     runtime->bluetooth_own_addr_type = own_addr_type;
-    RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, false);
     RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISING, true);
     RUNTIME_SET_FLAG(runtime, BLUETOOTH_CONNECTED, false);
     runtime_project_bluetooth_snapshot(runtime);
@@ -4027,6 +3592,7 @@ static void runtime_wifi_event_handler(void *arg,
         }
         ESP_LOGI(TAG, "[wifi] AP client connected: clients=%u first_mac=" MACSTR,
                  runtime->setup_ap_clients, MAC2STR(event->mac));
+        runtime_log_heap_state("ap_client_connected");
         return;
     }
     if (event_id == WIFI_EVENT_AP_STADISCONNECTED) {
@@ -4036,66 +3602,8 @@ static void runtime_wifi_event_handler(void *arg,
         }
         ESP_LOGI(TAG, "[wifi] AP client disconnected: clients=%u mac=" MACSTR " reason=%u",
                  runtime->setup_ap_clients, MAC2STR(event->mac), event->reason);
+        runtime_log_heap_state("ap_client_disconnected");
         return;
-    }
-    if (event_id == WIFI_EVENT_SCAN_DONE) {
-        runtime_wifi_scan_handle_done(runtime);
-        return;
-    }
-    if (event_id == WIFI_EVENT_STA_START) {
-        RUNTIME_SET_FLAG(runtime, STATION_STARTED, true);
-        if (RUNTIME_FLAG(runtime, STATION_CONNECT_REQUESTED) && runtime_has_external_wifi_credentials(runtime)) {
-            runtime->snapshot.wifi = ESP_BMS_WIFI_CONNECTING;
-            const esp_err_t ret = esp_wifi_connect();
-            if (ret != ESP_OK) {
-                ESP_LOGW(TAG, "[wifi] STA connect request failed: %s", esp_err_to_name(ret));
-            }
-        }
-        return;
-    }
-    if (event_id == WIFI_EVENT_STA_STOP) {
-        RUNTIME_SET_FLAG(runtime, STATION_STARTED, false);
-        RUNTIME_SET_FLAG(runtime, STATION_CONNECTED, false);
-        RUNTIME_SET_FLAG(runtime, STATION_HAS_IP, false);
-        ESP_LOGI(TAG, "[wifi] STA stopped");
-        return;
-    }
-    if (event_id == WIFI_EVENT_STA_CONNECTED) {
-        RUNTIME_SET_FLAG(runtime, STATION_CONNECTED, true);
-        RUNTIME_SET_FLAG(runtime, STATION_HAS_IP, false);
-        runtime->snapshot.wifi = ESP_BMS_WIFI_CONNECTING;
-        ESP_LOGI(TAG, "[wifi] STA connected: ssid='%s'", runtime->external_ssid);
-        return;
-    }
-    if (event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        const wifi_event_sta_disconnected_t *event = (const wifi_event_sta_disconnected_t *)event_data;
-        RUNTIME_SET_FLAG(runtime, STATION_CONNECTED, false);
-        RUNTIME_SET_FLAG(runtime, STATION_HAS_IP, false);
-        if (RUNTIME_FLAG(runtime, STATION_CONNECT_REQUESTED) &&
-            runtime_has_external_wifi_credentials(runtime) &&
-            runtime->station_retry_count < STATION_RECONNECT_MAX) {
-            runtime->station_retry_count++;
-            runtime->snapshot.wifi = ESP_BMS_WIFI_CONNECTING;
-            ESP_LOGW(TAG, "[wifi] STA disconnected: ssid='%s' reason=%u retry=%u/%u",
-                     runtime->external_ssid,
-                     event ? event->reason : 0U,
-                     runtime->station_retry_count,
-                     STATION_RECONNECT_MAX);
-            const esp_err_t ret = esp_wifi_connect();
-            if (ret != ESP_OK) {
-                ESP_LOGW(TAG, "[wifi] STA reconnect request failed: %s", esp_err_to_name(ret));
-            }
-            return;
-        }
-
-        runtime->snapshot.wifi = runtime_has_external_wifi_credentials(runtime)
-                                     ? ESP_BMS_WIFI_OFFLINE
-                                     : ESP_BMS_WIFI_SETUP_AP;
-        runtime_set_error(runtime, "STA FAIL");
-        ESP_LOGW(TAG, "[wifi] STA disconnected: ssid='%s' reason=%u retries_exhausted=%s",
-                 runtime->external_ssid,
-                 event ? event->reason : 0U,
-                 runtime->station_retry_count >= STATION_RECONNECT_MAX ? "true" : "false");
     }
 }
 
@@ -4104,7 +3612,7 @@ static void runtime_ip_event_handler(void *arg,
                                      int32_t event_id,
                                      void *event_data)
 {
-    esp_bms_idf_runtime_t *runtime = (esp_bms_idf_runtime_t *)arg;
+    (void)arg;
     if (event_base != IP_EVENT) {
         return;
     }
@@ -4115,18 +3623,6 @@ static void runtime_ip_event_handler(void *arg,
         ESP_LOGI(TAG, "[wifi] DHCP lease assigned: ip=%s mac=" MACSTR,
                  esp_ip4addr_ntoa(&event->ip, ip, sizeof(ip)), MAC2STR(event->mac));
         return;
-    }
-    if (event_id == IP_EVENT_STA_GOT_IP && runtime) {
-        const ip_event_got_ip_t *event = (const ip_event_got_ip_t *)event_data;
-        char ip[16] = { 0 };
-        RUNTIME_SET_FLAG(runtime, STATION_CONNECTED, true);
-        RUNTIME_SET_FLAG(runtime, STATION_HAS_IP, true);
-        runtime->station_retry_count = 0;
-        runtime->snapshot.wifi = ESP_BMS_WIFI_CONNECTED;
-        runtime_set_error(runtime, "STA IP");
-        ESP_LOGI(TAG, "[wifi] STA got IP: ssid='%s' ip=%s",
-                 runtime->external_ssid,
-                 esp_ip4addr_ntoa(&event->ip_info.ip, ip, sizeof(ip)));
     }
 }
 
@@ -4179,11 +3675,6 @@ static esp_err_t runtime_init_wifi_stack(esp_bms_idf_runtime_t *runtime)
                             TAG,
                             "setup AP IP config failed");
 
-        runtime->station_netif = esp_netif_create_default_wifi_sta();
-        if (!runtime->station_netif) {
-            return ESP_ERR_NO_MEM;
-        }
-
         RUNTIME_SET_FLAG(runtime, WIFI_STACK_READY, true);
     }
 
@@ -4216,164 +3707,9 @@ static esp_err_t runtime_apply_setup_ap_wifi_config(const esp_bms_idf_runtime_t 
     return esp_wifi_set_config(WIFI_IF_AP, &wifi_config);
 }
 
-static esp_err_t runtime_apply_external_wifi_config(esp_bms_idf_runtime_t *runtime)
-{
-    if (!runtime_external_wifi_credentials_match_policy(runtime->external_ssid,
-                                                        runtime->external_password)) {
-        return ESP_ERR_INVALID_STATE;
-    }
-
-    wifi_config_t wifi_config = { 0 };
-    const size_t ssid_len = strlen(runtime->external_ssid);
-    const size_t password_len = strlen(runtime->external_password);
-    memcpy(wifi_config.sta.ssid, runtime->external_ssid, ssid_len);
-    memcpy(wifi_config.sta.password, runtime->external_password, password_len);
-    wifi_config.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
-    wifi_config.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
-    wifi_config.sta.threshold.authmode = password_len == 0U ? WIFI_AUTH_OPEN : WIFI_AUTH_WPA2_PSK;
-    wifi_config.sta.pmf_cfg.capable = true;
-    wifi_config.sta.pmf_cfg.required = false;
-
-    const esp_err_t ret = esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
-    if (ret == ESP_OK) {
-        RUNTIME_SET_FLAG(runtime, STATION_CONNECT_REQUESTED, true);
-        runtime->station_retry_count = 0;
-        RUNTIME_SET_FLAG(runtime, STATION_CONNECTED, false);
-        RUNTIME_SET_FLAG(runtime, STATION_HAS_IP, false);
-        runtime->snapshot.wifi = ESP_BMS_WIFI_CONNECTING;
-        ESP_LOGI(TAG, "[wifi] STA config applied: ssid='%s' sta_pw_len=%u",
-                 runtime->external_ssid, (unsigned)password_len);
-    }
-    return ret;
-}
-
 static bool runtime_wifi_started(const esp_bms_idf_runtime_t *runtime)
 {
-    return runtime && (RUNTIME_FLAG(runtime, SETUP_AP_STARTED) || RUNTIME_FLAG(runtime, STATION_STARTED));
-}
-
-static esp_err_t runtime_start_station_connect(esp_bms_idf_runtime_t *runtime)
-{
-    if (!runtime) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    if (!runtime_has_external_wifi_credentials(runtime)) {
-        return ESP_ERR_INVALID_STATE;
-    }
-
-    ESP_RETURN_ON_ERROR(runtime_init_wifi_stack(runtime), TAG, "Wi-Fi stack init failed");
-
-    const bool wifi_was_started = runtime_wifi_started(runtime);
-    esp_err_t ret = esp_wifi_set_mode(RUNTIME_FLAG(runtime, SETUP_AP_STARTED) ? WIFI_MODE_APSTA : WIFI_MODE_STA);
-    if (ret == ESP_OK && RUNTIME_FLAG(runtime, SETUP_AP_STARTED)) {
-        ret = runtime_apply_setup_ap_wifi_config(runtime);
-    }
-    if (ret == ESP_OK) {
-        ret = runtime_apply_external_wifi_config(runtime);
-    }
-    if (ret == ESP_OK && !wifi_was_started) {
-        ret = esp_wifi_start();
-    } else if (ret == ESP_OK && RUNTIME_FLAG(runtime, STATION_STARTED)) {
-        (void)esp_wifi_disconnect();
-        ret = esp_wifi_connect();
-    }
-    return ret;
-}
-
-static esp_err_t runtime_wifi_start_scan(esp_bms_idf_runtime_t *runtime)
-{
-    if (!runtime) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    if (RUNTIME_FLAG(runtime, WIFI_SCAN_ACTIVE)) {
-        return ESP_OK;
-    }
-
-    ESP_RETURN_ON_ERROR(runtime_init_wifi_stack(runtime), TAG, "Wi-Fi stack init failed");
-
-    const bool wifi_was_started = runtime_wifi_started(runtime);
-    esp_err_t ret = esp_wifi_set_mode(RUNTIME_FLAG(runtime, SETUP_AP_STARTED) ? WIFI_MODE_APSTA : WIFI_MODE_STA);
-    if (ret != ESP_OK) {
-        return ret;
-    }
-    if (RUNTIME_FLAG(runtime, SETUP_AP_STARTED)) {
-        ret = runtime_apply_setup_ap_wifi_config(runtime);
-        if (ret != ESP_OK) {
-            return ret;
-        }
-    }
-    if (!wifi_was_started) {
-        ret = esp_wifi_start();
-        if (ret != ESP_OK) {
-            return ret;
-        }
-    }
-
-    runtime_wifi_scan_clear_candidates(runtime);
-    runtime_wifi_scan_set_state(runtime, true, false);
-
-    wifi_scan_config_t scan_config = {
-        .ssid = NULL,
-        .bssid = NULL,
-        .channel = 0,
-        .show_hidden = false,
-        .scan_type = WIFI_SCAN_TYPE_ACTIVE,
-        .scan_time.active.min = 80,
-        .scan_time.active.max = 180,
-    };
-    ret = esp_wifi_scan_start(&scan_config, false);
-    if (ret != ESP_OK) {
-        runtime_wifi_scan_set_state(runtime, false, true);
-        return ret;
-    }
-
-    runtime_set_error(runtime, "SCAN WIFI");
-    ESP_LOGI(TAG, "[wifi] STA scan started");
-    return ESP_OK;
-}
-
-static void runtime_wifi_scan_handle_done(esp_bms_idf_runtime_t *runtime)
-{
-    if (!runtime) {
-        return;
-    }
-
-    uint16_t ap_count = 0;
-    esp_err_t ret = esp_wifi_scan_get_ap_num(&ap_count);
-    if (ret != ESP_OK) {
-        runtime_wifi_scan_set_state(runtime, false, true);
-        runtime_set_error(runtime, "SCAN FAIL");
-        ESP_LOGW(TAG, "[wifi] scan count failed: %s", esp_err_to_name(ret));
-        return;
-    }
-
-    runtime_wifi_scan_clear_candidates(runtime);
-    uint16_t read_count = ap_count;
-    if (read_count > ESP_BMS_WIFI_SCAN_MAX_CANDIDATES) {
-        read_count = ESP_BMS_WIFI_SCAN_MAX_CANDIDATES;
-    }
-
-    wifi_ap_record_t records[ESP_BMS_WIFI_SCAN_MAX_CANDIDATES] = { 0 };
-    if (read_count > 0U) {
-        ret = esp_wifi_scan_get_ap_records(&read_count, records);
-        if (ret != ESP_OK) {
-            runtime_wifi_scan_set_state(runtime, false, true);
-            runtime_set_error(runtime, "SCAN FAIL");
-            ESP_LOGW(TAG, "[wifi] scan records failed: %s", esp_err_to_name(ret));
-            return;
-        }
-
-        for (uint16_t index = 0; index < read_count; ++index) {
-            runtime_wifi_scan_store_candidate(runtime, &records[index]);
-        }
-    }
-
-    runtime_wifi_scan_set_state(runtime, false, true);
-    runtime_wifi_scan_project_snapshot(runtime);
-    runtime_set_error(runtime, read_count > 0U ? "SCAN DONE" : "SCAN EMPTY");
-    ESP_LOGI(TAG, "[wifi] STA scan done: aps=%u shown=%u",
-             (unsigned)ap_count,
-             (unsigned)runtime->snapshot.wifi_scan_count);
+    return runtime && RUNTIME_FLAG(runtime, SETUP_AP_STARTED);
 }
 
 static bool runtime_sample_battery(esp_bms_idf_runtime_t *runtime)
@@ -4505,10 +3841,6 @@ void esp_bms_idf_runtime_init(esp_bms_idf_runtime_t *runtime)
     if (!runtime->bms_scan_lock) {
         ESP_LOGW(TAG, "[bms] scan candidate mutex allocation failed");
     }
-    runtime->wifi_scan_lock = xSemaphoreCreateMutex();
-    if (!runtime->wifi_scan_lock) {
-        ESP_LOGW(TAG, "[wifi] scan candidate mutex allocation failed");
-    }
     runtime_reset_state(runtime);
     runtime_ensure_setup_ap_credentials(runtime);
     runtime_init_battery_adc(runtime);
@@ -4538,8 +3870,7 @@ esp_err_t esp_bms_idf_runtime_start_setup_ap(esp_bms_idf_runtime_t *runtime)
     }
 
     const bool wifi_was_started = runtime_wifi_started(runtime);
-    const bool keep_station = RUNTIME_FLAG(runtime, STATION_STARTED) || RUNTIME_FLAG(runtime, STATION_CONNECT_REQUESTED);
-    ret = esp_wifi_set_mode(keep_station ? WIFI_MODE_APSTA : WIFI_MODE_AP);
+    ret = esp_wifi_set_mode(WIFI_MODE_AP);
     if (ret == ESP_OK) {
         ret = runtime_apply_setup_ap_wifi_config(runtime);
     }
@@ -4556,10 +3887,7 @@ esp_err_t esp_bms_idf_runtime_start_setup_ap(esp_bms_idf_runtime_t *runtime)
 
     RUNTIME_SET_FLAG(runtime, SETUP_AP_STARTED, true);
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, SETUP_AP_ENABLED, true);
-    runtime->snapshot.wifi = RUNTIME_FLAG(runtime, STATION_HAS_IP)
-                                  ? ESP_BMS_WIFI_CONNECTED
-                                  : (RUNTIME_FLAG(runtime, STATION_CONNECT_REQUESTED) ? ESP_BMS_WIFI_CONNECTING
-                                                                        : ESP_BMS_WIFI_SETUP_AP);
+    runtime->snapshot.wifi = ESP_BMS_WIFI_SETUP_AP;
     runtime_set_error(runtime, "AP READY");
     return ESP_OK;
 }
@@ -4579,6 +3907,41 @@ esp_err_t esp_bms_idf_runtime_start_http_server(esp_bms_idf_runtime_t *runtime)
         runtime_set_error(runtime, "HTTP ON");
     }
     return ret;
+}
+
+esp_err_t esp_bms_idf_runtime_stop_setup_services(esp_bms_idf_runtime_t *runtime)
+{
+    if (!runtime) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    esp_err_t result = ESP_OK;
+    if (runtime->http_server) {
+        const esp_err_t http_ret = httpd_stop(runtime->http_server);
+        if (http_ret != ESP_OK) {
+            ESP_LOGW(TAG, "[http] server stop failed: %s", esp_err_to_name(http_ret));
+            result = http_ret;
+        }
+        runtime->http_server = NULL;
+    }
+    RUNTIME_SET_FLAG(runtime, HTTP_SERVER_STARTED, false);
+
+    if (RUNTIME_FLAG(runtime, SETUP_AP_STARTED)) {
+        const esp_err_t wifi_ret = esp_wifi_stop();
+        if (wifi_ret != ESP_OK) {
+            ESP_LOGW(TAG, "[wifi] AP stop failed: %s", esp_err_to_name(wifi_ret));
+            if (result == ESP_OK) {
+                result = wifi_ret;
+            }
+        }
+    }
+    RUNTIME_SET_FLAG(runtime, SETUP_AP_STARTED, false);
+    runtime->setup_ap_clients = 0;
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, SETUP_AP_ENABLED, false);
+    runtime->snapshot.wifi = ESP_BMS_WIFI_OFFLINE;
+    runtime_set_error(runtime, "AP OFF");
+    runtime_log_heap_state("setup_services_stopped");
+    return result;
 }
 
 esp_err_t esp_bms_idf_runtime_start_bms_ble_if_bound(esp_bms_idf_runtime_t *runtime)
@@ -4613,29 +3976,6 @@ esp_err_t esp_bms_idf_runtime_start_bms_ble_for_bind(esp_bms_idf_runtime_t *runt
 
     ESP_RETURN_ON_ERROR(runtime_init_bms_ble(runtime), TAG, "BMS BLE init failed");
     return runtime_bms_ble_start_scan_or_defer(runtime);
-}
-
-esp_err_t esp_bms_idf_runtime_start_wifi_scan(esp_bms_idf_runtime_t *runtime)
-{
-    if (!runtime) {
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    const esp_err_t load_ret = runtime_load_external_wifi_credentials(runtime);
-    if (load_ret == ESP_OK) {
-        ESP_LOGI(TAG, "[wifi] external credentials loaded: ssid='%s' sta_pw_len=%u",
-                 runtime->external_ssid,
-                 (unsigned)strlen(runtime->external_password));
-    } else if (load_ret == ESP_ERR_NVS_NOT_FOUND) {
-        runtime->external_ssid[0] = '\0';
-        runtime->external_password[0] = '\0';
-    } else if (load_ret != ESP_ERR_INVALID_STATE) {
-        runtime->external_ssid[0] = '\0';
-        runtime->external_password[0] = '\0';
-        ESP_LOGW(TAG, "[wifi] external credential load failed: %s", esp_err_to_name(load_ret));
-    }
-
-    return runtime_wifi_start_scan(runtime);
 }
 
 esp_err_t esp_bms_idf_runtime_start_bluetooth_advertising(esp_bms_idf_runtime_t *runtime)
@@ -4677,6 +4017,29 @@ esp_err_t esp_bms_idf_runtime_start_bluetooth_advertising(esp_bms_idf_runtime_t 
     return ret;
 }
 
+static esp_err_t runtime_bluetooth_stop_advertising(esp_bms_idf_runtime_t *runtime)
+{
+    if (!runtime) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, false);
+    if (RUNTIME_FLAG(runtime, BMS_BLE_READY) &&
+        RUNTIME_FLAG(runtime, BMS_BLE_SYNCED) &&
+        ble_gap_adv_active()) {
+        const int rc = ble_gap_adv_stop();
+        if (rc != 0 && rc != BLE_HS_EALREADY) {
+            runtime_project_bluetooth_snapshot(runtime);
+            runtime_set_error(runtime, "BT FAIL");
+            return ESP_FAIL;
+        }
+    }
+    RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISING, false);
+    runtime_project_bluetooth_snapshot(runtime);
+    runtime_set_error(runtime, "BT HIDE");
+    return ESP_OK;
+}
+
 bool esp_bms_idf_runtime_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_ms)
 {
     if (!runtime) {
@@ -4685,13 +4048,19 @@ bool esp_bms_idf_runtime_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_m
 
     bool changed = RUNTIME_FLAG(runtime, BLUETOOTH_SNAPSHOT_DIRTY);
     RUNTIME_SET_FLAG(runtime, BLUETOOTH_SNAPSHOT_DIRTY, false);
+    if (RUNTIME_FLAG(runtime, BMS_SCAN_SNAPSHOT_DIRTY)) {
+        RUNTIME_SET_FLAG(runtime, BMS_SCAN_SNAPSHOT_DIRTY, false);
+        (void)runtime_bms_scan_project_snapshot(runtime);
+        changed = true;
+    }
     changed = runtime_apply_pending_http_config(runtime) || changed;
     changed = runtime_apply_pending_http_ap_password(runtime) || changed;
-    changed = runtime_apply_pending_http_external_wifi(runtime) || changed;
     changed = runtime_apply_pending_http_bms_scan(runtime) || changed;
     changed = runtime_apply_pending_http_bms_bind(runtime) || changed;
-    changed = runtime_apply_pending_wifi_scan(runtime) || changed;
-    if (RUNTIME_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED) && !RUNTIME_FLAG(runtime, BMS_SCAN_REQUESTED)) {
+    if (RUNTIME_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED) &&
+        !RUNTIME_FLAG(runtime, BLUETOOTH_ADVERTISING) &&
+        !RUNTIME_FLAG(runtime, BLUETOOTH_CONNECTED) &&
+        !RUNTIME_FLAG(runtime, BMS_SCAN_REQUESTED)) {
         const esp_err_t ret = esp_bms_idf_runtime_start_bluetooth_advertising(runtime);
         if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
             ESP_LOGW(TAG, "[bt] local Bluetooth advertising start failed: %s",
@@ -4735,9 +4104,15 @@ bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,
 
     switch (event->action) {
     case ESP_BMS_LVGL_ACTION_ENABLE_WIFI_REPROVISIONING:
-        RUNTIME_SET_SNAPSHOT_FLAG(runtime, SETUP_AP_ENABLED, true);
-        runtime->snapshot.wifi = ESP_BMS_WIFI_SETUP_AP;
-        runtime_set_error(runtime, "SETUP AP");
+        if (RUNTIME_SNAPSHOT_FLAG(runtime, SETUP_AP_ENABLED)) {
+            RUNTIME_SET_SNAPSHOT_FLAG(runtime, SETUP_AP_ENABLED, false);
+            runtime->snapshot.wifi = ESP_BMS_WIFI_OFFLINE;
+            runtime_set_error(runtime, "AP OFF");
+        } else {
+            RUNTIME_SET_SNAPSHOT_FLAG(runtime, SETUP_AP_ENABLED, true);
+            runtime->snapshot.wifi = ESP_BMS_WIFI_SETUP_AP;
+            runtime_set_error(runtime, "SETUP AP");
+        }
         return true;
     case ESP_BMS_LVGL_ACTION_CYCLE_BRIGHTNESS:
         (void)runtime_set_brightness_percent(runtime,
@@ -4784,36 +4159,33 @@ bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,
         runtime_set_error(runtime, RUNTIME_FLAG(runtime, LANGUAGE_ZH) ? "LANG ZH" : "LANG EN");
         return true;
     case ESP_BMS_LVGL_ACTION_START_BMS_BIND:
+        if (ACTION_EVENT_FLAG(event, BMS_MAC_VALID)) {
+            char normalized_mac[sizeof(runtime->bms_bound_mac)] = { 0 };
+            if (!runtime_normalize_mac_text(event->bms_mac, normalized_mac, sizeof(normalized_mac)) ||
+                !runtime_set_pending_http_bms_bind(runtime, normalized_mac)) {
+                runtime_set_bms_info(runtime, "BMS BIND FAIL");
+                ESP_LOGW(TAG, "[bms] bind action queue failed: mac=%s", event->bms_mac);
+                return true;
+            }
+            runtime_set_bms_info(runtime, "BMS BIND");
+            ESP_LOGI(TAG, "[bms] bind action queued: mac=%s", normalized_mac);
+            return true;
+        }
         if (!runtime_set_pending_http_bms_scan(runtime)) {
             runtime_set_bms_info(runtime, "BMS Q FAIL");
+            ESP_LOGW(TAG, "[bms] BLE scan action queue failed");
+        } else {
+            ESP_LOGI(TAG, "[bms] BLE scan action queued");
         }
         return true;
     case ESP_BMS_LVGL_ACTION_ENABLE_BLUETOOTH_ADVERTISING:
+        if (RUNTIME_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED) ||
+            RUNTIME_FLAG(runtime, BLUETOOTH_ADVERTISING)) {
+            return runtime_bluetooth_stop_advertising(runtime) == ESP_OK;
+        }
         RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, true);
         runtime_project_bluetooth_snapshot(runtime);
         runtime_set_error(runtime, "BT ON");
-        return true;
-    case ESP_BMS_LVGL_ACTION_SCAN_WIFI:
-        RUNTIME_SET_FLAG(runtime, WIFI_SCAN_REQUESTED, true);
-        RUNTIME_SET_FLAG(runtime, WIFI_SCAN_COMPLETE, false);
-        RUNTIME_SET_SNAPSHOT_FLAG(runtime, WIFI_SCAN_ACTIVE, true);
-        RUNTIME_SET_SNAPSHOT_FLAG(runtime, WIFI_SCAN_COMPLETE, false);
-        runtime->snapshot.wifi_scan_generation++;
-        runtime_set_error(runtime, "SCAN WIFI");
-        return true;
-    case ESP_BMS_LVGL_ACTION_CONNECT_WIFI:
-        if (!ACTION_EVENT_FLAG(event, WIFI_SSID_VALID) ||
-            !ACTION_EVENT_FLAG(event, WIFI_PASSWORD_VALID) ||
-            !runtime_external_wifi_credentials_match_policy(event->wifi_ssid, event->wifi_password)) {
-            runtime_set_error(runtime, "WIFI BAD");
-            return true;
-        }
-        if (!runtime_set_pending_http_external_wifi(runtime, event->wifi_ssid, event->wifi_password)) {
-            runtime_set_error(runtime, "WIFI Q FAIL");
-            return true;
-        }
-        runtime->snapshot.wifi = ESP_BMS_WIFI_CONNECTING;
-        runtime_set_error(runtime, "WIFI SET");
         return true;
     case ESP_BMS_LVGL_ACTION_SELECT_BMS_ANT:
         return runtime_select_bms_type(runtime, ESP_BMS_IDF_BMS_TYPE_ANT);
@@ -4831,6 +4203,7 @@ bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,
     case ESP_BMS_LVGL_ACTION_SHOW_DASHBOARD:
     case ESP_BMS_LVGL_ACTION_SHOW_QUICK_MENU:
     case ESP_BMS_LVGL_ACTION_SHOW_SETTINGS:
+    case ESP_BMS_LVGL_ACTION_CYCLE_LEVEL_POSITION:
         return false;
     case ESP_BMS_LVGL_ACTION_NONE:
     default:
@@ -4873,10 +4246,8 @@ const char *esp_bms_idf_runtime_action_name(esp_bms_lvgl_action_t action)
         return "start-bms-bind";
     case ESP_BMS_LVGL_ACTION_ENABLE_BLUETOOTH_ADVERTISING:
         return "enable-bluetooth-advertising";
-    case ESP_BMS_LVGL_ACTION_SCAN_WIFI:
-        return "scan-wifi";
-    case ESP_BMS_LVGL_ACTION_CONNECT_WIFI:
-        return "connect-wifi";
+    case ESP_BMS_LVGL_ACTION_CYCLE_LEVEL_POSITION:
+        return "cycle-level-position";
     case ESP_BMS_LVGL_ACTION_SELECT_BMS_ANT:
         return "select-bms-ant";
     case ESP_BMS_LVGL_ACTION_SELECT_BMS_JK:

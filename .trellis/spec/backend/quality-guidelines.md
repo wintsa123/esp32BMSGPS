@@ -137,6 +137,10 @@ idf.py -p /dev/ttyUSB0 flash
   response formatting.
 - Do not mutate LVGL/display hardware from the HTTP server task. Queue changes
   and apply them from the main runtime loop.
+- Setup AP / HTTP service tasks must not preempt the LVGL adapter or the main
+  runtime action loop; keep HTTP priority below the action loop and capture
+  bounded heap snapshots around AP client joins and Web API requests when
+  diagnosing touch stalls.
 - Keep runtime snapshot updates as the contract between hardware/runtime state
   and `esp_bms_lvgl_ui`.
 - Log secrets only as lengths or presence flags.

@@ -27,11 +27,12 @@ Managed by Trellis. Edits outside this block are preserved; edits inside may be 
 - TFT 当前只内置 ASCII 点阵字体；没有引入中文点阵/字库前，屏幕上的语言状态使用 `ZH` / `EN` 这类 ASCII 标记。
 - Setup AP 的 SSID 必须使用 `fuckingBms_` 加随机后缀；首启或旧配置不符合当前策略时要自动重生并保存。
 - Setup AP 密码必须是 8 位随机数字，并且二维码页面必须把当前 SSID 和当前密码同时显示出来。
+- 新增或更新 UI preview 图片必须放在仓库根目录的 `preview/` 目录里。
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **esp32BMSGPS** (1168 symbols, 2531 relationships, 102 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **esp32BMSGPS** (1113 symbols, 2422 relationships, 97 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
 

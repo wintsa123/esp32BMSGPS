@@ -12,6 +12,14 @@
 
 static const char *TAG = "bms_idf_main";
 
+#define MAIN_LOOP_TASK_PRIORITY 4U
+
+typedef enum {
+    SETUP_SERVICE_START_IDLE = 0,
+    SETUP_SERVICE_START_AP,
+    SETUP_SERVICE_START_HTTP,
+} setup_service_start_stage_t;
+
 static esp_bms_display_rotation_t bridge_rotation_from_runtime(esp_bms_idf_display_rotation_t rotation)
 {
     switch (rotation) {
@@ -46,20 +54,25 @@ static void log_heap_state(const char *stage)
 {
     const uint32_t internal_dma_caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA;
     const uint32_t internal_8bit_caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+    const uint32_t psram_caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
     ESP_LOGI(TAG,
-             "heap[%s] default_free=%u default_min=%u internal8_free=%u dma_free=%u dma_largest=%u dma_min=%u",
+             "heap[%s] default_free=%u default_min=%u internal8_free=%u dma_free=%u dma_largest=%u dma_min=%u psram_free=%u psram_largest=%u",
              stage,
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_DEFAULT),
              (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_DEFAULT),
              (unsigned)heap_caps_get_free_size(internal_8bit_caps),
              (unsigned)heap_caps_get_free_size(internal_dma_caps),
              (unsigned)heap_caps_get_largest_free_block(internal_dma_caps),
-             (unsigned)heap_caps_get_minimum_free_size(internal_dma_caps));
+             (unsigned)heap_caps_get_minimum_free_size(internal_dma_caps),
+             (unsigned)heap_caps_get_free_size(psram_caps),
+             (unsigned)heap_caps_get_largest_free_block(psram_caps));
 }
 
 void app_main(void)
 {
+    vTaskPrioritySet(NULL, MAIN_LOOP_TASK_PRIORITY);
     ESP_LOGI(TAG, "starting ESP-IDF LVGL adapter display path");
+    ESP_LOGI(TAG, "main loop task priority=%u", (unsigned)uxTaskPriorityGet(NULL));
 
     static esp_bms_idf_runtime_t runtime;
     esp_bms_idf_runtime_init(&runtime);
@@ -114,6 +127,10 @@ void app_main(void)
     }
     log_heap_state("optional_bms_ble");
 
+    bool delayed_display_settings_save_pending = false;
+    uint32_t delayed_display_settings_save_ms = 0;
+    setup_service_start_stage_t setup_service_start_stage = SETUP_SERVICE_START_IDLE;
+
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(50));
         esp_bms_audio_feedback_tick();
@@ -134,10 +151,22 @@ void app_main(void)
             continue;
         }
         const esp_bms_lvgl_action_t action = action_event.action;
+        const bool setup_ap_started =
+            esp_bms_idf_runtime_flag_get(&runtime, ESP_BMS_IDF_RUNTIME_FLAG_SETUP_AP_STARTED);
+        const bool http_server_started =
+            esp_bms_idf_runtime_flag_get(&runtime, ESP_BMS_IDF_RUNTIME_FLAG_HTTP_SERVER_STARTED);
+        const bool setup_ap_enabled =
+            esp_bms_dashboard_snapshot_flag_get(&runtime.snapshot,
+                                                ESP_BMS_DASHBOARD_FLAG_SETUP_AP_ENABLED);
         const bool should_start_setup_services =
             action == ESP_BMS_LVGL_ACTION_ENABLE_WIFI_REPROVISIONING &&
-            (!esp_bms_idf_runtime_flag_get(&runtime, ESP_BMS_IDF_RUNTIME_FLAG_SETUP_AP_STARTED) ||
-             !esp_bms_idf_runtime_flag_get(&runtime, ESP_BMS_IDF_RUNTIME_FLAG_HTTP_SERVER_STARTED));
+            !setup_ap_enabled &&
+            setup_service_start_stage == SETUP_SERVICE_START_IDLE &&
+            (!setup_ap_started || !http_server_started);
+        const bool should_stop_setup_services =
+            action == ESP_BMS_LVGL_ACTION_ENABLE_WIFI_REPROVISIONING &&
+            setup_ap_enabled &&
+            (setup_ap_started || http_server_started);
         const bool action_changed = esp_bms_idf_runtime_apply_action_event(&runtime, &action_event);
         bool display_apply_failed = false;
         if ((tick_changed || action_changed) && runtime.brightness_percent != previous_brightness) {
@@ -166,8 +195,22 @@ void app_main(void)
         }
         const bool action_committed =
             esp_bms_lvgl_action_event_flag_get(&action_event, ESP_BMS_LVGL_ACTION_EVENT_FLAG_COMMITTED);
-        const bool should_save_display_settings =
-            action_committed && !display_apply_failed && action_should_save_display_settings(action);
+        bool should_save_display_settings = false;
+        if (!display_apply_failed && action == ESP_BMS_LVGL_ACTION_ROTATE_DISPLAY && action_changed) {
+            delayed_display_settings_save_pending = true;
+            delayed_display_settings_save_ms = ESP_BMS_LVGL_ROTATE_SAVE_DELAY_MS;
+        } else if (action_committed && !display_apply_failed && action_should_save_display_settings(action)) {
+            should_save_display_settings = !delayed_display_settings_save_pending;
+        }
+        if (delayed_display_settings_save_pending && action != ESP_BMS_LVGL_ACTION_ROTATE_DISPLAY) {
+            if (delayed_display_settings_save_ms <= 50U) {
+                delayed_display_settings_save_pending = false;
+                delayed_display_settings_save_ms = 0;
+                should_save_display_settings = true;
+            } else {
+                delayed_display_settings_save_ms -= 50U;
+            }
+        }
         esp_bms_lvgl_bridge_unlock();
 
         if (esp_bms_lvgl_action_event_flag_get(&action_event,
@@ -183,26 +226,62 @@ void app_main(void)
         }
 
         if (should_start_setup_services) {
-            ret = esp_bms_idf_runtime_start_setup_ap(&runtime);
+            setup_service_start_stage = setup_ap_started ? SETUP_SERVICE_START_HTTP : SETUP_SERVICE_START_AP;
+            ESP_LOGI(TAG, "setup services queued: first_stage=%s",
+                     setup_service_start_stage == SETUP_SERVICE_START_AP ? "ap" : "http");
+        }
+
+        if (should_stop_setup_services) {
+            setup_service_start_stage = SETUP_SERVICE_START_IDLE;
+            log_heap_state("setup_stop_before");
+            ret = esp_bms_idf_runtime_stop_setup_services(&runtime);
             if (ret != ESP_OK) {
-                ESP_LOGE(TAG, "setup AP start failed: %s", esp_err_to_name(ret));
+                ESP_LOGE(TAG, "setup services stop failed: %s", esp_err_to_name(ret));
+            }
+            log_heap_state("setup_stop_after");
+            ret = esp_bms_lvgl_bridge_lock(-1);
+            if (ret == ESP_OK) {
+                const esp_err_t update_ret = esp_bms_lvgl_ui_update(&runtime.snapshot);
+                if (update_ret != ESP_OK) {
+                    ESP_LOGE(TAG, "update UI after setup service stop failed: %s",
+                             esp_err_to_name(update_ret));
+                }
+                esp_bms_lvgl_bridge_unlock();
+            } else {
+                ESP_LOGE(TAG, "LVGL lock after setup service stop failed: %s", esp_err_to_name(ret));
+            }
+        }
+
+        if (setup_service_start_stage != SETUP_SERVICE_START_IDLE) {
+            const setup_service_start_stage_t stage = setup_service_start_stage;
+            setup_service_start_stage = SETUP_SERVICE_START_IDLE;
+            log_heap_state(stage == SETUP_SERVICE_START_AP ? "setup_ap_before" : "setup_http_before");
+            if (stage == SETUP_SERVICE_START_AP) {
+                ret = esp_bms_idf_runtime_start_setup_ap(&runtime);
+                if (ret != ESP_OK) {
+                    ESP_LOGE(TAG, "setup AP start failed: %s", esp_err_to_name(ret));
+                } else if (!esp_bms_idf_runtime_flag_get(&runtime,
+                                                          ESP_BMS_IDF_RUNTIME_FLAG_HTTP_SERVER_STARTED)) {
+                    setup_service_start_stage = SETUP_SERVICE_START_HTTP;
+                }
+                log_heap_state("setup_ap_after");
             } else {
                 ret = esp_bms_idf_runtime_start_http_server(&runtime);
                 if (ret != ESP_OK) {
                     ESP_LOGE(TAG, "HTTP server start failed: %s", esp_err_to_name(ret));
                 }
+                log_heap_state("setup_http_after");
             }
             ret = esp_bms_lvgl_bridge_lock(-1);
             if (ret == ESP_OK) {
                 const esp_err_t update_ret = esp_bms_lvgl_ui_update(&runtime.snapshot);
                 if (update_ret != ESP_OK) {
-                    ESP_LOGE(TAG, "update UI after setup AP action failed: %s", esp_err_to_name(update_ret));
+                    ESP_LOGE(TAG, "update UI after setup service action failed: %s", esp_err_to_name(update_ret));
                 }
                 esp_bms_lvgl_bridge_unlock();
             } else {
-                ESP_LOGE(TAG, "LVGL lock after setup AP action failed: %s", esp_err_to_name(ret));
+                ESP_LOGE(TAG, "LVGL lock after setup service action failed: %s", esp_err_to_name(ret));
             }
-            log_heap_state("setup_ap_http");
         }
 
         if (action != ESP_BMS_LVGL_ACTION_NONE) {

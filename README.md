@@ -1,7 +1,7 @@
 # ESP32 BMS GPS Firmware
 
 ESP-IDF firmware for an ESP32-WROOM-32E dashboard with GPS speed, TPM408
-TFT/touch, local setup AP/Web UI, local battery ADC, and OTA-ready partitioning.
+TFT/touch, local setup AP/Web UI, local battery ADC, and two-slot partitioning.
 
 The target firmware is now built and flashed only through ESP-IDF. The previous
 Rust/Cargo firmware path has been removed.
@@ -106,11 +106,8 @@ Implemented on the ESP-IDF path:
   saved before applying Wi-Fi config.
 - Embedded Web UI served from `main/web/index.html` through
   `esp_http_server`.
-- Authenticated API routes for status, config, external Wi-Fi, AP password, BMS
-  scan trigger/candidates, and BMS bind persistence.
-- External Wi-Fi credentials persisted in NVS through `/api/wifi`; when present,
-  the firmware starts ESP-IDF Wi-Fi in AP+STA mode so the setup AP stays
-  available while station connection is attempted.
+- Authenticated API routes for status, config, AP password, BMS scan
+  trigger/candidates, and BMS bind persistence.
 - NimBLE-backed BMS discovery: `/api/bms/scan` starts a BLE scan and
   `/api/bms/candidates` returns deduplicated ANT BMS candidates from live
   advertisements.
@@ -121,15 +118,12 @@ Implemented on the ESP-IDF path:
 
 Still pending on the ESP-IDF path:
 
-- OTA manifest parsing, image download, verification, partition switch, and
-  post-boot validity marking. `/api/ota/check` and `/api/ota/start` currently
-  return an explicit unavailable response instead of reporting fake success.
 - Hardware validation of the new BMS BLE connection and notification telemetry
   path with a real ANT BMS.
 
 ## Flash Layout
 
-`partitions.csv` uses a 4 MB two-OTA layout:
+`partitions.csv` uses a 4 MB dual app-slot layout:
 
 - `ota_0`: offset `0x10000`, size `0x1E0000`
 - `ota_1`: offset `0x1F0000`, size `0x1E0000`
@@ -190,4 +184,4 @@ Primary validation:
 
 Hardware validation remains pending for GPS UART0, GPIO34 ADC scaling against a
 multimeter, phone scan and join of the setup AP shown on the TFT QR screen,
-HTTP access to `http://192.168.4.1`, BLE BMS, and OTA slot switching.
+HTTP access to `http://192.168.4.1`, BLE BMS, and update by phone flashing.
