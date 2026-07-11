@@ -40,6 +40,7 @@ Questions to answer:
 
 ### LVGL Settings Detail Rows
 
+- Settings root and secondary list pages use a black page background with one `COLOR_SETTINGS_LIST` card inset by 12px. Rows inside that card have no individual corner radius or gaps; use bottom borders as separators and let the parent card clip the outer corners.
 - Secondary settings rows use `settings_zh_13` for the title and `settings_zh_10` for `desc` / subtitle text; do not go below 10px for CJK subtitles because smaller bitmap fonts clip or lose strokes.
 - English and Chinese subtitles must render at the same visual size; preview fallback ASCII labels must be scaled down when the preview runtime lacks the exact font size.
 - Title + desc must be vertically centered as one text block inside the row; do not use fixed y offsets that only work for one row height.

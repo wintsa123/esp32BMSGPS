@@ -2816,6 +2816,25 @@ static const esp_bms_dashboard_snapshot_t *settings_current_snapshot(void)
     return UI_FLAG(LAST_SNAPSHOT_VALID) ? &s_ui.last_snapshot : &empty_snapshot;
 }
 
+static lv_obj_t *settings_list_card(lv_obj_t *parent,
+                                    int32_t x,
+                                    int32_t y,
+                                    int32_t w,
+                                    int32_t row_h,
+                                    size_t row_count)
+{
+    lv_obj_t *card = panel(parent,
+                           x,
+                           y,
+                           w,
+                           row_h * (int32_t)row_count,
+                           COLOR_SETTINGS_LIST);
+    lv_obj_set_style_radius(card, 8, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(card, 0, LV_PART_MAIN);
+    lv_obj_set_style_clip_corner(card, true, LV_PART_MAIN);
+    return card;
+}
+
 static const char *settings_bms_type_label(uint8_t type)
 {
     return type < ARRAY_SIZE(SETTINGS_BMS_TYPE_LABELS) ? SETTINGS_BMS_TYPE_LABELS[type] :
@@ -3056,8 +3075,8 @@ static void settings_show_hotspot_detail(void)
     const esp_bms_dashboard_snapshot_t *snapshot = settings_current_snapshot();
 
     const bool portrait = s_ui.width < s_ui.height;
-    const int32_t card_x = 8;
-    const int32_t card_w = portrait ? s_ui.width - 16 : (s_ui.width / 2) - 8;
+    const int32_t card_x = 12;
+    const int32_t card_w = portrait ? s_ui.width - 24 : (s_ui.width / 2) - 16;
     const int32_t row_h = portrait ? 56 : 48;
     const int32_t gap = 8;
     const int32_t info_y = 12 + row_h + gap;
@@ -3068,8 +3087,14 @@ static void settings_show_hotspot_detail(void)
         ESP_BMS_LVGL_ACTION_ENABLE_WIFI_REPROVISIONING,
         SETTINGS_SYSTEM_VIEW_ROOT,
     };
+    lv_obj_t *list_card = settings_list_card(s_ui.settings_detail,
+                                             card_x,
+                                             12,
+                                             card_w,
+                                             row_h,
+                                             1);
     s_ui.setup_ap_control_row =
-        settings_detail_row(s_ui.settings_detail, card_x, 12, card_w, row_h, &control_row);
+        settings_detail_row(list_card, 0, 0, card_w, row_h, &control_row);
 
     lv_obj_t *info = panel(s_ui.settings_detail, card_x, info_y, card_w, info_h, COLOR_SETTINGS_CARD);
     lv_obj_set_style_radius(info, 8, LV_PART_MAIN);
@@ -3134,10 +3159,9 @@ static void settings_show_bluetooth_detail(void)
 {
     const esp_bms_dashboard_snapshot_t *snapshot = settings_current_snapshot();
 
-    const int32_t card_x = 8;
-    const int32_t card_w = s_ui.width - 16;
+    const int32_t card_x = 12;
+    const int32_t card_w = s_ui.width - 24;
     const int32_t row_h = s_ui.width < s_ui.height ? 56 : 48;
-    const int32_t gap = 8;
     const int32_t first_y = 12;
 
     const settings_detail_row_t rows[] = {
@@ -3148,10 +3172,16 @@ static void settings_show_bluetooth_detail(void)
           SETTINGS_SYSTEM_VIEW_ROOT },
     };
 
+    lv_obj_t *list_card = settings_list_card(s_ui.settings_detail,
+                                             card_x,
+                                             first_y,
+                                             card_w,
+                                             row_h,
+                                             ARRAY_SIZE(rows));
     for (size_t index = 0; index < ARRAY_SIZE(rows); ++index) {
-        settings_detail_row(s_ui.settings_detail,
-                            card_x,
-                            first_y + ((int32_t)index * (row_h + gap)),
+        settings_detail_row(list_card,
+                            0,
+                            (int32_t)index * row_h,
                             card_w,
                             row_h,
                             &rows[index]);
@@ -3161,11 +3191,9 @@ static void settings_show_bluetooth_detail(void)
 static void settings_show_bms_detail(void)
 {
     const esp_bms_dashboard_snapshot_t *snapshot = settings_current_snapshot();
-    const int32_t card_x = 8;
-    const int32_t card_w = s_ui.width - 16;
+    const int32_t card_x = 12;
+    const int32_t card_w = s_ui.width - 24;
     const int32_t row_h = s_ui.width < s_ui.height ? 56 : 48;
-    const int32_t gap = 8;
-    int32_t y = 12;
     char ble_status[ESP_BMS_BMS_SCAN_NAME_LEN + 1U] = { 0 };
 
     s_ui.settings_bms_view = (uint8_t)SETTINGS_BMS_VIEW_ROOT;
@@ -3188,23 +3216,29 @@ static void settings_show_bms_detail(void)
         SETTINGS_SYSTEM_VIEW_ROOT,
     };
 
-    settings_detail_row(s_ui.settings_detail,
-                        card_x,
-                        y,
+    lv_obj_t *list_card = settings_list_card(s_ui.settings_detail,
+                                             card_x,
+                                             12,
+                                             card_w,
+                                             row_h,
+                                             2);
+    settings_detail_row(list_card,
+                        0,
+                        0,
                         card_w,
                         row_h,
                         &ble_row);
-    y += row_h + gap;
 
-    lv_obj_t *type_box = settings_detail_row(s_ui.settings_detail,
-                                              card_x,
-                                              y,
+    lv_obj_t *type_box = settings_detail_row(list_card,
+                                              0,
+                                              row_h,
                                               card_w,
                                               row_h,
                                               &type_row);
     lv_obj_add_event_cb(type_box, settings_bms_type_button_event_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *arrow = label(type_box, card_w - 24, (row_h - 15) / 2, 14, 15, &settings_zh_13);
+    lv_obj_t *arrow = label(type_box, card_w - 24, 0, 14, 15, &settings_zh_13);
     lv_label_set_text(arrow, ">");
+    lv_obj_align(arrow, LV_ALIGN_RIGHT_MID, -10, 0);
     lv_obj_set_style_text_align(arrow, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(arrow, COLOR_SETTINGS_ACCENT, LV_PART_MAIN);
 }
@@ -3577,11 +3611,12 @@ static lv_obj_t *settings_detail_row(lv_obj_t *parent,
                                      int32_t h,
                                      const settings_detail_row_t *row)
 {
-    lv_obj_t *box = panel(parent, x, y, w, h, COLOR_SETTINGS_CARD);
-    lv_obj_set_style_radius(box, 8, LV_PART_MAIN);
+    lv_obj_t *box = panel(parent, x, y, w, h, COLOR_SETTINGS_LIST);
+    lv_obj_set_style_radius(box, 0, LV_PART_MAIN);
     lv_obj_set_style_border_width(box, 1, LV_PART_MAIN);
     lv_obj_set_style_border_color(box, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
     lv_obj_set_style_border_opa(box, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_side(box, LV_BORDER_SIDE_BOTTOM, LV_PART_MAIN);
     lv_obj_set_style_pad_all(box, 0, LV_PART_MAIN);
     lv_obj_add_flag(box, LV_OBJ_FLAG_CLICKABLE);
     settings_add_swipe_handlers(box);
@@ -3634,8 +3669,9 @@ static lv_obj_t *settings_detail_row(lv_obj_t *parent,
                                (h - switch_h) / 2,
                                settings_detail_action_switch_on(row->action));
     } else if (has_action) {
-        lv_obj_t *arrow = label(box, w - 24, (h - 15) / 2, 14, 15, &settings_zh_13);
+        lv_obj_t *arrow = label(box, w - 24, 0, 14, 15, &settings_zh_13);
         lv_label_set_text(arrow, ">");
+        lv_obj_align(arrow, LV_ALIGN_RIGHT_MID, -10, 0);
         lv_obj_set_style_text_align(arrow, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
         lv_obj_set_style_text_color(arrow, COLOR_SETTINGS_ACCENT, LV_PART_MAIN);
     }
@@ -3995,18 +4031,23 @@ static void settings_show_detail(settings_detail_id_t detail_id)
         return;
     }
 
-    const int32_t card_x = 8;
-    const int32_t card_w = s_ui.width - 16;
+    const int32_t card_x = 12;
+    const int32_t card_w = s_ui.width - 24;
     const int32_t row_h = s_ui.width < s_ui.height ? 56 : 48;
-    const int32_t gap = 8;
     const int32_t first_y = 12;
 
     size_t row_count = 0;
     const settings_detail_row_t *rows = settings_detail_rows_for_id(detail_id, &row_count);
+    lv_obj_t *list_card = rows ? settings_list_card(s_ui.settings_detail,
+                                                    card_x,
+                                                    first_y,
+                                                    card_w,
+                                                    row_h,
+                                                    row_count) : NULL;
     for (size_t index = 0; rows && index < row_count; ++index) {
-        settings_detail_row(s_ui.settings_detail,
-                            card_x,
-                            first_y + ((int32_t)index * (row_h + gap)),
+        settings_detail_row(list_card,
+                            0,
+                            (int32_t)index * row_h,
                             card_w,
                             row_h,
                             &rows[index]);
@@ -5346,15 +5387,12 @@ static void create_screen(lv_display_t *display)
     const int32_t row_h = portrait ? SETTINGS_LIST_ROW_H_PORTRAIT : SETTINGS_LIST_ROW_H_LANDSCAPE;
     const int32_t list_x = 12;
     const int32_t list_w = s_ui.width - (list_x * 2);
-    lv_obj_t *list_card = panel(s_ui.settings_carousel,
-                                list_x,
-                                SETTINGS_LIST_PAD_Y,
-                                list_w,
-                                row_h * SETTINGS_OPTION_COUNT,
-                                COLOR_SETTINGS_LIST);
-    lv_obj_set_style_radius(list_card, 8, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(list_card, 0, LV_PART_MAIN);
-    lv_obj_set_style_clip_corner(list_card, true, LV_PART_MAIN);
+    lv_obj_t *list_card = settings_list_card(s_ui.settings_carousel,
+                                             list_x,
+                                             SETTINGS_LIST_PAD_Y,
+                                             list_w,
+                                             row_h,
+                                             SETTINGS_OPTION_COUNT);
     for (uint32_t index = 0; index < SETTINGS_OPTION_COUNT; ++index) {
         settings_option_card(list_card,
                              0,
