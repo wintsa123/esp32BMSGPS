@@ -139,3 +139,37 @@ Optimized ESP-IDF runtime/UI C state storage with explicit flag masks, verified 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 5: Complete system settings and touch calibration
+
+**Date**: 2026-07-11
+**Task**: Complete system settings and touch calibration
+**Branch**: `main`
+
+### Summary
+
+Completed System settings subpages and persistent four-point touch calibration; verified previews, calibration math, ESP-IDF build, GitNexus scope, RFC2217 flash, boot-time NVS load, and user-confirmed hardware behavior.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `15bdc23` | (see git log) |
+| `54d09f0` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
