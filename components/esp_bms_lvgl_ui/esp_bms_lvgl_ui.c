@@ -18,7 +18,7 @@ LV_FONT_DECLARE(settings_zh_10);
 LV_FONT_DECLARE(settings_zh_13);
 LV_FONT_DECLARE(settings_zh_16);
 
-#define QUICK_PANEL_BUTTON_COUNT 5
+#define QUICK_PANEL_BUTTON_COUNT 6
 #define QUICK_PANEL_GRID_COLS 4
 #define QUICK_PANEL_GRID_ROWS 2
 #define QUICK_PANEL_GRID_SLOT_COUNT (QUICK_PANEL_GRID_COLS * QUICK_PANEL_GRID_ROWS)
@@ -71,6 +71,14 @@ LV_FONT_DECLARE(settings_zh_16);
 #define QUICK_TILE_SCALE_NORMAL 256
 #define QUICK_TILE_SCALE_PRESSED 270
 #define QUICK_TILE_SCALE_LONG 292
+#define SCREEN_LOCK_PROMPT_TIMEOUT_MS 3000U
+#define SCREEN_LOCK_TAP_MAX_MOVE 14
+#define SCREEN_UNLOCK_THRESHOLD_PERCENT 85
+#define SCREEN_UNLOCK_TRACK_H 56
+#define SCREEN_UNLOCK_KNOB_SIZE 48
+#define SCREEN_UNLOCK_TOUCH_MARGIN 20
+#define QUICK_LOCK_ICON_W 24
+#define QUICK_LOCK_ICON_H 28
 #define DASHBOARD_CELL_STAT_COUNT 4U
 #define DASHBOARD_CELL_KEY_BITMAP_W 28
 #define DASHBOARD_CELL_KEY_BITMAP_H 16
@@ -109,6 +117,9 @@ typedef enum {
     UI_STATE_FLAG_QUICK_EDIT_MODE = UINT32_C(1) << 13,
     UI_STATE_FLAG_QUICK_DRAG_MOVED = UINT32_C(1) << 14,
     UI_STATE_FLAG_QUICK_LONG_TRIGGERED = UINT32_C(1) << 15,
+    UI_STATE_FLAG_SCREEN_LOCKED = UINT32_C(1) << 16,
+    UI_STATE_FLAG_SCREEN_UNLOCK_PROMPT_VISIBLE = UINT32_C(1) << 17,
+    UI_STATE_FLAG_SCREEN_UNLOCK_DRAGGING = UINT32_C(1) << 18,
     UI_STATE_FLAG_QUICK_LEVEL_OVERLAY_ACTIVE = UINT32_C(1) << 19,
     UI_STATE_FLAG_QUICK_LEVEL_OVERLAY_DRAGGED = UINT32_C(1) << 20,
     UI_STATE_FLAG_QUICK_LEVEL_OVERLAY_HORIZONTAL = UINT32_C(1) << 21,
@@ -277,6 +288,13 @@ typedef struct {
     lv_obj_t *quick_edit_button;
     lv_obj_t *quick_edit_icon;
     lv_obj_t *quick_panel_item_icons[QUICK_PANEL_BUTTON_COUNT];
+    lv_obj_t *screen_lock_guard;
+    lv_obj_t *screen_unlock_card;
+    lv_obj_t *screen_unlock_track;
+    lv_obj_t *screen_unlock_fill;
+    lv_obj_t *screen_unlock_knob;
+    lv_obj_t *screen_unlock_hint;
+    lv_timer_t *screen_unlock_timer;
     uint8_t quick_panel_item_active_flags;
     uint8_t quick_panel_item_local_active_flags;
     uint8_t quick_panel_item_local_override_flags;
@@ -315,11 +333,15 @@ typedef struct {
     lv_point_t settings_calibration_observed;
     lv_point_t settings_calibration_expected;
     lv_point_t quick_drag_start;
+    lv_point_t screen_lock_press_start;
     int32_t quick_pull_drag_dy;
     int32_t return_swipe_drag_dy;
     int32_t settings_swipe_drag_dx;
     int32_t settings_nav_drag_anchor_y;
     int32_t settings_nav_scroll_anchor_y;
+    int32_t screen_lock_drag_dx;
+    int32_t screen_lock_drag_dy;
+    int32_t screen_unlock_knob_x;
     esp_bms_lvgl_page_t page;
     esp_bms_lvgl_action_event_t pending_event;
     lv_obj_t *quick_drag_obj;
@@ -393,6 +415,10 @@ static const char *quick_level_position_text(void);
 static void quick_level_overlay_layout(void);
 static void quick_level_overlay_hide(void);
 static bool process_return_swipe_event(lv_event_code_t code, bool allow_start);
+static void screen_lock_enter(void);
+static void screen_lock_reapply(void);
+static void screen_lock_create(lv_obj_t *screen);
+static void screen_unlock_timer_cancel(void);
 
 static const lv_color_t COLOR_BG = LV_COLOR_MAKE(0x08, 0x0a, 0x0e);
 static const lv_color_t COLOR_PANEL_ALT = LV_COLOR_MAKE(0x16, 0x20, 0x29);
@@ -866,9 +892,10 @@ static void quick_layout_find_drop_target(quick_panel_layout_t *layout,
         QUICK_DRAG_TARGET_ITEM,
         QUICK_DRAG_TARGET_ITEM,
         QUICK_DRAG_TARGET_ITEM,
+        QUICK_DRAG_TARGET_ITEM,
     };
     const uint8_t indexes[QUICK_PANEL_CONTROL_COUNT] = {
-        0, 0, 0, 1, 2, 3, 4,
+        0, 0, 0, 1, 2, 3, 4, 5,
     };
 
     for (uint32_t slot = 0; slot < QUICK_PANEL_CONTROL_COUNT; ++slot) {
@@ -1838,6 +1865,7 @@ typedef enum {
     QUICK_ITEM_ROTATE,
     QUICK_ITEM_SPEED,
     QUICK_ITEM_SETTINGS,
+    QUICK_ITEM_LOCK,
 } quick_panel_item_kind_t;
 
 typedef struct {
@@ -1916,6 +1944,8 @@ static const quick_panel_item_t QUICK_PANEL_ITEMS[QUICK_PANEL_BUTTON_COUNT] = {
       "点击切换", false },
     { QUICK_ITEM_SETTINGS, LV_SYMBOL_SETTINGS, ESP_BMS_LVGL_ACTION_SHOW_SETTINGS,
       "设备设置", false },
+    { QUICK_ITEM_LOCK, NULL, ESP_BMS_LVGL_ACTION_NONE,
+      "LOCK", false },
 };
 
 static const settings_option_t SETTINGS_OPTIONS[SETTINGS_OPTION_COUNT] = {
@@ -2052,6 +2082,7 @@ static settings_detail_id_t quick_panel_item_detail_id(const quick_panel_item_t 
     case QUICK_ITEM_ROTATE:
     case QUICK_ITEM_SPEED:
     case QUICK_ITEM_SETTINGS:
+    case QUICK_ITEM_LOCK:
     default:
         return SETTINGS_DETAIL_NONE;
     }
@@ -2086,6 +2117,17 @@ static void quick_symbol_icon_recenter(lv_obj_t *icon,
                                        int32_t content_h,
                                        const char *symbol,
                                        const lv_font_t *font);
+
+static void quick_lock_icon_recenter(lv_obj_t *icon, int32_t content_w, int32_t content_h)
+{
+    if (!icon) {
+        return;
+    }
+    lv_obj_set_pos(icon,
+                   (content_w - QUICK_LOCK_ICON_W) / 2,
+                   (content_h - QUICK_LOCK_ICON_H) / 2);
+    lv_obj_set_size(icon, QUICK_LOCK_ICON_W, QUICK_LOCK_ICON_H);
+}
 
 static int32_t quick_tile_pressed_extent(int32_t extent, bool pressed)
 {
@@ -2159,6 +2201,10 @@ static void quick_panel_item_recenter_icon(uint32_t index, bool pressed)
     const int32_t w = quick_tile_pressed_extent(rect->w, pressed);
     const int32_t h = quick_tile_pressed_extent(rect->h, pressed);
     const quick_panel_item_t *item = &QUICK_PANEL_ITEMS[index];
+    if (item->kind == QUICK_ITEM_LOCK) {
+        quick_lock_icon_recenter(s_ui.quick_panel_item_icons[index], w - 8, h - 8);
+        return;
+    }
     quick_symbol_icon_recenter(s_ui.quick_panel_item_icons[index],
                                w - 8,
                                h - 8,
@@ -2320,6 +2366,10 @@ static void quick_panel_item_event_cb(lv_event_t *event)
     if (code == LV_EVENT_CLICKED) {
         if (UI_FLAG(QUICK_EDIT_MODE) || UI_FLAG(QUICK_LONG_TRIGGERED)) {
             UI_SET_FLAG(QUICK_LONG_TRIGGERED, false);
+            return;
+        }
+        if (item->kind == QUICK_ITEM_LOCK) {
+            screen_lock_enter();
             return;
         }
         const settings_detail_id_t detail_id = quick_panel_item_detail_id(item);
@@ -4153,6 +4203,32 @@ static lv_obj_t *quick_hotspot_icon(lv_obj_t *parent, int32_t w, int32_t h)
     return icon;
 }
 
+static lv_obj_t *quick_lock_icon(lv_obj_t *parent, int32_t w, int32_t h)
+{
+    lv_obj_t *icon = lv_obj_create(parent);
+    clear_style(icon);
+    lv_obj_set_style_bg_opa(icon, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_clear_flag(icon, LV_OBJ_FLAG_CLICKABLE);
+    quick_lock_icon_recenter(icon, w - 8, h - 8);
+
+    lv_obj_t *shackle = panel(icon, 6, 1, 12, 16, COLOR_TEXT);
+    lv_obj_set_style_bg_opa(shackle, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_border_width(shackle, 3, LV_PART_MAIN);
+    lv_obj_set_style_border_color(shackle, COLOR_TEXT, LV_PART_MAIN);
+    lv_obj_set_style_border_side(shackle,
+                                 LV_BORDER_SIDE_TOP | LV_BORDER_SIDE_LEFT | LV_BORDER_SIDE_RIGHT,
+                                 LV_PART_MAIN);
+    lv_obj_set_style_radius(shackle, 6, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(shackle, 0, LV_PART_MAIN);
+    lv_obj_clear_flag(shackle, LV_OBJ_FLAG_CLICKABLE);
+
+    lv_obj_t *body = panel(icon, 2, 12, 20, 14, COLOR_TEXT);
+    lv_obj_set_style_radius(body, 3, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(body, 0, LV_PART_MAIN);
+    lv_obj_clear_flag(body, LV_OBJ_FLAG_CLICKABLE);
+    return icon;
+}
+
 static lv_obj_t *quick_panel_tile(lv_obj_t *parent,
                                   int32_t x,
                                   int32_t y,
@@ -4177,12 +4253,14 @@ static lv_obj_t *quick_panel_tile(lv_obj_t *parent,
         s_ui.quick_panel_item_icons[index] = quick_bluetooth_icon(box, w, h);
     } else if (item->hotspot_icon) {
         s_ui.quick_panel_item_icons[index] = quick_hotspot_icon(box, w, h);
+    } else if (item->kind == QUICK_ITEM_LOCK) {
+        s_ui.quick_panel_item_icons[index] = quick_lock_icon(box, w, h);
     } else {
         s_ui.quick_panel_item_icons[index] = quick_symbol_icon(box,
                                                                content_w,
                                                                content_h,
                                                                item->icon,
-                                                               &lv_font_montserrat_24);
+                                                               quick_panel_item_icon_font(item));
     }
     return box;
 }
@@ -5044,6 +5122,318 @@ static void move_to_page(esp_bms_lvgl_page_t page, bool animated)
     }
 }
 
+static void screen_unlock_timer_cancel(void)
+{
+    if (s_ui.screen_unlock_timer) {
+        lv_timer_delete(s_ui.screen_unlock_timer);
+        s_ui.screen_unlock_timer = NULL;
+    }
+}
+
+static void screen_unlock_reset(void)
+{
+    UI_SET_FLAG(SCREEN_UNLOCK_DRAGGING, false);
+    s_ui.screen_unlock_knob_x = 4;
+    if (s_ui.screen_unlock_knob) {
+        lv_obj_set_x(s_ui.screen_unlock_knob, s_ui.screen_unlock_knob_x);
+    }
+    if (s_ui.screen_unlock_fill) {
+        lv_obj_set_width(s_ui.screen_unlock_fill, SCREEN_UNLOCK_KNOB_SIZE);
+    }
+}
+
+static void screen_unlock_prompt_hide(void)
+{
+    UI_SET_FLAG(SCREEN_UNLOCK_PROMPT_VISIBLE, false);
+    screen_unlock_reset();
+    set_obj_hidden(s_ui.screen_unlock_card, true);
+}
+
+static void screen_unlock_timeout_cb(lv_timer_t *timer)
+{
+    (void)timer;
+    s_ui.screen_unlock_timer = NULL;
+    screen_unlock_prompt_hide();
+}
+
+static void screen_unlock_prompt_show(void)
+{
+    if (!UI_FLAG(SCREEN_LOCKED) || !s_ui.screen_unlock_card) {
+        return;
+    }
+
+    screen_unlock_timer_cancel();
+    screen_unlock_reset();
+    UI_SET_FLAG(SCREEN_UNLOCK_PROMPT_VISIBLE, true);
+    set_obj_hidden(s_ui.screen_unlock_card, false);
+    lv_obj_move_foreground(s_ui.screen_unlock_card);
+    s_ui.screen_unlock_timer = lv_timer_create(screen_unlock_timeout_cb,
+                                               SCREEN_LOCK_PROMPT_TIMEOUT_MS,
+                                               NULL);
+    if (s_ui.screen_unlock_timer) {
+        lv_timer_set_repeat_count(s_ui.screen_unlock_timer, 1);
+    }
+}
+
+static void screen_lock_reapply(void)
+{
+    if (!UI_FLAG(SCREEN_LOCKED)) {
+        set_obj_hidden(s_ui.screen_lock_guard, true);
+        return;
+    }
+
+    set_obj_hidden(s_ui.screen_lock_guard, false);
+    set_obj_hidden(s_ui.screen_unlock_card, !UI_FLAG(SCREEN_UNLOCK_PROMPT_VISIBLE));
+    set_obj_hidden(s_ui.quick_pull_zone, true);
+    if (s_ui.screen_lock_guard) {
+        lv_obj_move_foreground(s_ui.screen_lock_guard);
+    }
+}
+
+static void screen_lock_exit(void)
+{
+    screen_unlock_timer_cancel();
+    screen_unlock_prompt_hide();
+    UI_SET_FLAG(SCREEN_LOCKED, false);
+    set_obj_hidden(s_ui.screen_lock_guard, true);
+    set_quick_panel_open(false);
+}
+
+static void screen_lock_enter(void)
+{
+    screen_unlock_timer_cancel();
+    set_quick_panel_open(false);
+    UI_SET_FLAG(SCREEN_LOCKED, true);
+    screen_unlock_prompt_hide();
+    screen_lock_reapply();
+}
+
+static void screen_lock_guard_event_cb(lv_event_t *event)
+{
+    if (!UI_FLAG(SCREEN_LOCKED) || UI_FLAG(SCREEN_UNLOCK_PROMPT_VISIBLE)) {
+        return;
+    }
+
+    const lv_event_code_t code = lv_event_get_code(event);
+    if (code == LV_EVENT_PRESSED) {
+        s_ui.screen_lock_drag_dx = 0;
+        s_ui.screen_lock_drag_dy = 0;
+        (void)get_active_pointer(&s_ui.screen_lock_press_start);
+        return;
+    }
+
+    if (code == LV_EVENT_PRESSING) {
+        lv_point_t point = { 0 };
+        if (get_active_pointer(&point)) {
+            s_ui.screen_lock_drag_dx = point.x - s_ui.screen_lock_press_start.x;
+            s_ui.screen_lock_drag_dy = point.y - s_ui.screen_lock_press_start.y;
+        }
+        return;
+    }
+
+    if (code == LV_EVENT_RELEASED) {
+        lv_point_t point = { 0 };
+        if (get_active_pointer(&point)) {
+            s_ui.screen_lock_drag_dx = point.x - s_ui.screen_lock_press_start.x;
+            s_ui.screen_lock_drag_dy = point.y - s_ui.screen_lock_press_start.y;
+        }
+        const int32_t abs_dx = abs_i32(s_ui.screen_lock_drag_dx);
+        const int32_t abs_dy = abs_i32(s_ui.screen_lock_drag_dy);
+        if (abs_dx <= SCREEN_LOCK_TAP_MAX_MOVE && abs_dy <= SCREEN_LOCK_TAP_MAX_MOVE) {
+            screen_unlock_prompt_show();
+        }
+        s_ui.screen_lock_drag_dx = 0;
+        s_ui.screen_lock_drag_dy = 0;
+        return;
+    }
+
+    if (code == LV_EVENT_PRESS_LOST) {
+        s_ui.screen_lock_drag_dx = 0;
+        s_ui.screen_lock_drag_dy = 0;
+    }
+}
+
+static void screen_unlock_update_from_pointer(void)
+{
+    if (!UI_FLAG(SCREEN_UNLOCK_DRAGGING) || !s_ui.screen_unlock_track) {
+        return;
+    }
+
+    lv_point_t point = { 0 };
+    if (!get_active_pointer(&point)) {
+        return;
+    }
+
+    lv_area_t area = { 0 };
+    lv_obj_get_coords(s_ui.screen_unlock_track, &area);
+    const int32_t track_w = area.x2 - area.x1 + 1;
+    const int32_t min_x = 4;
+    const int32_t max_x = track_w - SCREEN_UNLOCK_KNOB_SIZE - 4;
+    s_ui.screen_unlock_knob_x = clamp_i32(point.x - area.x1 - (SCREEN_UNLOCK_KNOB_SIZE / 2),
+                                          min_x,
+                                          max_x);
+    lv_obj_set_x(s_ui.screen_unlock_knob, s_ui.screen_unlock_knob_x);
+    lv_obj_set_width(s_ui.screen_unlock_fill,
+                     s_ui.screen_unlock_knob_x + SCREEN_UNLOCK_KNOB_SIZE - min_x);
+}
+
+static uint8_t screen_unlock_progress_percent(void)
+{
+    if (!s_ui.screen_unlock_track) {
+        return 0;
+    }
+    const int32_t min_x = 4;
+    const int32_t max_x = lv_obj_get_width(s_ui.screen_unlock_track) -
+                          SCREEN_UNLOCK_KNOB_SIZE - 4;
+    const int32_t range = max_x - min_x;
+    if (range <= 0) {
+        return 0;
+    }
+    return (uint8_t)(((s_ui.screen_unlock_knob_x - min_x) * 100) / range);
+}
+
+static void screen_unlock_track_event_cb(lv_event_t *event)
+{
+    if (!UI_FLAG(SCREEN_LOCKED) || !UI_FLAG(SCREEN_UNLOCK_PROMPT_VISIBLE)) {
+        return;
+    }
+
+    const lv_event_code_t code = lv_event_get_code(event);
+    if (code == LV_EVENT_PRESSED) {
+        lv_point_t point = { 0 };
+        lv_area_t area = { 0 };
+        if (!get_active_pointer(&point)) {
+            return;
+        }
+        lv_obj_get_coords(s_ui.screen_unlock_track, &area);
+        const bool starts_on_knob =
+            point.x <= area.x1 + SCREEN_UNLOCK_KNOB_SIZE + SCREEN_UNLOCK_TOUCH_MARGIN;
+        UI_SET_FLAG(SCREEN_UNLOCK_DRAGGING, starts_on_knob);
+        if (starts_on_knob) {
+            screen_unlock_update_from_pointer();
+        }
+        return;
+    }
+
+    if (code == LV_EVENT_PRESSING) {
+        screen_unlock_update_from_pointer();
+        return;
+    }
+
+    if (code == LV_EVENT_RELEASED) {
+        if (!UI_FLAG(SCREEN_UNLOCK_DRAGGING)) {
+            return;
+        }
+        screen_unlock_update_from_pointer();
+        const bool unlocked = screen_unlock_progress_percent() >=
+                              SCREEN_UNLOCK_THRESHOLD_PERCENT;
+        UI_SET_FLAG(SCREEN_UNLOCK_DRAGGING, false);
+        if (unlocked) {
+            screen_lock_exit();
+        } else {
+            screen_unlock_reset();
+        }
+        return;
+    }
+
+    if (code == LV_EVENT_PRESS_LOST) {
+        screen_unlock_reset();
+    }
+}
+
+static void screen_lock_create(lv_obj_t *screen)
+{
+    s_ui.screen_lock_guard = lv_obj_create(screen);
+    clear_style(s_ui.screen_lock_guard);
+    lv_obj_set_pos(s_ui.screen_lock_guard, 0, 0);
+    lv_obj_set_size(s_ui.screen_lock_guard, s_ui.width, s_ui.height);
+    lv_obj_set_style_bg_opa(s_ui.screen_lock_guard, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_add_flag(s_ui.screen_lock_guard, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(s_ui.screen_lock_guard, screen_lock_guard_event_cb, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(s_ui.screen_lock_guard, screen_lock_guard_event_cb, LV_EVENT_PRESSING, NULL);
+    lv_obj_add_event_cb(s_ui.screen_lock_guard, screen_lock_guard_event_cb, LV_EVENT_RELEASED, NULL);
+    lv_obj_add_event_cb(s_ui.screen_lock_guard, screen_lock_guard_event_cb, LV_EVENT_PRESS_LOST, NULL);
+
+    const int32_t card_w = clamp_i32(s_ui.width - 24, 200, 300);
+    const int32_t card_h = SCREEN_UNLOCK_TRACK_H + 20;
+    const int32_t card_x = (s_ui.width - card_w) / 2;
+    const int32_t card_y = s_ui.height - card_h - (s_ui.width < s_ui.height ? 24 : 16);
+    s_ui.screen_unlock_card = panel(s_ui.screen_lock_guard,
+                                    card_x,
+                                    card_y,
+                                    card_w,
+                                    card_h,
+                                    COLOR_PANEL_ALT);
+    lv_obj_set_style_radius(s_ui.screen_unlock_card, 12, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(s_ui.screen_unlock_card, 0, LV_PART_MAIN);
+    lv_obj_set_style_border_width(s_ui.screen_unlock_card, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(s_ui.screen_unlock_card, COLOR_MUTED, LV_PART_MAIN);
+    lv_obj_clear_flag(s_ui.screen_unlock_card, LV_OBJ_FLAG_CLICKABLE);
+
+    const int32_t track_w = card_w - 20;
+    s_ui.screen_unlock_track = panel(s_ui.screen_unlock_card,
+                                     10,
+                                     10,
+                                     track_w,
+                                     SCREEN_UNLOCK_TRACK_H,
+                                     COLOR_BG);
+    lv_obj_set_style_radius(s_ui.screen_unlock_track, SCREEN_UNLOCK_TRACK_H / 2, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(s_ui.screen_unlock_track, 0, LV_PART_MAIN);
+    lv_obj_set_style_border_width(s_ui.screen_unlock_track, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(s_ui.screen_unlock_track, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
+    lv_obj_add_flag(s_ui.screen_unlock_track, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_ext_click_area(s_ui.screen_unlock_track, SCREEN_UNLOCK_TOUCH_MARGIN);
+    lv_obj_add_event_cb(s_ui.screen_unlock_track, screen_unlock_track_event_cb, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(s_ui.screen_unlock_track, screen_unlock_track_event_cb, LV_EVENT_PRESSING, NULL);
+    lv_obj_add_event_cb(s_ui.screen_unlock_track, screen_unlock_track_event_cb, LV_EVENT_RELEASED, NULL);
+    lv_obj_add_event_cb(s_ui.screen_unlock_track, screen_unlock_track_event_cb, LV_EVENT_PRESS_LOST, NULL);
+
+    s_ui.screen_unlock_fill = panel(s_ui.screen_unlock_track,
+                                    4,
+                                    4,
+                                    SCREEN_UNLOCK_KNOB_SIZE,
+                                    SCREEN_UNLOCK_KNOB_SIZE,
+                                    COLOR_ACCENT);
+    lv_obj_set_style_radius(s_ui.screen_unlock_fill, SCREEN_UNLOCK_KNOB_SIZE / 2, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_ui.screen_unlock_fill, LV_OPA_50, LV_PART_MAIN);
+    lv_obj_clear_flag(s_ui.screen_unlock_fill, LV_OBJ_FLAG_CLICKABLE);
+
+    s_ui.screen_unlock_hint = label(s_ui.screen_unlock_track,
+                                    SCREEN_UNLOCK_KNOB_SIZE + 12,
+                                    (SCREEN_UNLOCK_TRACK_H - 18) / 2,
+                                    track_w - SCREEN_UNLOCK_KNOB_SIZE - 24,
+                                    18,
+                                    &lv_font_montserrat_14);
+    lv_label_set_text(s_ui.screen_unlock_hint, "SLIDE >");
+    lv_obj_set_style_text_align(s_ui.screen_unlock_hint, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.screen_unlock_hint, COLOR_MUTED, LV_PART_MAIN);
+    lv_obj_clear_flag(s_ui.screen_unlock_hint, LV_OBJ_FLAG_CLICKABLE);
+
+    s_ui.screen_unlock_knob = panel(s_ui.screen_unlock_track,
+                                    4,
+                                    4,
+                                    SCREEN_UNLOCK_KNOB_SIZE,
+                                    SCREEN_UNLOCK_KNOB_SIZE,
+                                    COLOR_ACCENT);
+    lv_obj_set_style_radius(s_ui.screen_unlock_knob, SCREEN_UNLOCK_KNOB_SIZE / 2, LV_PART_MAIN);
+    lv_obj_clear_flag(s_ui.screen_unlock_knob, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_t *arrow = label(s_ui.screen_unlock_knob,
+                            0,
+                            (SCREEN_UNLOCK_KNOB_SIZE - 24) / 2,
+                            SCREEN_UNLOCK_KNOB_SIZE,
+                            24,
+                            &lv_font_montserrat_24);
+    lv_label_set_text(arrow, ">");
+    lv_obj_set_style_text_align(arrow, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(arrow, COLOR_BG, LV_PART_MAIN);
+    lv_obj_clear_flag(arrow, LV_OBJ_FLAG_CLICKABLE);
+
+    screen_unlock_reset();
+    set_obj_hidden(s_ui.screen_unlock_card, true);
+    set_obj_hidden(s_ui.screen_lock_guard, true);
+    screen_lock_reapply();
+}
+
 static void page_scroll_event_cb(lv_event_t *event)
 {
     if (lv_event_get_target(event) != s_ui.pages) {
@@ -5617,6 +6007,7 @@ static void create_screen(lv_display_t *display)
     lv_obj_add_event_cb(s_ui.quick_pull_zone, quick_pull_event_cb, LV_EVENT_PRESS_LOST, NULL);
 
     set_quick_panel_open(false);
+    screen_lock_create(screen);
     lv_obj_add_flag(s_ui.header, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -5634,6 +6025,7 @@ static esp_err_t rebuild_screen_if_resolution_changed(void)
     const esp_bms_lvgl_page_t page = s_ui.page;
     const esp_bms_lvgl_action_event_t pending_event = s_ui.pending_event;
     const bool settings_visible = s_ui.settings_page && !lv_obj_has_flag(s_ui.settings_page, LV_OBJ_FLAG_HIDDEN);
+    const bool screen_locked = UI_FLAG(SCREEN_LOCKED);
     const bool rotate_toast_active = UI_FLAG(QUICK_ROTATE_TOAST_ACTIVE);
     const uint8_t quick_level_position = s_ui.quick_level_position;
     const quick_panel_layout_t quick_layouts[QUICK_LAYOUT_COUNT] = {
@@ -5647,6 +6039,7 @@ static esp_err_t rebuild_screen_if_resolution_changed(void)
         lv_obj_stop_scroll_anim(s_ui.pages);
     }
     quick_toast_cancel();
+    screen_unlock_timer_cancel();
     settings_bms_popup_close();
     settings_restore_popup_close();
     if (s_ui.settings_swipe_indicator) {
@@ -5663,6 +6056,7 @@ static esp_err_t rebuild_screen_if_resolution_changed(void)
     s_ui.quick_level_position = quick_level_position;
     memcpy(s_ui.quick_layouts, quick_layouts, sizeof(s_ui.quick_layouts));
     UI_SET_FLAG(INITIALIZED, true);
+    UI_SET_FLAG(SCREEN_LOCKED, screen_locked);
     create_screen(display);
     move_to_page(page, false);
     if (settings_visible) {
@@ -5673,6 +6067,7 @@ static esp_err_t rebuild_screen_if_resolution_changed(void)
     if (rotate_toast_active) {
         quick_rotate_toast_show();
     }
+    screen_lock_reapply();
     return ESP_OK;
 }
 
@@ -5703,6 +6098,7 @@ esp_err_t esp_bms_lvgl_ui_show_dashboard(void)
 {
     ESP_RETURN_ON_FALSE(UI_FLAG(INITIALIZED), ESP_ERR_INVALID_STATE, TAG, "UI is not initialized");
     show_dashboard_view();
+    screen_lock_reapply();
     return ESP_OK;
 }
 

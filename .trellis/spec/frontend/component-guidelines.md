@@ -78,6 +78,32 @@ Questions to answer:
 - Browsing down past `SETTINGS_NAV_SCROLL_THRESHOLD` hides the bar; browsing back up or reaching scroll position `0` shows it. Direct vertical drags use the same threshold so pages whose content fits the viewport still behave consistently.
 - A recognized vertical navigation drag must set `SETTINGS_SWIPE_CONSUMED` to prevent the release from triggering the row under the finger. Horizontal left-edge back tracking remains dominant when horizontal movement is larger.
 
+### LVGL Full-Screen Interaction Guards
+
+- A locked or modal dashboard state that must block every underlying control uses one transparent, full-screen clickable object above `pages`, `quick_pull_zone`, and the quick panel. Do not try to add lock checks independently to every dashboard child; missing one event path reintroduces touch-through.
+- The guard owns the complete pointer contract. If locked browsing still permits page changes, recognize that horizontal gesture on the guard and call the existing page-navigation helper; keep taps, unlock drags, and dashboard swipes mutually exclusive by distance thresholds.
+- A temporary unlock control uses an LVGL one-shot timer. Cancel and null the timer on unlock and before deleting/rebuilding the root object; in the timeout callback, null the stored pointer before hiding/resetting widgets because LVGL deletes a one-repeat timer after the callback returns.
+- Dashboard creation or rebuild code can move `quick_pull_zone` back to the foreground. After restoring a locked state, explicitly hide the pull zone and move the guard to the foreground again.
+- Touch-friendly slider targets use a visible track of at least 52px, a knob of at least 44px, and `lv_obj_set_ext_click_area()` where space allows. Require the initial press to land on or near the starting knob and require release beyond a defined completion threshold.
+
+```c
+static void interaction_guard_reapply(void)
+{
+    set_obj_hidden(s_ui.quick_pull_zone, true);
+    set_obj_hidden(s_ui.interaction_guard, false);
+    lv_obj_move_foreground(s_ui.interaction_guard);
+}
+
+static void interaction_timeout_cb(lv_timer_t *timer)
+{
+    (void)timer;
+    s_ui.interaction_timer = NULL;
+    interaction_prompt_hide();
+}
+```
+
+Validation must cover: tap versus horizontal swipe classification, below-threshold release, timeout while idle and while dragging, unlock cleanup, root rebuild while locked, and restoration of the quick-pull gesture after unlock.
+
 ---
 
 ## Accessibility
