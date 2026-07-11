@@ -173,3 +173,36 @@ Completed System settings subpages and persistent four-point touch calibration; 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 6: Unify settings list card style
+
+**Date**: 2026-07-11
+**Task**: Unify settings list card style
+**Branch**: `main`
+
+### Summary
+
+Unified root and secondary TFT settings lists into inset gray cards on black backgrounds, centered row content and affordances, built and flashed the firmware, and verified clean startup.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8a33b12` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
