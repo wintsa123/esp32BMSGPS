@@ -661,6 +661,89 @@ GATT discovery, or frame parsing has not produced real data.
 Keep BMS fields offline/invalid until validated BLE notifications from the
 bound device update the runtime snapshot.
 
+## Scenario: FarDriver BLE Controller Telemetry
+
+### 1. Scope / Trigger
+
+- Trigger: changing FarDriver settings, BLE scan/bind/connection, notification
+  parsing, dashboard projection, or the controller page data-source gate.
+
+### 2. Signatures
+
+- BLE service/characteristic: `0xFFE0` / `0xFFEC`.
+- Stable source API: `esp_bms_lvgl_ui_stable_data_source()` and
+  `esp_bms_idf_runtime_set_active_data_source()`.
+- Parser entry: `esp_fardriver_parse_frame()` for 16-byte compact or extended
+  frames with FarDriver CRC.
+- Persistent keys: `ctrl_conn`, `ctrl_page`, `ctrl_wheel`, `ctrl_ratio`,
+  `ctrl_mac`, and `ctrl_name` in namespace `esp_bms`.
+
+### 3. Contracts
+
+- Missing controller keys load as disabled/zero without invalidating older
+  display settings. Restore defaults clears switches and fallback values but
+  preserves the bound MAC and name.
+- `controller_page_enabled` is the master lifecycle switch. When it is false,
+  force controller connection state off, hide connection/bind UI, stop scan
+  intent, and terminate current or late-arriving connections without clearing
+  the bound MAC/name. Enabling it turns connection on and reconnects the bound
+  device automatically.
+- Only a stable controller dashboard page enables the FFEC CCCD and high-rate
+  projection. Settings, quick panel, and page drag/settle use data source NONE.
+- A different bound MAC must terminate the current controller connection and
+  defer scanning until the disconnect callback; never display a new binding
+  while continuing to consume the old connection.
+- Controller speed parameters take priority over complete user fallback
+  circumference/ratio values. Incomplete parameters keep speed invalid.
+
+### 4. Validation & Error Matrix
+
+- Invalid length, header, index, or CRC -> reject the frame and retain the last
+  validated telemetry.
+- Disabled connection -> clear controller scan intent and terminate an active
+  controller connection.
+- Connect callback arrives after the page or connection was disabled ->
+  terminate that connection immediately and skip GATT discovery.
+- Disconnect during rebind -> clear telemetry, then start the deferred scan
+  only when connection remains enabled.
+- Offline or field invalid -> keep the page present when enabled and render
+  that field as `-`.
+
+### 5. Good/Base/Bad Cases
+
+- Good: controller page settles, CCCD enables, validated FFEC frames update
+  fixed label buffers; leaving the page disables the CCCD.
+- Base: page is enabled without a controller; all six telemetry values stay
+  invalid and the battery/controller/GPS mapping remains stable.
+- Bad: selecting a new MAC while connected only overwrites NVS and leaves the
+  old GATT connection active.
+
+### 6. Tests Required
+
+- Run the host parser self-test for compact/extended frames, CRC, telemetry,
+  internal speed parameters, fallback speed, and invalid frames.
+- Run `git diff --check`, `./scripts/esp-idf-env.sh build`, GitNexus
+  `detect-changes`, and one RFC2217 flash plus boot-log capture.
+- On hardware, verify two-page/three-page mapping, settings return, rotation,
+  rebind, and BMS/FarDriver/phone coexistence for at least 10 minutes.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```c
+copy_bound_mac(new_mac);
+start_controller_if_enabled(); /* old conn_handle makes this a no-op */
+```
+
+#### Correct
+
+```c
+copy_bound_mac(new_mac);
+request_controller_scan_after_disconnect();
+ble_gap_terminate(old_conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+```
+
 ## Validation Matrix
 
 - QR screen visible but phone cannot see AP -> inspect whether

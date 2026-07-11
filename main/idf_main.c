@@ -47,6 +47,11 @@ static bool action_should_save_display_settings(esp_bms_lvgl_action_t action)
            action == ESP_BMS_LVGL_ACTION_SELECT_BMS_JK ||
            action == ESP_BMS_LVGL_ACTION_SELECT_BMS_JBD ||
            action == ESP_BMS_LVGL_ACTION_SELECT_BMS_DALY ||
+           action == ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_CONNECTION ||
+           action == ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_PAGE ||
+           action == ESP_BMS_LVGL_ACTION_START_CONTROLLER_BIND ||
+           action == ESP_BMS_LVGL_ACTION_ADJUST_CONTROLLER_WHEEL ||
+           action == ESP_BMS_LVGL_ACTION_ADJUST_CONTROLLER_RATIO ||
            action == ESP_BMS_LVGL_ACTION_RESTORE_DEFAULTS;
 }
 
@@ -122,10 +127,7 @@ void app_main(void)
     }
     log_heap_state("display_settings");
 
-    const esp_err_t bluetooth_ret = esp_bms_idf_runtime_start_bluetooth_advertising(&runtime);
-    if (bluetooth_ret != ESP_OK) {
-        ESP_LOGW(TAG, "local Bluetooth startup failed: %s", esp_err_to_name(bluetooth_ret));
-    }
+    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_bms_idf_runtime_start_controller_ble_if_enabled(&runtime));
 
     bool delayed_display_settings_save_pending = false;
     uint32_t delayed_display_settings_save_ms = 0;
@@ -152,6 +154,8 @@ void app_main(void)
             esp_bms_lvgl_bridge_unlock();
             continue;
         }
+        esp_bms_idf_runtime_set_active_data_source(&runtime,
+                                                   esp_bms_lvgl_ui_stable_data_source());
         const esp_bms_lvgl_action_t action = action_event.action;
         const bool http_config_applied =
             esp_bms_idf_runtime_flag_get(&runtime, ESP_BMS_IDF_RUNTIME_FLAG_HTTP_CONFIG_APPLIED);

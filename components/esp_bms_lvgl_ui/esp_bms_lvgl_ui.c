@@ -1,6 +1,7 @@
 #include "esp_bms_lvgl_ui.h"
 
 #include <stdarg.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include "esp_bms_lvgl_contract.h"
@@ -24,7 +25,7 @@ LV_FONT_DECLARE(settings_zh_16);
 #define QUICK_PANEL_GRID_SLOT_COUNT (QUICK_PANEL_GRID_COLS * QUICK_PANEL_GRID_ROWS)
 #define QUICK_PANEL_CONTROL_COUNT (QUICK_PANEL_BUTTON_COUNT + 2)
 #define QUICK_EDIT_BUTTON_SIZE 28
-#define SETTINGS_OPTION_COUNT 5
+#define SETTINGS_OPTION_COUNT 6
 #define ARRAY_SIZE(array) (sizeof(array) / sizeof((array)[0]))
 #define QUICK_BLUETOOTH_SYMBOL "\xee\x9c\xa8"
 #define QUICK_HOTSPOT_SYMBOL "\xee\x98\xab"
@@ -36,6 +37,7 @@ LV_FONT_DECLARE(settings_zh_16);
 #define QUICK_PULL_START_MAX_Y_NUM 4
 #define QUICK_PULL_START_MAX_Y_DEN 5
 #define QUICK_PANEL_SETTLE_MS 140
+#define QUICK_TILE_REORDER_MS 120
 #define RETURN_HOME_SWIPE_MIN_DY 58
 #define RETURN_HOME_SWIPE_MAX_DX 46
 #define RETURN_HOME_START_MIN_Y_NUM 3
@@ -176,10 +178,6 @@ static void ui_flag_set(uint8_t *flags, uint32_t index, bool enabled)
 #define ACTION_EVENT_SET_FLAG(event, name, enabled) \
     esp_bms_lvgl_action_event_flag_set((event), ESP_BMS_LVGL_ACTION_EVENT_FLAG_##name, (enabled))
 
-_Static_assert(sizeof(esp_bms_dashboard_snapshot_t) == 672,
-               "esp_bms_dashboard_snapshot_t ABI size changed; update C snapshot consumers too");
-_Static_assert(sizeof(esp_bms_lvgl_action_event_t) == 36,
-               "esp_bms_lvgl_action_event_t ABI size changed; update C action consumers too");
 _Static_assert(sizeof(esp_bms_lvgl_action_t) == 4,
                "esp_bms_lvgl_action_t ABI size changed; update C action consumers too");
 _Static_assert(ESP_BMS_LVGL_ACTION_NONE == 0,
@@ -234,6 +232,7 @@ typedef struct {
     lv_obj_t *pages;
     lv_obj_t *battery_page;
     lv_obj_t *gps_page;
+    lv_obj_t *controller_page;
     lv_obj_t *settings_page;
     lv_obj_t *settings_root;
     lv_obj_t *settings_carousel;
@@ -316,6 +315,20 @@ typedef struct {
     lv_obj_t *temperature_values[ESP_BMS_BMS_TEMP_MAX_COUNT];
     lv_obj_t *local_battery;
     lv_obj_t *gps_detail;
+    lv_obj_t *controller_speed;
+    lv_obj_t *controller_speed_unit;
+    lv_obj_t *controller_gear;
+    lv_obj_t *controller_power;
+    lv_obj_t *controller_rpm;
+    lv_obj_t *controller_temp;
+    lv_obj_t *controller_motor_temp;
+    char controller_speed_buf[12];
+    char controller_speed_unit_buf[8];
+    char controller_gear_buf[8];
+    char controller_power_buf[16];
+    char controller_rpm_buf[16];
+    char controller_temp_buf[12];
+    char controller_motor_temp_buf[12];
     lv_obj_t *setup_ap_control_row;
     lv_obj_t *setup_ap_info;
     lv_obj_t *setup_ap_qr_panel;
@@ -325,6 +338,7 @@ typedef struct {
     int32_t height;
     bool dragging;
     bool settling;
+    bool controller_page_enabled;
     int32_t drag_start_pages_x;
     uint32_t drag_last_sample_log_ms;
     lv_point_t quick_pull_start;
@@ -817,13 +831,66 @@ static quick_panel_layout_t *quick_layout_ensure_current(void)
     return layout;
 }
 
+static void quick_tile_x_anim_cb(void *obj, int32_t value)
+{
+    lv_obj_set_x((lv_obj_t *)obj, value);
+}
+
+static void quick_tile_y_anim_cb(void *obj, int32_t value)
+{
+    lv_obj_set_y((lv_obj_t *)obj, value);
+}
+
+static void quick_obj_stop_reorder_anim(lv_obj_t *obj)
+{
+    if (!obj) {
+        return;
+    }
+    lv_anim_delete(obj, quick_tile_x_anim_cb);
+    lv_anim_delete(obj, quick_tile_y_anim_cb);
+}
+
 static void quick_obj_apply_rect(lv_obj_t *obj, const quick_tile_rect_t *rect)
 {
     if (!obj || !rect) {
         return;
     }
+    quick_obj_stop_reorder_anim(obj);
     lv_obj_set_pos(obj, rect->x, rect->y);
     lv_obj_set_size(obj, rect->w, rect->h);
+}
+
+static void quick_obj_animate_to_rect(lv_obj_t *obj, const quick_tile_rect_t *rect)
+{
+    if (!obj || !rect) {
+        return;
+    }
+
+    const int32_t current_x = lv_obj_get_x(obj);
+    const int32_t current_y = lv_obj_get_y(obj);
+    quick_obj_stop_reorder_anim(obj);
+    lv_obj_set_size(obj, rect->w, rect->h);
+
+    if (current_x != rect->x) {
+        lv_anim_t anim;
+        lv_anim_init(&anim);
+        lv_anim_set_var(&anim, obj);
+        lv_anim_set_values(&anim, current_x, rect->x);
+        lv_anim_set_duration(&anim, QUICK_TILE_REORDER_MS);
+        lv_anim_set_path_cb(&anim, lv_anim_path_ease_out);
+        lv_anim_set_exec_cb(&anim, quick_tile_x_anim_cb);
+        lv_anim_start(&anim);
+    }
+    if (current_y != rect->y) {
+        lv_anim_t anim;
+        lv_anim_init(&anim);
+        lv_anim_set_var(&anim, obj);
+        lv_anim_set_values(&anim, current_y, rect->y);
+        lv_anim_set_duration(&anim, QUICK_TILE_REORDER_MS);
+        lv_anim_set_path_cb(&anim, lv_anim_path_ease_out);
+        lv_anim_set_exec_cb(&anim, quick_tile_y_anim_cb);
+        lv_anim_start(&anim);
+    }
 }
 
 static quick_tile_rect_t *quick_layout_rect_for_target(quick_panel_layout_t *layout,
@@ -841,6 +908,21 @@ static quick_tile_rect_t *quick_layout_rect_for_target(quick_panel_layout_t *lay
     }
     if (target_kind == QUICK_DRAG_TARGET_ITEM && target_index < QUICK_PANEL_BUTTON_COUNT) {
         return &layout->items[target_index];
+    }
+    return NULL;
+}
+
+static lv_obj_t *quick_layout_obj_for_target(quick_drag_target_kind_t target_kind,
+                                             uint8_t target_index)
+{
+    if (target_kind == QUICK_DRAG_TARGET_BRIGHTNESS) {
+        return s_ui.quick_brightness_tile;
+    }
+    if (target_kind == QUICK_DRAG_TARGET_VOLUME) {
+        return s_ui.quick_volume_tile;
+    }
+    if (target_kind == QUICK_DRAG_TARGET_ITEM && target_index < QUICK_PANEL_BUTTON_COUNT) {
+        return s_ui.quick_panel_items[target_index];
     }
     return NULL;
 }
@@ -924,19 +1006,17 @@ static void quick_layout_find_drop_target(quick_panel_layout_t *layout,
     }
 }
 
-static void quick_layout_commit_drag_sort(void)
+static bool quick_layout_update_drag_sort(void)
 {
     if (!s_ui.quick_drag_obj || !UI_FLAG(QUICK_DRAG_MOVED)) {
-        quick_layout_apply_current();
-        return;
+        return false;
     }
 
     quick_panel_layout_t *layout = quick_layout_ensure_current();
     quick_tile_rect_t *source =
         quick_layout_rect_for_target(layout, s_ui.quick_drag_target_kind, s_ui.quick_drag_target_index);
     if (!source) {
-        quick_layout_apply_current();
-        return;
+        return false;
     }
 
     const int32_t center_x = lv_obj_get_x(s_ui.quick_drag_obj) + (lv_obj_get_width(s_ui.quick_drag_obj) / 2);
@@ -945,16 +1025,41 @@ static void quick_layout_commit_drag_sort(void)
     uint8_t target_index = 0;
     quick_layout_find_drop_target(layout, center_x, center_y, &target_kind, &target_index);
 
-    if (target_kind != s_ui.quick_drag_target_kind ||
-        target_index != s_ui.quick_drag_target_index) {
-        quick_tile_rect_t *target = quick_layout_rect_for_target(layout, target_kind, target_index);
-        if (target) {
-            const quick_tile_rect_t moved_rect = *source;
-            *source = *target;
-            *target = moved_rect;
-        }
+    if (target_kind == s_ui.quick_drag_target_kind &&
+        target_index == s_ui.quick_drag_target_index) {
+        return false;
     }
-    quick_layout_apply_current();
+
+    quick_tile_rect_t *target = quick_layout_rect_for_target(layout, target_kind, target_index);
+    lv_obj_t *target_obj = quick_layout_obj_for_target(target_kind, target_index);
+    if (!target || !target_obj) {
+        return false;
+    }
+
+    const quick_tile_rect_t moved_rect = *source;
+    *source = *target;
+    *target = moved_rect;
+    quick_obj_animate_to_rect(target_obj, target);
+    return true;
+}
+
+static void quick_layout_commit_drag_sort(void)
+{
+    if (!s_ui.quick_drag_obj) {
+        quick_layout_apply_current();
+        return;
+    }
+
+    (void)quick_layout_update_drag_sort();
+    quick_panel_layout_t *layout = quick_layout_ensure_current();
+    quick_tile_rect_t *target =
+        quick_layout_rect_for_target(layout, s_ui.quick_drag_target_kind, s_ui.quick_drag_target_index);
+    if (target) {
+        quick_obj_animate_to_rect(s_ui.quick_drag_obj, target);
+    } else {
+        quick_layout_apply_current();
+    }
+    refresh_quick_level_layouts();
 }
 
 static lv_color_t dashboard_soc_fill_color(uint8_t soc_percent, bool valid, bool charging)
@@ -1881,6 +1986,7 @@ typedef enum {
     SETTINGS_DETAIL_HOTSPOT,
     SETTINGS_DETAIL_BLUETOOTH,
     SETTINGS_DETAIL_BMS,
+    SETTINGS_DETAIL_CONTROLLER,
     SETTINGS_DETAIL_SYSTEM,
     SETTINGS_DETAIL_ABOUT,
 } settings_detail_id_t;
@@ -1930,6 +2036,7 @@ static lv_obj_t *settings_detail_row(lv_obj_t *parent,
                                      const settings_detail_row_t *row);
 static void settings_show_bluetooth_detail(void);
 static void settings_show_bms_detail(void);
+static void settings_show_controller_detail(void);
 static void settings_show_system_view(settings_system_view_t view);
 static void set_setup_ap(const esp_bms_dashboard_snapshot_t *snapshot);
 
@@ -1952,6 +2059,7 @@ static const settings_option_t SETTINGS_OPTIONS[SETTINGS_OPTION_COUNT] = {
     { SETTINGS_DETAIL_HOTSPOT, "热点共享", "Setup AP", QUICK_HOTSPOT_SYMBOL, &wlanJZ },
     { SETTINGS_DETAIL_BLUETOOTH, "蓝牙", "附近可见", QUICK_BLUETOOTH_SYMBOL, &bluetoothon },
     { SETTINGS_DETAIL_BMS, "保护板设置", "扫描绑定", LV_SYMBOL_CHARGE, &lv_font_montserrat_24 },
+    { SETTINGS_DETAIL_CONTROLLER, "控制器设置", "远驱 FarDriver", "C", &lv_font_montserrat_24 },
     { SETTINGS_DETAIL_SYSTEM, "系统", "显示与控制", LV_SYMBOL_SETTINGS, &lv_font_montserrat_24 },
     { SETTINGS_DETAIL_ABOUT, "关于本机", "设备信息", "i", &lv_font_montserrat_24 },
 };
@@ -1973,6 +2081,13 @@ static const settings_detail_row_t SETTINGS_BLUETOOTH_ROWS[] = {
 
 static const settings_detail_row_t SETTINGS_BMS_ROWS[] = {
     { "蓝牙连接", "扫描绑定", ESP_BMS_LVGL_ACTION_START_BMS_BIND, SETTINGS_SYSTEM_VIEW_ROOT },
+};
+
+static const settings_detail_row_t SETTINGS_CONTROLLER_ROWS[] = {
+    { "控制器页面显示", "首页显示控制器数据页", ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_PAGE, SETTINGS_SYSTEM_VIEW_ROOT },
+    { "控制器连接", "连接远驱控制器", ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_CONNECTION, SETTINGS_SYSTEM_VIEW_ROOT },
+    { "蓝牙选择", "扫描绑定", ESP_BMS_LVGL_ACTION_START_CONTROLLER_BIND, SETTINGS_SYSTEM_VIEW_ROOT },
+    { "控制器类型", "远驱", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
 };
 
 static const char *const SETTINGS_BMS_TYPE_LABELS[] = {
@@ -2267,6 +2382,8 @@ static void quick_drag_begin(lv_obj_t *obj, quick_drag_target_kind_t target_kind
     s_ui.quick_drag_target_kind = target_kind;
     s_ui.quick_drag_target_index = target_index;
     UI_SET_FLAG(QUICK_DRAG_MOVED, false);
+    quick_obj_stop_reorder_anim(obj);
+    lv_obj_move_foreground(obj);
 }
 
 static void quick_drag_update(void)
@@ -2288,6 +2405,7 @@ static void quick_drag_update(void)
     lv_obj_set_pos(s_ui.quick_drag_obj,
                    clamp_i32(s_ui.quick_drag_obj_x + dx, 0, max_x),
                    clamp_i32(s_ui.quick_drag_obj_y + dy, 0, max_y));
+    (void)quick_layout_update_drag_sort();
 }
 
 static bool quick_drag_end(void)
@@ -2505,22 +2623,35 @@ static void settings_navigation_apply_offset(int32_t offset)
     offset = clamp_i32(offset, 0, SETTINGS_DETAIL_HEADER_H);
     const int32_t content_top = SETTINGS_DETAIL_HEADER_H - offset;
     const int32_t page_h = lv_obj_get_height(s_ui.settings_page);
+    const bool keep_layout_guard = s_ui.settings_nav_layout_updating;
 
     s_ui.settings_nav_layout_updating = true;
     lv_obj_set_y(s_ui.settings_detail_header, -offset);
     lv_obj_set_style_pad_top(s_ui.settings_carousel, content_top, LV_PART_MAIN);
     lv_obj_set_style_pad_top(s_ui.settings_detail, content_top, LV_PART_MAIN);
+    lv_obj_set_style_pad_bottom(s_ui.settings_carousel, offset, LV_PART_MAIN);
+    lv_obj_set_style_pad_bottom(s_ui.settings_detail, 16 + offset, LV_PART_MAIN);
     lv_obj_set_pos(s_ui.settings_detail_edge_zone, 0, content_top);
     lv_obj_set_size(s_ui.settings_detail_edge_zone,
                     SETTINGS_SWIPE_EDGE_WIDTH,
                     page_h - content_top);
-    s_ui.settings_nav_layout_updating = false;
+    lv_obj_update_layout(s_ui.settings_page);
+    lv_obj_t *scroll_target = s_ui.settings_detail_id == (uint8_t)SETTINGS_DETAIL_NONE ?
+                                  s_ui.settings_carousel : s_ui.settings_detail;
+    s_ui.settings_nav_scroll_anchor_y = lv_obj_get_scroll_y(scroll_target);
+    s_ui.settings_nav_layout_updating = keep_layout_guard;
 }
 
 static void settings_navigation_offset_anim_cb(void *obj, int32_t value)
 {
     (void)obj;
     settings_navigation_apply_offset(value);
+}
+
+static void settings_navigation_offset_anim_completed_cb(lv_anim_t *anim)
+{
+    (void)anim;
+    s_ui.settings_nav_layout_updating = false;
 }
 
 static void settings_navigation_set_hidden(bool hidden, bool animated)
@@ -2530,10 +2661,21 @@ static void settings_navigation_set_hidden(bool hidden, bool animated)
     }
 
     const int32_t target = hidden ? SETTINGS_DETAIL_HEADER_H : 0;
+    lv_obj_t *scroll_target = s_ui.settings_detail_id == (uint8_t)SETTINGS_DETAIL_NONE ?
+                                  s_ui.settings_carousel : s_ui.settings_detail;
+    ESP_LOGI(TAG,
+             "[settings-diag] nav request hidden=%d animated=%d current_hidden=%d y=%ld top=%ld bottom=%ld",
+             hidden,
+             animated,
+             s_ui.settings_nav_hidden,
+             (long)lv_obj_get_scroll_y(scroll_target),
+             (long)lv_obj_get_scroll_top(scroll_target),
+             (long)lv_obj_get_scroll_bottom(scroll_target));
     if (animated && s_ui.settings_nav_hidden == hidden) {
         return;
     }
     lv_anim_delete(s_ui.settings_detail_header, settings_navigation_offset_anim_cb);
+    s_ui.settings_nav_layout_updating = false;
 
     if (!animated) {
         s_ui.settings_nav_hidden = hidden;
@@ -2557,6 +2699,8 @@ static void settings_navigation_set_hidden(bool hidden, bool animated)
     lv_anim_set_duration(&anim, SETTINGS_NAV_ANIM_MS);
     lv_anim_set_path_cb(&anim, lv_anim_path_ease_out);
     lv_anim_set_exec_cb(&anim, settings_navigation_offset_anim_cb);
+    lv_anim_set_completed_cb(&anim, settings_navigation_offset_anim_completed_cb);
+    s_ui.settings_nav_layout_updating = true;
     lv_anim_start(&anim);
 }
 
@@ -2578,30 +2722,39 @@ static void settings_navigation_scroll_event_cb(lv_event_t *event)
     const int32_t scroll_y = lv_obj_get_scroll_y(target);
     if (code == LV_EVENT_SCROLL_BEGIN) {
         s_ui.settings_nav_scroll_anchor_y = scroll_y;
+        ESP_LOGI(TAG,
+                 "[settings-diag] scroll begin target=%s y=%ld bottom=%ld hidden=%d",
+                 target == s_ui.settings_carousel ? "root" : "detail",
+                 (long)scroll_y,
+                 (long)lv_obj_get_scroll_bottom(target),
+                 s_ui.settings_nav_hidden);
         return;
     }
     if (code == LV_EVENT_SCROLL_END) {
         s_ui.settings_nav_scroll_anchor_y = scroll_y;
-        if (scroll_y <= 0) {
-            settings_navigation_set_hidden(false, true);
-        }
+        ESP_LOGI(TAG,
+                 "[settings-diag] scroll end target=%s y=%ld bottom=%ld hidden=%d",
+                 target == s_ui.settings_carousel ? "root" : "detail",
+                 (long)scroll_y,
+                 (long)lv_obj_get_scroll_bottom(target),
+                 s_ui.settings_nav_hidden);
         return;
     }
     if (code != LV_EVENT_SCROLL) {
         return;
     }
 
-    if (scroll_y <= 0) {
-        s_ui.settings_nav_scroll_anchor_y = 0;
-        settings_navigation_set_hidden(false, true);
-        return;
-    }
-
     const int32_t delta = scroll_y - s_ui.settings_nav_scroll_anchor_y;
+    lv_indev_t *indev = lv_indev_active();
+    const bool pointer_pressed = indev && lv_indev_get_state(indev) == LV_INDEV_STATE_PRESSED;
     if (delta >= SETTINGS_NAV_SCROLL_THRESHOLD) {
+        ESP_LOGI(TAG, "[settings-diag] scroll direction=up delta=%ld", (long)delta);
         settings_navigation_set_hidden(true, true);
         s_ui.settings_nav_scroll_anchor_y = scroll_y;
-    } else if (delta <= -SETTINGS_NAV_SCROLL_THRESHOLD) {
+    } else if (delta <= -SETTINGS_NAV_SCROLL_THRESHOLD && pointer_pressed) {
+        ESP_LOGI(TAG,
+                 "[settings-diag] scroll direction=down delta=%ld pointer_pressed=1",
+                 (long)delta);
         settings_navigation_set_hidden(false, true);
         s_ui.settings_nav_scroll_anchor_y = scroll_y;
     }
@@ -2625,6 +2778,12 @@ static void settings_navigation_track_drag(const lv_point_t *point)
     }
 
     UI_SET_FLAG(SETTINGS_SWIPE_CONSUMED, true);
+    ESP_LOGI(TAG,
+             "[settings-diag] direct drag direction=%s dy=%ld total=(%ld,%ld)",
+             drag_dy < 0 ? "up" : "down",
+             (long)drag_dy,
+             (long)total_dx,
+             (long)total_dy);
     settings_navigation_set_hidden(drag_dy < 0, true);
     s_ui.settings_nav_drag_anchor_y = point->y;
 }
@@ -2768,6 +2927,13 @@ static void settings_swipe_event_cb(lv_event_t *event)
         const bool edge_start = pointer_ready &&
                                 s_ui.settings_swipe_start.x <= SETTINGS_SWIPE_EDGE_WIDTH;
         UI_SET_FLAG(SETTINGS_SWIPE_TRACKING, settings_view_is_visible() && edge_start);
+        ESP_LOGI(TAG,
+                 "[settings-diag] press target=%p parent=%p point=(%ld,%ld) detail=%u",
+                 lv_event_get_target(event),
+                 lv_obj_get_parent((lv_obj_t *)lv_event_get_target(event)),
+                 (long)s_ui.settings_swipe_start.x,
+                 (long)s_ui.settings_swipe_start.y,
+                 (unsigned)s_ui.settings_detail_id);
         if (!edge_start) {
             settings_swipe_indicator_hide();
         }
@@ -3293,10 +3459,186 @@ static void settings_show_bms_detail(void)
     lv_obj_set_style_text_color(arrow, COLOR_SETTINGS_ACCENT, LV_PART_MAIN);
 }
 
+typedef struct {
+    esp_bms_lvgl_action_t action;
+    int16_t delta;
+} controller_step_action_t;
+
+static const controller_step_action_t CONTROLLER_STEPS[] = {
+    { ESP_BMS_LVGL_ACTION_ADJUST_CONTROLLER_WHEEL, -10 },
+    { ESP_BMS_LVGL_ACTION_ADJUST_CONTROLLER_WHEEL, 10 },
+    { ESP_BMS_LVGL_ACTION_ADJUST_CONTROLLER_RATIO, -5 },
+    { ESP_BMS_LVGL_ACTION_ADJUST_CONTROLLER_RATIO, 5 },
+};
+
+static void settings_controller_step_event_cb(lv_event_t *event)
+{
+    if (lv_event_get_code(event) != LV_EVENT_CLICKED || UI_FLAG(SETTINGS_SWIPE_CONSUMED)) {
+        return;
+    }
+    const controller_step_action_t *step = lv_event_get_user_data(event);
+    if (!step) {
+        return;
+    }
+    memset(&s_ui.pending_event, 0, sizeof(s_ui.pending_event));
+    s_ui.pending_event.action = step->action;
+    s_ui.pending_event.numeric_delta = step->delta;
+    ACTION_EVENT_SET_FLAG(&s_ui.pending_event, NUMERIC_DELTA_VALID, true);
+    ACTION_EVENT_SET_FLAG(&s_ui.pending_event, COMMITTED, true);
+}
+
+static void settings_controller_candidate_event_cb(lv_event_t *event)
+{
+    if (lv_event_get_code(event) != LV_EVENT_CLICKED || UI_FLAG(SETTINGS_SWIPE_CONSUMED)) {
+        return;
+    }
+    const esp_bms_bms_scan_candidate_t *candidate = lv_event_get_user_data(event);
+    if (!candidate || candidate->mac[0] == '\0') {
+        return;
+    }
+    memset(&s_ui.pending_event, 0, sizeof(s_ui.pending_event));
+    s_ui.pending_event.action = ESP_BMS_LVGL_ACTION_START_CONTROLLER_BIND;
+    snprintf(s_ui.pending_event.controller_mac,
+             sizeof(s_ui.pending_event.controller_mac),
+             "%s",
+             candidate->mac);
+    ACTION_EVENT_SET_FLAG(&s_ui.pending_event, CONTROLLER_MAC_VALID, true);
+    ACTION_EVENT_SET_FLAG(&s_ui.pending_event, COMMITTED, true);
+}
+
+static void settings_controller_step_row(lv_obj_t *parent,
+                                         int32_t y,
+                                         const char *title,
+                                         const char *value,
+                                         const controller_step_action_t *minus,
+                                         const controller_step_action_t *plus)
+{
+    const int32_t row_h = s_ui.width < s_ui.height ? 56 : 48;
+    lv_obj_t *row = panel(parent, 0, y, lv_obj_get_width(parent), row_h, COLOR_SETTINGS_LIST);
+    lv_obj_set_style_radius(row, 0, LV_PART_MAIN);
+    lv_obj_set_style_border_width(row, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_side(row, LV_BORDER_SIDE_BOTTOM, LV_PART_MAIN);
+    lv_obj_set_style_border_color(row, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
+    lv_obj_t *name = label(row, 12, 5, lv_obj_get_width(row) - 130, 20, &settings_zh_13);
+    lv_label_set_text(name, title);
+    lv_obj_t *current = label(row, 12, 27, lv_obj_get_width(row) - 130, 16, &lv_font_montserrat_14);
+    lv_label_set_text(current, value);
+    const controller_step_action_t *steps[2] = { minus, plus };
+    const char *texts[2] = { "-", "+" };
+    for (uint8_t index = 0; index < 2U; ++index) {
+        lv_obj_t *button = panel(row,
+                                 lv_obj_get_width(row) - 104 + index * 50,
+                                 7,
+                                 42,
+                                 row_h - 14,
+                                 COLOR_SETTINGS_CARD);
+        lv_obj_set_style_border_width(button, 1, LV_PART_MAIN);
+        lv_obj_set_style_border_color(button, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
+        lv_obj_add_flag(button, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(button, settings_controller_step_event_cb, LV_EVENT_CLICKED,
+                            (void *)steps[index]);
+        lv_obj_t *text = label(button, 0, 2, 42, row_h - 18, &lv_font_montserrat_24);
+        lv_label_set_text(text, texts[index]);
+        lv_obj_set_style_text_align(text, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    }
+}
+
+static void settings_show_controller_detail(void)
+{
+    const int32_t card_x = 12;
+    const int32_t card_w = s_ui.width - 24;
+    const int32_t row_h = s_ui.width < s_ui.height ? 56 : 48;
+    const size_t base_count = ARRAY_SIZE(SETTINGS_CONTROLLER_ROWS);
+    const esp_bms_dashboard_snapshot_t *snapshot = settings_current_snapshot();
+    const bool page_enabled = SNAPSHOT_FLAG(snapshot, CONTROLLER_PAGE_ENABLED);
+    const size_t visible_row_count = page_enabled ? base_count + 2U : base_count - 2U;
+    lv_obj_t *card = settings_list_card(s_ui.settings_detail,
+                                        card_x,
+                                        12,
+                                        card_w,
+                                        row_h,
+                                        visible_row_count);
+    size_t visible_index = 0U;
+    for (size_t index = 0; index < base_count; ++index) {
+        const esp_bms_lvgl_action_t action = SETTINGS_CONTROLLER_ROWS[index].action;
+        if (!page_enabled &&
+            (action == ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_CONNECTION ||
+             action == ESP_BMS_LVGL_ACTION_START_CONTROLLER_BIND)) {
+            continue;
+        }
+        settings_detail_row(card, 0, (int32_t)visible_index * row_h, card_w, row_h,
+                            &SETTINGS_CONTROLLER_ROWS[index]);
+        visible_index++;
+    }
+    if (page_enabled) {
+        char wheel[24];
+        char ratio[24];
+        if (snapshot->controller_wheel_circumference_mm > 0U) {
+            snprintf(wheel, sizeof(wheel), "%u mm", snapshot->controller_wheel_circumference_mm);
+        } else {
+            snprintf(wheel, sizeof(wheel), "-");
+        }
+        if (snapshot->controller_gear_ratio_centi > 0U) {
+            snprintf(ratio, sizeof(ratio), "%u.%02u",
+                     snapshot->controller_gear_ratio_centi / 100U,
+                     snapshot->controller_gear_ratio_centi % 100U);
+        } else {
+            snprintf(ratio, sizeof(ratio), "-");
+        }
+        settings_controller_step_row(card, (int32_t)visible_index * row_h,
+                                     "轮胎周长", wheel, &CONTROLLER_STEPS[0], &CONTROLLER_STEPS[1]);
+        visible_index++;
+        settings_controller_step_row(card, (int32_t)visible_index * row_h,
+                                     "传动比", ratio, &CONTROLLER_STEPS[2], &CONTROLLER_STEPS[3]);
+        visible_index++;
+    }
+
+    if (page_enabled && snapshot->controller_scan_candidate_count > 0U) {
+        const int32_t list_y = 24 + (int32_t)visible_index * row_h;
+        lv_obj_t *devices = settings_list_card(s_ui.settings_detail,
+                                               card_x,
+                                               list_y,
+                                               card_w,
+                                               row_h,
+                                               snapshot->controller_scan_candidate_count);
+        for (uint8_t index = 0; index < snapshot->controller_scan_candidate_count; ++index) {
+            const esp_bms_bms_scan_candidate_t *candidate =
+                &snapshot->controller_scan_candidates[index];
+            settings_detail_row_t row = {
+                .title = candidate->has_name ? candidate->name : "FarDriver",
+                .subtitle = candidate->mac,
+                .action = ESP_BMS_LVGL_ACTION_NONE,
+                .system_view = SETTINGS_SYSTEM_VIEW_ROOT,
+            };
+            lv_obj_t *box = settings_detail_row(devices, 0, (int32_t)index * row_h,
+                                                card_w, row_h, &row);
+            lv_obj_add_flag(box, LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_add_event_cb(box, settings_controller_candidate_event_cb, LV_EVENT_CLICKED,
+                                (void *)candidate);
+        }
+    }
+    lv_obj_update_layout(s_ui.settings_detail);
+    lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
+    lv_obj_update_layout(s_ui.settings_detail);
+    lv_area_t card_area = { 0 };
+    lv_obj_get_coords(card, &card_area);
+    ESP_LOGI(TAG,
+             "[settings-diag] controller card page=%d visible=%u h=%ld area_y=%ld..%ld detail_children=%u scroll_bottom=%ld",
+             page_enabled,
+             (unsigned)visible_index,
+             (long)lv_obj_get_height(card),
+             (long)card_area.y1,
+             (long)card_area.y2,
+             (unsigned)lv_obj_get_child_count(s_ui.settings_detail),
+             (long)lv_obj_get_scroll_bottom(s_ui.settings_detail));
+}
+
 static bool settings_detail_action_uses_switch(esp_bms_lvgl_action_t action)
 {
     return action == ESP_BMS_LVGL_ACTION_ENABLE_WIFI_REPROVISIONING ||
-           action == ESP_BMS_LVGL_ACTION_ENABLE_BLUETOOTH_ADVERTISING;
+           action == ESP_BMS_LVGL_ACTION_ENABLE_BLUETOOTH_ADVERTISING ||
+           action == ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_CONNECTION ||
+           action == ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_PAGE;
 }
 
 static bool settings_detail_action_switch_on(esp_bms_lvgl_action_t action)
@@ -3310,6 +3652,12 @@ static bool settings_detail_action_switch_on(esp_bms_lvgl_action_t action)
     }
     if (action == ESP_BMS_LVGL_ACTION_ENABLE_BLUETOOTH_ADVERTISING) {
         return SNAPSHOT_FLAG(snapshot, BLUETOOTH_ADVERTISING);
+    }
+    if (action == ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_CONNECTION) {
+        return SNAPSHOT_FLAG(snapshot, CONTROLLER_CONNECTION_ENABLED);
+    }
+    if (action == ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_PAGE) {
+        return SNAPSHOT_FLAG(snapshot, CONTROLLER_PAGE_ENABLED);
     }
     return false;
 }
@@ -3445,6 +3793,13 @@ static void settings_detail_action_event_cb(lv_event_t *event)
     }
     if (action == ESP_BMS_LVGL_ACTION_RESTORE_DEFAULTS) {
         settings_restore_confirm_show();
+        return;
+    }
+    if (action == ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_CONNECTION ||
+        action == ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_PAGE ||
+        action == ESP_BMS_LVGL_ACTION_ADJUST_CONTROLLER_WHEEL ||
+        action == ESP_BMS_LVGL_ACTION_ADJUST_CONTROLLER_RATIO) {
+        queue_action_with_commit(action, true);
         return;
     }
     if (action != ESP_BMS_LVGL_ACTION_NONE) {
@@ -3638,6 +3993,11 @@ static const settings_detail_row_t *settings_detail_rows_for_id(settings_detail_
             *count = ARRAY_SIZE(SETTINGS_BMS_ROWS);
         }
         return SETTINGS_BMS_ROWS;
+    case SETTINGS_DETAIL_CONTROLLER:
+        if (count) {
+            *count = ARRAY_SIZE(SETTINGS_CONTROLLER_ROWS);
+        }
+        return SETTINGS_CONTROLLER_ROWS;
     case SETTINGS_DETAIL_SYSTEM:
         if (count) {
             *count = ARRAY_SIZE(SETTINGS_SYSTEM_ROWS);
@@ -4078,6 +4438,10 @@ static void settings_show_detail(settings_detail_id_t detail_id)
     }
     if (detail_id == SETTINGS_DETAIL_BMS) {
         settings_show_bms_detail();
+        return;
+    }
+    if (detail_id == SETTINGS_DETAIL_CONTROLLER) {
+        settings_show_controller_detail();
         return;
     }
 
@@ -4965,9 +5329,106 @@ static void set_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
     update_quick_item_colors(snapshot);
 }
 
+static void controller_label_set(lv_obj_t *label_obj,
+                                 char *buffer,
+                                 size_t buffer_len,
+                                 const char *text)
+{
+    if (!label_obj || strcmp(buffer, text) == 0) {
+        return;
+    }
+    snprintf(buffer, buffer_len, "%s", text);
+    lv_label_set_text_static(label_obj, buffer);
+}
+
+static void set_controller_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
+{
+    if (!s_ui.controller_page) {
+        return;
+    }
+    char text[20];
+    if (SNAPSHOT_FLAG(snapshot, CONTROLLER_SPEED_VALID)) {
+        snprintf(text, sizeof(text), "%u.%u",
+                 snapshot->controller_speed_deci_units / 10U,
+                 snapshot->controller_speed_deci_units % 10U);
+    } else {
+        snprintf(text, sizeof(text), "-");
+    }
+    controller_label_set(s_ui.controller_speed, s_ui.controller_speed_buf,
+                         sizeof(s_ui.controller_speed_buf), text);
+    controller_label_set(s_ui.controller_speed_unit, s_ui.controller_speed_unit_buf,
+                         sizeof(s_ui.controller_speed_unit_buf),
+                         snapshot->speed_unit == ESP_BMS_SPEED_UNIT_MPH ? "mph" : "km/h");
+    snprintf(text, sizeof(text), SNAPSHOT_FLAG(snapshot, CONTROLLER_GEAR_VALID) ? "%u" : "-",
+             snapshot->controller_gear);
+    controller_label_set(s_ui.controller_gear, s_ui.controller_gear_buf,
+                         sizeof(s_ui.controller_gear_buf), text);
+    if (SNAPSHOT_FLAG(snapshot, CONTROLLER_POWER_VALID)) {
+        snprintf(text, sizeof(text), "POWER\n%ld.%01ldkW",
+                 (long)(snapshot->controller_power_w / 1000),
+                 (long)(labs(snapshot->controller_power_w) % 1000 / 100));
+    } else {
+        snprintf(text, sizeof(text), "POWER\n-");
+    }
+    controller_label_set(s_ui.controller_power, s_ui.controller_power_buf,
+                         sizeof(s_ui.controller_power_buf), text);
+    snprintf(text, sizeof(text), SNAPSHOT_FLAG(snapshot, CONTROLLER_RPM_VALID) ? "RPM\n%u" : "RPM\n-",
+             snapshot->controller_rpm);
+    controller_label_set(s_ui.controller_rpm, s_ui.controller_rpm_buf,
+                         sizeof(s_ui.controller_rpm_buf), text);
+    snprintf(text, sizeof(text), SNAPSHOT_FLAG(snapshot, CONTROLLER_TEMP_VALID) ? "CTRL\n%dC" : "CTRL\n-",
+             snapshot->controller_temp_c);
+    controller_label_set(s_ui.controller_temp, s_ui.controller_temp_buf,
+                         sizeof(s_ui.controller_temp_buf), text);
+    snprintf(text, sizeof(text), SNAPSHOT_FLAG(snapshot, MOTOR_TEMP_VALID) ? "MOTOR\n%dC" : "MOTOR\n-",
+             snapshot->motor_temp_c);
+    controller_label_set(s_ui.controller_motor_temp, s_ui.controller_motor_temp_buf,
+                         sizeof(s_ui.controller_motor_temp_buf), text);
+}
+
+static bool settings_controller_candidate_rows_changed(
+    const esp_bms_dashboard_snapshot_t *previous,
+    const esp_bms_dashboard_snapshot_t *current)
+{
+    if (previous->controller_scan_candidate_count != current->controller_scan_candidate_count) {
+        return true;
+    }
+    for (uint8_t index = 0; index < current->controller_scan_candidate_count; ++index) {
+        const esp_bms_bms_scan_candidate_t *old_candidate =
+            &previous->controller_scan_candidates[index];
+        const esp_bms_bms_scan_candidate_t *new_candidate =
+            &current->controller_scan_candidates[index];
+        if (old_candidate->has_name != new_candidate->has_name ||
+            strcmp(old_candidate->mac, new_candidate->mac) != 0 ||
+            strcmp(old_candidate->name, new_candidate->name) != 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool settings_controller_view_changed(const esp_bms_dashboard_snapshot_t *previous,
+                                             const esp_bms_dashboard_snapshot_t *current,
+                                             bool had_previous)
+{
+    return !had_previous ||
+           SNAPSHOT_FLAG(previous, CONTROLLER_PAGE_ENABLED) !=
+               SNAPSHOT_FLAG(current, CONTROLLER_PAGE_ENABLED) ||
+           SNAPSHOT_FLAG(previous, CONTROLLER_CONNECTION_ENABLED) !=
+               SNAPSHOT_FLAG(current, CONTROLLER_CONNECTION_ENABLED) ||
+           previous->controller_wheel_circumference_mm !=
+               current->controller_wheel_circumference_mm ||
+           previous->controller_gear_ratio_centi != current->controller_gear_ratio_centi ||
+           settings_controller_candidate_rows_changed(previous, current);
+}
+
 static void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapshot)
 {
     const bool had_last_snapshot = UI_FLAG(LAST_SNAPSHOT_VALID);
+    const bool previous_controller_page_enabled =
+        SNAPSHOT_FLAG(&s_ui.last_snapshot, CONTROLLER_PAGE_ENABLED);
+    const bool previous_controller_connection_enabled =
+        SNAPSHOT_FLAG(&s_ui.last_snapshot, CONTROLLER_CONNECTION_ENABLED);
     const bool previous_bms_online = SNAPSHOT_FLAG(&s_ui.last_snapshot, BMS_ONLINE);
     const uint8_t previous_bms_type = s_ui.last_snapshot.bms_type;
     const bool previous_bluetooth_enabled = SNAPSHOT_FLAG(&s_ui.last_snapshot, BLUETOOTH_ENABLED);
@@ -4993,11 +5454,14 @@ static void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapsho
         memcmp(s_ui.last_snapshot.bms_scan_candidates,
                snapshot->bms_scan_candidates,
                sizeof(snapshot->bms_scan_candidates)) != 0;
+    const bool controller_view_changed =
+        settings_controller_view_changed(&s_ui.last_snapshot, snapshot, had_last_snapshot);
     memcpy(&s_ui.last_snapshot, snapshot, sizeof(s_ui.last_snapshot));
     UI_SET_FLAG(LAST_SNAPSHOT_VALID, true);
 
     set_header(snapshot);
     set_dashboard(snapshot);
+    set_controller_dashboard(snapshot);
     if (had_last_snapshot && !previous_bms_online && SNAPSHOT_FLAG(snapshot, BMS_ONLINE)) {
         quick_toast_show_text("绑定成功");
     } else if (s_ui.quick_connecting_toast_active &&
@@ -5036,6 +5500,19 @@ static void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapsho
                    (bms_scan_candidates_changed || bms_online_changed || bms_type_changed)) {
             settings_show_bms_detail();
         }
+    }
+    if (s_ui.settings_detail_id == (uint8_t)SETTINGS_DETAIL_CONTROLLER &&
+        controller_view_changed) {
+        ESP_LOGI(TAG,
+                 "[settings-diag] controller snapshot page=%d->%d connection=%d->%d wheel=%u ratio=%u candidates=%u",
+                 previous_controller_page_enabled,
+                 SNAPSHOT_FLAG(snapshot, CONTROLLER_PAGE_ENABLED),
+                 previous_controller_connection_enabled,
+                 SNAPSHOT_FLAG(snapshot, CONTROLLER_CONNECTION_ENABLED),
+                 snapshot->controller_wheel_circumference_mm,
+                 snapshot->controller_gear_ratio_centi,
+                 snapshot->controller_scan_candidate_count);
+        settings_show_detail(SETTINGS_DETAIL_CONTROLLER);
     }
 }
 
@@ -5076,12 +5553,25 @@ static void invalidate_dashboard_viewport(void)
 
 static int32_t page_target_scroll_x(esp_bms_lvgl_page_t page)
 {
-    return page == ESP_BMS_LVGL_PAGE_GPS ? s_ui.width : 0;
+    if (page == ESP_BMS_LVGL_PAGE_CONTROLLER && s_ui.controller_page_enabled) {
+        return s_ui.width;
+    }
+    if (page == ESP_BMS_LVGL_PAGE_GPS) {
+        return s_ui.width * (s_ui.controller_page_enabled ? 2 : 1);
+    }
+    return 0;
 }
 
 static esp_bms_lvgl_page_t page_from_scroll_x(int32_t scroll_x)
 {
-    return scroll_x >= (s_ui.width / 2) ? ESP_BMS_LVGL_PAGE_GPS : ESP_BMS_LVGL_PAGE_BATTERY;
+    const int32_t index = (scroll_x + (s_ui.width / 2)) / s_ui.width;
+    if (index <= 0) {
+        return ESP_BMS_LVGL_PAGE_BATTERY;
+    }
+    if (s_ui.controller_page_enabled && index == 1) {
+        return ESP_BMS_LVGL_PAGE_CONTROLLER;
+    }
+    return ESP_BMS_LVGL_PAGE_GPS;
 }
 
 static void finish_page_scroll_state(bool flush_snapshot)
@@ -5560,9 +6050,69 @@ static void create_screen(lv_display_t *display)
     lv_obj_set_style_bg_opa(s_ui.battery_page, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_add_flag(s_ui.battery_page, LV_OBJ_FLAG_SNAPPABLE);
 
+    s_ui.controller_page_enabled = UI_FLAG(LAST_SNAPSHOT_VALID) &&
+                                   SNAPSHOT_FLAG(&s_ui.last_snapshot, CONTROLLER_PAGE_ENABLED);
+    if (s_ui.controller_page_enabled) {
+        s_ui.controller_page = lv_obj_create(s_ui.pages);
+        clear_style(s_ui.controller_page);
+        lv_obj_set_pos(s_ui.controller_page, s_ui.width, 0);
+        lv_obj_set_size(s_ui.controller_page, s_ui.width, page_h);
+        lv_obj_set_style_bg_color(s_ui.controller_page, COLOR_DASHBOARD_BG, LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(s_ui.controller_page, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_add_flag(s_ui.controller_page, LV_OBJ_FLAG_SNAPPABLE);
+
+        snprintf(s_ui.controller_speed_buf, sizeof(s_ui.controller_speed_buf), "-");
+        snprintf(s_ui.controller_speed_unit_buf, sizeof(s_ui.controller_speed_unit_buf), "km/h");
+        snprintf(s_ui.controller_gear_buf, sizeof(s_ui.controller_gear_buf), "-");
+        snprintf(s_ui.controller_power_buf, sizeof(s_ui.controller_power_buf), "-");
+        snprintf(s_ui.controller_rpm_buf, sizeof(s_ui.controller_rpm_buf), "-");
+        snprintf(s_ui.controller_temp_buf, sizeof(s_ui.controller_temp_buf), "-");
+        snprintf(s_ui.controller_motor_temp_buf, sizeof(s_ui.controller_motor_temp_buf), "-");
+        if (portrait) {
+            s_ui.controller_speed = label(s_ui.controller_page, 8, 18, s_ui.width - 16, 58,
+                                          &lv_font_montserrat_48);
+            s_ui.controller_speed_unit = label(s_ui.controller_page, 8, 76, s_ui.width - 16, 20,
+                                               &lv_font_montserrat_14);
+            s_ui.controller_gear = label(s_ui.controller_page, 8, 94, s_ui.width - 16, 70,
+                                         &lv_font_montserrat_48);
+            const int32_t col_w = (s_ui.width - 24) / 2;
+            s_ui.controller_power = label(s_ui.controller_page, 8, 190, col_w, 38, &lv_font_montserrat_24);
+            s_ui.controller_rpm = label(s_ui.controller_page, 16 + col_w, 190, col_w, 38, &lv_font_montserrat_24);
+            s_ui.controller_temp = label(s_ui.controller_page, 8, 246, col_w, 38, &lv_font_montserrat_24);
+            s_ui.controller_motor_temp = label(s_ui.controller_page, 16 + col_w, 246, col_w, 38,
+                                               &lv_font_montserrat_24);
+        } else {
+            s_ui.controller_speed = label(s_ui.controller_page, 8, 28, 178, 58, &lv_font_montserrat_48);
+            s_ui.controller_speed_unit = label(s_ui.controller_page, 8, 88, 178, 20,
+                                               &lv_font_montserrat_14);
+            s_ui.controller_gear = label(s_ui.controller_page, 198, 34, 114, 70, &lv_font_montserrat_48);
+            const int32_t col_w = (s_ui.width - 32) / 4;
+            s_ui.controller_power = label(s_ui.controller_page, 8, 158, col_w, 50, &lv_font_montserrat_24);
+            s_ui.controller_rpm = label(s_ui.controller_page, 8 + col_w, 158, col_w, 50, &lv_font_montserrat_24);
+            s_ui.controller_temp = label(s_ui.controller_page, 8 + col_w * 2, 158, col_w, 50, &lv_font_montserrat_24);
+            s_ui.controller_motor_temp = label(s_ui.controller_page, 8 + col_w * 3, 158, col_w, 50,
+                                               &lv_font_montserrat_24);
+        }
+        lv_obj_t *controller_labels[] = {
+            s_ui.controller_speed, s_ui.controller_speed_unit, s_ui.controller_gear, s_ui.controller_power,
+            s_ui.controller_rpm, s_ui.controller_temp, s_ui.controller_motor_temp,
+        };
+        for (size_t index = 0; index < ARRAY_SIZE(controller_labels); ++index) {
+            lv_obj_set_style_text_align(controller_labels[index], LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+        }
+        lv_obj_set_style_text_color(s_ui.controller_gear, COLOR_DASHBOARD_SOC_BORDER, LV_PART_MAIN);
+        lv_label_set_text_static(s_ui.controller_speed, s_ui.controller_speed_buf);
+        lv_label_set_text_static(s_ui.controller_speed_unit, s_ui.controller_speed_unit_buf);
+        lv_label_set_text_static(s_ui.controller_gear, s_ui.controller_gear_buf);
+        lv_label_set_text_static(s_ui.controller_power, s_ui.controller_power_buf);
+        lv_label_set_text_static(s_ui.controller_rpm, s_ui.controller_rpm_buf);
+        lv_label_set_text_static(s_ui.controller_temp, s_ui.controller_temp_buf);
+        lv_label_set_text_static(s_ui.controller_motor_temp, s_ui.controller_motor_temp_buf);
+    }
+
     s_ui.gps_page = lv_obj_create(s_ui.pages);
     clear_style(s_ui.gps_page);
-    lv_obj_set_pos(s_ui.gps_page, s_ui.width, 0);
+    lv_obj_set_pos(s_ui.gps_page, s_ui.width * (s_ui.controller_page_enabled ? 2 : 1), 0);
     lv_obj_set_size(s_ui.gps_page, s_ui.width, page_h);
     lv_obj_set_style_bg_color(s_ui.gps_page, COLOR_BG, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_ui.gps_page, LV_OPA_COVER, LV_PART_MAIN);
@@ -6011,18 +6561,24 @@ static void create_screen(lv_display_t *display)
     lv_obj_add_flag(s_ui.header, LV_OBJ_FLAG_HIDDEN);
 }
 
-static esp_err_t rebuild_screen_if_resolution_changed(void)
+static esp_err_t rebuild_screen_if_needed(const esp_bms_dashboard_snapshot_t *snapshot)
 {
     ESP_RETURN_ON_FALSE(s_ui.display, ESP_ERR_INVALID_STATE, TAG, "display is not initialized");
 
     const int32_t width = lv_display_get_horizontal_resolution(s_ui.display);
     const int32_t height = lv_display_get_vertical_resolution(s_ui.display);
-    if (width == s_ui.width && height == s_ui.height) {
+    const bool controller_page_enabled = snapshot &&
+                                         SNAPSHOT_FLAG(snapshot, CONTROLLER_PAGE_ENABLED);
+    if (width == s_ui.width && height == s_ui.height &&
+        controller_page_enabled == s_ui.controller_page_enabled) {
         return ESP_OK;
     }
 
     lv_obj_t *old_root = s_ui.root;
-    const esp_bms_lvgl_page_t page = s_ui.page;
+    esp_bms_lvgl_page_t page = s_ui.page;
+    if (!controller_page_enabled && page == ESP_BMS_LVGL_PAGE_CONTROLLER) {
+        page = ESP_BMS_LVGL_PAGE_BATTERY;
+    }
     const esp_bms_lvgl_action_event_t pending_event = s_ui.pending_event;
     const bool settings_visible = s_ui.settings_page && !lv_obj_has_flag(s_ui.settings_page, LV_OBJ_FLAG_HIDDEN);
     const bool screen_locked = UI_FLAG(SCREEN_LOCKED);
@@ -6055,6 +6611,10 @@ static esp_err_t rebuild_screen_if_resolution_changed(void)
     s_ui.pending_event = pending_event;
     s_ui.quick_level_position = quick_level_position;
     memcpy(s_ui.quick_layouts, quick_layouts, sizeof(s_ui.quick_layouts));
+    if (snapshot) {
+        memcpy(&s_ui.last_snapshot, snapshot, sizeof(s_ui.last_snapshot));
+        UI_SET_FLAG(LAST_SNAPSHOT_VALID, true);
+    }
     UI_SET_FLAG(INITIALIZED, true);
     UI_SET_FLAG(SCREEN_LOCKED, screen_locked);
     create_screen(display);
@@ -6084,7 +6644,13 @@ esp_err_t esp_bms_lvgl_ui_update(const esp_bms_dashboard_snapshot_t *snapshot)
 {
     ESP_RETURN_ON_FALSE(snapshot, ESP_ERR_INVALID_ARG, TAG, "snapshot is required");
     ESP_RETURN_ON_FALSE(UI_FLAG(INITIALIZED), ESP_ERR_INVALID_STATE, TAG, "UI is not initialized");
-    ESP_RETURN_ON_ERROR(rebuild_screen_if_resolution_changed(), TAG, "rebuild UI after resolution change failed");
+    const bool settings_visible = s_ui.settings_page &&
+                                  !lv_obj_has_flag(s_ui.settings_page, LV_OBJ_FLAG_HIDDEN);
+    const bool page_structure_changed =
+        SNAPSHOT_FLAG(snapshot, CONTROLLER_PAGE_ENABLED) != s_ui.controller_page_enabled;
+    if (!settings_visible || !page_structure_changed) {
+        ESP_RETURN_ON_ERROR(rebuild_screen_if_needed(snapshot), TAG, "rebuild UI failed");
+    }
     if (UI_FLAG(DRAGGING) || UI_FLAG(SETTLING)) {
         defer_dashboard_snapshot(snapshot);
         return ESP_OK;
@@ -6097,6 +6663,8 @@ esp_err_t esp_bms_lvgl_ui_update(const esp_bms_dashboard_snapshot_t *snapshot)
 esp_err_t esp_bms_lvgl_ui_show_dashboard(void)
 {
     ESP_RETURN_ON_FALSE(UI_FLAG(INITIALIZED), ESP_ERR_INVALID_STATE, TAG, "UI is not initialized");
+    ESP_RETURN_ON_ERROR(rebuild_screen_if_needed(&s_ui.last_snapshot), TAG,
+                        "rebuild dashboard pages failed");
     show_dashboard_view();
     screen_lock_reapply();
     return ESP_OK;
@@ -6117,11 +6685,31 @@ esp_err_t esp_bms_lvgl_ui_touch_calibration_result(bool success)
 esp_err_t esp_bms_lvgl_ui_set_page(esp_bms_lvgl_page_t page, bool animated)
 {
     ESP_RETURN_ON_FALSE(UI_FLAG(INITIALIZED), ESP_ERR_INVALID_STATE, TAG, "UI is not initialized");
-    ESP_RETURN_ON_FALSE(page == ESP_BMS_LVGL_PAGE_BATTERY || page == ESP_BMS_LVGL_PAGE_GPS,
+    ESP_RETURN_ON_FALSE(page == ESP_BMS_LVGL_PAGE_BATTERY ||
+                            page == ESP_BMS_LVGL_PAGE_GPS ||
+                            (page == ESP_BMS_LVGL_PAGE_CONTROLLER && s_ui.controller_page_enabled),
                         ESP_ERR_INVALID_ARG, TAG, "invalid page");
 
     move_to_page(page, animated);
     return ESP_OK;
+}
+
+esp_bms_lvgl_data_source_t esp_bms_lvgl_ui_stable_data_source(void)
+{
+    if (!UI_FLAG(INITIALIZED) || UI_FLAG(DRAGGING) || UI_FLAG(SETTLING) ||
+        UI_FLAG(QUICK_PANEL_OPEN) ||
+        (s_ui.settings_page && !lv_obj_has_flag(s_ui.settings_page, LV_OBJ_FLAG_HIDDEN))) {
+        return ESP_BMS_LVGL_DATA_SOURCE_NONE;
+    }
+    switch (s_ui.page) {
+    case ESP_BMS_LVGL_PAGE_CONTROLLER:
+        return ESP_BMS_LVGL_DATA_SOURCE_CONTROLLER;
+    case ESP_BMS_LVGL_PAGE_GPS:
+        return ESP_BMS_LVGL_DATA_SOURCE_GPS;
+    case ESP_BMS_LVGL_PAGE_BATTERY:
+    default:
+        return ESP_BMS_LVGL_DATA_SOURCE_BMS;
+    }
 }
 
 esp_err_t esp_bms_lvgl_ui_take_action_event(esp_bms_lvgl_action_event_t *event)

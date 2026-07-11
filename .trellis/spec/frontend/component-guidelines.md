@@ -53,6 +53,7 @@ Questions to answer:
 - BLE candidate rows open a confirmation overlay before queuing a bind. Copy the candidate name and MAC into stable UI storage before opening it; never retain a pointer to a snapshot row across refreshes, and never show an anonymous candidate's MAC as its display name.
 - Repeated BLE advertisements may update cached RSSI without rebuilding the candidate list. Rebuild only for new candidates, identity/name changes, or scan-state changes; deleting a pressed row before `LV_EVENT_CLICKED` makes the first tap disappear.
 - A confirmed bind uses the existing toast objects for a persistent rotating `LV_SYMBOL_LOOP` plus `连接...`. Stop the animation on terminal connection states and replace it with `绑定成功` only on the offline-to-online snapshot transition.
+- Regenerate `settings_zh_10/13/16.c` from every Han character actually present in `esp_bms_lvgl_ui.c`; do not maintain an ad hoc glyph tail. Before build, compare the generated `--symbols` list with UI literals and require zero missing glyphs.
 
 ### LVGL Fixed QR Lifecycle
 
@@ -75,8 +76,10 @@ Questions to answer:
 - The settings root and all settings detail pages reuse one persistent top navigation object. The root title is `设置` and its back action returns to the dashboard; detail titles come from `SETTINGS_OPTIONS` and return to the settings root.
 - LVGL event `user_data` must not retain pointers to function-local row/config structs. Pack small action/view values into `uintptr_t`, or store them in UI state whose lifetime covers the widget.
 - Vertical navigation collapse uses one offset animation. Apply the same offset to the header `y`, the root/detail scroll-container top padding, and the left-edge capture zone so content fills the released space without a blank strip.
+- Changing a scroll container's padding during that animation can make LVGL recalculate `scroll_y` and emit scroll events. Keep the navigation layout guard active for the whole animation, force the affected layout while guarded, refresh the scroll anchor from the active container, and release the guard only from the animation completion callback. Reset the guard when replacing or cancelling the animation; otherwise layout-generated events can reopen the header and cover the list bottom.
 - Browsing down past `SETTINGS_NAV_SCROLL_THRESHOLD` hides the bar; browsing back up or reaching scroll position `0` shows it. Direct vertical drags use the same threshold so pages whose content fits the viewport still behave consistently.
 - A recognized vertical navigation drag must set `SETTINGS_SWIPE_CONSUMED` to prevent the release from triggering the row under the finger. Horizontal left-edge back tracking remains dominant when horizontal movement is larger.
+- Dynamic settings cards must calculate their visible row count before calling `settings_list_card()`. Create the card at its final height and place rows with a compact `visible_index`; do not create a maximum-height card and then hide rows or shrink it after child creation, because LVGL can retain stale scroll geometry or visible blank slots.
 
 ### LVGL Full-Screen Interaction Guards
 

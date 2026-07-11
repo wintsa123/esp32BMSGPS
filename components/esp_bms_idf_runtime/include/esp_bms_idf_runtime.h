@@ -7,6 +7,7 @@
 #include "driver/uart.h"
 #include "esp_adc/adc_oneshot.h"
 #include "esp_bms_lvgl_ui.h"
+#include "esp_fardriver_protocol.h"
 #include "esp_netif_types.h"
 #include "freertos/semphr.h"
 
@@ -62,6 +63,10 @@ typedef enum {
 #define ESP_BMS_IDF_RUNTIME_FLAG_BMS_SCAN_SNAPSHOT_DIRTY (UINT64_C(1) << 35)
 #define ESP_BMS_IDF_RUNTIME_FLAG_HTTP_CONFIG_APPLIED (UINT64_C(1) << 36)
 #define ESP_BMS_IDF_RUNTIME_FLAG_BMS_SNAPSHOT_DIRTY (UINT64_C(1) << 37)
+#define ESP_BMS_IDF_RUNTIME_FLAG_CONTROLLER_SCAN_REQUESTED (UINT64_C(1) << 38)
+#define ESP_BMS_IDF_RUNTIME_FLAG_CONTROLLER_SCAN_ACTIVE (UINT64_C(1) << 39)
+#define ESP_BMS_IDF_RUNTIME_FLAG_CONTROLLER_SNAPSHOT_DIRTY (UINT64_C(1) << 40)
+#define ESP_BMS_IDF_RUNTIME_FLAG_CONTROLLER_SUBSCRIBED (UINT64_C(1) << 41)
 
 typedef esp_bms_bms_scan_candidate_t esp_bms_idf_bms_scan_candidate_t;
 
@@ -80,33 +85,48 @@ typedef struct {
     uint32_t gps_parse_errors;
     uint32_t gps_speed_knots_milli;
     uint32_t bms_status_poll_elapsed_ms;
+    uint32_t controller_keepalive_elapsed_ms;
     uint16_t gps_line_len;
     uint16_t bms_frame_len;
     uint16_t bms_conn_handle;
     uint16_t bluetooth_conn_handle;
+    uint16_t controller_conn_handle;
     uint16_t bms_service_start_handle;
     uint16_t bms_service_end_handle;
     uint16_t bms_char_val_handle;
     uint16_t bms_cccd_handle;
+    uint16_t controller_service_start_handle;
+    uint16_t controller_service_end_handle;
+    uint16_t controller_char_val_handle;
+    uint16_t controller_cccd_handle;
     uint8_t brightness_percent;
     uint8_t volume_percent;
     uint8_t bms_type;
     uint8_t bms_own_addr_type;
     uint8_t bluetooth_own_addr_type;
     uint8_t bms_ble_phase;
+    uint8_t controller_ble_phase;
     uint8_t bms_frame[ESP_BMS_IDF_BMS_FRAME_MAX_LEN];
     char setup_ap_ssid[32];
     char setup_ap_password[9];
     char bms_bound_mac[18];
     char bms_bound_name[ESP_BMS_IDF_BMS_SCAN_NAME_LEN + 1U];
+    char controller_bound_mac[18];
+    char controller_bound_name[ESP_BMS_IDF_BMS_SCAN_NAME_LEN + 1U];
     char bluetooth_name[32];
     esp_netif_t *setup_ap_netif;
     httpd_handle_t http_server;
     SemaphoreHandle_t http_pending_lock;
     SemaphoreHandle_t bms_scan_lock;
     esp_bms_idf_bms_scan_candidate_t bms_scan_candidates[ESP_BMS_IDF_BMS_SCAN_MAX_CANDIDATES];
+    esp_bms_idf_bms_scan_candidate_t controller_scan_candidates[ESP_BMS_IDF_BMS_SCAN_MAX_CANDIDATES];
     uint8_t setup_ap_clients;
     uint8_t bms_scan_candidate_count;
+    uint8_t controller_scan_candidate_count;
+    bool controller_connection_enabled;
+    bool controller_page_enabled;
+    esp_bms_lvgl_data_source_t active_data_source;
+    esp_fardriver_state_t controller_state;
     uint8_t http_pending_brightness_percent;
     uint8_t http_pending_volume_percent;
     uint8_t http_pending_bms_type;
@@ -147,6 +167,9 @@ esp_err_t esp_bms_idf_runtime_stop_setup_services(esp_bms_idf_runtime_t *runtime
 esp_err_t esp_bms_idf_runtime_start_bms_ble_if_bound(esp_bms_idf_runtime_t *runtime);
 esp_err_t esp_bms_idf_runtime_start_bms_ble_for_bind(esp_bms_idf_runtime_t *runtime);
 esp_err_t esp_bms_idf_runtime_start_bluetooth_advertising(esp_bms_idf_runtime_t *runtime);
+esp_err_t esp_bms_idf_runtime_start_controller_ble_if_enabled(esp_bms_idf_runtime_t *runtime);
+void esp_bms_idf_runtime_set_active_data_source(esp_bms_idf_runtime_t *runtime,
+                                                esp_bms_lvgl_data_source_t source);
 bool esp_bms_idf_runtime_apply_pending_http_config(esp_bms_idf_runtime_t *runtime);
 bool esp_bms_idf_runtime_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_ms);
 bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,

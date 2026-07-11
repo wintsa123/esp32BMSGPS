@@ -11,8 +11,16 @@ extern "C" {
 
 typedef enum {
     ESP_BMS_LVGL_PAGE_BATTERY = 0,
-    ESP_BMS_LVGL_PAGE_GPS = 1,
+    ESP_BMS_LVGL_PAGE_CONTROLLER = 1,
+    ESP_BMS_LVGL_PAGE_GPS = 2,
 } esp_bms_lvgl_page_t;
+
+typedef enum {
+    ESP_BMS_LVGL_DATA_SOURCE_NONE = 0,
+    ESP_BMS_LVGL_DATA_SOURCE_BMS,
+    ESP_BMS_LVGL_DATA_SOURCE_CONTROLLER,
+    ESP_BMS_LVGL_DATA_SOURCE_GPS,
+} esp_bms_lvgl_data_source_t;
 
 typedef enum {
     ESP_BMS_LVGL_ACTION_NONE = 0,
@@ -37,6 +45,11 @@ typedef enum {
     ESP_BMS_LVGL_ACTION_START_TOUCH_CALIBRATION = 19,
     ESP_BMS_LVGL_ACTION_ADD_TOUCH_CALIBRATION_SAMPLE = 20,
     ESP_BMS_LVGL_ACTION_CANCEL_TOUCH_CALIBRATION = 21,
+    ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_CONNECTION = 22,
+    ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_PAGE = 23,
+    ESP_BMS_LVGL_ACTION_START_CONTROLLER_BIND = 24,
+    ESP_BMS_LVGL_ACTION_ADJUST_CONTROLLER_WHEEL = 25,
+    ESP_BMS_LVGL_ACTION_ADJUST_CONTROLLER_RATIO = 26,
 } esp_bms_lvgl_action_t;
 
 #define ESP_BMS_LVGL_ACTION_EVENT_FLAG_COMMITTED (UINT8_C(1) << 0)
@@ -44,6 +57,8 @@ typedef enum {
 #define ESP_BMS_LVGL_ACTION_EVENT_FLAG_VOLUME_PERCENT_VALID (UINT8_C(1) << 2)
 #define ESP_BMS_LVGL_ACTION_EVENT_FLAG_VOLUME_FEEDBACK_VALID (UINT8_C(1) << 3)
 #define ESP_BMS_LVGL_ACTION_EVENT_FLAG_BMS_MAC_VALID (UINT8_C(1) << 4)
+#define ESP_BMS_LVGL_ACTION_EVENT_FLAG_CONTROLLER_MAC_VALID (UINT8_C(1) << 5)
+#define ESP_BMS_LVGL_ACTION_EVENT_FLAG_NUMERIC_DELTA_VALID (UINT8_C(1) << 6)
 #define ESP_BMS_LVGL_ROTATE_SAVE_DELAY_MS 2000U
 
 typedef struct {
@@ -53,6 +68,8 @@ typedef struct {
     uint8_t volume_percent;
     uint8_t volume_feedback_percent;
     char bms_mac[18];
+    char controller_mac[18];
+    int16_t numeric_delta;
     uint16_t touch_observed_x;
     uint16_t touch_observed_y;
     uint16_t touch_target_x;
@@ -114,6 +131,15 @@ typedef enum {
 #define ESP_BMS_DASHBOARD_FLAG_BLUETOOTH_CONNECTED (UINT32_C(1) << 15)
 #define ESP_BMS_DASHBOARD_FLAG_SETUP_AP_ENABLED (UINT32_C(1) << 16)
 #define ESP_BMS_DASHBOARD_FLAG_BMS_TEMPERATURE_VALID_SHIFT 17U
+#define ESP_BMS_DASHBOARD_FLAG_CONTROLLER_CONNECTION_ENABLED (UINT32_C(1) << 23)
+#define ESP_BMS_DASHBOARD_FLAG_CONTROLLER_PAGE_ENABLED (UINT32_C(1) << 24)
+#define ESP_BMS_DASHBOARD_FLAG_CONTROLLER_ONLINE (UINT32_C(1) << 25)
+#define ESP_BMS_DASHBOARD_FLAG_CONTROLLER_SPEED_VALID (UINT32_C(1) << 26)
+#define ESP_BMS_DASHBOARD_FLAG_CONTROLLER_RPM_VALID (UINT32_C(1) << 27)
+#define ESP_BMS_DASHBOARD_FLAG_CONTROLLER_GEAR_VALID (UINT32_C(1) << 28)
+#define ESP_BMS_DASHBOARD_FLAG_CONTROLLER_POWER_VALID (UINT32_C(1) << 29)
+#define ESP_BMS_DASHBOARD_FLAG_CONTROLLER_TEMP_VALID (UINT32_C(1) << 30)
+#define ESP_BMS_DASHBOARD_FLAG_MOTOR_TEMP_VALID (UINT32_C(1) << 31)
 
 typedef struct {
     char mac[18];
@@ -155,6 +181,17 @@ typedef struct {
     uint8_t bms_scan_candidate_count;
     esp_bms_bms_scan_candidate_t bms_scan_candidates[ESP_BMS_BMS_SCAN_MAX_CANDIDATES];
     char bms_bound_name[ESP_BMS_BMS_SCAN_NAME_LEN + 1U];
+    uint16_t controller_speed_deci_units;
+    uint16_t controller_rpm;
+    int32_t controller_power_w;
+    int16_t controller_temp_c;
+    int16_t motor_temp_c;
+    uint16_t controller_wheel_circumference_mm;
+    uint16_t controller_gear_ratio_centi;
+    uint8_t controller_gear;
+    uint8_t controller_scan_candidate_count;
+    esp_bms_bms_scan_candidate_t controller_scan_candidates[ESP_BMS_BMS_SCAN_MAX_CANDIDATES];
+    char controller_bound_name[ESP_BMS_BMS_SCAN_NAME_LEN + 1U];
 } esp_bms_dashboard_snapshot_t;
 
 static inline bool esp_bms_dashboard_snapshot_flag_get(const esp_bms_dashboard_snapshot_t *snapshot,
@@ -206,6 +243,7 @@ esp_err_t esp_bms_lvgl_ui_update(const esp_bms_dashboard_snapshot_t *snapshot);
 esp_err_t esp_bms_lvgl_ui_show_dashboard(void);
 esp_err_t esp_bms_lvgl_ui_touch_calibration_result(bool success);
 esp_err_t esp_bms_lvgl_ui_set_page(esp_bms_lvgl_page_t page, bool animated);
+esp_bms_lvgl_data_source_t esp_bms_lvgl_ui_stable_data_source(void);
 esp_err_t esp_bms_lvgl_ui_take_action_event(esp_bms_lvgl_action_event_t *event);
 esp_err_t esp_bms_lvgl_ui_take_action(esp_bms_lvgl_action_t *action);
 

@@ -55,6 +55,8 @@ static const char *TAG = "bms_idf_runtime";
 #define SETUP_AP_NVS_PASSWORD_KEY "setup_pw"
 #define ANT_BMS_SERVICE_UUID_16 0xFFE0U
 #define ANT_BMS_CHARACTERISTIC_UUID_16 0xFFE1U
+#define FARDRIVER_SERVICE_UUID_16 0xFFE0U
+#define FARDRIVER_CHARACTERISTIC_UUID_16 0xFFECU
 #define BMS_SCAN_DURATION_MS 10000
 #define BMS_SCAN_HOST_TASK_STACK 4096U
 #define BMS_SCAN_HOST_TASK_PRIORITY 5U
@@ -82,6 +84,12 @@ static const char *TAG = "bms_idf_runtime";
 #define DISPLAY_NVS_SPEED_UNIT_KEY "speed_unit"
 #define DISPLAY_NVS_LANGUAGE_KEY "lang"
 #define DISPLAY_NVS_BMS_TYPE_KEY "bms_type"
+#define CONTROLLER_NVS_CONNECTION_KEY "ctl_conn"
+#define CONTROLLER_NVS_PAGE_KEY "ctl_page"
+#define CONTROLLER_NVS_WHEEL_KEY "ctl_wheel"
+#define CONTROLLER_NVS_RATIO_KEY "ctl_ratio"
+#define CONTROLLER_NVS_BOUND_MAC_KEY "ctl_mac"
+#define CONTROLLER_NVS_BOUND_NAME_KEY "ctl_name"
 #define HTTP_BODY_MAX_LEN 384U
 #define HTTP_JSON_MAX_LEN 1024U
 #define HTTP_AUTH_MAX_LEN 48U
@@ -135,13 +143,16 @@ static uint8_t s_bms_scan_name_cache_next;
 
 static esp_err_t runtime_apply_setup_ap_wifi_config(const esp_bms_idf_runtime_t *runtime);
 static int runtime_bms_ble_gap_event(struct ble_gap_event *event, void *arg);
+static int runtime_controller_gap_event(struct ble_gap_event *event, void *arg);
 static int runtime_bluetooth_gap_event(struct ble_gap_event *event, void *arg);
 static esp_err_t runtime_bms_ble_start_scan(esp_bms_idf_runtime_t *runtime);
 static esp_err_t runtime_bluetooth_start_advertising_now(esp_bms_idf_runtime_t *runtime);
-static esp_err_t runtime_bluetooth_stop_for_bms_scan(esp_bms_idf_runtime_t *runtime);
 static esp_err_t runtime_bms_ble_send_poll_request(esp_bms_idf_runtime_t *runtime,
                                                    bool include_device_info);
 static esp_err_t runtime_init_bms_ble(esp_bms_idf_runtime_t *runtime);
+static esp_err_t runtime_controller_start_scan(esp_bms_idf_runtime_t *runtime);
+static void runtime_controller_set_subscription(esp_bms_idf_runtime_t *runtime, bool enabled);
+static void runtime_copy_snapshot_text(char *out, size_t out_len, const char *text);
 static esp_err_t runtime_save_bms_binding(esp_bms_idf_runtime_t *runtime);
 static esp_err_t runtime_save_setup_ap_credentials(const esp_bms_idf_runtime_t *runtime);
 static void runtime_ensure_setup_ap_credentials(esp_bms_idf_runtime_t *runtime);
@@ -160,6 +171,50 @@ static char runtime_hex_char(uint8_t value);
     esp_bms_lvgl_action_event_flag_get((event), ESP_BMS_LVGL_ACTION_EVENT_FLAG_##name)
 
 static esp_bms_idf_runtime_t *s_bms_ble_runtime;
+
+static void runtime_project_controller_snapshot(esp_bms_idf_runtime_t *runtime)
+{
+    esp_bms_dashboard_snapshot_t *snapshot = &runtime->snapshot;
+    const esp_fardriver_state_t *state = &runtime->controller_state;
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, CONTROLLER_CONNECTION_ENABLED, runtime->controller_connection_enabled);
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, CONTROLLER_PAGE_ENABLED, runtime->controller_page_enabled);
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, CONTROLLER_ONLINE, runtime->controller_conn_handle != 0xFFFFU);
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, CONTROLLER_SPEED_VALID, state->speed_valid);
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, CONTROLLER_RPM_VALID, state->rpm_valid);
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, CONTROLLER_GEAR_VALID, state->gear_valid);
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, CONTROLLER_POWER_VALID, state->power_valid);
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, CONTROLLER_TEMP_VALID, state->controller_temp_valid);
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, MOTOR_TEMP_VALID, state->motor_temp_valid);
+    snapshot->controller_speed_deci_units = state->speed_deci_kmh;
+    if (snapshot->speed_unit == ESP_BMS_SPEED_UNIT_MPH && state->speed_valid) {
+        snapshot->controller_speed_deci_units = (uint16_t)(((uint32_t)state->speed_deci_kmh * 621371U) / 1000000U);
+    }
+    snapshot->controller_rpm = state->rpm;
+    snapshot->controller_gear = state->gear;
+    snapshot->controller_power_w = state->power_w;
+    snapshot->controller_temp_c = state->controller_temp_c;
+    snapshot->motor_temp_c = state->motor_temp_c;
+    snapshot->controller_wheel_circumference_mm = state->fallback_wheel_circumference_mm;
+    snapshot->controller_gear_ratio_centi = state->fallback_gear_ratio_centi;
+    snapshot->controller_scan_candidate_count = runtime->controller_scan_candidate_count;
+    memcpy(snapshot->controller_scan_candidates,
+           runtime->controller_scan_candidates,
+           sizeof(snapshot->controller_scan_candidates));
+    runtime_copy_snapshot_text(snapshot->controller_bound_name,
+                               sizeof(snapshot->controller_bound_name),
+                               runtime->controller_bound_name);
+    RUNTIME_SET_FLAG(runtime, CONTROLLER_SNAPSHOT_DIRTY, true);
+}
+
+static void runtime_clear_controller_telemetry(esp_bms_idf_runtime_t *runtime)
+{
+    const uint16_t wheel = runtime->controller_state.fallback_wheel_circumference_mm;
+    const uint16_t ratio = runtime->controller_state.fallback_gear_ratio_centi;
+    memset(&runtime->controller_state, 0, sizeof(runtime->controller_state));
+    runtime->controller_state.fallback_wheel_circumference_mm = wheel;
+    runtime->controller_state.fallback_gear_ratio_centi = ratio;
+    runtime_project_controller_snapshot(runtime);
+}
 
 static void runtime_set_error(esp_bms_idf_runtime_t *runtime, const char *text)
 {
@@ -1386,6 +1441,17 @@ static void runtime_reset_state(esp_bms_idf_runtime_t *runtime)
     runtime->bms_own_addr_type = 0;
     runtime->bluetooth_own_addr_type = 0;
     runtime->bluetooth_conn_handle = 0xFFFFU;
+    runtime->controller_conn_handle = 0xFFFFU;
+    runtime->controller_service_start_handle = 0;
+    runtime->controller_service_end_handle = 0;
+    runtime->controller_char_val_handle = 0;
+    runtime->controller_cccd_handle = 0;
+    runtime->controller_ble_phase = BMS_BLE_PHASE_IDLE;
+    runtime->controller_keepalive_elapsed_ms = 0;
+    runtime->controller_connection_enabled = false;
+    runtime->controller_page_enabled = false;
+    runtime->active_data_source = ESP_BMS_LVGL_DATA_SOURCE_BMS;
+    memset(&runtime->controller_state, 0, sizeof(runtime->controller_state));
     runtime->bms_ble_phase = BMS_BLE_PHASE_IDLE;
     RUNTIME_SET_FLAG(runtime, BMS_WRITE_IN_FLIGHT, false);
     RUNTIME_SET_FLAG(runtime, BMS_DEVICE_INFO_REQUESTED, false);
@@ -1410,12 +1476,16 @@ static void runtime_reset_state(esp_bms_idf_runtime_t *runtime)
     RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, false);
     RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISING, false);
     RUNTIME_SET_FLAG(runtime, BLUETOOTH_CONNECTED, false);
+    RUNTIME_SET_FLAG(runtime, CONTROLLER_SCAN_REQUESTED, false);
+    RUNTIME_SET_FLAG(runtime, CONTROLLER_SCAN_ACTIVE, false);
+    RUNTIME_SET_FLAG(runtime, CONTROLLER_SUBSCRIBED, false);
     (void)runtime_project_bluetooth_snapshot(runtime);
     runtime_bms_scan_clear_candidates(runtime);
     runtime_clear_bms_telemetry(runtime);
     runtime_update_setup_ap_snapshot(runtime);
     runtime_set_bms_info(runtime, "BMS OFF");
     runtime_update_snapshot_speed(runtime);
+    runtime_project_controller_snapshot(runtime);
 }
 
 static void runtime_init_battery_adc(esp_bms_idf_runtime_t *runtime)
@@ -1528,6 +1598,28 @@ static esp_err_t runtime_init_nvs(esp_bms_idf_runtime_t *runtime)
     return ret;
 }
 
+static esp_err_t runtime_nvs_get_optional_u8(nvs_handle_t handle, const char *key, uint8_t *value)
+{
+    const esp_err_t ret = nvs_get_u8(handle, key, value);
+    return ret == ESP_ERR_NVS_NOT_FOUND ? ESP_OK : ret;
+}
+
+static esp_err_t runtime_nvs_get_optional_u16(nvs_handle_t handle, const char *key, uint16_t *value)
+{
+    const esp_err_t ret = nvs_get_u16(handle, key, value);
+    return ret == ESP_ERR_NVS_NOT_FOUND ? ESP_OK : ret;
+}
+
+static esp_err_t runtime_nvs_get_optional_string(nvs_handle_t handle,
+                                                 const char *key,
+                                                 char *value,
+                                                 size_t value_len)
+{
+    size_t len = value_len;
+    const esp_err_t ret = nvs_get_str(handle, key, value, &len);
+    return ret == ESP_ERR_NVS_NOT_FOUND ? ESP_OK : ret;
+}
+
 esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runtime, bool *loaded)
 {
     ESP_RETURN_ON_FALSE(runtime, ESP_ERR_INVALID_ARG, TAG, "runtime is required");
@@ -1548,6 +1640,10 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
     uint8_t speed_unit = 0;
     uint8_t language = 0;
     uint8_t bms_type = (uint8_t)ESP_BMS_IDF_BMS_TYPE_ANT;
+    uint8_t controller_connection_enabled = 0;
+    uint8_t controller_page_enabled = 0;
+    uint16_t controller_wheel_mm = 0;
+    uint16_t controller_ratio_centi = 0;
 
     ret = nvs_get_u8(handle, DISPLAY_NVS_BRIGHTNESS_KEY, &brightness_percent);
     if (ret == ESP_OK) {
@@ -1573,6 +1669,32 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
             ret = bms_type_ret;
         }
     }
+    if (ret == ESP_OK) {
+        ret = runtime_nvs_get_optional_u8(handle, CONTROLLER_NVS_CONNECTION_KEY,
+                                          &controller_connection_enabled);
+    }
+    if (ret == ESP_OK) {
+        ret = runtime_nvs_get_optional_u8(handle, CONTROLLER_NVS_PAGE_KEY,
+                                          &controller_page_enabled);
+    }
+    if (ret == ESP_OK) {
+        ret = runtime_nvs_get_optional_u16(handle, CONTROLLER_NVS_WHEEL_KEY,
+                                           &controller_wheel_mm);
+    }
+    if (ret == ESP_OK) {
+        ret = runtime_nvs_get_optional_u16(handle, CONTROLLER_NVS_RATIO_KEY,
+                                           &controller_ratio_centi);
+    }
+    if (ret == ESP_OK) {
+        ret = runtime_nvs_get_optional_string(handle, CONTROLLER_NVS_BOUND_MAC_KEY,
+                                              runtime->controller_bound_mac,
+                                              sizeof(runtime->controller_bound_mac));
+    }
+    if (ret == ESP_OK) {
+        ret = runtime_nvs_get_optional_string(handle, CONTROLLER_NVS_BOUND_NAME_KEY,
+                                              runtime->controller_bound_name,
+                                              sizeof(runtime->controller_bound_name));
+    }
     nvs_close(handle);
     if (ret != ESP_OK) {
         return ret;
@@ -1583,7 +1705,10 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
         !runtime_rotation_matches_policy(rotation) ||
         !runtime_speed_unit_matches_policy(speed_unit) ||
         !runtime_language_matches_policy(language) ||
-        !runtime_bms_type_matches_policy(bms_type)) {
+        !runtime_bms_type_matches_policy(bms_type) ||
+        controller_connection_enabled > 1U || controller_page_enabled > 1U ||
+        (controller_wheel_mm != 0U && (controller_wheel_mm < 500U || controller_wheel_mm > 4000U)) ||
+        (controller_ratio_centi != 0U && (controller_ratio_centi < 10U || controller_ratio_centi > 2000U))) {
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -1594,6 +1719,12 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
     RUNTIME_SET_FLAG(runtime, LANGUAGE_ZH, language != 0U);
     runtime->bms_type = bms_type;
     runtime->snapshot.bms_type = runtime->bms_type;
+    runtime->controller_page_enabled = controller_page_enabled != 0U;
+    runtime->controller_connection_enabled = runtime->controller_page_enabled &&
+                                             controller_connection_enabled != 0U;
+    runtime->controller_state.fallback_wheel_circumference_mm = controller_wheel_mm;
+    runtime->controller_state.fallback_gear_ratio_centi = controller_ratio_centi;
+    runtime_project_controller_snapshot(runtime);
     runtime_update_snapshot_speed(runtime);
     *loaded = true;
     return ESP_OK;
@@ -1636,6 +1767,28 @@ esp_err_t esp_bms_idf_runtime_save_display_settings(esp_bms_idf_runtime_t *runti
     }
     if (ret == ESP_OK) {
         ret = nvs_set_u8(handle, DISPLAY_NVS_BMS_TYPE_KEY, runtime->bms_type);
+    }
+    if (ret == ESP_OK) {
+        ret = nvs_set_u8(handle, CONTROLLER_NVS_CONNECTION_KEY,
+                         runtime->controller_connection_enabled ? 1U : 0U);
+    }
+    if (ret == ESP_OK) {
+        ret = nvs_set_u8(handle, CONTROLLER_NVS_PAGE_KEY,
+                         runtime->controller_page_enabled ? 1U : 0U);
+    }
+    if (ret == ESP_OK) {
+        ret = nvs_set_u16(handle, CONTROLLER_NVS_WHEEL_KEY,
+                          runtime->controller_state.fallback_wheel_circumference_mm);
+    }
+    if (ret == ESP_OK) {
+        ret = nvs_set_u16(handle, CONTROLLER_NVS_RATIO_KEY,
+                          runtime->controller_state.fallback_gear_ratio_centi);
+    }
+    if (ret == ESP_OK && runtime->controller_bound_mac[0] != '\0') {
+        ret = nvs_set_str(handle, CONTROLLER_NVS_BOUND_MAC_KEY, runtime->controller_bound_mac);
+    }
+    if (ret == ESP_OK && runtime->controller_bound_name[0] != '\0') {
+        ret = nvs_set_str(handle, CONTROLLER_NVS_BOUND_NAME_KEY, runtime->controller_bound_name);
     }
     if (ret == ESP_OK) {
         ret = nvs_commit(handle);
@@ -3209,6 +3362,248 @@ static esp_err_t runtime_bms_ble_start_service_discovery(esp_bms_idf_runtime_t *
     return rc == 0 ? ESP_OK : ESP_FAIL;
 }
 
+static int runtime_controller_write_cb(uint16_t conn_handle,
+                                       const struct ble_gatt_error *error,
+                                       struct ble_gatt_attr *attr,
+                                       void *arg)
+{
+    (void)attr;
+    esp_bms_idf_runtime_t *runtime = (esp_bms_idf_runtime_t *)arg;
+    if (!runtime || conn_handle != runtime->controller_conn_handle) {
+        return 0;
+    }
+    if (error && error->status != 0) {
+        ESP_LOGW(TAG, "[controller] GATT write failed: status=%u", (unsigned)error->status);
+    }
+    return 0;
+}
+
+static void runtime_controller_send_gather(esp_bms_idf_runtime_t *runtime)
+{
+    if (!runtime || runtime->controller_conn_handle == 0xFFFFU ||
+        runtime->controller_char_val_handle == 0U) {
+        return;
+    }
+    uint8_t frame[8] = { 0xAA, 0x46, 0xA0, 0xA0, 0x06, 0x88 };
+    const uint16_t crc = esp_fardriver_crc(frame, sizeof(frame) - 2U);
+    frame[6] = (uint8_t)(crc >> 8U);
+    frame[7] = (uint8_t)crc;
+    (void)ble_gattc_write_flat(runtime->controller_conn_handle,
+                               runtime->controller_char_val_handle,
+                               frame,
+                               sizeof(frame),
+                               runtime_controller_write_cb,
+                               runtime);
+    runtime->controller_keepalive_elapsed_ms = 0U;
+}
+
+static void runtime_controller_set_subscription(esp_bms_idf_runtime_t *runtime, bool enabled)
+{
+    if (!runtime || runtime->controller_conn_handle == 0xFFFFU ||
+        runtime->controller_cccd_handle == 0U ||
+        RUNTIME_FLAG(runtime, CONTROLLER_SUBSCRIBED) == enabled) {
+        return;
+    }
+    const uint8_t value[2] = { enabled ? 1U : 0U, 0U };
+    if (ble_gattc_write_flat(runtime->controller_conn_handle,
+                            runtime->controller_cccd_handle,
+                            value,
+                            sizeof(value),
+                            runtime_controller_write_cb,
+                            runtime) == 0) {
+        RUNTIME_SET_FLAG(runtime, CONTROLLER_SUBSCRIBED, enabled);
+        if (enabled) {
+            runtime_controller_send_gather(runtime);
+        }
+    }
+}
+
+static int runtime_controller_dsc_cb(uint16_t conn_handle,
+                                     const struct ble_gatt_error *error,
+                                     uint16_t chr_val_handle,
+                                     const struct ble_gatt_dsc *dsc,
+                                     void *arg)
+{
+    esp_bms_idf_runtime_t *runtime = (esp_bms_idf_runtime_t *)arg;
+    if (!runtime || conn_handle != runtime->controller_conn_handle ||
+        chr_val_handle != runtime->controller_char_val_handle) {
+        return 0;
+    }
+    if (error && error->status == 0 && dsc) {
+        if (ble_uuid_cmp(&dsc->uuid.u, BLE_UUID16_DECLARE(BLE_GATT_DSC_CLT_CFG_UUID16)) == 0) {
+            runtime->controller_cccd_handle = dsc->handle;
+        }
+        return 0;
+    }
+    if (error && error->status == BLE_HS_EDONE && runtime->controller_cccd_handle != 0U) {
+        runtime->controller_ble_phase = (uint8_t)BMS_BLE_PHASE_ONLINE;
+        runtime_project_controller_snapshot(runtime);
+        runtime_controller_set_subscription(runtime,
+                                            runtime->active_data_source ==
+                                                ESP_BMS_LVGL_DATA_SOURCE_CONTROLLER);
+        return 0;
+    }
+    (void)ble_gap_terminate(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+    return 0;
+}
+
+static int runtime_controller_chr_cb(uint16_t conn_handle,
+                                     const struct ble_gatt_error *error,
+                                     const struct ble_gatt_chr *chr,
+                                     void *arg)
+{
+    esp_bms_idf_runtime_t *runtime = (esp_bms_idf_runtime_t *)arg;
+    if (!runtime || conn_handle != runtime->controller_conn_handle) {
+        return 0;
+    }
+    if (error && error->status == 0 && chr) {
+        runtime->controller_char_val_handle = chr->val_handle;
+        return 0;
+    }
+    if (error && error->status == BLE_HS_EDONE && runtime->controller_char_val_handle != 0U) {
+        runtime->controller_cccd_handle = 0U;
+        runtime->controller_ble_phase = (uint8_t)BMS_BLE_PHASE_DISCOVERING_CCCD;
+        if (ble_gattc_disc_all_dscs(conn_handle,
+                                   runtime->controller_char_val_handle,
+                                   runtime->controller_service_end_handle,
+                                   runtime_controller_dsc_cb,
+                                   runtime) == 0) {
+            return 0;
+        }
+    }
+    (void)ble_gap_terminate(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+    return 0;
+}
+
+static int runtime_controller_service_cb(uint16_t conn_handle,
+                                         const struct ble_gatt_error *error,
+                                         const struct ble_gatt_svc *service,
+                                         void *arg)
+{
+    esp_bms_idf_runtime_t *runtime = (esp_bms_idf_runtime_t *)arg;
+    if (!runtime || conn_handle != runtime->controller_conn_handle) {
+        return 0;
+    }
+    if (error && error->status == 0 && service) {
+        runtime->controller_service_start_handle = service->start_handle;
+        runtime->controller_service_end_handle = service->end_handle;
+        return 0;
+    }
+    if (error && error->status == BLE_HS_EDONE && runtime->controller_service_start_handle != 0U) {
+        ble_uuid16_t uuid = BLE_UUID16_INIT(FARDRIVER_CHARACTERISTIC_UUID_16);
+        runtime->controller_ble_phase = (uint8_t)BMS_BLE_PHASE_DISCOVERING_CHARACTERISTIC;
+        if (ble_gattc_disc_chrs_by_uuid(conn_handle,
+                                       runtime->controller_service_start_handle,
+                                       runtime->controller_service_end_handle,
+                                       &uuid.u,
+                                       runtime_controller_chr_cb,
+                                       runtime) == 0) {
+            return 0;
+        }
+    }
+    (void)ble_gap_terminate(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+    return 0;
+}
+
+static esp_err_t runtime_controller_connect(esp_bms_idf_runtime_t *runtime,
+                                            const struct ble_gap_disc_desc *disc)
+{
+    if (!runtime || !disc || runtime->controller_conn_handle != 0xFFFFU) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (ble_gap_disc_active()) {
+        (void)ble_gap_disc_cancel();
+    }
+    uint8_t own_addr_type = 0;
+    if (ble_hs_id_infer_auto(0, &own_addr_type) != 0 ||
+        ble_gap_connect(own_addr_type,
+                        &disc->addr,
+                        BMS_CONNECT_TIMEOUT_MS,
+                        NULL,
+                        runtime_controller_gap_event,
+                        runtime) != 0) {
+        return ESP_FAIL;
+    }
+    runtime->controller_ble_phase = (uint8_t)BMS_BLE_PHASE_CONNECTING;
+    RUNTIME_SET_FLAG(runtime, CONTROLLER_SCAN_ACTIVE, false);
+    return ESP_OK;
+}
+
+static int runtime_controller_gap_event(struct ble_gap_event *event, void *arg)
+{
+    esp_bms_idf_runtime_t *runtime = (esp_bms_idf_runtime_t *)arg;
+    if (!runtime || !event) {
+        return 0;
+    }
+    switch (event->type) {
+    case BLE_GAP_EVENT_CONNECT:
+        if (event->connect.status == 0) {
+            if (!runtime->controller_page_enabled ||
+                !runtime->controller_connection_enabled) {
+                (void)ble_gap_terminate(event->connect.conn_handle,
+                                        BLE_ERR_REM_USER_CONN_TERM);
+                return 0;
+            }
+            runtime->controller_conn_handle = event->connect.conn_handle;
+            runtime->controller_service_start_handle = 0U;
+            runtime->controller_service_end_handle = 0U;
+            runtime->controller_ble_phase = (uint8_t)BMS_BLE_PHASE_DISCOVERING_SERVICE;
+            ble_uuid16_t uuid = BLE_UUID16_INIT(FARDRIVER_SERVICE_UUID_16);
+            if (ble_gattc_disc_svc_by_uuid(event->connect.conn_handle,
+                                          &uuid.u,
+                                          runtime_controller_service_cb,
+                                          runtime) != 0) {
+                (void)ble_gap_terminate(event->connect.conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+            }
+        } else {
+            runtime->controller_ble_phase = (uint8_t)BMS_BLE_PHASE_BACKOFF;
+            runtime_clear_controller_telemetry(runtime);
+        }
+        runtime_project_controller_snapshot(runtime);
+        return 0;
+    case BLE_GAP_EVENT_DISCONNECT:
+        if (event->disconnect.conn.conn_handle == runtime->controller_conn_handle) {
+            runtime->controller_conn_handle = 0xFFFFU;
+            runtime->controller_cccd_handle = 0U;
+            runtime->controller_char_val_handle = 0U;
+            runtime->controller_ble_phase = (uint8_t)BMS_BLE_PHASE_BACKOFF;
+            RUNTIME_SET_FLAG(runtime, CONTROLLER_SUBSCRIBED, false);
+            runtime_clear_controller_telemetry(runtime);
+            if (runtime->controller_connection_enabled &&
+                RUNTIME_FLAG(runtime, CONTROLLER_SCAN_REQUESTED)) {
+                const esp_err_t ret = runtime_controller_start_scan(runtime);
+                if (ret != ESP_OK) {
+                    ESP_LOGW(TAG, "[controller] deferred rebind scan failed: %s",
+                             esp_err_to_name(ret));
+                }
+            }
+        }
+        return 0;
+    case BLE_GAP_EVENT_NOTIFY_RX:
+        if (event->notify_rx.conn_handle == runtime->controller_conn_handle &&
+            event->notify_rx.attr_handle == runtime->controller_char_val_handle &&
+            runtime->active_data_source == ESP_BMS_LVGL_DATA_SOURCE_CONTROLLER) {
+            uint8_t frame[ESP_FARDRIVER_FRAME_LEN];
+            const int len = OS_MBUF_PKTLEN(event->notify_rx.om);
+            if (len == (int)sizeof(frame) &&
+                os_mbuf_copydata(event->notify_rx.om, 0, len, frame) == 0) {
+                const esp_fardriver_layout_t layout = (frame[1] & 0x3FU) <= 29U
+                                                           ? ESP_FARDRIVER_LAYOUT_COMPACT
+                                                           : ESP_FARDRIVER_LAYOUT_EXTENDED;
+                if (esp_fardriver_parse_frame(&runtime->controller_state,
+                                              frame,
+                                              sizeof(frame),
+                                              layout)) {
+                    runtime_project_controller_snapshot(runtime);
+                }
+            }
+        }
+        return 0;
+    default:
+        return 0;
+    }
+}
+
 static esp_err_t runtime_bms_ble_connect_to_disc(esp_bms_idf_runtime_t *runtime,
                                                  const struct ble_gap_disc_desc *disc,
                                                  const char *mac)
@@ -3276,6 +3671,29 @@ static void runtime_bms_ble_handle_notification(esp_bms_idf_runtime_t *runtime,
     }
 }
 
+static void runtime_controller_store_candidate(esp_bms_idf_runtime_t *runtime,
+                                               const char *mac,
+                                               const char *name,
+                                               int8_t rssi)
+{
+    for (uint8_t index = 0; index < runtime->controller_scan_candidate_count; ++index) {
+        if (strcmp(runtime->controller_scan_candidates[index].mac, mac) == 0) {
+            runtime->controller_scan_candidates[index].rssi = rssi;
+            return;
+        }
+    }
+    if (runtime->controller_scan_candidate_count >= ESP_BMS_IDF_BMS_SCAN_MAX_CANDIDATES) {
+        return;
+    }
+    esp_bms_idf_bms_scan_candidate_t *candidate =
+        &runtime->controller_scan_candidates[runtime->controller_scan_candidate_count++];
+    runtime_copy_snapshot_text(candidate->mac, sizeof(candidate->mac), mac);
+    runtime_copy_snapshot_text(candidate->name, sizeof(candidate->name), name);
+    candidate->has_name = name && name[0] != '\0';
+    candidate->rssi = rssi;
+    runtime_project_controller_snapshot(runtime);
+}
+
 static int runtime_bms_ble_gap_event(struct ble_gap_event *event, void *arg)
 {
     esp_bms_idf_runtime_t *runtime = (esp_bms_idf_runtime_t *)arg;
@@ -3299,6 +3717,14 @@ static int runtime_bms_ble_gap_event(struct ble_gap_event *event, void *arg)
                                      strcmp(mac, runtime->bms_bound_mac) == 0;
         const int8_t rssi = event->disc.rssi == 127 ? INT8_MIN : event->disc.rssi;
         runtime_bms_scan_store_candidate(runtime, mac, has_name ? name : NULL, rssi);
+        if (RUNTIME_FLAG(runtime, CONTROLLER_SCAN_ACTIVE)) {
+            runtime_controller_store_candidate(runtime, mac, has_name ? name : NULL, rssi);
+            if (runtime->controller_connection_enabled &&
+                runtime->controller_bound_mac[0] != '\0' &&
+                strcmp(mac, runtime->controller_bound_mac) == 0) {
+                (void)runtime_controller_connect(runtime, &event->disc);
+            }
+        }
         if (matches_binding) {
             const esp_err_t ret = runtime_bms_ble_connect_to_disc(runtime, &event->disc, mac);
             if (ret != ESP_OK) {
@@ -3348,6 +3774,7 @@ static int runtime_bms_ble_gap_event(struct ble_gap_event *event, void *arg)
         }
         return 0;
     case BLE_GAP_EVENT_DISC_COMPLETE:
+        RUNTIME_SET_FLAG(runtime, CONTROLLER_SCAN_ACTIVE, false);
         if (runtime->bms_ble_phase == (uint8_t)BMS_BLE_PHASE_SCANNING) {
             runtime->bms_ble_phase = (uint8_t)BMS_BLE_PHASE_IDLE;
             RUNTIME_SET_FLAG(runtime, BMS_SCAN_ACTIVE, false);
@@ -3385,17 +3812,6 @@ static esp_err_t runtime_bms_ble_start_scan(esp_bms_idf_runtime_t *runtime)
         return ESP_OK;
     }
 
-    const esp_err_t local_bt_ret = runtime_bluetooth_stop_for_bms_scan(runtime);
-    if (local_bt_ret != ESP_OK) {
-        RUNTIME_SET_FLAG(runtime, BMS_SCAN_REQUESTED, true);
-        return local_bt_ret;
-    }
-
-    if (runtime->bms_conn_handle != 0xFFFFU) {
-        RUNTIME_SET_FLAG(runtime, BMS_SCAN_REQUESTED, true);
-        (void)ble_gap_terminate(runtime->bms_conn_handle, BLE_ERR_REM_USER_CONN_TERM);
-        return ESP_ERR_INVALID_STATE;
-    }
     uint8_t own_addr_type = 0;
     const int addr_rc = ble_hs_id_infer_auto(0, &own_addr_type);
     if (addr_rc != 0) {
@@ -3426,6 +3842,46 @@ static esp_err_t runtime_bms_ble_start_scan(esp_bms_idf_runtime_t *runtime)
     runtime->bms_ble_phase = (uint8_t)BMS_BLE_PHASE_SCANNING;
     runtime_set_bms_info(runtime, "BMS SCAN");
     ESP_LOGI(TAG, "[bms] BLE scan started: duration_ms=%u", (unsigned)BMS_SCAN_DURATION_MS);
+    return ESP_OK;
+}
+
+static esp_err_t runtime_controller_start_scan(esp_bms_idf_runtime_t *runtime)
+{
+    if (!runtime) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    ESP_RETURN_ON_ERROR(runtime_init_bms_ble(runtime), TAG, "NimBLE init failed");
+    if (!RUNTIME_FLAG(runtime, BMS_BLE_SYNCED)) {
+        RUNTIME_SET_FLAG(runtime, CONTROLLER_SCAN_REQUESTED, true);
+        return ESP_OK;
+    }
+    runtime->controller_scan_candidate_count = 0U;
+    memset(runtime->controller_scan_candidates, 0, sizeof(runtime->controller_scan_candidates));
+    RUNTIME_SET_FLAG(runtime, CONTROLLER_SCAN_REQUESTED, false);
+    RUNTIME_SET_FLAG(runtime, CONTROLLER_SCAN_ACTIVE, true);
+    if (ble_gap_disc_active()) {
+        return ESP_OK;
+    }
+    uint8_t own_addr_type = 0;
+    if (ble_hs_id_infer_auto(0, &own_addr_type) != 0) {
+        RUNTIME_SET_FLAG(runtime, CONTROLLER_SCAN_ACTIVE, false);
+        return ESP_FAIL;
+    }
+    const struct ble_gap_disc_params params = {
+        .filter_duplicates = 0,
+        .passive = 0,
+        .filter_policy = 0,
+        .limited = 0,
+    };
+    if (ble_gap_disc(own_addr_type,
+                     BMS_SCAN_DURATION_MS,
+                     &params,
+                     runtime_bms_ble_gap_event,
+                     runtime) != 0) {
+        RUNTIME_SET_FLAG(runtime, CONTROLLER_SCAN_ACTIVE, false);
+        return ESP_FAIL;
+    }
+    runtime_project_controller_snapshot(runtime);
     return ESP_OK;
 }
 
@@ -3481,8 +3937,7 @@ static int runtime_bluetooth_gap_event(struct ble_gap_event *event, void *arg)
         if (should_resume_advertising &&
             !RUNTIME_FLAG(runtime, BLUETOOTH_CONNECTED) &&
             !RUNTIME_FLAG(runtime, BMS_SCAN_REQUESTED) &&
-            !RUNTIME_FLAG(runtime, BMS_SCAN_ACTIVE) &&
-            runtime->bms_conn_handle == 0xFFFFU) {
+            !RUNTIME_FLAG(runtime, BMS_SCAN_ACTIVE)) {
             RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, true);
         }
         (void)runtime_project_bluetooth_snapshot(runtime);
@@ -3510,7 +3965,7 @@ static esp_err_t runtime_bluetooth_start_advertising_now(esp_bms_idf_runtime_t *
         (void)runtime_project_bluetooth_snapshot(runtime);
         return ESP_OK;
     }
-    if (RUNTIME_FLAG(runtime, BMS_SCAN_ACTIVE) || runtime->bms_conn_handle != 0xFFFFU || ble_gap_disc_active()) {
+    if (RUNTIME_FLAG(runtime, BMS_SCAN_ACTIVE) || ble_gap_disc_active()) {
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -3570,30 +4025,6 @@ static esp_err_t runtime_bluetooth_start_advertising_now(esp_bms_idf_runtime_t *
     return ESP_OK;
 }
 
-static esp_err_t runtime_bluetooth_stop_for_bms_scan(esp_bms_idf_runtime_t *runtime)
-{
-    if (!runtime) {
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, false);
-    if (runtime->bluetooth_conn_handle != 0xFFFFU) {
-        (void)ble_gap_terminate(runtime->bluetooth_conn_handle, BLE_ERR_REM_USER_CONN_TERM);
-        RUNTIME_SET_FLAG(runtime, BMS_SCAN_REQUESTED, true);
-        runtime_project_bluetooth_snapshot(runtime);
-        return ESP_ERR_INVALID_STATE;
-    }
-    if (RUNTIME_FLAG(runtime, BLUETOOTH_ADVERTISING) || ble_gap_adv_active()) {
-        const int rc = ble_gap_adv_stop();
-        if (rc != 0 && rc != BLE_HS_EALREADY) {
-            return ESP_FAIL;
-        }
-        RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISING, false);
-        runtime_project_bluetooth_snapshot(runtime);
-    }
-    return ESP_OK;
-}
-
 static esp_err_t runtime_bms_ble_start_scan_or_defer(esp_bms_idf_runtime_t *runtime)
 {
     const esp_err_t ret = runtime_bms_ble_start_scan(runtime);
@@ -3625,7 +4056,12 @@ static void runtime_bms_ble_on_sync(void)
     }
     RUNTIME_SET_FLAG(runtime, BMS_BLE_SYNCED, true);
     ESP_LOGI(TAG, "[bms] NimBLE synced");
-    if (RUNTIME_FLAG(runtime, BMS_SCAN_REQUESTED)) {
+    if (RUNTIME_FLAG(runtime, CONTROLLER_SCAN_REQUESTED)) {
+        const esp_err_t ret = runtime_controller_start_scan(runtime);
+        if (ret != ESP_OK) {
+            ESP_LOGW(TAG, "[controller] deferred scan failed: %s", esp_err_to_name(ret));
+        }
+    } else if (RUNTIME_FLAG(runtime, BMS_SCAN_REQUESTED)) {
         const esp_err_t ret = runtime_bms_ble_start_scan(runtime);
         if (ret != ESP_OK) {
             ESP_LOGW(TAG, "[bms] deferred BLE scan start failed: %s", esp_err_to_name(ret));
@@ -4145,6 +4581,20 @@ esp_err_t esp_bms_idf_runtime_start_bluetooth_advertising(esp_bms_idf_runtime_t 
     return ret;
 }
 
+esp_err_t esp_bms_idf_runtime_start_controller_ble_if_enabled(esp_bms_idf_runtime_t *runtime)
+{
+    if (!runtime) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!runtime->controller_page_enabled || !runtime->controller_connection_enabled ||
+        runtime->controller_bound_mac[0] == '\0' ||
+        runtime->controller_conn_handle != 0xFFFFU) {
+        runtime_project_controller_snapshot(runtime);
+        return ESP_OK;
+    }
+    return runtime_controller_start_scan(runtime);
+}
+
 static esp_err_t runtime_bluetooth_stop_advertising(esp_bms_idf_runtime_t *runtime)
 {
     if (!runtime) {
@@ -4168,6 +4618,20 @@ static esp_err_t runtime_bluetooth_stop_advertising(esp_bms_idf_runtime_t *runti
     return ESP_OK;
 }
 
+void esp_bms_idf_runtime_set_active_data_source(esp_bms_idf_runtime_t *runtime,
+                                                esp_bms_lvgl_data_source_t source)
+{
+    if (!runtime || runtime->active_data_source == source) {
+        return;
+    }
+    runtime->active_data_source = source;
+    runtime->bms_status_poll_elapsed_ms = source == ESP_BMS_LVGL_DATA_SOURCE_BMS
+                                              ? BMS_STATUS_POLL_PERIOD_MS
+                                              : 0U;
+    runtime_controller_set_subscription(runtime,
+                                        source == ESP_BMS_LVGL_DATA_SOURCE_CONTROLLER);
+}
+
 bool esp_bms_idf_runtime_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_ms)
 {
     if (!runtime) {
@@ -4175,9 +4639,11 @@ bool esp_bms_idf_runtime_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_m
     }
 
     bool changed = RUNTIME_FLAG(runtime, BLUETOOTH_SNAPSHOT_DIRTY) ||
-                   RUNTIME_FLAG(runtime, BMS_SNAPSHOT_DIRTY);
+                   RUNTIME_FLAG(runtime, BMS_SNAPSHOT_DIRTY) ||
+                   RUNTIME_FLAG(runtime, CONTROLLER_SNAPSHOT_DIRTY);
     RUNTIME_SET_FLAG(runtime, BLUETOOTH_SNAPSHOT_DIRTY, false);
     RUNTIME_SET_FLAG(runtime, BMS_SNAPSHOT_DIRTY, false);
+    RUNTIME_SET_FLAG(runtime, CONTROLLER_SNAPSHOT_DIRTY, false);
     if (RUNTIME_FLAG(runtime, BMS_SCAN_SNAPSHOT_DIRTY)) {
         RUNTIME_SET_FLAG(runtime, BMS_SCAN_SNAPSHOT_DIRTY, false);
         (void)runtime_bms_scan_project_snapshot(runtime);
@@ -4197,7 +4663,8 @@ bool esp_bms_idf_runtime_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_m
         }
         changed = true;
     }
-    if (runtime->bms_ble_phase == (uint8_t)BMS_BLE_PHASE_ONLINE) {
+    if (runtime->active_data_source == ESP_BMS_LVGL_DATA_SOURCE_BMS &&
+        runtime->bms_ble_phase == (uint8_t)BMS_BLE_PHASE_ONLINE) {
         runtime->bms_status_poll_elapsed_ms += elapsed_ms;
         if (runtime->bms_status_poll_elapsed_ms >= BMS_STATUS_POLL_PERIOD_MS &&
             !RUNTIME_FLAG(runtime, BMS_WRITE_IN_FLIGHT)) {
@@ -4214,7 +4681,18 @@ bool esp_bms_idf_runtime_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_m
         runtime->battery_sample_elapsed_ms = 0;
         changed = runtime_sample_battery(runtime) || changed;
     }
-    changed = runtime_poll_gps_uart(runtime) || changed;
+    if (runtime->active_data_source == ESP_BMS_LVGL_DATA_SOURCE_GPS) {
+        changed = runtime_poll_gps_uart(runtime) || changed;
+    } else if (RUNTIME_FLAG(runtime, GPS_UART_READY)) {
+        (void)uart_flush_input(runtime->gps_uart);
+    }
+    if (runtime->active_data_source == ESP_BMS_LVGL_DATA_SOURCE_CONTROLLER &&
+        RUNTIME_FLAG(runtime, CONTROLLER_SUBSCRIBED)) {
+        runtime->controller_keepalive_elapsed_ms += elapsed_ms;
+        if (runtime->controller_keepalive_elapsed_ms >= 2000U) {
+            runtime_controller_send_gather(runtime);
+        }
+    }
 
     runtime->elapsed_ms += elapsed_ms;
     while (runtime->elapsed_ms >= 1000) {
@@ -4287,6 +4765,93 @@ bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,
         RUNTIME_SET_FLAG(runtime, LANGUAGE_ZH, !RUNTIME_FLAG(runtime, LANGUAGE_ZH));
         runtime_set_error(runtime, RUNTIME_FLAG(runtime, LANGUAGE_ZH) ? "LANG ZH" : "LANG EN");
         return true;
+    case ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_CONNECTION:
+        runtime->controller_connection_enabled = !runtime->controller_connection_enabled;
+        if (!runtime->controller_connection_enabled) {
+            RUNTIME_SET_FLAG(runtime, CONTROLLER_SCAN_REQUESTED, false);
+            RUNTIME_SET_FLAG(runtime, CONTROLLER_SCAN_ACTIVE, false);
+            if (runtime->controller_conn_handle != 0xFFFFU) {
+                (void)ble_gap_terminate(runtime->controller_conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+            }
+        } else if (runtime->controller_connection_enabled) {
+            (void)esp_bms_idf_runtime_start_controller_ble_if_enabled(runtime);
+        }
+        runtime_project_controller_snapshot(runtime);
+        return true;
+    case ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_PAGE:
+        runtime->controller_page_enabled = !runtime->controller_page_enabled;
+        runtime->controller_connection_enabled = runtime->controller_page_enabled;
+        if (!runtime->controller_page_enabled) {
+            RUNTIME_SET_FLAG(runtime, CONTROLLER_SCAN_REQUESTED, false);
+            RUNTIME_SET_FLAG(runtime, CONTROLLER_SCAN_ACTIVE, false);
+            if (runtime->controller_conn_handle != 0xFFFFU) {
+                (void)ble_gap_terminate(runtime->controller_conn_handle,
+                                        BLE_ERR_REM_USER_CONN_TERM);
+            }
+        } else {
+            (void)esp_bms_idf_runtime_start_controller_ble_if_enabled(runtime);
+        }
+        runtime_project_controller_snapshot(runtime);
+        return true;
+    case ESP_BMS_LVGL_ACTION_START_CONTROLLER_BIND:
+        if (ACTION_EVENT_FLAG(event, CONTROLLER_MAC_VALID)) {
+            char normalized_mac[sizeof(runtime->controller_bound_mac)] = { 0 };
+            if (!runtime_normalize_mac_text(event->controller_mac,
+                                            normalized_mac,
+                                            sizeof(normalized_mac))) {
+                return false;
+            }
+            const bool binding_changed = strcmp(runtime->controller_bound_mac, normalized_mac) != 0;
+            runtime_copy_snapshot_text(runtime->controller_bound_mac,
+                                       sizeof(runtime->controller_bound_mac),
+                                       normalized_mac);
+            for (uint8_t index = 0; index < runtime->controller_scan_candidate_count; ++index) {
+                if (strcmp(runtime->controller_scan_candidates[index].mac, normalized_mac) == 0) {
+                    runtime_copy_snapshot_text(runtime->controller_bound_name,
+                                               sizeof(runtime->controller_bound_name),
+                                               runtime->controller_scan_candidates[index].name);
+                    break;
+                }
+            }
+            runtime->controller_connection_enabled = true;
+            if (binding_changed && runtime->controller_conn_handle != 0xFFFFU) {
+                RUNTIME_SET_FLAG(runtime, CONTROLLER_SCAN_REQUESTED, true);
+                (void)ble_gap_terminate(runtime->controller_conn_handle,
+                                        BLE_ERR_REM_USER_CONN_TERM);
+            } else {
+                (void)esp_bms_idf_runtime_start_controller_ble_if_enabled(runtime);
+            }
+        } else {
+            (void)runtime_controller_start_scan(runtime);
+        }
+        runtime_project_controller_snapshot(runtime);
+        return true;
+    case ESP_BMS_LVGL_ACTION_ADJUST_CONTROLLER_WHEEL:
+        if (!ACTION_EVENT_FLAG(event, NUMERIC_DELTA_VALID)) {
+            return false;
+        }
+        {
+            int32_t value = (int32_t)runtime->controller_state.fallback_wheel_circumference_mm +
+                            event->numeric_delta;
+            value = value < 0 ? 0 : value > 4000 ? 4000 : value;
+            runtime->controller_state.fallback_wheel_circumference_mm = (uint16_t)value;
+        }
+        esp_fardriver_refresh_derived(&runtime->controller_state);
+        runtime_project_controller_snapshot(runtime);
+        return true;
+    case ESP_BMS_LVGL_ACTION_ADJUST_CONTROLLER_RATIO:
+        if (!ACTION_EVENT_FLAG(event, NUMERIC_DELTA_VALID)) {
+            return false;
+        }
+        {
+            int32_t value = (int32_t)runtime->controller_state.fallback_gear_ratio_centi +
+                            event->numeric_delta;
+            value = value < 0 ? 0 : value > 2000 ? 2000 : value;
+            runtime->controller_state.fallback_gear_ratio_centi = (uint16_t)value;
+        }
+        esp_fardriver_refresh_derived(&runtime->controller_state);
+        runtime_project_controller_snapshot(runtime);
+        return true;
     case ESP_BMS_LVGL_ACTION_START_BMS_BIND:
         if (ACTION_EVENT_FLAG(event, BMS_MAC_VALID)) {
             char normalized_mac[sizeof(runtime->bms_bound_mac)] = { 0 };
@@ -4325,6 +4890,9 @@ bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,
     case ESP_BMS_LVGL_ACTION_SELECT_BMS_DALY:
         return runtime_select_bms_type(runtime, ESP_BMS_IDF_BMS_TYPE_DALY);
     case ESP_BMS_LVGL_ACTION_RESTORE_DEFAULTS:
+        if (runtime->controller_conn_handle != 0xFFFFU) {
+            (void)ble_gap_terminate(runtime->controller_conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+        }
         runtime_reset_state(runtime);
         (void)runtime_sample_battery(runtime);
         runtime_set_error(runtime, "RESTORED");
@@ -4374,6 +4942,16 @@ const char *esp_bms_idf_runtime_action_name(esp_bms_lvgl_action_t action)
         return "toggle-speed-unit";
     case ESP_BMS_LVGL_ACTION_TOGGLE_LANGUAGE:
         return "toggle-language";
+    case ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_CONNECTION:
+        return "toggle-controller-connection";
+    case ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_PAGE:
+        return "toggle-controller-page";
+    case ESP_BMS_LVGL_ACTION_START_CONTROLLER_BIND:
+        return "start-controller-bind";
+    case ESP_BMS_LVGL_ACTION_ADJUST_CONTROLLER_WHEEL:
+        return "adjust-controller-wheel";
+    case ESP_BMS_LVGL_ACTION_ADJUST_CONTROLLER_RATIO:
+        return "adjust-controller-ratio";
     case ESP_BMS_LVGL_ACTION_START_BMS_BIND:
         return "start-bms-bind";
     case ESP_BMS_LVGL_ACTION_ENABLE_BLUETOOTH_ADVERTISING:
