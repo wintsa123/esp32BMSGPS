@@ -126,6 +126,9 @@ invalid/offline states.
 - R31. Candidate row identity must remain stable for the duration of a scan.
   Once a row is assigned to a MAC, no other MAC may reuse that array slot until
   the user explicitly refreshes and starts a new candidate list.
+- R32. Device-local Bluetooth must initialize and advertise after boot so a
+  previously connected client can reconnect. This must not start BMS candidate
+  discovery; BMS scanning remains limited to opening or refreshing its list.
 
 ## Out Of Scope
 

@@ -453,6 +453,11 @@ static void runtime_bms_scan_store_candidate(esp_bms_idf_runtime_t *runtime,
 
     size_t index = runtime_bms_scan_find_candidate(runtime, mac);
     if (index < ESP_BMS_IDF_BMS_SCAN_MAX_CANDIDATES) {
+        const bool candidate_changed =
+            bound_name_changed ||
+            (name && name[0] != '\0' &&
+             (!runtime->bms_scan_candidates[index].has_name ||
+              strcmp(runtime->bms_scan_candidates[index].name, name) != 0));
         runtime->bms_scan_candidates[index].rssi = rssi;
         if (name && name[0] != '\0') {
             runtime_copy_snapshot_text(runtime->bms_scan_candidates[index].name,
@@ -463,7 +468,9 @@ static void runtime_bms_scan_store_candidate(esp_bms_idf_runtime_t *runtime,
         if (runtime->bms_scan_lock) {
             xSemaphoreGive(runtime->bms_scan_lock);
         }
-        RUNTIME_SET_FLAG(runtime, BMS_SCAN_SNAPSHOT_DIRTY, true);
+        if (candidate_changed) {
+            RUNTIME_SET_FLAG(runtime, BMS_SCAN_SNAPSHOT_DIRTY, true);
+        }
         return;
     }
 

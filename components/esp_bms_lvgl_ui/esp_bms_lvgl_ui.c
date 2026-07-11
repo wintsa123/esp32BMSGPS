@@ -113,7 +113,6 @@ typedef enum {
     UI_STATE_FLAG_QUICK_LEVEL_OVERLAY_DRAGGED = UINT32_C(1) << 20,
     UI_STATE_FLAG_QUICK_LEVEL_OVERLAY_HORIZONTAL = UINT32_C(1) << 21,
     UI_STATE_FLAG_QUICK_LEVEL_LONG_TRIGGERED = UINT32_C(1) << 22,
-    UI_STATE_FLAG_SOC_FILL_HORIZONTAL = UINT32_C(1) << 23,
     UI_STATE_FLAG_INITIALIZED = UINT32_C(1) << 26,
     UI_STATE_FLAG_QUICK_ROTATE_TOAST_ACTIVE = UINT32_C(1) << 27,
     UI_STATE_FLAG_QUICK_LEVEL_POINTER_ACTIVE = UINT32_C(1) << 28,
@@ -288,7 +287,6 @@ typedef struct {
     lv_obj_t *bms_state;
     lv_obj_t *ap_state;
     lv_obj_t *soc;
-    lv_obj_t *soc_fill;
     lv_obj_t *soc_battery_level;
     lv_obj_t *pack_voltage;
     lv_obj_t *current;
@@ -414,6 +412,7 @@ static const lv_color_t COLOR_DASHBOARD_VALUE = LV_COLOR_MAKE(0x2d, 0x8a, 0x66);
 static const lv_color_t COLOR_DASHBOARD_BATTERY_LEVEL = LV_COLOR_MAKE(0x66, 0xbf, 0xf2);
 static const lv_color_t COLOR_SETTINGS_BG = LV_COLOR_MAKE(0x00, 0x00, 0x00);
 static const lv_color_t COLOR_SETTINGS_CARD = LV_COLOR_MAKE(0x00, 0x00, 0x00);
+static const lv_color_t COLOR_SETTINGS_LIST = LV_COLOR_MAKE(0x24, 0x24, 0x24);
 static const lv_color_t COLOR_SETTINGS_BORDER = LV_COLOR_MAKE(0x32, 0x32, 0x32);
 static const lv_color_t COLOR_SETTINGS_TEXT = LV_COLOR_MAKE(0xff, 0xff, 0xff);
 static const lv_color_t COLOR_SETTINGS_MUTED = LV_COLOR_MAKE(0xff, 0xff, 0xff);
@@ -477,18 +476,6 @@ static lv_obj_t *panel(lv_obj_t *parent, int32_t x, int32_t y, int32_t w, int32_
     lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_pad_all(obj, 4, LV_PART_MAIN);
     return obj;
-}
-
-static void dashboard_soc_fill_create(lv_obj_t *soc_panel)
-{
-    lv_obj_set_style_clip_corner(soc_panel, true, LV_PART_MAIN);
-
-    s_ui.soc_fill = lv_obj_create(soc_panel);
-    clear_style(s_ui.soc_fill);
-    lv_obj_set_style_radius(s_ui.soc_fill, 0, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(s_ui.soc_fill, COLOR_SOC, LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(s_ui.soc_fill, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(s_ui.soc_fill, 0, LV_PART_MAIN);
 }
 
 static lv_obj_t *label(lv_obj_t *parent, int32_t x, int32_t y, int32_t w, int32_t h, const lv_font_t *font)
@@ -949,35 +936,25 @@ static lv_color_t dashboard_soc_fill_color(uint8_t soc_percent, bool valid, bool
     if (!valid) {
         return COLOR_PANEL_ALT;
     }
-    if (soc_percent >= 95U) {
+    if (soc_percent >= 80U) {
         return COLOR_ACCENT;
     }
-    if (soc_percent < 20U) {
-        return COLOR_WARN;
+    if (soc_percent <= 20U) {
+        return COLOR_BAD;
     }
     return COLOR_SOC;
 }
 
 static void update_dashboard_soc_fill(uint8_t soc_percent, bool valid, bool charging)
 {
-    if (!s_ui.soc_fill) {
+    if (!s_ui.soc) {
         return;
     }
 
-    lv_obj_t *panel_obj = lv_obj_get_parent(s_ui.soc_fill);
-    const int32_t panel_w = lv_obj_get_width(panel_obj);
-    const int32_t panel_h = lv_obj_get_height(panel_obj);
     const uint8_t soc = valid ? (soc_percent > 100U ? 100U : soc_percent) : 0U;
-
-    lv_obj_set_style_bg_color(s_ui.soc_fill, dashboard_soc_fill_color(soc, valid, charging), LV_PART_MAIN);
-    if (UI_FLAG(SOC_FILL_HORIZONTAL)) {
-        lv_obj_set_pos(s_ui.soc_fill, 0, 0);
-        lv_obj_set_size(s_ui.soc_fill, (panel_w * (int32_t)soc) / 100, panel_h);
-    } else {
-        const int32_t fill_h = (panel_h * (int32_t)soc) / 100;
-        lv_obj_set_pos(s_ui.soc_fill, 0, panel_h - fill_h);
-        lv_obj_set_size(s_ui.soc_fill, panel_w, fill_h);
-    }
+    lv_obj_set_style_bg_color(lv_obj_get_parent(s_ui.soc),
+                              dashboard_soc_fill_color(soc, valid, charging),
+                              LV_PART_MAIN);
 }
 
 static bool get_active_pointer(lv_point_t *point)
@@ -4056,8 +4033,9 @@ static lv_obj_t *settings_option_card(lv_obj_t *parent,
                                       int32_t h,
                                       const settings_option_t *option)
 {
-    lv_obj_t *box = panel(parent, x, y, w, h, COLOR_SETTINGS_CARD);
+    lv_obj_t *box = panel(parent, x, y, w, h, COLOR_SETTINGS_LIST);
     lv_obj_set_style_radius(box, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(box, 0, LV_PART_MAIN);
     lv_obj_set_style_border_width(box, 1, LV_PART_MAIN);
     lv_obj_set_style_border_color(box, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
     lv_obj_set_style_border_opa(box, LV_OPA_COVER, LV_PART_MAIN);
@@ -4096,11 +4074,12 @@ static lv_obj_t *settings_option_card(lv_obj_t *parent,
 
     lv_obj_t *arrow = label(box,
                             w - 22,
-                            (h - 16) / 2,
+                            0,
                             14,
                             16,
                             &settings_zh_16);
     lv_label_set_text(arrow, ">");
+    lv_obj_align(arrow, LV_ALIGN_RIGHT_MID, -8, 0);
     lv_obj_set_style_text_align(arrow, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(arrow, COLOR_SETTINGS_MUTED, LV_PART_MAIN);
 
@@ -4666,7 +4645,7 @@ static void format_cell_v(char *out, size_t len, bool valid, uint16_t mv)
         snprintf(out, len, "--");
         return;
     }
-    snprintf(out, len, "%u.%03u", mv / 1000, mv % 1000);
+    snprintf(out, len, "%u.%03uV", mv / 1000, mv % 1000);
 }
 
 static void format_temp_c(char *out, size_t len, bool valid, int16_t celsius)
@@ -4829,11 +4808,11 @@ static void set_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
         label_set_text_color_if_changed(s_ui.bms_error, COLOR_BAD);
         label_set_text_if_changed(s_ui.bms_error, "BMS WARN\nPROTECTION");
     } else if (snapshot->bms_warning_count > 0U) {
-        label_set_text_color_if_changed(s_ui.bms_error, COLOR_BAD);
+        label_set_text_color_if_changed(s_ui.bms_error, COLOR_WARN);
         label_set_text_if_changed(s_ui.bms_error, "BMS WARN\nWARNING");
     } else if (SNAPSHOT_FLAG(snapshot, BMS_ONLINE)) {
         label_set_text_color_if_changed(s_ui.bms_error, COLOR_ACCENT);
-        label_set_text_if_changed(s_ui.bms_error, "BLE STATUS\nCONNECTED");
+        label_set_text_if_changed(s_ui.bms_error, "BMS INFO\nOK");
     } else if (strstr(snapshot->bms_info_text, "FAIL") != NULL ||
                strstr(snapshot->bms_info_text, "ERR") != NULL ||
                strstr(snapshot->bms_info_text, "NO ") != NULL) {
@@ -5166,8 +5145,6 @@ static void create_screen(lv_display_t *display)
                                               112,
                                               COLOR_DASHBOARD_SOC_PANEL,
                                               COLOR_DASHBOARD_SOC_BORDER);
-        UI_SET_FLAG(SOC_FILL_HORIZONTAL, false);
-        dashboard_soc_fill_create(soc_panel);
         s_ui.soc = label(soc_panel, 4, 8, 100, 30, &lv_font_montserrat_24);
         dashboard_battery_icon(soc_panel, 19, 43, 66, 22);
         s_ui.capacity = label(soc_panel, 4, 76, 100, 20, &lv_font_montserrat_14);
@@ -5181,7 +5158,7 @@ static void create_screen(lv_display_t *display)
                                                COLOR_DASHBOARD_BORDER);
         s_ui.pack_voltage = label(pack_panel, 4, 12, 100, 34, &lv_font_montserrat_28);
         dashboard_separator(pack_panel, 8, 52, 92);
-        s_ui.current = label(pack_panel, 4, 56, 100, 34, &lv_font_montserrat_28);
+        s_ui.current = label(pack_panel, 4, 58, 100, 34, &lv_font_montserrat_28);
 
         lv_obj_t *bms_panel = dashboard_panel(s_ui.battery_page,
                                               8,
@@ -5242,8 +5219,6 @@ static void create_screen(lv_display_t *display)
                                               84,
                                               COLOR_DASHBOARD_SOC_PANEL,
                                               COLOR_DASHBOARD_SOC_BORDER);
-        UI_SET_FLAG(SOC_FILL_HORIZONTAL, true);
-        dashboard_soc_fill_create(soc_panel);
         s_ui.soc = label(soc_panel, 4, 3, 140, 30, &lv_font_montserrat_24);
         dashboard_battery_icon(soc_panel, 34, 35, 76, 19);
         s_ui.capacity = label(soc_panel, 4, 58, 140, 20, &lv_font_montserrat_14);
@@ -5257,7 +5232,7 @@ static void create_screen(lv_display_t *display)
                                                COLOR_DASHBOARD_BORDER);
         s_ui.pack_voltage = label(pack_panel, 4, 3, 140, 34, &lv_font_montserrat_28);
         dashboard_separator(pack_panel, 10, 40, 128);
-        s_ui.current = label(pack_panel, 4, 42, 140, 34, &lv_font_montserrat_28);
+        s_ui.current = label(pack_panel, 4, 44, 140, 34, &lv_font_montserrat_28);
 
         lv_obj_t *bms_panel = dashboard_panel(s_ui.battery_page,
                                               8,
@@ -5369,11 +5344,22 @@ static void create_screen(lv_display_t *display)
                         NULL);
 
     const int32_t row_h = portrait ? SETTINGS_LIST_ROW_H_PORTRAIT : SETTINGS_LIST_ROW_H_LANDSCAPE;
+    const int32_t list_x = 12;
+    const int32_t list_w = s_ui.width - (list_x * 2);
+    lv_obj_t *list_card = panel(s_ui.settings_carousel,
+                                list_x,
+                                SETTINGS_LIST_PAD_Y,
+                                list_w,
+                                row_h * SETTINGS_OPTION_COUNT,
+                                COLOR_SETTINGS_LIST);
+    lv_obj_set_style_radius(list_card, 8, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(list_card, 0, LV_PART_MAIN);
+    lv_obj_set_style_clip_corner(list_card, true, LV_PART_MAIN);
     for (uint32_t index = 0; index < SETTINGS_OPTION_COUNT; ++index) {
-        settings_option_card(s_ui.settings_carousel,
+        settings_option_card(list_card,
                              0,
-                             SETTINGS_LIST_PAD_Y + ((int32_t)index * row_h),
-                             s_ui.width,
+                             (int32_t)index * row_h,
+                             list_w,
                              row_h,
                              &SETTINGS_OPTIONS[index]);
     }

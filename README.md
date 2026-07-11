@@ -63,22 +63,19 @@ On Windows, the flash helper wraps the same ESP-IDF flow:
 .\scripts\flash.ps1 -Port COM3 -Monitor
 ```
 
-For a raw TCP serial bridge, use `socket://`, not `rfc2217://`. Raw TCP cannot
-change the Windows-side serial baud rate, so the flash baud must match the
-bridge process. `scripts/flash.ps1` defaults socket ports to `-b 115200`:
+For the RFC2217 serial bridge, use `rfc2217://`. It supports serial line-control
+operations required by esptool:
 
 ```powershell
-.\scripts\flash.ps1 -Port socket://192.168.2.10:4000
-.\scripts\flash.ps1 -Port socket://192.168.2.10:4000 -Monitor
-.\scripts\flash.ps1 -Port socket://192.168.2.10:4000 -BaudRate 115200
+.\scripts\flash.ps1 -Port rfc2217://192.168.2.10:4000?ign_set_control
+.\scripts\flash.ps1 -Port rfc2217://192.168.2.10:4000?ign_set_control -Monitor
 ```
 
-The raw bridge in `scripts/serial_tcp_bridge.ps1` can reset the ESP32 into the
-bootloader on the first TCP write, but it cannot expose RFC2217 line-control
-commands to esptool.
+`scripts/serial_tcp_bridge.ps1` starts the RFC2217 service and automatically
+loads the same ESP-IDF environment as `scripts/flash.ps1`.
 
-In non-interactive shells where `idf.py monitor` refuses to run without a TTY,
-capture the same raw socket with:
+`raw-socket-monitor.py` only supports raw `socket://` endpoints; use
+`flash.ps1 -Monitor` for RFC2217 monitoring.
 
 ```bash
 python3 scripts/raw-socket-monitor.py socket://192.168.2.10:4000 --duration 30

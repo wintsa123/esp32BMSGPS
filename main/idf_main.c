@@ -122,6 +122,11 @@ void app_main(void)
     }
     log_heap_state("display_settings");
 
+    const esp_err_t bluetooth_ret = esp_bms_idf_runtime_start_bluetooth_advertising(&runtime);
+    if (bluetooth_ret != ESP_OK) {
+        ESP_LOGW(TAG, "local Bluetooth startup failed: %s", esp_err_to_name(bluetooth_ret));
+    }
+
     bool delayed_display_settings_save_pending = false;
     uint32_t delayed_display_settings_save_ms = 0;
     setup_service_start_stage_t setup_service_start_stage = SETUP_SERVICE_START_IDLE;

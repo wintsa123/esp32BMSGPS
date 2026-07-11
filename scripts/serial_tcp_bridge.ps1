@@ -3,18 +3,35 @@ param(
     [string]$PortName = "COM3",
     [int]$ListenPort = 4000,
     [string]$AllowedRemote = "192.168.2.108",
-    [string]$IdfPythonEnv = "$env:USERPROFILE\.espressif\python_env\idf5.5_py3.10_env",
+    [string]$IdfPythonEnv,
     [switch]$VerboseRfc2217
 )
 
 $ErrorActionPreference = "Stop"
 
-function Resolve-Rfc2217Server {
-    param([Parameter(Mandatory = $true)][string]$PythonEnv)
+function Initialize-IdfEnvironment {
+    $candidates = @()
+    if (Test-Path Env:IDF_PATH) {
+        $candidates += (Join-Path $env:IDF_PATH "export.ps1")
+    }
+    $candidates += (Join-Path $env:USERPROFILE "esp\esp-idf-v5.5.4\export.ps1")
 
-    $envServer = Join-Path $PythonEnv "Scripts\esp_rfc2217_server.exe"
-    if (Test-Path $envServer) {
-        return (Resolve-Path $envServer).Path
+    foreach ($candidate in $candidates) {
+        if (Test-Path $candidate) {
+            . $candidate
+            return
+        }
+    }
+}
+
+function Resolve-Rfc2217Server {
+    param([string]$PythonEnv)
+
+    if ($PythonEnv) {
+        $envServer = Join-Path $PythonEnv "Scripts\esp_rfc2217_server.exe"
+        if (Test-Path $envServer) {
+            return (Resolve-Path $envServer).Path
+        }
     }
 
     $pathServer = Get-Command esp_rfc2217_server.exe -ErrorAction SilentlyContinue
@@ -22,7 +39,14 @@ function Resolve-Rfc2217Server {
         return $pathServer.Source
     }
 
-    throw "esp_rfc2217_server.exe was not found. Load ESP-IDF tools or pass -IdfPythonEnv."
+    $pythonEnvRoot = Join-Path $env:USERPROFILE ".espressif\python_env"
+    $discoveredServer = Get-ChildItem -Path $pythonEnvRoot -Filter "esp_rfc2217_server.exe" -Recurse -File -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($discoveredServer) {
+        return $discoveredServer.FullName
+    }
+
+    throw "esp_rfc2217_server.exe was not found after loading ESP-IDF. Set IDF_PATH, install ESP-IDF 5.5.4 under $env:USERPROFILE\esp, or pass -IdfPythonEnv."
 }
 
 function Test-FirewallRuleScope {
@@ -44,6 +68,7 @@ function Test-FirewallRuleScope {
     }
 }
 
+Initialize-IdfEnvironment
 $server = Resolve-Rfc2217Server -PythonEnv $IdfPythonEnv
 Test-FirewallRuleScope -Port $ListenPort -RemoteIp $AllowedRemote
 
