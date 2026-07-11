@@ -237,6 +237,74 @@ ble_gap_disc(...);
 if (BMS_SCAN_ACTIVE || ble_gap_disc_active()) return ESP_OK;
 ```
 
+## Scenario: Persistent Touch Calibration
+
+### 1. Scope / Trigger
+
+- Trigger: adding or changing TFT touch calibration, display rotation, or the
+  UI action contract that carries calibration samples.
+
+### 2. Signatures
+
+- Actions: `START_TOUCH_CALIBRATION`, `ADD_TOUCH_CALIBRATION_SAMPLE`, and
+  `CANCEL_TOUCH_CALIBRATION`.
+- Sample fields: target index plus observed and target `uint16_t` coordinates.
+- Storage: NVS namespace `esp_bms`, blob key `touch_cal`, with an explicit
+  calibration version.
+
+### 3. Contracts
+
+- Calibration is user initiated. Starting a session disables the active user
+  mapping but retains it for cancel/error rollback.
+- Convert display coordinates to canonical panel coordinates by undoing swap
+  first and mirrors second. Apply correction in canonical coordinates, then
+  mirror and swap back to the active rotation.
+- Accept all four corner samples before saving. A successful save applies
+  immediately; cancel, invalid geometry, or NVS failure restores the previous
+  mapping.
+- Restoring defaults erases `touch_cal` and returns to the driver mapping.
+
+### 4. Validation & Error Matrix
+
+- Duplicate start while active -> `ESP_ERR_INVALID_STATE`.
+- Invalid target index, incomplete geometry, reversed axis, or insufficient
+  span -> reject without overwriting the previous calibration.
+- NVS save failure -> restore the previous in-memory mapping and report error.
+- Missing NVS blob at boot -> continue with the factory touch mapping.
+
+### 5. Good/Base/Bad Cases
+
+- Good: four separated corner samples produce bounded X/Y ranges, save, and
+  remain correct after rotation and reboot.
+- Base: no saved blob; touch uses the existing XPT2046 scaling and rotation.
+- Bad: calibrate directly in current landscape coordinates and reuse those
+  ranges in portrait; axes and mirrors become rotation dependent.
+
+### 6. Tests Required
+
+- Run a host math check for valid bounds, invalid spans, and round-trip
+  conversion in all four rotations.
+- Run `git diff --check` and `./scripts/esp-idf-env.sh build`.
+- Flash through RFC2217 and confirm boot loads a valid blob without errors.
+- On hardware, complete calibration, reboot, restore defaults, and exercise all
+  four rotations.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```c
+calibrated_x = map(display_x, saved_landscape_min, saved_landscape_max);
+```
+
+#### Correct
+
+```c
+touch_display_to_canonical(display_x, display_y, &x, &y);
+x = touch_calibration_map(x, calibration.x_min, calibration.x_max, width - 1);
+touch_canonical_to_display(x, y, &display_x, &display_y);
+```
+
 ## Required Patterns
 
 - Keep `main/idf_main.c` as orchestration only. Subsystem logic belongs in
