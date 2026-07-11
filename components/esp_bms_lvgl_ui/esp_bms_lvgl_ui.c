@@ -28,6 +28,7 @@ LV_FONT_DECLARE(settings_zh_16);
 #define ARRAY_SIZE(array) (sizeof(array) / sizeof((array)[0]))
 #define QUICK_BLUETOOTH_SYMBOL "\xee\x9c\xa8"
 #define QUICK_HOTSPOT_SYMBOL "\xee\x98\xab"
+#define SETUP_AP_INFO_LINE_SPACE 4
 #define QUICK_PULL_OPEN_DY 34
 #define QUICK_PULL_MAX_DX 64
 #define QUICK_PULL_ZONE_PORTRAIT_H 88
@@ -61,10 +62,10 @@ LV_FONT_DECLARE(settings_zh_16);
 #define QUICK_LEVEL_OVERLAY_FADE_MS 140U
 #define QUICK_TOAST_MS 950
 #define QUICK_ROTATE_TOAST_TICK_MS 1000U
-#define QUICK_TOAST_SORT_HINT "HOLD TO SORT"
+#define QUICK_TOAST_SORT_HINT "快捷面板调节"
+#define QUICK_BRIGHTNESS_TOAST_HINT "亮度调节"
+#define QUICK_VOLUME_TOAST_HINT "音量调节"
 #define QUICK_ROTATE_TOAST_TITLE "自动保存"
-#define QUICK_HOLD_PROGRESS_PERIOD_MS 35U
-#define QUICK_HOLD_COMPLETE_MS 700U
 #define QUICK_PANEL_ITEM_COUNT QUICK_PANEL_BUTTON_COUNT
 #define QUICK_TILE_PRESS_INSET 4
 #define QUICK_TILE_SCALE_NORMAL 256
@@ -75,9 +76,6 @@ LV_FONT_DECLARE(settings_zh_16);
 #define DASHBOARD_CELL_KEY_BITMAP_H 16
 #define DASHBOARD_CELL_KEY_BITMAP_BYTES \
     (((DASHBOARD_CELL_KEY_BITMAP_W * DASHBOARD_CELL_KEY_BITMAP_H) + 7U) / 8U)
-#define DASHBOARD_SOC_WAVE_PERIOD 32
-#define DASHBOARD_SOC_WAVE_WIDTH 192
-#define DASHBOARD_SOC_WAVE_HEIGHT 18
 
 typedef enum {
     QUICK_LAYOUT_PORTRAIT = 0,
@@ -111,16 +109,11 @@ typedef enum {
     UI_STATE_FLAG_QUICK_EDIT_MODE = UINT32_C(1) << 13,
     UI_STATE_FLAG_QUICK_DRAG_MOVED = UINT32_C(1) << 14,
     UI_STATE_FLAG_QUICK_LONG_TRIGGERED = UINT32_C(1) << 15,
-    UI_STATE_FLAG_QUICK_HOLD_ACTIVE = UINT32_C(1) << 16,
-    UI_STATE_FLAG_QUICK_HOLD_COMPLETED = UINT32_C(1) << 17,
-    UI_STATE_FLAG_QUICK_HOLD_SUPPRESS_CLICK = UINT32_C(1) << 18,
     UI_STATE_FLAG_QUICK_LEVEL_OVERLAY_ACTIVE = UINT32_C(1) << 19,
     UI_STATE_FLAG_QUICK_LEVEL_OVERLAY_DRAGGED = UINT32_C(1) << 20,
     UI_STATE_FLAG_QUICK_LEVEL_OVERLAY_HORIZONTAL = UINT32_C(1) << 21,
     UI_STATE_FLAG_QUICK_LEVEL_LONG_TRIGGERED = UINT32_C(1) << 22,
     UI_STATE_FLAG_SOC_FILL_HORIZONTAL = UINT32_C(1) << 23,
-    UI_STATE_FLAG_SOC_WAVE_ACTIVE = UINT32_C(1) << 24,
-    UI_STATE_FLAG_SOC_WAVE_VERTICAL = UINT32_C(1) << 25,
     UI_STATE_FLAG_INITIALIZED = UINT32_C(1) << 26,
     UI_STATE_FLAG_QUICK_ROTATE_TOAST_ACTIVE = UINT32_C(1) << 27,
     UI_STATE_FLAG_QUICK_LEVEL_POINTER_ACTIVE = UINT32_C(1) << 28,
@@ -173,9 +166,9 @@ static void ui_flag_set(uint8_t *flags, uint32_t index, bool enabled)
 #define ACTION_EVENT_SET_FLAG(event, name, enabled) \
     esp_bms_lvgl_action_event_flag_set((event), ESP_BMS_LVGL_ACTION_EVENT_FLAG_##name, (enabled))
 
-_Static_assert(sizeof(esp_bms_dashboard_snapshot_t) == 648,
+_Static_assert(sizeof(esp_bms_dashboard_snapshot_t) == 672,
                "esp_bms_dashboard_snapshot_t ABI size changed; update C snapshot consumers too");
-_Static_assert(sizeof(esp_bms_lvgl_action_event_t) == 28,
+_Static_assert(sizeof(esp_bms_lvgl_action_event_t) == 36,
                "esp_bms_lvgl_action_event_t ABI size changed; update C action consumers too");
 _Static_assert(sizeof(esp_bms_lvgl_action_t) == 4,
                "esp_bms_lvgl_action_t ABI size changed; update C action consumers too");
@@ -217,6 +210,12 @@ _Static_assert(ESP_BMS_LVGL_ACTION_ENABLE_BLUETOOTH_ADVERTISING == 17,
                "esp_bms_lvgl_action_t value changed; update C action consumers too");
 _Static_assert(ESP_BMS_LVGL_ACTION_CYCLE_LEVEL_POSITION == 18,
                "esp_bms_lvgl_action_t value changed; update C action consumers too");
+_Static_assert(ESP_BMS_LVGL_ACTION_START_TOUCH_CALIBRATION == 19,
+               "esp_bms_lvgl_action_t value changed; update C action consumers too");
+_Static_assert(ESP_BMS_LVGL_ACTION_ADD_TOUCH_CALIBRATION_SAMPLE == 20,
+               "esp_bms_lvgl_action_t value changed; update C action consumers too");
+_Static_assert(ESP_BMS_LVGL_ACTION_CANCEL_TOUCH_CALIBRATION == 21,
+               "esp_bms_lvgl_action_t value changed; update C action consumers too");
 
 typedef struct {
     lv_display_t *display;
@@ -234,10 +233,22 @@ typedef struct {
     lv_obj_t *settings_detail_edge_zone;
     lv_obj_t *settings_bms_popup;
     lv_obj_t *settings_bms_ble_status;
+    lv_obj_t *settings_restore_popup;
+    lv_obj_t *settings_system_value;
+    lv_obj_t *settings_system_slider;
+    lv_obj_t *settings_system_slider_fill;
+    lv_obj_t *settings_system_slider_knob;
+    lv_obj_t *settings_calibration_target;
+    lv_obj_t *settings_calibration_status;
+    char settings_bms_confirm_mac[18];
+    char settings_bms_confirm_name[ESP_BMS_BMS_SCAN_NAME_LEN + 1U];
     lv_obj_t *settings_swipe_indicator;
     bool settings_bms_ble_popup_open;
+    bool quick_connecting_toast_active;
     bool settings_nav_hidden;
     bool settings_nav_layout_updating;
+    bool setup_ap_qr_ready;
+    bool setup_ap_qr_encode_attempted;
     lv_obj_t *settings_button;
     lv_obj_t *quick_pull_zone;
     lv_obj_t *quick_panel;
@@ -278,7 +289,7 @@ typedef struct {
     lv_obj_t *ap_state;
     lv_obj_t *soc;
     lv_obj_t *soc_fill;
-    lv_obj_t *soc_wave;
+    lv_obj_t *soc_battery_level;
     lv_obj_t *pack_voltage;
     lv_obj_t *current;
     lv_obj_t *capacity;
@@ -291,9 +302,8 @@ typedef struct {
     lv_obj_t *gps_detail;
     lv_obj_t *setup_ap_control_row;
     lv_obj_t *setup_ap_info;
+    lv_obj_t *setup_ap_qr_panel;
     lv_obj_t *setup_ap_qr;
-    lv_obj_t *quick_hold_segments[4];
-    lv_timer_t *quick_hold_timer;
 
     int32_t width;
     int32_t height;
@@ -304,6 +314,8 @@ typedef struct {
     lv_point_t quick_pull_start;
     lv_point_t return_swipe_start;
     lv_point_t settings_swipe_start;
+    lv_point_t settings_calibration_observed;
+    lv_point_t settings_calibration_expected;
     lv_point_t quick_drag_start;
     int32_t quick_pull_drag_dy;
     int32_t return_swipe_drag_dy;
@@ -318,18 +330,18 @@ typedef struct {
     quick_drag_target_kind_t quick_drag_target_kind;
     uint8_t quick_drag_target_index;
     uint8_t settings_detail_id;
+    uint8_t settings_bms_view;
+    uint8_t settings_system_view;
+    uint8_t settings_system_slider_kind;
+    uint8_t settings_calibration_target_index;
     uint8_t quick_level_overlay_kind;
     uint8_t quick_level_position;
-    uint8_t quick_hold_index;
     uint8_t quick_brightness_percent;
     uint8_t quick_volume_percent;
     uint8_t quick_rotate_toast_remaining_s;
-    uint32_t quick_hold_elapsed_ms;
     uint32_t flags;
-    int32_t soc_wave_span;
     esp_bms_dashboard_snapshot_t last_snapshot;
     esp_bms_dashboard_snapshot_t deferred_snapshot;
-    char current_setup_ap_qr_payload[sizeof(((esp_bms_dashboard_snapshot_t *)0)->setup_ap_qr_payload)];
 } esp_bms_lvgl_ui_t;
 
 static esp_bms_lvgl_ui_t s_ui;
@@ -376,25 +388,30 @@ static void settings_swipe_indicator_hide(void);
 static void settings_show_root(void);
 static void set_quick_panel_open(bool open);
 static void set_quick_edit_mode(bool edit_mode);
+static void quick_edit_set_pressed(bool pressed);
 static void quick_tile_set_scale(lv_obj_t *obj, int32_t scale);
-static void quick_hold_cancel(bool suppress_click);
 static void refresh_quick_level_layouts(void);
-static void quick_level_cycle_position(void);
 static const char *quick_level_position_text(void);
 static void quick_level_overlay_layout(void);
 static void quick_level_overlay_hide(void);
 static bool process_return_swipe_event(lv_event_code_t code, bool allow_start);
 
 static const lv_color_t COLOR_BG = LV_COLOR_MAKE(0x08, 0x0a, 0x0e);
-static const lv_color_t COLOR_PANEL = LV_COLOR_MAKE(0x12, 0x18, 0x20);
 static const lv_color_t COLOR_PANEL_ALT = LV_COLOR_MAKE(0x16, 0x20, 0x29);
-static const lv_color_t COLOR_SOC = LV_COLOR_MAKE(0x05, 0x68, 0xde);
+static const lv_color_t COLOR_SOC = LV_COLOR_MAKE(0x00, 0x56, 0xbe);
 static const lv_color_t COLOR_WHITE = LV_COLOR_MAKE(0xff, 0xff, 0xff);
 static const lv_color_t COLOR_TEXT = LV_COLOR_MAKE(0xe8, 0xf1, 0xff);
 static const lv_color_t COLOR_MUTED = LV_COLOR_MAKE(0xa9, 0xb4, 0xc8);
 static const lv_color_t COLOR_ACCENT = LV_COLOR_MAKE(0x74, 0xd6, 0xb5);
 static const lv_color_t COLOR_WARN = LV_COLOR_MAKE(0xff, 0xc8, 0x57);
 static const lv_color_t COLOR_BAD = LV_COLOR_MAKE(0xff, 0x6b, 0x6b);
+static const lv_color_t COLOR_DASHBOARD_BG = LV_COLOR_MAKE(0x00, 0x00, 0x00);
+static const lv_color_t COLOR_DASHBOARD_PANEL = LV_COLOR_MAKE(0x09, 0x0c, 0x10);
+static const lv_color_t COLOR_DASHBOARD_SOC_PANEL = LV_COLOR_MAKE(0x06, 0x32, 0x70);
+static const lv_color_t COLOR_DASHBOARD_BORDER = LV_COLOR_MAKE(0x3e, 0x42, 0x47);
+static const lv_color_t COLOR_DASHBOARD_SOC_BORDER = LV_COLOR_MAKE(0x4a, 0x9b, 0xf5);
+static const lv_color_t COLOR_DASHBOARD_VALUE = LV_COLOR_MAKE(0x2d, 0x8a, 0x66);
+static const lv_color_t COLOR_DASHBOARD_BATTERY_LEVEL = LV_COLOR_MAKE(0x66, 0xbf, 0xf2);
 static const lv_color_t COLOR_SETTINGS_BG = LV_COLOR_MAKE(0x00, 0x00, 0x00);
 static const lv_color_t COLOR_SETTINGS_CARD = LV_COLOR_MAKE(0x00, 0x00, 0x00);
 static const lv_color_t COLOR_SETTINGS_BORDER = LV_COLOR_MAKE(0x32, 0x32, 0x32);
@@ -402,32 +419,6 @@ static const lv_color_t COLOR_SETTINGS_TEXT = LV_COLOR_MAKE(0xff, 0xff, 0xff);
 static const lv_color_t COLOR_SETTINGS_MUTED = LV_COLOR_MAKE(0xff, 0xff, 0xff);
 static const lv_color_t COLOR_SETTINGS_ACCENT = LV_COLOR_MAKE(0xff, 0xff, 0xff);
 static const lv_color_t COLOR_SWITCH_ACTIVE = LV_COLOR_MAKE(0x34, 0xc7, 0x59);
-static const lv_color_t COLOR_SETTINGS_POPUP_BG = LV_COLOR_MAKE(0x28, 0x2d, 0x36);
-static const lv_color_t COLOR_SETTINGS_POPUP_LIST = LV_COLOR_MAKE(0x36, 0x3d, 0x48);
-static const lv_color_t COLOR_SETTINGS_POPUP_ROW = LV_COLOR_MAKE(0x4c, 0x56, 0x64);
-static const lv_color_t COLOR_SETTINGS_POPUP_ROW_ACTIVE = LV_COLOR_MAKE(0x2c, 0x69, 0xa6);
-static const lv_color_t COLOR_SETTINGS_POPUP_BORDER = LV_COLOR_MAKE(0xd8, 0xe4, 0xf2);
-static const lv_color_t COLOR_SETTINGS_POPUP_MUTED = LV_COLOR_MAKE(0xf0, 0xf4, 0xf8);
-static const lv_point_precise_t DASHBOARD_SOC_WAVE_POINTS[] = {
-    { .x = 0, .y = 9 },     { .x = 4, .y = 5 },     { .x = 8, .y = 3 },
-    { .x = 12, .y = 5 },    { .x = 16, .y = 9 },    { .x = 20, .y = 13 },
-    { .x = 24, .y = 15 },   { .x = 28, .y = 13 },   { .x = 32, .y = 9 },
-    { .x = 36, .y = 5 },    { .x = 40, .y = 3 },    { .x = 44, .y = 5 },
-    { .x = 48, .y = 9 },    { .x = 52, .y = 13 },   { .x = 56, .y = 15 },
-    { .x = 60, .y = 13 },   { .x = 64, .y = 9 },    { .x = 68, .y = 5 },
-    { .x = 72, .y = 3 },    { .x = 76, .y = 5 },    { .x = 80, .y = 9 },
-    { .x = 84, .y = 13 },   { .x = 88, .y = 15 },   { .x = 92, .y = 13 },
-    { .x = 96, .y = 9 },    { .x = 100, .y = 5 },   { .x = 104, .y = 3 },
-    { .x = 108, .y = 5 },   { .x = 112, .y = 9 },   { .x = 116, .y = 13 },
-    { .x = 120, .y = 15 },  { .x = 124, .y = 13 },  { .x = 128, .y = 9 },
-    { .x = 132, .y = 5 },   { .x = 136, .y = 3 },   { .x = 140, .y = 5 },
-    { .x = 144, .y = 9 },   { .x = 148, .y = 13 },  { .x = 152, .y = 15 },
-    { .x = 156, .y = 13 },  { .x = 160, .y = 9 },   { .x = 164, .y = 5 },
-    { .x = 168, .y = 3 },   { .x = 172, .y = 5 },   { .x = 176, .y = 9 },
-    { .x = 180, .y = 13 },  { .x = 184, .y = 15 },  { .x = 188, .y = 13 },
-    { .x = 192, .y = 9 },
-};
-
 static const uint8_t DASHBOARD_CELL_STAT_KEY_BITMAPS[DASHBOARD_CELL_STAT_COUNT]
                                                    [DASHBOARD_CELL_KEY_BITMAP_BYTES] = {
     {
@@ -498,19 +489,6 @@ static void dashboard_soc_fill_create(lv_obj_t *soc_panel)
     lv_obj_set_style_bg_color(s_ui.soc_fill, COLOR_SOC, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_ui.soc_fill, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_pad_all(s_ui.soc_fill, 0, LV_PART_MAIN);
-
-    s_ui.soc_wave = lv_line_create(s_ui.soc_fill);
-    clear_style(s_ui.soc_wave);
-    lv_line_set_points(s_ui.soc_wave,
-                       DASHBOARD_SOC_WAVE_POINTS,
-                       sizeof(DASHBOARD_SOC_WAVE_POINTS) / sizeof(DASHBOARD_SOC_WAVE_POINTS[0]));
-    lv_obj_set_size(s_ui.soc_wave, DASHBOARD_SOC_WAVE_WIDTH, DASHBOARD_SOC_WAVE_HEIGHT);
-    lv_obj_set_style_line_color(s_ui.soc_wave, COLOR_WHITE, LV_PART_MAIN);
-    lv_obj_set_style_line_opa(s_ui.soc_wave, LV_OPA_60, LV_PART_MAIN);
-    lv_obj_set_style_line_width(s_ui.soc_wave, 3, LV_PART_MAIN);
-    lv_obj_set_style_line_rounded(s_ui.soc_wave, true, LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(s_ui.soc_wave, LV_OPA_TRANSP, LV_PART_MAIN);
-    lv_obj_add_flag(s_ui.soc_wave, LV_OBJ_FLAG_HIDDEN);
 }
 
 static lv_obj_t *label(lv_obj_t *parent, int32_t x, int32_t y, int32_t w, int32_t h, const lv_font_t *font)
@@ -524,6 +502,107 @@ static lv_obj_t *label(lv_obj_t *parent, int32_t x, int32_t y, int32_t w, int32_
     lv_obj_set_style_text_font(obj, font, LV_PART_MAIN);
     lv_obj_set_style_text_align(obj, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
     return obj;
+}
+
+static lv_obj_t *dashboard_panel(lv_obj_t *parent,
+                                 int32_t x,
+                                 int32_t y,
+                                 int32_t w,
+                                 int32_t h,
+                                 lv_color_t color,
+                                 lv_color_t border_color)
+{
+    lv_obj_t *obj = panel(parent, x, y, w, h, color);
+    lv_obj_set_style_border_width(obj, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(obj, border_color, LV_PART_MAIN);
+    lv_obj_set_style_border_opa(obj, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_post(obj, true, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(obj, 0, LV_PART_MAIN);
+    return obj;
+}
+
+static lv_obj_t *dashboard_separator(lv_obj_t *parent, int32_t x, int32_t y, int32_t w)
+{
+    lv_obj_t *line = lv_obj_create(parent);
+    clear_style(line);
+    lv_obj_set_pos(line, x, y);
+    lv_obj_set_size(line, w, 1);
+    lv_obj_set_style_bg_color(line, COLOR_DASHBOARD_BORDER, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(line, LV_OPA_COVER, LV_PART_MAIN);
+    return line;
+}
+
+static void dashboard_battery_icon(lv_obj_t *parent,
+                                   int32_t x,
+                                   int32_t y,
+                                   int32_t w,
+                                   int32_t h)
+{
+    lv_obj_t *body = lv_obj_create(parent);
+    clear_style(body);
+    lv_obj_set_pos(body, x, y);
+    lv_obj_set_size(body, w, h);
+    lv_obj_set_style_radius(body, 3, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(body, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_border_width(body, 2, LV_PART_MAIN);
+    lv_obj_set_style_border_color(body, COLOR_WHITE, LV_PART_MAIN);
+    lv_obj_set_style_border_opa(body, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_post(body, true, LV_PART_MAIN);
+
+    s_ui.soc_battery_level = lv_obj_create(body);
+    clear_style(s_ui.soc_battery_level);
+    lv_obj_set_pos(s_ui.soc_battery_level, 3, 3);
+    lv_obj_set_size(s_ui.soc_battery_level, 0, h - 6);
+    lv_obj_set_style_radius(s_ui.soc_battery_level, 1, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s_ui.soc_battery_level, COLOR_WHITE, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_ui.soc_battery_level, LV_OPA_COVER, LV_PART_MAIN);
+
+    for (int32_t index = 1; index < 5; ++index) {
+        lv_obj_set_height(dashboard_separator(body, (w * index) / 5, 3, 1), h - 6);
+    }
+
+    lv_obj_t *terminal = lv_obj_create(parent);
+    clear_style(terminal);
+    lv_obj_set_pos(terminal, x + w, y + ((h - 8) / 2));
+    lv_obj_set_size(terminal, 4, 8);
+    lv_obj_set_style_radius(terminal, 1, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(terminal, COLOR_WHITE, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(terminal, LV_OPA_COVER, LV_PART_MAIN);
+}
+
+static void update_dashboard_battery_icon(uint8_t soc_percent, bool valid, bool charging)
+{
+    (void)charging;
+    if (!s_ui.soc_battery_level) {
+        return;
+    }
+
+    lv_obj_t *body = lv_obj_get_parent(s_ui.soc_battery_level);
+    const int32_t inner_w = lv_obj_get_width(body) - 6;
+    const uint8_t soc = valid ? (soc_percent > 100U ? 100U : soc_percent) : 0U;
+    lv_obj_set_width(s_ui.soc_battery_level, (inner_w * (int32_t)soc) / 100);
+    lv_obj_set_style_bg_color(s_ui.soc_battery_level,
+                              valid ? COLOR_DASHBOARD_BATTERY_LEVEL : COLOR_MUTED,
+                              LV_PART_MAIN);
+}
+
+static void dashboard_thermometer_icon(lv_obj_t *parent, int32_t center_x, int32_t y)
+{
+    lv_obj_t *stem = lv_obj_create(parent);
+    clear_style(stem);
+    lv_obj_set_pos(stem, center_x - 1, y);
+    lv_obj_set_size(stem, 3, 10);
+    lv_obj_set_style_radius(stem, 2, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(stem, COLOR_ACCENT, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(stem, LV_OPA_COVER, LV_PART_MAIN);
+
+    lv_obj_t *bulb = lv_obj_create(parent);
+    clear_style(bulb);
+    lv_obj_set_pos(bulb, center_x - 3, y + 7);
+    lv_obj_set_size(bulb, 7, 7);
+    lv_obj_set_style_radius(bulb, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(bulb, COLOR_ACCENT, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(bulb, LV_OPA_COVER, LV_PART_MAIN);
 }
 
 static void label_set_text_if_changed(lv_obj_t *obj, const char *text)
@@ -550,13 +629,6 @@ static void label_set_text_color_if_changed(lv_obj_t *obj, lv_color_t color)
     if (!lv_color_eq(current, color)) {
         lv_obj_set_style_text_color(obj, color, LV_PART_MAIN);
     }
-}
-
-static lv_obj_t *panel_label(lv_obj_t *parent, int32_t x, int32_t y, int32_t w, int32_t h,
-                             lv_color_t bg, const lv_font_t *font)
-{
-    lv_obj_t *box = panel(parent, x, y, w, h, bg);
-    return label(box, 4, 4, w - 8, h - 8, font);
 }
 
 static lv_draw_buf_t *dashboard_cell_key_draw_buf(uint8_t index)
@@ -871,70 +943,17 @@ static void quick_layout_commit_drag_sort(void)
     quick_layout_apply_current();
 }
 
-static void dashboard_soc_wave_x_anim_cb(void *var, int32_t value)
-{
-    lv_obj_set_x((lv_obj_t *)var, value);
-}
-
-static void dashboard_soc_wave_y_anim_cb(void *var, int32_t value)
-{
-    lv_obj_set_y((lv_obj_t *)var, value);
-}
-
-static void dashboard_soc_wave_stop(void)
-{
-    if (!s_ui.soc_wave) {
-        return;
-    }
-    lv_anim_delete(s_ui.soc_wave, dashboard_soc_wave_x_anim_cb);
-    lv_anim_delete(s_ui.soc_wave, dashboard_soc_wave_y_anim_cb);
-    UI_SET_FLAG(SOC_WAVE_ACTIVE, false);
-    s_ui.soc_wave_span = 0;
-}
-
-static void dashboard_soc_wave_start(bool vertical, int32_t span)
-{
-    if (!s_ui.soc_wave) {
-        return;
-    }
-    if (UI_FLAG(SOC_WAVE_ACTIVE) &&
-        UI_FLAG(SOC_WAVE_VERTICAL) == vertical &&
-        (!vertical || abs_i32(s_ui.soc_wave_span - span) <= 2)) {
-        return;
-    }
-
-    dashboard_soc_wave_stop();
-    UI_SET_FLAG(SOC_WAVE_ACTIVE, true);
-    UI_SET_FLAG(SOC_WAVE_VERTICAL, vertical);
-    s_ui.soc_wave_span = span;
-
-    lv_anim_t anim;
-    lv_anim_init(&anim);
-    lv_anim_set_var(&anim, s_ui.soc_wave);
-    lv_anim_set_repeat_count(&anim, LV_ANIM_REPEAT_INFINITE);
-    lv_anim_set_path_cb(&anim, lv_anim_path_linear);
-    if (vertical) {
-        lv_anim_set_values(&anim, span - 2, -DASHBOARD_SOC_WAVE_HEIGHT);
-        lv_anim_set_duration(&anim, 1500);
-        lv_anim_set_exec_cb(&anim, dashboard_soc_wave_y_anim_cb);
-    } else {
-        lv_anim_set_values(&anim, -DASHBOARD_SOC_WAVE_PERIOD, 0);
-        lv_anim_set_duration(&anim, 850);
-        lv_anim_set_exec_cb(&anim, dashboard_soc_wave_x_anim_cb);
-    }
-    lv_anim_start(&anim);
-}
-
 static lv_color_t dashboard_soc_fill_color(uint8_t soc_percent, bool valid, bool charging)
 {
+    (void)charging;
     if (!valid) {
         return COLOR_PANEL_ALT;
     }
-    if (charging || soc_percent >= 100U) {
+    if (soc_percent >= 95U) {
         return COLOR_ACCENT;
     }
-    if (soc_percent <= 20U) {
-        return COLOR_BAD;
+    if (soc_percent < 20U) {
+        return COLOR_WARN;
     }
     return COLOR_SOC;
 }
@@ -949,39 +968,15 @@ static void update_dashboard_soc_fill(uint8_t soc_percent, bool valid, bool char
     const int32_t panel_w = lv_obj_get_width(panel_obj);
     const int32_t panel_h = lv_obj_get_height(panel_obj);
     const uint8_t soc = valid ? (soc_percent > 100U ? 100U : soc_percent) : 0U;
-    const bool show_fill = valid && soc > 0U;
 
     lv_obj_set_style_bg_color(s_ui.soc_fill, dashboard_soc_fill_color(soc, valid, charging), LV_PART_MAIN);
     if (UI_FLAG(SOC_FILL_HORIZONTAL)) {
-        const int32_t fill_w = show_fill ? ((panel_w * (int32_t)soc) / 100) : 0;
         lv_obj_set_pos(s_ui.soc_fill, 0, 0);
-        lv_obj_set_size(s_ui.soc_fill, fill_w, panel_h);
-        if (s_ui.soc_wave) {
-            const bool show_wave = charging && fill_w >= 32;
-            set_obj_hidden(s_ui.soc_wave, !show_wave);
-            if (show_wave) {
-                lv_obj_set_y(s_ui.soc_wave, (panel_h - DASHBOARD_SOC_WAVE_HEIGHT) / 2);
-                lv_obj_set_size(s_ui.soc_wave, DASHBOARD_SOC_WAVE_WIDTH, DASHBOARD_SOC_WAVE_HEIGHT);
-                dashboard_soc_wave_start(false, 0);
-            } else {
-                dashboard_soc_wave_stop();
-            }
-        }
+        lv_obj_set_size(s_ui.soc_fill, (panel_w * (int32_t)soc) / 100, panel_h);
     } else {
-        const int32_t fill_h = show_fill ? ((panel_h * (int32_t)soc) / 100) : 0;
+        const int32_t fill_h = (panel_h * (int32_t)soc) / 100;
         lv_obj_set_pos(s_ui.soc_fill, 0, panel_h - fill_h);
         lv_obj_set_size(s_ui.soc_fill, panel_w, fill_h);
-        if (s_ui.soc_wave) {
-            const bool show_wave = charging && fill_h >= 24;
-            set_obj_hidden(s_ui.soc_wave, !show_wave);
-            if (show_wave) {
-                lv_obj_set_x(s_ui.soc_wave, -DASHBOARD_SOC_WAVE_PERIOD / 2);
-                lv_obj_set_size(s_ui.soc_wave, DASHBOARD_SOC_WAVE_WIDTH, DASHBOARD_SOC_WAVE_HEIGHT);
-                dashboard_soc_wave_start(true, fill_h);
-            } else {
-                dashboard_soc_wave_stop();
-            }
-        }
     }
 }
 
@@ -1073,6 +1068,22 @@ static void queue_bms_bind_action(const char *mac)
     ACTION_EVENT_SET_FLAG(&s_ui.pending_event, COMMITTED, true);
     ACTION_EVENT_SET_FLAG(&s_ui.pending_event, BMS_MAC_VALID, true);
     (void)snprintf(s_ui.pending_event.bms_mac, sizeof(s_ui.pending_event.bms_mac), "%s", mac);
+}
+
+static void queue_touch_calibration_sample(uint8_t target_index,
+                                           const lv_point_t *observed,
+                                           const lv_point_t *expected)
+{
+    if (!observed || !expected) {
+        return;
+    }
+    memset(&s_ui.pending_event, 0, sizeof(s_ui.pending_event));
+    s_ui.pending_event.action = ESP_BMS_LVGL_ACTION_ADD_TOUCH_CALIBRATION_SAMPLE;
+    s_ui.pending_event.touch_observed_x = (uint16_t)clamp_i32(observed->x, 0, s_ui.width - 1);
+    s_ui.pending_event.touch_observed_y = (uint16_t)clamp_i32(observed->y, 0, s_ui.height - 1);
+    s_ui.pending_event.touch_target_x = (uint16_t)clamp_i32(expected->x, 0, s_ui.width - 1);
+    s_ui.pending_event.touch_target_y = (uint16_t)clamp_i32(expected->y, 0, s_ui.height - 1);
+    s_ui.pending_event.touch_target_index = target_index;
 }
 
 static uint8_t clamp_brightness_percent(int32_t value)
@@ -1214,17 +1225,6 @@ static void quick_level_overlay_update(quick_level_kind_t kind, uint8_t value)
     }
 }
 
-static void quick_level_cycle_position(void)
-{
-    s_ui.quick_level_position =
-        (uint8_t)(((uint32_t)quick_level_position() + 1U) % QUICK_LEVEL_POSITION_COUNT);
-    quick_level_overlay_layout();
-    if (UI_FLAG(QUICK_LEVEL_OVERLAY_ACTIVE)) {
-        const quick_level_kind_t kind = (quick_level_kind_t)s_ui.quick_level_overlay_kind;
-        quick_level_overlay_update(kind, quick_level_current_value(kind));
-    }
-}
-
 static void set_quick_brightness_value(uint8_t brightness_percent, bool queue, bool committed)
 {
     const uint8_t clamped = clamp_brightness_percent(brightness_percent);
@@ -1319,8 +1319,26 @@ static void quick_panel_animate_to_open_state(bool open)
     lv_anim_start(&anim);
 }
 
+static void quick_connecting_spinner_anim_cb(void *obj, int32_t angle)
+{
+    lv_obj_set_style_transform_rotation((lv_obj_t *)obj, angle, LV_PART_MAIN);
+}
+
+static void quick_toast_stop_connecting(void)
+{
+    if (!s_ui.quick_connecting_toast_active) {
+        return;
+    }
+    if (s_ui.quick_toast_rotate_icon) {
+        lv_anim_delete(s_ui.quick_toast_rotate_icon, quick_connecting_spinner_anim_cb);
+        lv_obj_set_style_transform_rotation(s_ui.quick_toast_rotate_icon, 0, LV_PART_MAIN);
+    }
+    s_ui.quick_connecting_toast_active = false;
+}
+
 static void quick_toast_cancel(void)
 {
+    quick_toast_stop_connecting();
     if (s_ui.quick_toast_timer) {
         lv_timer_delete(s_ui.quick_toast_timer);
         s_ui.quick_toast_timer = NULL;
@@ -1404,6 +1422,60 @@ static void quick_toast_show_text(const char *text)
     if (s_ui.quick_toast_timer) {
         lv_timer_set_repeat_count(s_ui.quick_toast_timer, 1);
     }
+}
+
+static void quick_toast_show_connecting(void)
+{
+    if (!s_ui.quick_toast || !s_ui.quick_toast_text || !s_ui.quick_toast_rotate_icon) {
+        return;
+    }
+
+    quick_toast_cancel();
+    UI_SET_FLAG(QUICK_ROTATE_TOAST_ACTIVE, false);
+
+    const int32_t toast_w = s_ui.width < 150 ? s_ui.width - 24 : 126;
+    const int32_t toast_h = 36;
+    lv_obj_set_pos(s_ui.quick_toast, (s_ui.width - toast_w) / 2, s_ui.height - toast_h - 18);
+    lv_obj_set_size(s_ui.quick_toast, toast_w, toast_h);
+    lv_obj_set_style_radius(s_ui.quick_toast, 6, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s_ui.quick_toast, COLOR_PANEL_ALT, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_ui.quick_toast, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(s_ui.quick_toast, 0, LV_PART_MAIN);
+    lv_obj_clear_flag(s_ui.quick_toast, LV_OBJ_FLAG_CLICKABLE);
+
+    lv_obj_set_pos(s_ui.quick_toast_rotate_icon, 8, 6);
+    lv_obj_set_size(s_ui.quick_toast_rotate_icon, 24, 24);
+    lv_obj_set_style_transform_pivot_x(s_ui.quick_toast_rotate_icon, lv_pct(50), LV_PART_MAIN);
+    lv_obj_set_style_transform_pivot_y(s_ui.quick_toast_rotate_icon, lv_pct(50), LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.quick_toast_rotate_icon, COLOR_ACCENT, LV_PART_MAIN);
+    lv_obj_set_style_text_font(s_ui.quick_toast_rotate_icon, &lv_font_montserrat_24, LV_PART_MAIN);
+    lv_obj_set_style_text_align(s_ui.quick_toast_rotate_icon, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    label_set_text_if_changed(s_ui.quick_toast_rotate_icon, LV_SYMBOL_LOOP);
+
+    lv_obj_set_pos(s_ui.quick_toast_text, 34, (toast_h - (int32_t)settings_zh_16.line_height) / 2);
+    lv_obj_set_size(s_ui.quick_toast_text, toast_w - 40, settings_zh_16.line_height);
+    lv_obj_set_style_text_color(s_ui.quick_toast_text, COLOR_ACCENT, LV_PART_MAIN);
+    lv_obj_set_style_text_font(s_ui.quick_toast_text, &settings_zh_16, LV_PART_MAIN);
+    lv_obj_set_style_text_align(s_ui.quick_toast_text, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    label_set_text_if_changed(s_ui.quick_toast_text, "连接...");
+
+    set_obj_hidden(s_ui.quick_toast_rotate_title, true);
+    set_obj_hidden(s_ui.quick_toast_rotate_countdown, true);
+    set_obj_hidden(s_ui.quick_toast_rotate_icon, false);
+    set_obj_hidden(s_ui.quick_toast_text, false);
+    set_obj_hidden(s_ui.quick_toast, false);
+    lv_obj_move_foreground(s_ui.quick_toast);
+
+    lv_anim_t anim;
+    lv_anim_init(&anim);
+    lv_anim_set_var(&anim, s_ui.quick_toast_rotate_icon);
+    lv_anim_set_values(&anim, 0, 3600);
+    lv_anim_set_duration(&anim, 850);
+    lv_anim_set_path_cb(&anim, lv_anim_path_linear);
+    lv_anim_set_exec_cb(&anim, quick_connecting_spinner_anim_cb);
+    lv_anim_set_repeat_count(&anim, LV_ANIM_REPEAT_INFINITE);
+    s_ui.quick_connecting_toast_active = true;
+    lv_anim_start(&anim);
 }
 
 static void quick_rotate_toast_show(void)
@@ -1500,7 +1572,6 @@ static void set_quick_panel_open(bool open)
         UI_SET_FLAG(QUICK_LEVEL_OVERLAY_ACTIVE, false);
         UI_SET_FLAG(QUICK_LEVEL_OVERLAY_DRAGGED, false);
         UI_SET_FLAG(QUICK_LEVEL_LONG_TRIGGERED, false);
-        quick_hold_cancel(false);
         quick_toast_cancel();
         UI_SET_FLAG(QUICK_ROTATE_TOAST_ACTIVE, false);
         set_obj_hidden(s_ui.quick_toast, true);
@@ -1543,12 +1614,22 @@ static void quick_edit_event_cb(lv_event_t *event)
 {
     const lv_event_code_t code = lv_event_get_code(event);
     if (code == LV_EVENT_PRESSED) {
-        quick_tile_set_scale(s_ui.quick_edit_button, QUICK_TILE_SCALE_PRESSED);
+        UI_SET_FLAG(QUICK_LONG_TRIGGERED, false);
+        quick_edit_set_pressed(true);
     } else if (code == LV_EVENT_LONG_PRESSED) {
-        quick_tile_set_scale(s_ui.quick_edit_button, QUICK_TILE_SCALE_LONG);
+        quick_toast_show_text(QUICK_TOAST_SORT_HINT);
+        UI_SET_FLAG(QUICK_LONG_TRIGGERED, true);
+        lv_indev_wait_release(lv_indev_active());
     } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
-        quick_tile_set_scale(s_ui.quick_edit_button, QUICK_TILE_SCALE_NORMAL);
+        quick_edit_set_pressed(false);
+        if (code == LV_EVENT_PRESS_LOST) {
+            UI_SET_FLAG(QUICK_LONG_TRIGGERED, false);
+        }
     } else if (code == LV_EVENT_CLICKED) {
+        if (UI_FLAG(QUICK_LONG_TRIGGERED)) {
+            UI_SET_FLAG(QUICK_LONG_TRIGGERED, false);
+            return;
+        }
         set_quick_edit_mode(!UI_FLAG(QUICK_EDIT_MODE));
     }
 }
@@ -1799,6 +1880,20 @@ typedef enum {
     SETTINGS_DETAIL_ABOUT,
 } settings_detail_id_t;
 
+typedef enum {
+    SETTINGS_BMS_VIEW_ROOT = 0,
+    SETTINGS_BMS_VIEW_BLE_LIST,
+    SETTINGS_BMS_VIEW_TYPE_LIST,
+} settings_bms_view_t;
+
+typedef enum {
+    SETTINGS_SYSTEM_VIEW_ROOT = 0,
+    SETTINGS_SYSTEM_VIEW_BRIGHTNESS,
+    SETTINGS_SYSTEM_VIEW_VOLUME,
+    SETTINGS_SYSTEM_VIEW_LEVEL_POSITION,
+    SETTINGS_SYSTEM_VIEW_TOUCH_CALIBRATION,
+} settings_system_view_t;
+
 typedef struct {
     settings_detail_id_t detail_id;
     const char *title;
@@ -1811,6 +1906,7 @@ typedef struct {
     const char *title;
     const char *subtitle;
     esp_bms_lvgl_action_t action;
+    settings_system_view_t system_view;
 } settings_detail_row_t;
 
 static void settings_show_detail(settings_detail_id_t detail_id);
@@ -1820,7 +1916,7 @@ static void settings_bms_type_button_event_cb(lv_event_t *event);
 static void settings_bms_type_option_event_cb(lv_event_t *event);
 static void settings_bms_ble_candidate_event_cb(lv_event_t *event);
 static void settings_bms_ble_refresh_event_cb(lv_event_t *event);
-static void settings_bms_popup_close_event_cb(lv_event_t *event);
+static void settings_restore_confirm_show(void);
 static lv_obj_t *settings_detail_row(lv_obj_t *parent,
                                      int32_t x,
                                      int32_t y,
@@ -1829,19 +1925,20 @@ static lv_obj_t *settings_detail_row(lv_obj_t *parent,
                                      const settings_detail_row_t *row);
 static void settings_show_bluetooth_detail(void);
 static void settings_show_bms_detail(void);
+static void settings_show_system_view(settings_system_view_t view);
 static void set_setup_ap(const esp_bms_dashboard_snapshot_t *snapshot);
 
 static const quick_panel_item_t QUICK_PANEL_ITEMS[QUICK_PANEL_BUTTON_COUNT] = {
-    { QUICK_ITEM_BLUETOOTH, QUICK_BLUETOOTH_SYMBOL, ESP_BMS_LVGL_ACTION_ENABLE_BLUETOOTH_ADVERTISING,
-      "BLUETOOTH", false },
-    { QUICK_ITEM_HOTSPOT, NULL, ESP_BMS_LVGL_ACTION_ENABLE_WIFI_REPROVISIONING,
-      "HOTSPOT", true },
+    { QUICK_ITEM_BLUETOOTH, QUICK_BLUETOOTH_SYMBOL, ESP_BMS_LVGL_ACTION_SHOW_SETTINGS,
+      "蓝牙设置", false },
+    { QUICK_ITEM_HOTSPOT, NULL, ESP_BMS_LVGL_ACTION_SHOW_SETTINGS,
+      "热点设置", true },
     { QUICK_ITEM_ROTATE, LV_SYMBOL_LOOP, ESP_BMS_LVGL_ACTION_ROTATE_DISPLAY,
-      "ROTATE", false },
+      "旋转屏幕", false },
     { QUICK_ITEM_SPEED, LV_SYMBOL_GPS, ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_UNIT,
-      "SPEED UNIT", false },
+      "点击切换", false },
     { QUICK_ITEM_SETTINGS, LV_SYMBOL_SETTINGS, ESP_BMS_LVGL_ACTION_SHOW_SETTINGS,
-      "SETTINGS", false },
+      "设备设置", false },
 };
 
 static const settings_option_t SETTINGS_OPTIONS[SETTINGS_OPTION_COUNT] = {
@@ -1853,29 +1950,29 @@ static const settings_option_t SETTINGS_OPTIONS[SETTINGS_OPTION_COUNT] = {
 };
 
 static const settings_detail_row_t SETTINGS_HOTSPOT_ROWS[] = {
-    { "状态", "热点已打开", ESP_BMS_LVGL_ACTION_NONE },
-    { "名称", "fuckingBms_xxxxxx", ESP_BMS_LVGL_ACTION_NONE },
-    { "密码", "8 DIGITS", ESP_BMS_LVGL_ACTION_NONE },
-    { "手机页面", "192.168.4.1 网页配置", ESP_BMS_LVGL_ACTION_NONE },
-    { "配置入口", "开启配网入口", ESP_BMS_LVGL_ACTION_ENABLE_WIFI_REPROVISIONING },
-    { "二维码", "网页查看", ESP_BMS_LVGL_ACTION_ENABLE_WIFI_REPROVISIONING },
+    { "状态", "热点已打开", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
+    { "名称", "fuckingBms_xxxxxx", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
+    { "密码", "8 DIGITS", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
+    { "手机页面", "192.168.4.1 网页配置", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
+    { "配置入口", "开启配网入口", ESP_BMS_LVGL_ACTION_ENABLE_WIFI_REPROVISIONING, SETTINGS_SYSTEM_VIEW_ROOT },
+    { "二维码", "网页查看", ESP_BMS_LVGL_ACTION_ENABLE_WIFI_REPROVISIONING, SETTINGS_SYSTEM_VIEW_ROOT },
 };
 
 static const settings_detail_row_t SETTINGS_BLUETOOTH_ROWS[] = {
-    { "状态", "未连接", ESP_BMS_LVGL_ACTION_NONE },
-    { "名称", "ESP32 BMS GPS", ESP_BMS_LVGL_ACTION_NONE },
-    { "可被发现", "附近可见", ESP_BMS_LVGL_ACTION_ENABLE_BLUETOOTH_ADVERTISING },
+    { "状态", "未连接", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
+    { "名称", "ESP32 BMS GPS", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
+    { "可被发现", "附近可见", ESP_BMS_LVGL_ACTION_ENABLE_BLUETOOTH_ADVERTISING, SETTINGS_SYSTEM_VIEW_ROOT },
 };
 
 static const settings_detail_row_t SETTINGS_BMS_ROWS[] = {
-    { "连接蓝牙", "扫描绑定", ESP_BMS_LVGL_ACTION_START_BMS_BIND },
+    { "蓝牙连接", "扫描绑定", ESP_BMS_LVGL_ACTION_START_BMS_BIND, SETTINGS_SYSTEM_VIEW_ROOT },
 };
 
 static const char *const SETTINGS_BMS_TYPE_LABELS[] = {
-    "MAYI ANT",
-    "JIKONG JK",
-    "JIABAIDA JBD",
-    "DALY",
+    "蚂蚁 ANT",
+    "极空 JK",
+    "嘉佰达 JBD",
+    "达锂 Daly",
 };
 
 static const esp_bms_lvgl_action_t SETTINGS_BMS_TYPE_ACTIONS[] = {
@@ -1889,18 +1986,19 @@ _Static_assert(ARRAY_SIZE(SETTINGS_BMS_TYPE_LABELS) == ARRAY_SIZE(SETTINGS_BMS_T
                "BMS type labels must match runtime BMS type count");
 
 static const settings_detail_row_t SETTINGS_SYSTEM_ROWS[] = {
-    { "亮度", "快捷面板调节", ESP_BMS_LVGL_ACTION_NONE },
-    { "音量", "快捷面板调节", ESP_BMS_LVGL_ACTION_NONE },
-    { "调节条位置", "中间", ESP_BMS_LVGL_ACTION_CYCLE_LEVEL_POSITION },
-    { "旋转屏幕", "点击操作", ESP_BMS_LVGL_ACTION_ROTATE_DISPLAY },
-    { "语言切换", "点击操作", ESP_BMS_LVGL_ACTION_TOGGLE_LANGUAGE },
-    { "恢复默认", "点击操作", ESP_BMS_LVGL_ACTION_RESTORE_DEFAULTS },
+    { "亮度", "调节屏幕亮度", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_BRIGHTNESS },
+    { "音量", "调节提示音量", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_VOLUME },
+    { "调节条位置", "中间", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_LEVEL_POSITION },
+    { "屏幕校准", "校准触摸位置", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_TOUCH_CALIBRATION },
+    { "旋转屏幕", "点击操作", ESP_BMS_LVGL_ACTION_ROTATE_DISPLAY, SETTINGS_SYSTEM_VIEW_ROOT },
+    { "语言切换", "点击操作", ESP_BMS_LVGL_ACTION_TOGGLE_LANGUAGE, SETTINGS_SYSTEM_VIEW_ROOT },
+    { "恢复默认", "清除设置与校准", ESP_BMS_LVGL_ACTION_RESTORE_DEFAULTS, SETTINGS_SYSTEM_VIEW_ROOT },
 };
 
 static const settings_detail_row_t SETTINGS_ABOUT_ROWS[] = {
-    { "设备", "ESP32 BMS GPS", ESP_BMS_LVGL_ACTION_NONE },
-    { "固件版本", "本地构建", ESP_BMS_LVGL_ACTION_NONE },
-    { "屏幕", "ST7789", ESP_BMS_LVGL_ACTION_NONE },
+    { "设备", "ESP32 BMS GPS", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
+    { "固件版本", "本地构建", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
+    { "屏幕", "ST7789", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
 };
 
 static uint32_t quick_panel_item_index(const quick_panel_item_t *item)
@@ -1964,11 +2062,6 @@ static bool quick_panel_item_can_stay_active(const quick_panel_item_t *item)
                     item->kind == QUICK_ITEM_HOTSPOT);
 }
 
-static bool quick_panel_item_can_hold_navigate(const quick_panel_item_t *item)
-{
-    return quick_panel_item_can_stay_active(item);
-}
-
 static settings_detail_id_t quick_panel_item_detail_id(const quick_panel_item_t *item)
 {
     if (!item) {
@@ -1985,17 +2078,6 @@ static settings_detail_id_t quick_panel_item_detail_id(const quick_panel_item_t 
     default:
         return SETTINGS_DETAIL_NONE;
     }
-}
-
-static lv_color_t quick_hold_progress_color(const quick_panel_item_t *item)
-{
-    if (!item) {
-        return COLOR_ACCENT;
-    }
-    if (item->kind == QUICK_ITEM_HOTSPOT) {
-        return COLOR_WARN;
-    }
-    return COLOR_ACCENT;
 }
 
 static void quick_panel_item_apply_active(uint32_t index, bool active)
@@ -2045,6 +2127,23 @@ static void quick_tile_apply_press_inset(lv_obj_t *obj, const quick_tile_rect_t 
     lv_obj_set_pos(obj, rect->x + inset, rect->y + inset);
     lv_obj_set_size(obj, quick_tile_pressed_extent(rect->w, pressed),
                     quick_tile_pressed_extent(rect->h, pressed));
+}
+
+static void quick_edit_set_pressed(bool pressed)
+{
+    const quick_tile_rect_t rect = {
+        .x = s_ui.width - QUICK_EDIT_BUTTON_SIZE - 8,
+        .y = 8,
+        .w = QUICK_EDIT_BUTTON_SIZE,
+        .h = QUICK_EDIT_BUTTON_SIZE,
+    };
+    quick_tile_apply_press_inset(s_ui.quick_edit_button, &rect, pressed);
+    const int32_t extent = quick_tile_pressed_extent(QUICK_EDIT_BUTTON_SIZE, pressed);
+    quick_symbol_icon_recenter(s_ui.quick_edit_icon,
+                               extent - 8,
+                               extent - 8,
+                               LV_SYMBOL_EDIT,
+                               &lv_font_montserrat_14);
 }
 
 static const lv_font_t *quick_panel_item_icon_font(const quick_panel_item_t *item)
@@ -2134,155 +2233,6 @@ static void quick_tile_set_scale(lv_obj_t *obj, int32_t scale)
     lv_obj_set_style_border_opa(obj, active ? LV_OPA_COVER : LV_OPA_TRANSP, LV_PART_MAIN);
 }
 
-static void quick_hold_clear_segments(void)
-{
-    for (uint32_t index = 0; index < ARRAY_SIZE(s_ui.quick_hold_segments); ++index) {
-        if (s_ui.quick_hold_segments[index]) {
-            lv_obj_delete(s_ui.quick_hold_segments[index]);
-            s_ui.quick_hold_segments[index] = NULL;
-        }
-    }
-}
-
-static void quick_hold_update_segments(uint8_t progress_percent)
-{
-    if (!UI_FLAG(QUICK_HOLD_ACTIVE) || s_ui.quick_hold_index >= QUICK_PANEL_BUTTON_COUNT) {
-        return;
-    }
-    lv_obj_t *tile = s_ui.quick_panel_items[s_ui.quick_hold_index];
-    if (!tile) {
-        return;
-    }
-
-    const int32_t w = lv_obj_get_width(tile);
-    const int32_t h = lv_obj_get_height(tile);
-    if (w <= 4 || h <= 4) {
-        return;
-    }
-
-    const int32_t line = 3;
-    const int32_t perimeter = (2 * w) + (2 * h);
-    int32_t amount = (perimeter * progress_percent) / 100;
-    const int32_t top = clamp_i32(amount, 0, w);
-    amount -= top;
-    const int32_t right = clamp_i32(amount, 0, h);
-    amount -= right;
-    const int32_t bottom = clamp_i32(amount, 0, w);
-    amount -= bottom;
-    const int32_t left = clamp_i32(amount, 0, h);
-    const int32_t lengths[4] = { top, right, bottom, left };
-    const lv_color_t color = quick_hold_progress_color(&QUICK_PANEL_ITEMS[s_ui.quick_hold_index]);
-
-    for (uint32_t index = 0; index < ARRAY_SIZE(s_ui.quick_hold_segments); ++index) {
-        lv_obj_t *seg = s_ui.quick_hold_segments[index];
-        if (!seg) {
-            seg = lv_obj_create(tile);
-            clear_style(seg);
-            lv_obj_set_style_bg_color(seg, color, LV_PART_MAIN);
-            lv_obj_set_style_bg_opa(seg, LV_OPA_COVER, LV_PART_MAIN);
-            lv_obj_set_style_radius(seg, line / 2, LV_PART_MAIN);
-            lv_obj_add_flag(seg, LV_OBJ_FLAG_HIDDEN);
-            s_ui.quick_hold_segments[index] = seg;
-        }
-        lv_obj_set_style_bg_color(seg, color, LV_PART_MAIN);
-        set_obj_hidden(seg, lengths[index] <= 0);
-    }
-
-    lv_obj_set_pos(s_ui.quick_hold_segments[0], 0, 0);
-    lv_obj_set_size(s_ui.quick_hold_segments[0], top, line);
-    lv_obj_set_pos(s_ui.quick_hold_segments[1], w - line, 0);
-    lv_obj_set_size(s_ui.quick_hold_segments[1], line, right);
-    lv_obj_set_pos(s_ui.quick_hold_segments[2], w - bottom, h - line);
-    lv_obj_set_size(s_ui.quick_hold_segments[2], bottom, line);
-    lv_obj_set_pos(s_ui.quick_hold_segments[3], 0, h - left);
-    lv_obj_set_size(s_ui.quick_hold_segments[3], line, left);
-
-    for (uint32_t index = 0; index < ARRAY_SIZE(s_ui.quick_hold_segments); ++index) {
-        lv_obj_move_foreground(s_ui.quick_hold_segments[index]);
-    }
-}
-
-static void quick_hold_cancel(bool suppress_click)
-{
-    if (s_ui.quick_hold_timer) {
-        lv_timer_delete(s_ui.quick_hold_timer);
-        s_ui.quick_hold_timer = NULL;
-    }
-
-    const uint8_t index = s_ui.quick_hold_index;
-    const bool keep_suppress = suppress_click || (UI_FLAG(QUICK_HOLD_COMPLETED) &&
-                                                  UI_FLAG(QUICK_HOLD_SUPPRESS_CLICK));
-    quick_hold_clear_segments();
-    if (index < QUICK_PANEL_BUTTON_COUNT) {
-        quick_panel_item_set_pressed(index, false);
-        quick_tile_set_scale(s_ui.quick_panel_items[index], QUICK_TILE_SCALE_NORMAL);
-    }
-    UI_SET_FLAG(QUICK_HOLD_ACTIVE, false);
-    s_ui.quick_hold_elapsed_ms = 0;
-    if (keep_suppress) {
-        UI_SET_FLAG(QUICK_HOLD_SUPPRESS_CLICK, true);
-    } else {
-        UI_SET_FLAG(QUICK_HOLD_SUPPRESS_CLICK, false);
-        UI_SET_FLAG(QUICK_HOLD_COMPLETED, false);
-    }
-}
-
-static void quick_hold_complete_navigation(void)
-{
-    if (s_ui.quick_hold_index >= QUICK_PANEL_BUTTON_COUNT) {
-        quick_hold_cancel(true);
-        return;
-    }
-
-    const settings_detail_id_t detail_id =
-        quick_panel_item_detail_id(&QUICK_PANEL_ITEMS[s_ui.quick_hold_index]);
-    UI_SET_FLAG(QUICK_HOLD_COMPLETED, true);
-    UI_SET_FLAG(QUICK_HOLD_SUPPRESS_CLICK, true);
-    quick_hold_cancel(true);
-    if (detail_id != SETTINGS_DETAIL_NONE) {
-        show_settings_view();
-        settings_show_detail(detail_id);
-        lv_indev_wait_release(lv_indev_active());
-    }
-}
-
-static void quick_hold_timer_cb(lv_timer_t *timer)
-{
-    (void)timer;
-    if (!UI_FLAG(QUICK_HOLD_ACTIVE)) {
-        quick_hold_cancel(false);
-        return;
-    }
-
-    s_ui.quick_hold_elapsed_ms += QUICK_HOLD_PROGRESS_PERIOD_MS;
-    uint8_t progress = 100U;
-    if (s_ui.quick_hold_elapsed_ms < QUICK_HOLD_COMPLETE_MS) {
-        progress = (uint8_t)((s_ui.quick_hold_elapsed_ms * 100U) / QUICK_HOLD_COMPLETE_MS);
-    }
-    quick_hold_update_segments(progress);
-    if (s_ui.quick_hold_elapsed_ms >= QUICK_HOLD_COMPLETE_MS) {
-        quick_hold_complete_navigation();
-    }
-}
-
-static void quick_hold_start(uint32_t index)
-{
-    if (index >= QUICK_PANEL_BUTTON_COUNT || !s_ui.quick_panel_items[index]) {
-        return;
-    }
-
-    quick_hold_cancel(false);
-    s_ui.quick_hold_index = (uint8_t)index;
-    UI_SET_FLAG(QUICK_HOLD_ACTIVE, true);
-    UI_SET_FLAG(QUICK_HOLD_COMPLETED, false);
-    UI_SET_FLAG(QUICK_HOLD_SUPPRESS_CLICK, true);
-    s_ui.quick_hold_elapsed_ms = 0;
-    quick_panel_item_set_pressed(index, true);
-    quick_tile_set_scale(s_ui.quick_panel_items[index], QUICK_TILE_SCALE_LONG);
-    quick_hold_update_segments(1U);
-    s_ui.quick_hold_timer = lv_timer_create(quick_hold_timer_cb, QUICK_HOLD_PROGRESS_PERIOD_MS, NULL);
-}
-
 static void quick_drag_begin(lv_obj_t *obj, quick_drag_target_kind_t target_kind, uint8_t target_index)
 {
     if (!obj || !get_active_pointer(&s_ui.quick_drag_start)) {
@@ -2344,7 +2294,6 @@ static void quick_panel_item_event_cb(lv_event_t *event)
     const uint32_t index = quick_panel_item_index(item);
     if (!UI_FLAG(QUICK_PANEL_INTERACTIVE)) {
         if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
-            quick_hold_cancel(false);
             quick_panel_item_set_pressed(index, false);
             quick_tile_set_scale(tile, QUICK_TILE_SCALE_NORMAL);
         }
@@ -2352,12 +2301,12 @@ static void quick_panel_item_event_cb(lv_event_t *event)
     }
 
     if (code == LV_EVENT_PRESSED) {
-        UI_SET_FLAG(QUICK_HOLD_COMPLETED, false);
-        UI_SET_FLAG(QUICK_HOLD_SUPPRESS_CLICK, false);
-        if (!UI_FLAG(QUICK_EDIT_MODE)) {
+        UI_SET_FLAG(QUICK_LONG_TRIGGERED, false);
+        if (UI_FLAG(QUICK_EDIT_MODE)) {
+            quick_tile_set_scale(tile, QUICK_TILE_SCALE_PRESSED);
+        } else {
             quick_panel_item_set_pressed(index, true);
         }
-        quick_tile_set_scale(tile, QUICK_TILE_SCALE_PRESSED);
         return;
     }
 
@@ -2367,32 +2316,24 @@ static void quick_panel_item_event_cb(lv_event_t *event)
     }
 
     if (code == LV_EVENT_LONG_PRESSED) {
-        quick_tile_set_scale(tile, QUICK_TILE_SCALE_LONG);
         if (UI_FLAG(QUICK_EDIT_MODE)) {
+            quick_tile_set_scale(tile, QUICK_TILE_SCALE_LONG);
             quick_drag_begin(tile, QUICK_DRAG_TARGET_ITEM, (uint8_t)index);
-        } else if (quick_panel_item_can_hold_navigate(item)) {
-            UI_SET_FLAG(QUICK_LONG_TRIGGERED, true);
-            quick_toast_cancel();
-            set_obj_hidden(s_ui.quick_toast, true);
-            quick_hold_start(index);
         } else {
             quick_toast_show_text(item->toast_text);
             UI_SET_FLAG(QUICK_LONG_TRIGGERED, true);
+            lv_indev_wait_release(lv_indev_active());
         }
         return;
     }
 
     if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
-        if (UI_FLAG(QUICK_HOLD_ACTIVE)) {
-            quick_hold_cancel(true);
-        } else {
-            quick_panel_item_set_pressed(index, false);
-            quick_tile_set_scale(tile, QUICK_TILE_SCALE_NORMAL);
-        }
         if (UI_FLAG(QUICK_EDIT_MODE)) {
+            quick_tile_set_scale(tile, QUICK_TILE_SCALE_NORMAL);
             (void)quick_drag_end();
             return;
         }
+        quick_panel_item_set_pressed(index, false);
         if (code == LV_EVENT_PRESS_LOST) {
             UI_SET_FLAG(QUICK_LONG_TRIGGERED, false);
         }
@@ -2400,10 +2341,14 @@ static void quick_panel_item_event_cb(lv_event_t *event)
     }
 
     if (code == LV_EVENT_CLICKED) {
-        if (UI_FLAG(QUICK_EDIT_MODE) || UI_FLAG(QUICK_LONG_TRIGGERED) || UI_FLAG(QUICK_HOLD_SUPPRESS_CLICK)) {
+        if (UI_FLAG(QUICK_EDIT_MODE) || UI_FLAG(QUICK_LONG_TRIGGERED)) {
             UI_SET_FLAG(QUICK_LONG_TRIGGERED, false);
-            UI_SET_FLAG(QUICK_HOLD_COMPLETED, false);
-            UI_SET_FLAG(QUICK_HOLD_SUPPRESS_CLICK, false);
+            return;
+        }
+        const settings_detail_id_t detail_id = quick_panel_item_detail_id(item);
+        if (detail_id != SETTINGS_DETAIL_NONE) {
+            show_settings_view();
+            settings_show_detail(detail_id);
             return;
         }
         const bool rebuilds_view = item->click_action == ESP_BMS_LVGL_ACTION_ROTATE_DISPLAY ||
@@ -2485,13 +2430,20 @@ static void quick_symbol_icon_recenter(lv_obj_t *icon,
     lv_font_glyph_dsc_t glyph = { 0 };
     if (letter != 0 && lv_font_get_glyph_dsc(font, &glyph, letter, 0) &&
         glyph.box_w > 0 && glyph.box_h > 0) {
-        const int32_t glyph_center_x2 = label_w - (int32_t)glyph.adv_w +
-                                        (2 * (int32_t)glyph.ofs_x) + (int32_t)glyph.box_w;
         const int32_t glyph_top = (int32_t)font->line_height - (int32_t)font->base_line -
                                   (int32_t)glyph.box_h - (int32_t)glyph.ofs_y;
-        const int32_t glyph_center_y2 = (2 * glyph_top) + (int32_t)glyph.box_h;
-        label_x = (content_w - glyph_center_x2) / 2;
-        label_y = (content_h - glyph_center_y2) / 2;
+        if (font == &bluetoothon || font == &wlanJZ) {
+            label_x = ((content_w - (int32_t)glyph.box_w) / 2) - (int32_t)glyph.ofs_x;
+            label_y = ((content_h - (int32_t)glyph.box_h) / 2) - glyph_top;
+            lv_obj_set_style_text_align(icon, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
+        } else {
+            const int32_t glyph_center_x2 = label_w - (int32_t)glyph.adv_w +
+                                            (2 * (int32_t)glyph.ofs_x) + (int32_t)glyph.box_w;
+            const int32_t glyph_center_y2 = (2 * glyph_top) + (int32_t)glyph.box_h;
+            label_x = (content_w - glyph_center_x2) / 2;
+            label_y = (content_h - glyph_center_y2) / 2;
+            lv_obj_set_style_text_align(icon, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+        }
     }
 
     lv_obj_set_pos(icon, label_x, label_y);
@@ -2510,8 +2462,8 @@ static lv_obj_t *quick_symbol_icon(lv_obj_t *parent,
 
     lv_obj_t *icon_label = label(parent, 0, 0, content_w, font->line_height, font);
     lv_label_set_text(icon_label, symbol ? symbol : "");
-    quick_symbol_icon_recenter(icon_label, content_w, content_h, symbol, font);
     lv_obj_set_style_text_align(icon_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    quick_symbol_icon_recenter(icon_label, content_w, content_h, symbol, font);
     lv_obj_set_style_bg_opa(icon_label, LV_OPA_TRANSP, LV_PART_MAIN);
     return icon_label;
 }
@@ -2657,6 +2609,8 @@ static void settings_show_root(void)
         settings_swipe_indicator_hide();
     }
     s_ui.settings_detail_id = (uint8_t)SETTINGS_DETAIL_NONE;
+    s_ui.settings_bms_view = (uint8_t)SETTINGS_BMS_VIEW_ROOT;
+    s_ui.settings_bms_ble_status = NULL;
     UI_SET_FLAG(SETTINGS_SWIPE_TRACKING, false);
     set_obj_hidden(s_ui.settings_detail, true);
     set_obj_hidden(s_ui.settings_root, false);
@@ -2688,17 +2642,37 @@ static void settings_detail_chrome_show(settings_detail_id_t detail_id)
     lv_obj_move_foreground(s_ui.settings_detail_header);
 }
 
+static void settings_navigate_back(void)
+{
+    if (s_ui.settings_detail_id == (uint8_t)SETTINGS_DETAIL_NONE) {
+        show_dashboard_view();
+        return;
+    }
+    if (s_ui.settings_detail_id == (uint8_t)SETTINGS_DETAIL_BMS &&
+        s_ui.settings_bms_view != (uint8_t)SETTINGS_BMS_VIEW_ROOT) {
+        settings_show_bms_detail();
+        settings_navigation_set_hidden(false, false);
+        return;
+    }
+    if (s_ui.settings_detail_id == (uint8_t)SETTINGS_DETAIL_SYSTEM &&
+        s_ui.settings_system_view != (uint8_t)SETTINGS_SYSTEM_VIEW_ROOT) {
+        if (s_ui.settings_system_view == (uint8_t)SETTINGS_SYSTEM_VIEW_TOUCH_CALIBRATION) {
+            queue_action(ESP_BMS_LVGL_ACTION_CANCEL_TOUCH_CALIBRATION);
+        }
+        settings_show_detail(SETTINGS_DETAIL_SYSTEM);
+        settings_navigation_set_hidden(false, false);
+        return;
+    }
+    settings_show_root();
+}
+
 static void settings_detail_back_event_cb(lv_event_t *event)
 {
     if (lv_event_get_code(event) != LV_EVENT_CLICKED) {
         return;
     }
     UI_SET_FLAG(SETTINGS_SWIPE_CONSUMED, true);
-    if (s_ui.settings_detail_id == (uint8_t)SETTINGS_DETAIL_NONE) {
-        show_dashboard_view();
-    } else {
-        settings_show_root();
-    }
+    settings_navigate_back();
     lv_indev_wait_release(lv_indev_active());
 }
 
@@ -2810,11 +2784,7 @@ static void settings_swipe_event_cb(lv_event_t *event)
                      "[settings] edge back committed: detail=%u dx=%ld",
                      (unsigned)s_ui.settings_detail_id,
                      (long)s_ui.settings_swipe_drag_dx);
-            if (s_ui.settings_detail_id != (uint8_t)SETTINGS_DETAIL_NONE) {
-                settings_show_root();
-            } else {
-                show_dashboard_view();
-            }
+            settings_navigate_back();
             lv_indev_wait_release(lv_indev_active());
         }
         s_ui.settings_swipe_drag_dx = 0;
@@ -2885,223 +2855,217 @@ static void settings_bms_popup_close(void)
     }
 }
 
-static void settings_bms_popup_press_event_cb(lv_event_t *event)
-{
-    if (lv_event_get_code(event) != LV_EVENT_PRESSED) {
-        return;
-    }
-    UI_SET_FLAG(SETTINGS_SWIPE_TRACKING, false);
-    UI_SET_FLAG(SETTINGS_SWIPE_CONSUMED, false);
-}
-
 static bool settings_bms_popup_click_ready(lv_event_t *event)
 {
-    if (lv_event_get_code(event) != LV_EVENT_CLICKED) {
+    if (lv_event_get_code(event) != LV_EVENT_CLICKED || UI_FLAG(SETTINGS_SWIPE_CONSUMED)) {
         return false;
     }
     UI_SET_FLAG(SETTINGS_SWIPE_TRACKING, false);
-    UI_SET_FLAG(SETTINGS_SWIPE_CONSUMED, false);
     return true;
-}
-
-static lv_obj_t *settings_bms_popup_panel(const char *title, int32_t *content_y)
-{
-    settings_bms_popup_close();
-    UI_SET_FLAG(SETTINGS_SWIPE_TRACKING, false);
-    UI_SET_FLAG(SETTINGS_SWIPE_CONSUMED, false);
-
-    lv_obj_t *overlay = lv_obj_create(lv_layer_top());
-    clear_style(overlay);
-    lv_obj_set_pos(overlay, 0, 0);
-    lv_obj_set_size(overlay, s_ui.width, s_ui.height);
-    lv_obj_set_style_bg_color(overlay, lv_color_black(), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(overlay, LV_OPA_50, LV_PART_MAIN);
-    lv_obj_add_flag(overlay, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_FLOATING);
-    lv_obj_clear_flag(overlay, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_event_cb(overlay, settings_bms_popup_press_event_cb, LV_EVENT_PRESSED, NULL);
-
-    const bool portrait = s_ui.width < s_ui.height;
-    const int32_t popup_w = portrait ? s_ui.width - 32 : clamp_i32(s_ui.width - 80, 176, 244);
-    const int32_t popup_h = portrait ? clamp_i32(s_ui.height - 64, 176, 228) :
-                                       clamp_i32(s_ui.height - 32, 160, 196);
-    const int32_t popup_x = (s_ui.width - popup_w) / 2;
-    const int32_t popup_y = (s_ui.height - popup_h) / 2;
-    lv_obj_t *popup = panel(overlay, popup_x, popup_y, popup_w, popup_h, COLOR_SETTINGS_POPUP_BG);
-    lv_obj_set_style_radius(popup, 8, LV_PART_MAIN);
-    lv_obj_set_style_border_width(popup, 2, LV_PART_MAIN);
-    lv_obj_set_style_border_color(popup, COLOR_SETTINGS_POPUP_BORDER, LV_PART_MAIN);
-    lv_obj_set_style_border_opa(popup, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_add_flag(popup, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_FLOATING);
-    lv_obj_clear_flag(popup, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_event_cb(popup, settings_bms_popup_press_event_cb, LV_EVENT_PRESSED, NULL);
-    s_ui.settings_bms_popup = overlay;
-
-    const int32_t title_h = (int32_t)lv_font_montserrat_14.line_height + 6;
-    lv_obj_t *title_label = label(popup, 10, 10, popup_w - 54, title_h, &lv_font_montserrat_14);
-    lv_label_set_text(title_label, title ? title : "");
-    lv_obj_set_style_text_color(title_label, COLOR_WHITE, LV_PART_MAIN);
-
-    lv_obj_t *close = settings_icon_action_button(popup,
-                                                  popup_w - 38,
-                                                  7,
-                                                  30,
-                                                  30,
-                                                  "X",
-                                                  &lv_font_montserrat_14,
-                                                  settings_bms_popup_close_event_cb,
-                                                  NULL);
-    lv_obj_set_style_bg_color(close, COLOR_SETTINGS_POPUP_ROW, LV_PART_MAIN);
-    lv_obj_set_style_border_color(close, COLOR_SETTINGS_POPUP_BORDER, LV_PART_MAIN);
-    lv_obj_move_foreground(overlay);
-    if (content_y) {
-        *content_y = 44;
-    }
-    return popup;
 }
 
 static void settings_show_bms_type_picker(void)
 {
-    int32_t content_y = 0;
-    lv_obj_t *popup = settings_bms_popup_panel("BMS TYPE", &content_y);
-    const int32_t popup_w = lv_obj_get_width(popup);
-    const int32_t popup_h = lv_obj_get_height(popup);
-    const int32_t gap = 5;
-    const int32_t list_h = popup_h - content_y - 10;
-    const int32_t row_h = (list_h - ((int32_t)ARRAY_SIZE(SETTINGS_BMS_TYPE_LABELS) - 1) * gap) /
-                          (int32_t)ARRAY_SIZE(SETTINGS_BMS_TYPE_LABELS);
+    const bool portrait = s_ui.width < s_ui.height;
+    const int32_t card_x = 8;
+    const int32_t card_w = s_ui.width - 16;
+    const int32_t row_h = portrait ? 48 : 38;
+    const int32_t gap = portrait ? 7 : 5;
+    const int32_t first_y = 12;
     const uint8_t current = settings_current_snapshot()->bms_type;
+
+    s_ui.settings_bms_view = (uint8_t)SETTINGS_BMS_VIEW_TYPE_LIST;
+    s_ui.settings_bms_ble_status = NULL;
+    lv_obj_clean(s_ui.settings_detail);
+    label_set_text_if_changed(s_ui.settings_detail_title, "保护板类型");
+    lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
 
     for (size_t index = 0; index < ARRAY_SIZE(SETTINGS_BMS_TYPE_LABELS); ++index) {
         const bool active = index == current;
-        lv_obj_t *row = panel(popup,
-                              8,
-                              content_y + ((int32_t)index * (row_h + gap)),
-                              popup_w - 16,
+        lv_obj_t *row = panel(s_ui.settings_detail,
+                              card_x,
+                              first_y + ((int32_t)index * (row_h + gap)),
+                              card_w,
                               row_h,
-                              active ? COLOR_SETTINGS_POPUP_ROW_ACTIVE : COLOR_SETTINGS_POPUP_ROW);
-        lv_obj_set_style_radius(row, 6, LV_PART_MAIN);
+                              COLOR_SETTINGS_CARD);
+        lv_obj_set_style_radius(row, 8, LV_PART_MAIN);
         lv_obj_set_style_border_width(row, active ? 2 : 1, LV_PART_MAIN);
-        lv_obj_set_style_border_color(row, active ? COLOR_WHITE : COLOR_SETTINGS_POPUP_BORDER, LV_PART_MAIN);
+        lv_obj_set_style_border_color(row,
+                                      active ? COLOR_SWITCH_ACTIVE : COLOR_SETTINGS_BORDER,
+                                      LV_PART_MAIN);
         lv_obj_set_style_border_opa(row, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_pad_all(row, 0, LV_PART_MAIN);
         lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_add_event_cb(row, settings_bms_popup_press_event_cb, LV_EVENT_PRESSED, NULL);
+        settings_add_swipe_handlers(row);
         lv_obj_add_event_cb(row,
                             settings_bms_type_option_event_cb,
                             LV_EVENT_CLICKED,
                             (void *)(uintptr_t)index);
 
-        const int32_t text_h = (int32_t)lv_font_montserrat_14.line_height + 4;
-        lv_obj_t *text = label(row, 10, (row_h - text_h) / 2, popup_w - 36, text_h, &lv_font_montserrat_14);
+        const lv_font_t *text_font = &settings_zh_13;
+        const int32_t text_h = (int32_t)text_font->line_height + 4;
+        lv_obj_t *text = label(row, 12, (row_h - text_h) / 2, card_w - 52, text_h,
+                               text_font);
         lv_label_set_text(text, SETTINGS_BMS_TYPE_LABELS[index]);
-        lv_obj_set_style_text_color(text, COLOR_WHITE, LV_PART_MAIN);
+        lv_obj_set_style_text_color(text,
+                                    active ? COLOR_SWITCH_ACTIVE : COLOR_SETTINGS_TEXT,
+                                    LV_PART_MAIN);
+        if (active) {
+            lv_obj_t *check = label(row, card_w - 36, (row_h - text_h) / 2, 24, text_h,
+                                    &lv_font_montserrat_14);
+            lv_label_set_text(check, LV_SYMBOL_OK);
+            lv_obj_set_style_text_align(check, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+            lv_obj_set_style_text_color(check, COLOR_SWITCH_ACTIVE, LV_PART_MAIN);
+        }
+    }
+}
+
+static void settings_bms_ble_format_status(char *out,
+                                           size_t out_len,
+                                           const esp_bms_dashboard_snapshot_t *snapshot,
+                                           bool scan_requested)
+{
+    if (!out || out_len == 0U) {
+        return;
+    }
+    if (scan_requested || strcmp(snapshot->bms_info_text, "BMS SCAN") == 0) {
+        (void)snprintf(out, out_len, "扫描...");
+    } else if (SNAPSHOT_FLAG(snapshot, BMS_ONLINE)) {
+        (void)snprintf(out,
+                       out_len,
+                       "%s",
+                       snapshot->bms_bound_name[0] != '\0' ? snapshot->bms_bound_name : "已连接");
+    } else if (snapshot->bms_scan_candidate_count > 0U) {
+        (void)snprintf(out, out_len, "发现 %u", (unsigned)snapshot->bms_scan_candidate_count);
+    } else if (snapshot->bms_info_text[0] != '\0') {
+        (void)snprintf(out, out_len, "%.15s", snapshot->bms_info_text);
+    } else {
+        (void)snprintf(out, out_len, "未发现保护板");
     }
 }
 
 static void settings_bms_ble_start_scan(void)
 {
     if (s_ui.settings_bms_ble_status) {
-        label_set_text_if_changed(s_ui.settings_bms_ble_status, "Loading...");
+        label_set_text_if_changed(s_ui.settings_bms_ble_status, "扫描...");
     }
-    ESP_LOGI(TAG, "[bms-ui] queue BLE scan from popup");
+    ESP_LOGI(TAG, "[bms-ui] queue BLE scan from list page");
     queue_action(ESP_BMS_LVGL_ACTION_START_BMS_BIND);
 }
 
 static void settings_show_bms_ble_popup(bool start_scan)
 {
-    int32_t content_y = 0;
-    lv_obj_t *popup = settings_bms_popup_panel("BLE LIST", &content_y);
-    const int32_t popup_w = lv_obj_get_width(popup);
-    const int32_t popup_h = lv_obj_get_height(popup);
+    const bool portrait = s_ui.width < s_ui.height;
+    const int32_t card_x = 8;
+    const int32_t card_w = s_ui.width - 16;
+    const int32_t status_h = portrait ? 48 : 38;
+    const int32_t refresh_w = status_h;
+    const int32_t gap = portrait ? 7 : 5;
+    const int32_t status_w = card_w - refresh_w - gap;
+    const int32_t first_y = 12;
+    const int32_t list_y = first_y + status_h + gap;
+    const int32_t row_h = portrait ? 48 : 42;
     const esp_bms_dashboard_snapshot_t *snapshot = settings_current_snapshot();
-    s_ui.settings_bms_ble_popup_open = true;
+    char status_text[24] = { 0 };
 
-    lv_obj_t *scan = panel(popup, popup_w - 58, content_y, 50, 34, COLOR_SETTINGS_POPUP_ROW);
-    lv_obj_set_style_radius(scan, 6, LV_PART_MAIN);
-    lv_obj_set_style_border_width(scan, 1, LV_PART_MAIN);
-    lv_obj_set_style_border_color(scan, COLOR_SETTINGS_POPUP_BORDER, LV_PART_MAIN);
-    lv_obj_set_style_border_opa(scan, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_add_flag(scan, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(scan, settings_bms_popup_press_event_cb, LV_EVENT_PRESSED, NULL);
-    lv_obj_add_event_cb(scan, settings_bms_ble_refresh_event_cb, LV_EVENT_CLICKED, NULL);
+    s_ui.settings_bms_view = (uint8_t)SETTINGS_BMS_VIEW_BLE_LIST;
+    s_ui.settings_bms_ble_status = NULL;
+    lv_obj_clean(s_ui.settings_detail);
+    label_set_text_if_changed(s_ui.settings_detail_title, "蓝牙连接");
+    lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
 
-    const int32_t scan_text_h = (int32_t)lv_font_montserrat_14.line_height + 2;
-    lv_obj_t *scan_text = label(scan, 0, (34 - scan_text_h) / 2, 50, scan_text_h, &lv_font_montserrat_14);
-    lv_label_set_text(scan_text, "SCAN");
-    lv_obj_set_style_text_align(scan_text, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_set_style_text_color(scan_text, COLOR_WHITE, LV_PART_MAIN);
+    lv_obj_t *status = panel(s_ui.settings_detail,
+                             card_x,
+                             first_y,
+                             status_w,
+                             status_h,
+                             COLOR_SETTINGS_CARD);
+    lv_obj_set_style_radius(status, 8, LV_PART_MAIN);
+    lv_obj_set_style_border_width(status, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(status, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
+    lv_obj_set_style_border_opa(status, LV_OPA_COVER, LV_PART_MAIN);
+    settings_bms_ble_format_status(status_text, sizeof(status_text), snapshot, start_scan);
+    s_ui.settings_bms_ble_status = label(status,
+                                         10,
+                                         (status_h - ((int32_t)settings_zh_13.line_height + 4)) / 2,
+                                         status_w - 20,
+                                         (int32_t)settings_zh_13.line_height + 4,
+                                         &settings_zh_13);
+    lv_label_set_text(s_ui.settings_bms_ble_status, status_text);
+    lv_obj_set_style_text_color(s_ui.settings_bms_ble_status, COLOR_SETTINGS_TEXT, LV_PART_MAIN);
 
-    const int32_t list_y = content_y + 42;
-    lv_obj_t *list = panel(popup, 8, list_y, popup_w - 16, popup_h - list_y - 10, COLOR_SETTINGS_POPUP_LIST);
-    lv_obj_set_style_radius(list, 6, LV_PART_MAIN);
-    lv_obj_set_style_border_width(list, 1, LV_PART_MAIN);
-    lv_obj_set_style_border_color(list, COLOR_SETTINGS_POPUP_BORDER, LV_PART_MAIN);
-    lv_obj_set_style_border_opa(list, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_add_flag(list, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_scroll_dir(list, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_AUTO);
-    lv_obj_set_style_pad_all(list, 4, LV_PART_MAIN);
+    settings_icon_action_button(s_ui.settings_detail,
+                                card_x + status_w + gap,
+                                first_y,
+                                refresh_w,
+                                status_h,
+                                LV_SYMBOL_REFRESH,
+                                &lv_font_montserrat_24,
+                                settings_bms_ble_refresh_event_cb,
+                                NULL);
 
     const uint8_t count = snapshot->bms_scan_candidate_count > ESP_BMS_BMS_SCAN_MAX_CANDIDATES
                               ? ESP_BMS_BMS_SCAN_MAX_CANDIDATES
                               : snapshot->bms_scan_candidate_count;
-    if (count == 0U) {
-        const bool scan_active = start_scan || strcmp(snapshot->bms_info_text, "BMS SCAN") == 0;
-        const char *status_text = scan_active ? "Loading..." :
-                                  snapshot->bms_info_text[0] != '\0' ? snapshot->bms_info_text : "NO BMS";
-        const int32_t status_h = (int32_t)lv_font_montserrat_14.line_height + 6;
-        s_ui.settings_bms_ble_status = label(list,
-                                             10,
-                                             (lv_obj_get_height(list) - status_h) / 2,
-                                             popup_w - 36,
-                                             status_h,
-                                             &lv_font_montserrat_14);
-        lv_label_set_text(s_ui.settings_bms_ble_status, status_text);
-        lv_obj_set_style_text_align(s_ui.settings_bms_ble_status, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-        lv_obj_set_style_text_color(s_ui.settings_bms_ble_status, COLOR_WHITE, LV_PART_MAIN);
+    if (count == 0U || start_scan) {
+        const int32_t empty_h = (int32_t)settings_zh_13.line_height + 8;
+        lv_obj_t *empty = label(s_ui.settings_detail,
+                                card_x,
+                                list_y + 18,
+                                card_w,
+                                empty_h,
+                                &settings_zh_13);
+        lv_label_set_text(empty, start_scan ? "扫描..." : "未发现保护板");
+        lv_obj_set_style_text_align(empty, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+        lv_obj_set_style_text_color(empty, COLOR_SETTINGS_MUTED, LV_PART_MAIN);
     } else {
-        const int32_t list_w = lv_obj_get_width(list);
-        const int32_t row_h = 40;
-        const int32_t gap = 4;
         for (uint8_t index = 0; index < count; ++index) {
             const esp_bms_bms_scan_candidate_t *candidate = &snapshot->bms_scan_candidates[index];
-            lv_obj_t *row = panel(list,
-                                  4,
-                                  4 + ((int32_t)index * (row_h + gap)),
-                                  list_w - 8,
+            lv_obj_t *row = panel(s_ui.settings_detail,
+                                  card_x,
+                                  list_y + ((int32_t)index * (row_h + gap)),
+                                  card_w,
                                   row_h,
-                                  COLOR_SETTINGS_POPUP_ROW);
-            lv_obj_set_style_radius(row, 6, LV_PART_MAIN);
+                                  COLOR_SETTINGS_CARD);
+            lv_obj_set_style_radius(row, 8, LV_PART_MAIN);
             lv_obj_set_style_border_width(row, 1, LV_PART_MAIN);
-            lv_obj_set_style_border_color(row, COLOR_SETTINGS_POPUP_BORDER, LV_PART_MAIN);
+            lv_obj_set_style_border_color(row, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
             lv_obj_set_style_border_opa(row, LV_OPA_COVER, LV_PART_MAIN);
+            lv_obj_set_style_pad_all(row, 0, LV_PART_MAIN);
             lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
-            lv_obj_add_event_cb(row, settings_bms_popup_press_event_cb, LV_EVENT_PRESSED, NULL);
+            settings_add_swipe_handlers(row);
             lv_obj_add_event_cb(row,
                                 settings_bms_ble_candidate_event_cb,
                                 LV_EVENT_CLICKED,
                                 (void *)candidate);
 
-            const char *name = candidate->has_name && candidate->name[0] != '\0'
-                                   ? candidate->name
-                                   : "BMS";
-            lv_obj_t *name_label = label(row, 8, 4, list_w - 58, 16, &lv_font_montserrat_14);
+            char fallback_name[16] = { 0 };
+            const bool has_name = candidate->has_name && candidate->name[0] != '\0';
+            if (!has_name) {
+                (void)snprintf(fallback_name, sizeof(fallback_name), "设备 %u", (unsigned)index + 1U);
+            }
+            const char *name = has_name ? candidate->name : fallback_name;
+            const lv_font_t *name_font = &settings_zh_13;
+            const lv_font_t *metadata_font = &settings_zh_10;
+            const int32_t name_h = (int32_t)name_font->line_height + 2;
+            const int32_t text_y = (row_h - name_h) / 2;
+            lv_obj_t *name_label = label(row, 10, text_y, card_w - 88, name_h, name_font);
             lv_label_set_text(name_label, name);
-            lv_obj_set_style_text_color(name_label, COLOR_WHITE, LV_PART_MAIN);
-
-            lv_obj_t *mac_label = label(row, 8, 21, list_w - 72, 14, &lv_font_montserrat_14);
-            lv_label_set_text(mac_label, candidate->mac);
-            lv_obj_set_style_text_color(mac_label, COLOR_SETTINGS_POPUP_MUTED, LV_PART_MAIN);
+            lv_label_set_long_mode(name_label, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
+            lv_obj_set_style_text_color(name_label, COLOR_SETTINGS_TEXT, LV_PART_MAIN);
 
             char rssi[12] = { 0 };
             if (candidate->rssi > INT8_MIN) {
-                (void)snprintf(rssi, sizeof(rssi), "%d", (int)candidate->rssi);
+                (void)snprintf(rssi, sizeof(rssi), "%d dBm", (int)candidate->rssi);
             } else {
                 (void)snprintf(rssi, sizeof(rssi), "--");
             }
-            lv_obj_t *rssi_label = label(row, list_w - 48, 13, 34, 16, &lv_font_montserrat_14);
+            const int32_t metadata_h = (int32_t)metadata_font->line_height + 4;
+            lv_obj_t *rssi_label = label(row, card_w - 70, (row_h - metadata_h) / 2, 58, metadata_h,
+                                         metadata_font);
             lv_label_set_text(rssi_label, rssi);
             lv_obj_set_style_text_align(rssi_label, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
-            lv_obj_set_style_text_color(rssi_label, COLOR_SETTINGS_POPUP_MUTED, LV_PART_MAIN);
+            lv_obj_set_style_text_color(rssi_label, COLOR_SETTINGS_MUTED, LV_PART_MAIN);
         }
     }
 
@@ -3116,7 +3080,7 @@ static void settings_show_hotspot_detail(void)
 
     const bool portrait = s_ui.width < s_ui.height;
     const int32_t card_x = 8;
-    const int32_t card_w = portrait ? s_ui.width - 16 : (s_ui.width / 2) - 16;
+    const int32_t card_w = portrait ? s_ui.width - 16 : (s_ui.width / 2) - 8;
     const int32_t row_h = portrait ? 56 : 48;
     const int32_t gap = 8;
     const int32_t info_y = 12 + row_h + gap;
@@ -3125,6 +3089,7 @@ static void settings_show_hotspot_detail(void)
         "热点共享",
         SNAPSHOT_FLAG(snapshot, SETUP_AP_ENABLED) ? "热点已打开" : "未打开",
         ESP_BMS_LVGL_ACTION_ENABLE_WIFI_REPROVISIONING,
+        SETTINGS_SYSTEM_VIEW_ROOT,
     };
     s_ui.setup_ap_control_row =
         settings_detail_row(s_ui.settings_detail, card_x, 12, card_w, row_h, &control_row);
@@ -3134,8 +3099,14 @@ static void settings_show_hotspot_detail(void)
     lv_obj_set_style_border_width(info, 1, LV_PART_MAIN);
     lv_obj_set_style_border_color(info, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
     lv_obj_set_style_border_opa(info, LV_OPA_COVER, LV_PART_MAIN);
-    s_ui.setup_ap_info = label(info, 8, 8, card_w - 16, info_h - 16, &lv_font_montserrat_14);
+    s_ui.setup_ap_info = label(info,
+                               8,
+                               8,
+                               card_w - 16,
+                               info_h - 16,
+                               &settings_zh_13);
     lv_obj_set_style_text_color(s_ui.setup_ap_info, COLOR_SETTINGS_TEXT, LV_PART_MAIN);
+    lv_obj_set_style_text_line_space(s_ui.setup_ap_info, SETUP_AP_INFO_LINE_SPACE, LV_PART_MAIN);
 
 #if LV_USE_QRCODE
     const int32_t qr_size = portrait ? clamp_i32(s_ui.width - 104, 96, 140) :
@@ -3144,19 +3115,25 @@ static void settings_show_hotspot_detail(void)
     const int32_t qr_panel_h = qr_size + 18;
     const int32_t qr_x = portrait ? (s_ui.width - qr_panel_w) / 2 : (s_ui.width - qr_panel_w - 12);
     const int32_t qr_y = portrait ? (info_y + info_h + 10) : 58;
-    lv_obj_t *qr_panel = panel(s_ui.settings_detail, qr_x, qr_y, qr_panel_w, qr_panel_h, COLOR_WHITE);
-    lv_obj_set_style_radius(qr_panel, 8, LV_PART_MAIN);
-    lv_obj_set_style_border_width(qr_panel, 1, LV_PART_MAIN);
-    lv_obj_set_style_border_color(qr_panel, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
-    lv_obj_set_style_border_opa(qr_panel, LV_OPA_COVER, LV_PART_MAIN);
-    s_ui.setup_ap_qr = lv_qrcode_create(qr_panel);
+    s_ui.setup_ap_qr_panel = panel(s_ui.settings_detail,
+                                  qr_x,
+                                  qr_y,
+                                  qr_panel_w,
+                                  qr_panel_h,
+                                  COLOR_WHITE);
+    lv_obj_set_style_radius(s_ui.setup_ap_qr_panel, 8, LV_PART_MAIN);
+    lv_obj_set_style_border_width(s_ui.setup_ap_qr_panel, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(s_ui.setup_ap_qr_panel, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
+    lv_obj_set_style_border_opa(s_ui.setup_ap_qr_panel, LV_OPA_COVER, LV_PART_MAIN);
+    s_ui.setup_ap_qr = lv_qrcode_create(s_ui.setup_ap_qr_panel);
     if (s_ui.setup_ap_qr) {
         lv_qrcode_set_size(s_ui.setup_ap_qr, qr_size);
         lv_qrcode_set_dark_color(s_ui.setup_ap_qr, COLOR_SETTINGS_BG);
         lv_qrcode_set_light_color(s_ui.setup_ap_qr, COLOR_WHITE);
         lv_qrcode_set_quiet_zone(s_ui.setup_ap_qr, true);
-        lv_obj_set_pos(s_ui.setup_ap_qr, 9, 9);
+        lv_obj_center(s_ui.setup_ap_qr);
     }
+    set_obj_hidden(s_ui.setup_ap_qr_panel, true);
 #endif
 
     set_setup_ap(snapshot);
@@ -3187,10 +3164,11 @@ static void settings_show_bluetooth_detail(void)
     const int32_t first_y = 12;
 
     const settings_detail_row_t rows[] = {
-        { "状态", bluetooth_status_text(snapshot), ESP_BMS_LVGL_ACTION_NONE },
+        { "状态", bluetooth_status_text(snapshot), ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
         { "名称", snapshot->bluetooth_name[0] != '\0' ? snapshot->bluetooth_name : "ESP32 BMS GPS",
-          ESP_BMS_LVGL_ACTION_NONE },
-        { "可被发现", "附近可见", ESP_BMS_LVGL_ACTION_ENABLE_BLUETOOTH_ADVERTISING },
+          ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
+        { "可被发现", "附近可见", ESP_BMS_LVGL_ACTION_ENABLE_BLUETOOTH_ADVERTISING,
+          SETTINGS_SYSTEM_VIEW_ROOT },
     };
 
     for (size_t index = 0; index < ARRAY_SIZE(rows); ++index) {
@@ -3206,56 +3184,49 @@ static void settings_show_bluetooth_detail(void)
 static void settings_show_bms_detail(void)
 {
     const esp_bms_dashboard_snapshot_t *snapshot = settings_current_snapshot();
-
-    const bool portrait = s_ui.width < s_ui.height;
     const int32_t card_x = 8;
     const int32_t card_w = s_ui.width - 16;
-    const int32_t bind_row_h = portrait ? 48 : 42;
-    const int32_t type_row_h = portrait ? 72 : 46;
-    const int32_t gap = portrait ? 6 : 5;
+    const int32_t row_h = s_ui.width < s_ui.height ? 56 : 48;
+    const int32_t gap = 8;
     int32_t y = 12;
+    char ble_status[ESP_BMS_BMS_SCAN_NAME_LEN + 1U] = { 0 };
+
+    s_ui.settings_bms_view = (uint8_t)SETTINGS_BMS_VIEW_ROOT;
+    s_ui.settings_bms_ble_status = NULL;
+    lv_obj_clean(s_ui.settings_detail);
+    label_set_text_if_changed(s_ui.settings_detail_title, "保护板设置");
+    lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
+
+    settings_bms_ble_format_status(ble_status, sizeof(ble_status), snapshot, false);
+    const settings_detail_row_t ble_row = {
+        "蓝牙连接",
+        ble_status,
+        ESP_BMS_LVGL_ACTION_START_BMS_BIND,
+        SETTINGS_SYSTEM_VIEW_ROOT,
+    };
+    const settings_detail_row_t type_row = {
+        "保护板类型",
+        settings_bms_type_label(snapshot->bms_type),
+        ESP_BMS_LVGL_ACTION_NONE,
+        SETTINGS_SYSTEM_VIEW_ROOT,
+    };
 
     settings_detail_row(s_ui.settings_detail,
                         card_x,
                         y,
                         card_w,
-                        bind_row_h,
-                        &SETTINGS_BMS_ROWS[0]);
-    y += bind_row_h + gap;
+                        row_h,
+                        &ble_row);
+    y += row_h + gap;
 
-    lv_obj_t *type_box = panel(s_ui.settings_detail, card_x, y, card_w, type_row_h, COLOR_SETTINGS_CARD);
-    lv_obj_set_style_radius(type_box, 8, LV_PART_MAIN);
-    lv_obj_set_style_border_width(type_box, 1, LV_PART_MAIN);
-    lv_obj_set_style_border_color(type_box, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
-    lv_obj_set_style_border_opa(type_box, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(type_box, 0, LV_PART_MAIN);
-    lv_obj_add_flag(type_box, LV_OBJ_FLAG_CLICKABLE);
-    settings_add_swipe_handlers(type_box);
+    lv_obj_t *type_box = settings_detail_row(s_ui.settings_detail,
+                                              card_x,
+                                              y,
+                                              card_w,
+                                              row_h,
+                                              &type_row);
     lv_obj_add_event_cb(type_box, settings_bms_type_button_event_cb, LV_EVENT_CLICKED, NULL);
-
-    const int32_t title_h = (int32_t)settings_zh_13.line_height + 4;
-    lv_obj_t *title = label(type_box,
-                            12,
-                            portrait ? 7 : ((type_row_h - title_h) / 2),
-                            portrait ? (card_w - 24) : 82,
-                            title_h,
-                            &settings_zh_13);
-    lv_label_set_text(title, "保护板 TYPE");
-    lv_obj_set_style_text_color(title, COLOR_SETTINGS_TEXT, LV_PART_MAIN);
-
-    const int32_t value_h = (int32_t)settings_zh_13.line_height + 4;
-    const int32_t value_w = portrait ? (card_w - 46) : clamp_i32(card_w - 116, 90, 144);
-    lv_obj_t *value = label(type_box,
-                            portrait ? 12 : (card_w - value_w - 28),
-                            portrait ? (type_row_h - value_h - 9) : ((type_row_h - value_h) / 2),
-                            value_w,
-                            value_h,
-                            &settings_zh_13);
-    lv_label_set_text(value, settings_bms_type_label(snapshot->bms_type));
-    lv_obj_set_style_text_color(value, COLOR_SETTINGS_TEXT, LV_PART_MAIN);
-    lv_obj_set_style_text_align(value, portrait ? LV_TEXT_ALIGN_LEFT : LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
-
-    lv_obj_t *arrow = label(type_box, card_w - 24, (type_row_h - 15) / 2, 14, 15, &settings_zh_13);
+    lv_obj_t *arrow = label(type_box, card_w - 24, (row_h - 15) / 2, 14, 15, &settings_zh_13);
     lv_label_set_text(arrow, ">");
     lv_obj_set_style_text_align(arrow, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(arrow, COLOR_SETTINGS_ACCENT, LV_PART_MAIN);
@@ -3309,25 +3280,110 @@ static void settings_detail_switch(lv_obj_t *parent, int32_t x, int32_t y, bool 
     lv_obj_clear_flag(thumb, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
 }
 
+static void settings_restore_popup_close(void)
+{
+    if (!s_ui.settings_restore_popup) {
+        return;
+    }
+    lv_obj_delete(s_ui.settings_restore_popup);
+    s_ui.settings_restore_popup = NULL;
+}
+
+static void settings_restore_cancel_event_cb(lv_event_t *event)
+{
+    if (lv_event_get_code(event) == LV_EVENT_CLICKED) {
+        settings_restore_popup_close();
+    }
+}
+
+static void settings_restore_accept_event_cb(lv_event_t *event)
+{
+    if (lv_event_get_code(event) != LV_EVENT_CLICKED) {
+        return;
+    }
+    queue_action(ESP_BMS_LVGL_ACTION_RESTORE_DEFAULTS);
+    settings_restore_popup_close();
+}
+
+static void settings_restore_confirm_show(void)
+{
+    settings_restore_popup_close();
+    s_ui.settings_restore_popup = lv_obj_create(lv_layer_top());
+    clear_style(s_ui.settings_restore_popup);
+    lv_obj_set_pos(s_ui.settings_restore_popup, 0, 0);
+    lv_obj_set_size(s_ui.settings_restore_popup, s_ui.width, s_ui.height);
+    lv_obj_set_style_bg_color(s_ui.settings_restore_popup, COLOR_DASHBOARD_BG, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_ui.settings_restore_popup, LV_OPA_70, LV_PART_MAIN);
+    lv_obj_add_flag(s_ui.settings_restore_popup, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_FLOATING);
+    lv_obj_clear_flag(s_ui.settings_restore_popup, LV_OBJ_FLAG_SCROLLABLE);
+
+    const int32_t dialog_w = clamp_i32(s_ui.width - 32, 208, 288);
+    const int32_t dialog_h = 136;
+    lv_obj_t *dialog = panel(s_ui.settings_restore_popup,
+                             (s_ui.width - dialog_w) / 2,
+                             (s_ui.height - dialog_h) / 2,
+                             dialog_w,
+                             dialog_h,
+                             COLOR_PANEL_ALT);
+    lv_obj_set_style_radius(dialog, 8, LV_PART_MAIN);
+    lv_obj_set_style_border_width(dialog, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(dialog, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(dialog, 0, LV_PART_MAIN);
+
+    lv_obj_t *title = label(dialog, 12, 12, dialog_w - 24, 22, &settings_zh_16);
+    lv_label_set_text(title, "恢复默认");
+    lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(title, COLOR_SETTINGS_TEXT, LV_PART_MAIN);
+    lv_obj_t *message = label(dialog, 12, 42, dialog_w - 24, 34, &settings_zh_13);
+    lv_label_set_text(message, "清除设置与屏幕校准？");
+    lv_label_set_long_mode(message, LV_LABEL_LONG_MODE_WRAP);
+    lv_obj_set_style_text_align(message, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(message, COLOR_SETTINGS_MUTED, LV_PART_MAIN);
+
+    const int32_t gap = 12;
+    const int32_t button_w = (dialog_w - 36 - gap) / 2;
+    lv_obj_t *cancel = panel(dialog, 12, 86, button_w, 38, COLOR_SETTINGS_CARD);
+    lv_obj_set_style_radius(cancel, 7, LV_PART_MAIN);
+    lv_obj_set_style_border_width(cancel, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(cancel, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
+    lv_obj_add_flag(cancel, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(cancel, settings_restore_cancel_event_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *cancel_icon = label(cancel, 0, 7, button_w, 24, &lv_font_montserrat_24);
+    lv_label_set_text(cancel_icon, LV_SYMBOL_CLOSE);
+    lv_obj_set_style_text_align(cancel_icon, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(cancel_icon, COLOR_SETTINGS_TEXT, LV_PART_MAIN);
+
+    lv_obj_t *confirm = panel(dialog, 12 + button_w + gap, 86, button_w, 38, COLOR_SWITCH_ACTIVE);
+    lv_obj_set_style_radius(confirm, 7, LV_PART_MAIN);
+    lv_obj_add_flag(confirm, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(confirm, settings_restore_accept_event_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *confirm_icon = label(confirm, 0, 7, button_w, 24, &lv_font_montserrat_24);
+    lv_label_set_text(confirm_icon, LV_SYMBOL_OK);
+    lv_obj_set_style_text_align(confirm_icon, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(confirm_icon, COLOR_WHITE, LV_PART_MAIN);
+}
+
 static void settings_detail_action_event_cb(lv_event_t *event)
 {
     if (lv_event_get_code(event) != LV_EVENT_CLICKED || UI_FLAG(SETTINGS_SWIPE_CONSUMED)) {
         return;
     }
 
-    const esp_bms_lvgl_action_t action =
-        (esp_bms_lvgl_action_t)(uintptr_t)lv_event_get_user_data(event);
-    if (action == ESP_BMS_LVGL_ACTION_CYCLE_LEVEL_POSITION) {
-        quick_level_cycle_position();
-        lv_obj_t *row = (lv_obj_t *)lv_event_get_target(event);
-        if (row && lv_obj_get_child_count(row) > 1U) {
-            label_set_text_if_changed(lv_obj_get_child(row, 1), quick_level_position_text());
-        }
+    const uintptr_t route = (uintptr_t)lv_event_get_user_data(event);
+    const esp_bms_lvgl_action_t action = (esp_bms_lvgl_action_t)(route & UINT8_MAX);
+    const settings_system_view_t system_view = (settings_system_view_t)(route >> 8);
+    if (system_view != SETTINGS_SYSTEM_VIEW_ROOT) {
+        settings_show_system_view(system_view);
         return;
     }
+
     if (action == ESP_BMS_LVGL_ACTION_START_BMS_BIND) {
-        ESP_LOGI(TAG, "[bms-ui] open BLE list and start scan");
+        ESP_LOGI(TAG, "[bms-ui] open BLE list page and start scan");
         settings_show_bms_ble_popup(true);
+        return;
+    }
+    if (action == ESP_BMS_LVGL_ACTION_RESTORE_DEFAULTS) {
+        settings_restore_confirm_show();
         return;
     }
     if (action != ESP_BMS_LVGL_ACTION_NONE) {
@@ -3340,7 +3396,7 @@ static void settings_bms_type_button_event_cb(lv_event_t *event)
     if (lv_event_get_code(event) != LV_EVENT_CLICKED || UI_FLAG(SETTINGS_SWIPE_CONSUMED)) {
         return;
     }
-    ESP_LOGI(TAG, "[bms-ui] open BMS type picker");
+    ESP_LOGI(TAG, "[bms-ui] open BMS type list page");
     settings_show_bms_type_picker();
 }
 
@@ -3356,11 +3412,123 @@ static void settings_bms_type_option_event_cb(lv_event_t *event)
     }
 
     ESP_LOGI(TAG, "[bms-ui] BMS type selected: %s", SETTINGS_BMS_TYPE_LABELS[selected]);
-    settings_bms_popup_close();
-    if (UI_FLAG(LAST_SNAPSHOT_VALID) && settings_current_snapshot()->bms_type == selected) {
+    if (!UI_FLAG(LAST_SNAPSHOT_VALID) || settings_current_snapshot()->bms_type != selected) {
+        queue_action(SETTINGS_BMS_TYPE_ACTIONS[selected]);
+    }
+    settings_show_bms_detail();
+    settings_navigation_set_hidden(false, false);
+    lv_indev_wait_release(lv_indev_active());
+}
+
+static void settings_bms_bind_confirm_cancel_event_cb(lv_event_t *event)
+{
+    if (lv_event_get_code(event) != LV_EVENT_CLICKED) {
         return;
     }
-    queue_action(SETTINGS_BMS_TYPE_ACTIONS[selected]);
+    lv_indev_wait_release(lv_indev_active());
+    settings_bms_popup_close();
+    settings_show_bms_ble_popup(false);
+}
+
+static void settings_bms_bind_confirm_accept_event_cb(lv_event_t *event)
+{
+    if (lv_event_get_code(event) != LV_EVENT_CLICKED ||
+        s_ui.settings_bms_confirm_mac[0] == '\0') {
+        return;
+    }
+
+    char mac[sizeof(s_ui.settings_bms_confirm_mac)] = { 0 };
+    (void)snprintf(mac, sizeof(mac), "%s", s_ui.settings_bms_confirm_mac);
+    lv_indev_wait_release(lv_indev_active());
+    settings_bms_popup_close();
+    queue_bms_bind_action(mac);
+    settings_show_bms_detail();
+    settings_navigation_set_hidden(false, false);
+    quick_toast_show_connecting();
+    ESP_LOGI(TAG, "[bms-ui] BMS bind confirmed: mac=%s", mac);
+}
+
+static void settings_show_bms_bind_confirm(const esp_bms_bms_scan_candidate_t *candidate)
+{
+    if (!candidate || candidate->mac[0] == '\0') {
+        return;
+    }
+
+    settings_bms_popup_close();
+    (void)snprintf(s_ui.settings_bms_confirm_mac,
+                   sizeof(s_ui.settings_bms_confirm_mac),
+                   "%s",
+                   candidate->mac);
+    (void)snprintf(s_ui.settings_bms_confirm_name,
+                   sizeof(s_ui.settings_bms_confirm_name),
+                   "%s",
+                   candidate->has_name && candidate->name[0] != '\0' ? candidate->name : "设备");
+
+    UI_SET_FLAG(SETTINGS_SWIPE_TRACKING, false);
+    UI_SET_FLAG(SETTINGS_SWIPE_CONSUMED, false);
+    s_ui.settings_bms_popup = lv_obj_create(lv_layer_top());
+    clear_style(s_ui.settings_bms_popup);
+    lv_obj_set_pos(s_ui.settings_bms_popup, 0, 0);
+    lv_obj_set_size(s_ui.settings_bms_popup, s_ui.width, s_ui.height);
+    lv_obj_set_style_bg_color(s_ui.settings_bms_popup, COLOR_DASHBOARD_BG, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_ui.settings_bms_popup, LV_OPA_70, LV_PART_MAIN);
+    lv_obj_add_flag(s_ui.settings_bms_popup, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_FLOATING);
+    lv_obj_clear_flag(s_ui.settings_bms_popup, LV_OBJ_FLAG_SCROLLABLE);
+
+    const int32_t dialog_w = clamp_i32(s_ui.width - 32, 200, 280);
+    const int32_t dialog_h = 132;
+    lv_obj_t *dialog = panel(s_ui.settings_bms_popup,
+                             (s_ui.width - dialog_w) / 2,
+                             (s_ui.height - dialog_h) / 2,
+                             dialog_w,
+                             dialog_h,
+                             COLOR_PANEL_ALT);
+    lv_obj_set_style_radius(dialog, 8, LV_PART_MAIN);
+    lv_obj_set_style_border_width(dialog, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(dialog, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
+    lv_obj_set_style_border_opa(dialog, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(dialog, 0, LV_PART_MAIN);
+
+    lv_obj_t *title = label(dialog, 12, 10, dialog_w - 24, 20, &settings_zh_16);
+    lv_label_set_text(title, "蓝牙连接");
+    lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(title, COLOR_SETTINGS_TEXT, LV_PART_MAIN);
+
+    lv_obj_t *name = label(dialog, 12, 40, dialog_w - 24, 22, &settings_zh_13);
+    lv_label_set_text_fmt(name, "连接 %s ?", s_ui.settings_bms_confirm_name);
+    lv_label_set_long_mode(name, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
+    lv_obj_set_style_text_align(name, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(name, COLOR_SETTINGS_MUTED, LV_PART_MAIN);
+
+    const int32_t button_gap = 12;
+    const int32_t button_w = (dialog_w - 36 - button_gap) / 2;
+    const int32_t button_y = 78;
+    const int32_t button_h = 40;
+    lv_obj_t *cancel = panel(dialog, 12, button_y, button_w, button_h, COLOR_SETTINGS_CARD);
+    lv_obj_set_style_radius(cancel, 8, LV_PART_MAIN);
+    lv_obj_set_style_border_width(cancel, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(cancel, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
+    lv_obj_add_flag(cancel, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(cancel, settings_bms_bind_confirm_cancel_event_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *cancel_icon = label(cancel, 0, 8, button_w, 24, &lv_font_montserrat_24);
+    lv_label_set_text(cancel_icon, LV_SYMBOL_CLOSE);
+    lv_obj_set_style_text_align(cancel_icon, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(cancel_icon, COLOR_SETTINGS_MUTED, LV_PART_MAIN);
+
+    lv_obj_t *confirm = panel(dialog,
+                             12 + button_w + button_gap,
+                             button_y,
+                             button_w,
+                             button_h,
+                             COLOR_SWITCH_ACTIVE);
+    lv_obj_set_style_radius(confirm, 8, LV_PART_MAIN);
+    lv_obj_set_style_border_width(confirm, 0, LV_PART_MAIN);
+    lv_obj_add_flag(confirm, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(confirm, settings_bms_bind_confirm_accept_event_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *confirm_icon = label(confirm, 0, 8, button_w, 24, &lv_font_montserrat_24);
+    lv_label_set_text(confirm_icon, LV_SYMBOL_OK);
+    lv_obj_set_style_text_align(confirm_icon, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(confirm_icon, COLOR_WHITE, LV_PART_MAIN);
 }
 
 static void settings_bms_ble_candidate_event_cb(lv_event_t *event)
@@ -3375,9 +3543,8 @@ static void settings_bms_ble_candidate_event_cb(lv_event_t *event)
         return;
     }
 
-    ESP_LOGI(TAG, "[bms-ui] BMS candidate selected: mac=%s", candidate->mac);
-    settings_bms_popup_close();
-    queue_bms_bind_action(candidate->mac);
+    ESP_LOGI(TAG, "[bms-ui] BMS candidate confirmation opened: mac=%s", candidate->mac);
+    settings_show_bms_bind_confirm(candidate);
 }
 
 static void settings_bms_ble_refresh_event_cb(lv_event_t *event)
@@ -3385,20 +3552,7 @@ static void settings_bms_ble_refresh_event_cb(lv_event_t *event)
     if (!settings_bms_popup_click_ready(event)) {
         return;
     }
-
-    if (s_ui.settings_bms_ble_status) {
-        label_set_text_if_changed(s_ui.settings_bms_ble_status, "Loading...");
-    }
-    ESP_LOGI(TAG, "[bms-ui] queue BLE scan from refresh");
-    queue_action(ESP_BMS_LVGL_ACTION_START_BMS_BIND);
-}
-
-static void settings_bms_popup_close_event_cb(lv_event_t *event)
-{
-    if (!settings_bms_popup_click_ready(event)) {
-        return;
-    }
-    settings_bms_popup_close();
+    settings_bms_ble_start_scan();
 }
 
 static const settings_detail_row_t *settings_detail_rows_for_id(settings_detail_id_t detail_id,
@@ -3454,18 +3608,21 @@ static lv_obj_t *settings_detail_row(lv_obj_t *parent,
     lv_obj_set_style_pad_all(box, 0, LV_PART_MAIN);
     lv_obj_add_flag(box, LV_OBJ_FLAG_CLICKABLE);
     settings_add_swipe_handlers(box);
-    if (row && row->action != ESP_BMS_LVGL_ACTION_NONE) {
+    if (row && (row->action != ESP_BMS_LVGL_ACTION_NONE ||
+                row->system_view != SETTINGS_SYSTEM_VIEW_ROOT)) {
+        const uintptr_t route = (uintptr_t)row->action | ((uintptr_t)row->system_view << 8);
         lv_obj_add_event_cb(box, settings_detail_action_event_cb, LV_EVENT_CLICKED,
-                            (void *)(uintptr_t)row->action);
+                            (void *)route);
     }
 
-    const bool has_action = row && row->action != ESP_BMS_LVGL_ACTION_NONE;
+    const bool has_action = row && (row->action != ESP_BMS_LVGL_ACTION_NONE ||
+                                    row->system_view != SETTINGS_SYSTEM_VIEW_ROOT);
     const bool has_switch = has_action && settings_detail_action_uses_switch(row->action);
     const bool has_subtitle = row && row->subtitle && row->subtitle[0] != '\0';
     const lv_font_t *title_font = &settings_zh_13;
     const lv_font_t *subtitle_font = &settings_zh_10;
-    const int32_t title_h = (int32_t)title_font->line_height + 2;
-    const int32_t subtitle_h = (int32_t)subtitle_font->line_height + 6;
+    const int32_t title_h = (int32_t)title_font->line_height + 4;
+    const int32_t subtitle_h = (int32_t)subtitle_font->line_height + 4;
     const int32_t text_gap = has_subtitle ? 1 : 0;
     const int32_t total_text_h = title_h + (has_subtitle ? text_gap + subtitle_h : 0);
     const int32_t text_y = total_text_h < h ? (h - total_text_h) / 2 : 0;
@@ -3474,11 +3631,12 @@ static lv_obj_t *settings_detail_row(lv_obj_t *parent,
 
     lv_obj_t *title = label(box, 12, text_y, text_w, title_h, title_font);
     lv_label_set_text(title, row ? row->title : "");
+    lv_label_set_long_mode(title, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
     lv_obj_set_style_text_color(title, COLOR_SETTINGS_TEXT, LV_PART_MAIN);
 
     if (has_subtitle) {
         const char *subtitle_text =
-            row->action == ESP_BMS_LVGL_ACTION_CYCLE_LEVEL_POSITION ? quick_level_position_text() : row->subtitle;
+            row->system_view == SETTINGS_SYSTEM_VIEW_LEVEL_POSITION ? quick_level_position_text() : row->subtitle;
         lv_obj_t *subtitle = label(box,
                                    12,
                                    text_y + title_h + text_gap,
@@ -3486,6 +3644,7 @@ static lv_obj_t *settings_detail_row(lv_obj_t *parent,
                                    subtitle_h,
                                    subtitle_font);
         lv_label_set_text(subtitle, subtitle_text);
+        lv_label_set_long_mode(subtitle, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
         lv_obj_set_style_text_color(subtitle, COLOR_SETTINGS_MUTED, LV_PART_MAIN);
     }
 
@@ -3504,6 +3663,304 @@ static lv_obj_t *settings_detail_row(lv_obj_t *parent,
         lv_obj_set_style_text_color(arrow, COLOR_SETTINGS_ACCENT, LV_PART_MAIN);
     }
     return box;
+}
+
+static void settings_system_slider_event_cb(lv_event_t *event)
+{
+    const lv_event_code_t code = lv_event_get_code(event);
+    if (code != LV_EVENT_PRESSED && code != LV_EVENT_PRESSING &&
+        code != LV_EVENT_RELEASED) {
+        return;
+    }
+
+    lv_point_t point = { 0 };
+    if (!get_active_pointer(&point) || !s_ui.settings_system_slider) {
+        return;
+    }
+    lv_area_t coordinates;
+    lv_obj_get_coords(s_ui.settings_system_slider, &coordinates);
+    const quick_level_kind_t kind =
+        (quick_level_kind_t)s_ui.settings_system_slider_kind;
+    const int32_t minimum = kind == QUICK_LEVEL_VOLUME ? QUICK_VOLUME_MIN : QUICK_BRIGHTNESS_MIN;
+    const int32_t maximum = kind == QUICK_LEVEL_VOLUME ? QUICK_VOLUME_MAX : QUICK_BRIGHTNESS_MAX;
+    const int32_t width = coordinates.x2 - coordinates.x1 + 1;
+    const int32_t raw_value = minimum +
+                              ((point.x - coordinates.x1) * (maximum - minimum)) /
+                                  (width > 0 ? width : 1);
+    const uint8_t value = quick_level_snap_drag_value(kind, raw_value);
+    const int32_t fill_w = ((value - minimum) * lv_obj_get_width(s_ui.settings_system_slider)) /
+                           (maximum - minimum);
+    lv_obj_set_width(s_ui.settings_system_slider_fill, fill_w);
+    lv_obj_set_x(s_ui.settings_system_slider_knob,
+                 clamp_i32(fill_w - 10, 0, lv_obj_get_width(s_ui.settings_system_slider) - 20));
+    lv_label_set_text_fmt(s_ui.settings_system_value, "%u%%", (unsigned)value);
+    quick_level_queue_value(kind, value, code == LV_EVENT_RELEASED);
+    if (code == LV_EVENT_RELEASED) {
+        lv_indev_wait_release(lv_indev_active());
+    }
+}
+
+static void settings_show_system_slider(quick_level_kind_t kind)
+{
+    const int32_t page_w = s_ui.width - 24;
+    const int32_t card_h = s_ui.width < s_ui.height ? 150 : 130;
+    lv_obj_t *card = panel(s_ui.settings_detail, 12, 16, page_w, card_h, COLOR_SETTINGS_CARD);
+    lv_obj_set_style_radius(card, 8, LV_PART_MAIN);
+    lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(card, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(card, 0, LV_PART_MAIN);
+
+    const char *title_text = kind == QUICK_LEVEL_VOLUME ? "提示音量" : "屏幕亮度";
+    lv_obj_t *title = label(card, 12, 14, page_w - 24, 22, &settings_zh_16);
+    lv_label_set_text(title, title_text);
+    lv_obj_set_style_text_color(title, COLOR_SETTINGS_TEXT, LV_PART_MAIN);
+
+    s_ui.settings_system_value = label(card, 12, 44, page_w - 24, 28, &lv_font_montserrat_24);
+    lv_label_set_text_fmt(s_ui.settings_system_value,
+                          "%u%%",
+                          (unsigned)quick_level_current_value(kind));
+    lv_obj_set_style_text_align(s_ui.settings_system_value, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.settings_system_value, COLOR_SWITCH_ACTIVE, LV_PART_MAIN);
+
+    const int32_t slider_w = page_w - 36;
+    const uint8_t value = quick_level_current_value(kind);
+    const int32_t minimum = kind == QUICK_LEVEL_VOLUME ? QUICK_VOLUME_MIN : QUICK_BRIGHTNESS_MIN;
+    const int32_t maximum = kind == QUICK_LEVEL_VOLUME ? QUICK_VOLUME_MAX : QUICK_BRIGHTNESS_MAX;
+    const int32_t fill_w = ((value - minimum) * slider_w) / (maximum - minimum);
+    s_ui.settings_system_slider_kind = (uint8_t)kind;
+    s_ui.settings_system_slider = panel(card, 18, card_h - 50, slider_w, 28, COLOR_SETTINGS_BORDER);
+    lv_obj_set_style_radius(s_ui.settings_system_slider, 14, LV_PART_MAIN);
+    lv_obj_add_flag(s_ui.settings_system_slider, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(s_ui.settings_system_slider, LV_OBJ_FLAG_SCROLLABLE);
+    s_ui.settings_system_slider_fill = panel(s_ui.settings_system_slider,
+                                             0,
+                                             0,
+                                             fill_w,
+                                             28,
+                                             COLOR_SWITCH_ACTIVE);
+    lv_obj_set_style_radius(s_ui.settings_system_slider_fill, 14, LV_PART_MAIN);
+    lv_obj_clear_flag(s_ui.settings_system_slider_fill, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    s_ui.settings_system_slider_knob = panel(s_ui.settings_system_slider,
+                                             clamp_i32(fill_w - 10, 0, slider_w - 20),
+                                             4,
+                                             20,
+                                             20,
+                                             COLOR_WHITE);
+    lv_obj_set_style_radius(s_ui.settings_system_slider_knob, 10, LV_PART_MAIN);
+    lv_obj_clear_flag(s_ui.settings_system_slider_knob, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(s_ui.settings_system_slider, settings_system_slider_event_cb, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(s_ui.settings_system_slider, settings_system_slider_event_cb, LV_EVENT_PRESSING, NULL);
+    lv_obj_add_event_cb(s_ui.settings_system_slider, settings_system_slider_event_cb, LV_EVENT_RELEASED, NULL);
+}
+
+static void settings_system_position_option_event_cb(lv_event_t *event)
+{
+    if (lv_event_get_code(event) != LV_EVENT_CLICKED || UI_FLAG(SETTINGS_SWIPE_CONSUMED)) {
+        return;
+    }
+    s_ui.quick_level_position =
+        (uint8_t)(uintptr_t)lv_event_get_user_data(event);
+    refresh_quick_level_layouts();
+    settings_show_system_view(SETTINGS_SYSTEM_VIEW_LEVEL_POSITION);
+}
+
+static void settings_show_system_position(void)
+{
+    const bool portrait = s_ui.width < s_ui.height;
+    const char *labels[QUICK_LEVEL_POSITION_COUNT] = {
+        "中间",
+        portrait ? "右边" : "下面",
+        portrait ? "左边" : "上面",
+    };
+    lv_obj_t *description = label(s_ui.settings_detail, 12, 18, s_ui.width - 24, 24, &settings_zh_13);
+    lv_label_set_text(description, "选择快捷调节条出现的位置");
+    lv_label_set_long_mode(description, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
+    lv_obj_set_style_text_align(description, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(description, COLOR_SETTINGS_MUTED, LV_PART_MAIN);
+
+    const int32_t gap = 8;
+    const int32_t x = 12;
+    const int32_t button_w = (s_ui.width - 24 - (gap * 2)) / 3;
+    for (uint8_t index = 0; index < QUICK_LEVEL_POSITION_COUNT; ++index) {
+        lv_obj_t *button = panel(s_ui.settings_detail,
+                                 x + ((button_w + gap) * index),
+                                 64,
+                                 button_w,
+                                 56,
+                                 index == s_ui.quick_level_position ? COLOR_SWITCH_ACTIVE : COLOR_SETTINGS_CARD);
+        lv_obj_set_style_radius(button, 8, LV_PART_MAIN);
+        lv_obj_set_style_border_width(button, 1, LV_PART_MAIN);
+        lv_obj_set_style_border_color(button,
+                                      index == s_ui.quick_level_position ? COLOR_SWITCH_ACTIVE : COLOR_SETTINGS_BORDER,
+                                      LV_PART_MAIN);
+        lv_obj_add_flag(button, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(button,
+                            settings_system_position_option_event_cb,
+                            LV_EVENT_CLICKED,
+                            (void *)(uintptr_t)index);
+        lv_obj_t *button_label = label(button, 2, 17, button_w - 4, 22, &settings_zh_13);
+        lv_label_set_text(button_label, labels[index]);
+        lv_obj_set_style_text_align(button_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+        lv_obj_set_style_text_color(button_label, COLOR_SETTINGS_TEXT, LV_PART_MAIN);
+    }
+}
+
+static void settings_calibration_target_place(void)
+{
+    if (!s_ui.settings_calibration_target || s_ui.settings_calibration_target_index >= 4U) {
+        return;
+    }
+    const int32_t margin = 52;
+    const int32_t target_x[4] = { margin, s_ui.width - margin, s_ui.width - margin, margin };
+    const int32_t content_h = s_ui.height - SETTINGS_DETAIL_HEADER_H;
+    const int32_t target_y[4] = { margin, margin, content_h - margin, content_h - margin };
+    const uint8_t index = s_ui.settings_calibration_target_index;
+    lv_obj_set_pos(s_ui.settings_calibration_target, target_x[index] - 18, target_y[index] - 18);
+    set_obj_hidden(s_ui.settings_calibration_target, false);
+    lv_obj_update_layout(s_ui.settings_calibration_target);
+    lv_area_t coordinates;
+    lv_obj_get_coords(s_ui.settings_calibration_target, &coordinates);
+    s_ui.settings_calibration_expected.x = (coordinates.x1 + coordinates.x2) / 2;
+    s_ui.settings_calibration_expected.y = (coordinates.y1 + coordinates.y2) / 2;
+    if (s_ui.settings_calibration_status) {
+        lv_label_set_text_fmt(s_ui.settings_calibration_status,
+                              "点击十字中心 %u/4",
+                              (unsigned)index + 1U);
+    }
+}
+
+static void settings_calibration_start_timer_cb(lv_timer_t *timer)
+{
+    (void)timer;
+    if (s_ui.settings_system_view == (uint8_t)SETTINGS_SYSTEM_VIEW_TOUCH_CALIBRATION) {
+        settings_calibration_target_place();
+    }
+}
+
+static void settings_calibration_event_cb(lv_event_t *event)
+{
+    const lv_event_code_t code = lv_event_get_code(event);
+    if (code == LV_EVENT_PRESSED) {
+        (void)get_active_pointer(&s_ui.settings_calibration_observed);
+        return;
+    }
+    if (code != LV_EVENT_RELEASED || s_ui.settings_calibration_target_index >= 4U) {
+        return;
+    }
+
+    queue_touch_calibration_sample(s_ui.settings_calibration_target_index,
+                                   &s_ui.settings_calibration_observed,
+                                   &s_ui.settings_calibration_expected);
+    s_ui.settings_calibration_target_index++;
+    if (s_ui.settings_calibration_target_index < 4U) {
+        settings_calibration_target_place();
+    } else {
+        set_obj_hidden(s_ui.settings_calibration_target, true);
+        label_set_text_if_changed(s_ui.settings_calibration_status, "正在保存校准...");
+    }
+}
+
+static void settings_calibration_cancel_event_cb(lv_event_t *event)
+{
+    if (lv_event_get_code(event) != LV_EVENT_CLICKED) {
+        return;
+    }
+    queue_action(ESP_BMS_LVGL_ACTION_CANCEL_TOUCH_CALIBRATION);
+    settings_show_detail(SETTINGS_DETAIL_SYSTEM);
+    lv_indev_wait_release(lv_indev_active());
+}
+
+static void settings_show_touch_calibration(void)
+{
+    s_ui.settings_calibration_target_index = 0;
+    queue_action(ESP_BMS_LVGL_ACTION_START_TOUCH_CALIBRATION);
+
+    lv_obj_t *layer = lv_obj_create(s_ui.settings_detail);
+    clear_style(layer);
+    lv_obj_set_pos(layer, 0, 0);
+    lv_obj_set_size(layer, s_ui.width, s_ui.height - SETTINGS_DETAIL_HEADER_H);
+    lv_obj_set_style_bg_color(layer, COLOR_SETTINGS_BG, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(layer, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_add_flag(layer, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(layer, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(layer, settings_calibration_event_cb, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(layer, settings_calibration_event_cb, LV_EVENT_RELEASED, NULL);
+
+    s_ui.settings_calibration_status = label(layer, 42, 4, s_ui.width - 84, 24, &settings_zh_13);
+    lv_label_set_text(s_ui.settings_calibration_status, "准备校准...");
+    lv_label_set_long_mode(s_ui.settings_calibration_status, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
+    lv_obj_set_style_text_align(s_ui.settings_calibration_status, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.settings_calibration_status, COLOR_SETTINGS_TEXT, LV_PART_MAIN);
+
+    s_ui.settings_calibration_target = lv_obj_create(layer);
+    clear_style(s_ui.settings_calibration_target);
+    lv_obj_set_size(s_ui.settings_calibration_target, 36, 36);
+    lv_obj_set_style_radius(s_ui.settings_calibration_target, 18, LV_PART_MAIN);
+    lv_obj_set_style_border_width(s_ui.settings_calibration_target, 2, LV_PART_MAIN);
+    lv_obj_set_style_border_color(s_ui.settings_calibration_target, COLOR_SWITCH_ACTIVE, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_ui.settings_calibration_target, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_clear_flag(s_ui.settings_calibration_target, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *horizontal = panel(s_ui.settings_calibration_target, 5, 17, 26, 2, COLOR_SWITCH_ACTIVE);
+    lv_obj_clear_flag(horizontal, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *vertical = panel(s_ui.settings_calibration_target, 17, 5, 2, 26, COLOR_SWITCH_ACTIVE);
+    lv_obj_clear_flag(vertical, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    set_obj_hidden(s_ui.settings_calibration_target, true);
+
+    lv_obj_t *cancel = panel(layer, s_ui.width - 58, 4, 50, 28, COLOR_SETTINGS_CARD);
+    lv_obj_set_style_radius(cancel, 6, LV_PART_MAIN);
+    lv_obj_set_style_border_width(cancel, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(cancel, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
+    lv_obj_add_flag(cancel, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(cancel, settings_calibration_cancel_event_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *cancel_label = label(cancel, 2, 5, 46, 18, &settings_zh_13);
+    lv_label_set_text(cancel_label, "取消");
+    lv_obj_set_style_text_align(cancel_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(cancel_label, COLOR_SETTINGS_TEXT, LV_PART_MAIN);
+
+    lv_timer_t *timer = lv_timer_create(settings_calibration_start_timer_cb, 100, NULL);
+    if (timer) {
+        lv_timer_set_repeat_count(timer, 1);
+    }
+}
+
+static void settings_show_system_view(settings_system_view_t view)
+{
+    lv_obj_clean(s_ui.settings_detail);
+    s_ui.settings_detail_id = (uint8_t)SETTINGS_DETAIL_SYSTEM;
+    s_ui.settings_system_view = (uint8_t)view;
+    s_ui.settings_system_value = NULL;
+    s_ui.settings_system_slider = NULL;
+    s_ui.settings_system_slider_fill = NULL;
+    s_ui.settings_system_slider_knob = NULL;
+    s_ui.settings_calibration_target = NULL;
+    s_ui.settings_calibration_status = NULL;
+    set_obj_hidden(s_ui.settings_root, true);
+    set_obj_hidden(s_ui.settings_detail, false);
+    settings_detail_chrome_show(SETTINGS_DETAIL_SYSTEM);
+    lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
+
+    switch (view) {
+    case SETTINGS_SYSTEM_VIEW_BRIGHTNESS:
+        label_set_text_if_changed(s_ui.settings_detail_title, "亮度");
+        settings_show_system_slider(QUICK_LEVEL_BRIGHTNESS);
+        break;
+    case SETTINGS_SYSTEM_VIEW_VOLUME:
+        label_set_text_if_changed(s_ui.settings_detail_title, "音量");
+        settings_show_system_slider(QUICK_LEVEL_VOLUME);
+        break;
+    case SETTINGS_SYSTEM_VIEW_LEVEL_POSITION:
+        label_set_text_if_changed(s_ui.settings_detail_title, "调节条位置");
+        settings_show_system_position();
+        break;
+    case SETTINGS_SYSTEM_VIEW_TOUCH_CALIBRATION:
+        label_set_text_if_changed(s_ui.settings_detail_title, "屏幕校准");
+        settings_show_touch_calibration();
+        break;
+    case SETTINGS_SYSTEM_VIEW_ROOT:
+    default:
+        settings_show_detail(SETTINGS_DETAIL_SYSTEM);
+        break;
+    }
 }
 
 static void settings_show_detail(settings_detail_id_t detail_id)
@@ -3527,17 +3984,26 @@ static void settings_show_detail(settings_detail_id_t detail_id)
 
     lv_obj_clean(s_ui.settings_detail);
     s_ui.settings_detail_id = (uint8_t)detail_id;
+    s_ui.settings_system_view = (uint8_t)SETTINGS_SYSTEM_VIEW_ROOT;
     set_obj_hidden(s_ui.settings_root, true);
     set_obj_hidden(s_ui.settings_detail, false);
     settings_detail_chrome_show(detail_id);
     lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
     s_ui.setup_ap_control_row = NULL;
     s_ui.setup_ap_info = NULL;
+    s_ui.setup_ap_qr_panel = NULL;
     s_ui.setup_ap_qr = NULL;
-    s_ui.settings_bms_popup = NULL;
+    s_ui.setup_ap_qr_ready = false;
+    s_ui.setup_ap_qr_encode_attempted = false;
     s_ui.settings_bms_ble_status = NULL;
     s_ui.settings_bms_ble_popup_open = false;
-    s_ui.current_setup_ap_qr_payload[0] = '\0';
+    s_ui.settings_bms_view = (uint8_t)SETTINGS_BMS_VIEW_ROOT;
+    s_ui.settings_system_value = NULL;
+    s_ui.settings_system_slider = NULL;
+    s_ui.settings_system_slider_fill = NULL;
+    s_ui.settings_system_slider_knob = NULL;
+    s_ui.settings_calibration_target = NULL;
+    s_ui.settings_calibration_status = NULL;
 
     if (detail_id == SETTINGS_DETAIL_HOTSPOT) {
         settings_show_hotspot_detail();
@@ -3613,6 +4079,7 @@ static lv_obj_t *settings_option_card(lv_obj_t *parent,
     const int32_t title_y = total_text_h < h ? (h - total_text_h) / 2 : 0;
     lv_obj_t *title = label(box, text_x, title_y, w - text_x - 30, title_h, title_font);
     lv_label_set_text(title, option ? option->title : "");
+    lv_label_set_long_mode(title, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
     lv_obj_set_style_text_color(title, COLOR_SETTINGS_TEXT, LV_PART_MAIN);
 
     if (show_subtitle) {
@@ -3623,6 +4090,7 @@ static lv_obj_t *settings_option_card(lv_obj_t *parent,
                                    subtitle_h,
                                    subtitle_font);
         lv_label_set_text(subtitle, subtitle_text);
+        lv_label_set_long_mode(subtitle, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
         lv_obj_set_style_text_color(subtitle, COLOR_SETTINGS_MUTED, LV_PART_MAIN);
     }
 
@@ -4021,22 +4489,20 @@ static void quick_level_event_cb(lv_event_t *event)
     if (code == LV_EVENT_PRESSED) {
         UI_SET_FLAG(QUICK_LEVEL_LONG_TRIGGERED, false);
         quick_level_set_pressed(kind, true);
-        quick_tile_set_scale(tile, QUICK_TILE_SCALE_PRESSED);
     } else if (code == LV_EVENT_LONG_PRESSED) {
         UI_SET_FLAG(QUICK_LEVEL_LONG_TRIGGERED, true);
-        quick_tile_set_scale(tile, QUICK_TILE_SCALE_LONG);
-        quick_toast_cancel();
-        set_obj_hidden(s_ui.quick_toast, true);
+        quick_toast_show_text(kind == QUICK_LEVEL_VOLUME ? QUICK_VOLUME_TOAST_HINT :
+                                                               QUICK_BRIGHTNESS_TOAST_HINT);
+        lv_indev_wait_release(lv_indev_active());
     } else if (code == LV_EVENT_PRESS_LOST) {
         quick_level_set_pressed(kind, false);
-        quick_tile_set_scale(tile, QUICK_TILE_SCALE_NORMAL);
         UI_SET_FLAG(QUICK_LEVEL_LONG_TRIGGERED, false);
     } else if (code == LV_EVENT_RELEASED) {
         quick_level_set_pressed(kind, false);
-        quick_tile_set_scale(tile, QUICK_TILE_SCALE_NORMAL);
     } else if (code == LV_EVENT_CLICKED) {
         if (UI_FLAG(QUICK_LEVEL_LONG_TRIGGERED)) {
             UI_SET_FLAG(QUICK_LEVEL_LONG_TRIGGERED, false);
+            return;
         }
         quick_toast_cancel();
         set_obj_hidden(s_ui.quick_toast, true);
@@ -4259,29 +4725,35 @@ static void set_setup_ap(const esp_bms_dashboard_snapshot_t *snapshot)
     if (s_ui.setup_ap_info) {
         const char *ssid = snapshot->setup_ap_ssid[0] != '\0' ? snapshot->setup_ap_ssid : "--";
         const char *password = snapshot->setup_ap_password[0] != '\0' ? snapshot->setup_ap_password : "--";
-        label_set_text_fmt_if_changed(s_ui.setup_ap_info, "SETUP %s\nSSID %.31s\nPW %.8s",
-                                      SNAPSHOT_FLAG(snapshot, SETUP_AP_ENABLED) ? "ON" : "OFF",
-                                      ssid,
-                                      password);
+        if (s_ui.width < s_ui.height) {
+            label_set_text_fmt_if_changed(s_ui.setup_ap_info, "SETUP %s\nSSID %.31s\nPW %.8s",
+                                          SNAPSHOT_FLAG(snapshot, SETUP_AP_ENABLED) ? "ON" : "OFF",
+                                          ssid,
+                                          password);
+        } else {
+            label_set_text_fmt_if_changed(s_ui.setup_ap_info, "SETUP %s\nSSID\n%.31s\nPW %.8s",
+                                          SNAPSHOT_FLAG(snapshot, SETUP_AP_ENABLED) ? "ON" : "OFF",
+                                          ssid,
+                                          password);
+        }
     }
 
 #if LV_USE_QRCODE
-    if (s_ui.setup_ap_qr) {
-        if (snapshot->setup_ap_qr_payload[0] == '\0') {
-            s_ui.current_setup_ap_qr_payload[0] = '\0';
-            lv_obj_add_flag(s_ui.setup_ap_qr, LV_OBJ_FLAG_HIDDEN);
-        } else if (strcmp(s_ui.current_setup_ap_qr_payload, snapshot->setup_ap_qr_payload) == 0) {
-            lv_obj_clear_flag(s_ui.setup_ap_qr, LV_OBJ_FLAG_HIDDEN);
-        } else if (lv_qrcode_update(s_ui.setup_ap_qr,
-                                    snapshot->setup_ap_qr_payload,
-                                    strlen(snapshot->setup_ap_qr_payload)) == LV_RESULT_OK) {
-            snprintf(s_ui.current_setup_ap_qr_payload, sizeof(s_ui.current_setup_ap_qr_payload), "%s",
-                     snapshot->setup_ap_qr_payload);
-            lv_obj_clear_flag(s_ui.setup_ap_qr, LV_OBJ_FLAG_HIDDEN);
-        } else {
-            s_ui.current_setup_ap_qr_payload[0] = '\0';
-            lv_obj_add_flag(s_ui.setup_ap_qr, LV_OBJ_FLAG_HIDDEN);
+    if (s_ui.setup_ap_qr && s_ui.setup_ap_qr_panel) {
+        if (!s_ui.setup_ap_qr_encode_attempted && snapshot->setup_ap_qr_payload[0] != '\0') {
+            s_ui.setup_ap_qr_encode_attempted = true;
+            s_ui.setup_ap_qr_ready =
+                lv_qrcode_update(s_ui.setup_ap_qr,
+                                 snapshot->setup_ap_qr_payload,
+                                 strlen(snapshot->setup_ap_qr_payload)) == LV_RESULT_OK;
+            if (s_ui.setup_ap_qr_ready) {
+                ESP_LOGI(TAG, "[setup-qr] encoded fixed payload once");
+            } else {
+                ESP_LOGW(TAG, "[setup-qr] encode failed; keep panel hidden");
+            }
         }
+        set_obj_hidden(s_ui.setup_ap_qr_panel,
+                       !SNAPSHOT_FLAG(snapshot, SETUP_AP_ENABLED) || !s_ui.setup_ap_qr_ready);
     }
 #endif
 }
@@ -4312,11 +4784,11 @@ static void set_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
             SNAPSHOT_FLAG(snapshot, TOTAL_CAPACITY_VALID)) {
             (void)snprintf(ah,
                            sizeof(ah),
-                           "%lu.%02lu/%lu.%02luAh",
+                           "%lu.%01lu/%lu.%01luAh",
                            (unsigned long)(snapshot->capacity_remaining_mah / 1000U),
-                           (unsigned long)((snapshot->capacity_remaining_mah % 1000U) / 10U),
+                           (unsigned long)((snapshot->capacity_remaining_mah % 1000U) / 100U),
                            (unsigned long)(snapshot->total_capacity_mah / 1000U),
-                           (unsigned long)((snapshot->total_capacity_mah % 1000U) / 10U));
+                           (unsigned long)((snapshot->total_capacity_mah % 1000U) / 100U));
         } else {
             (void)snprintf(ah, sizeof(ah), "--/--Ah");
         }
@@ -4330,9 +4802,9 @@ static void set_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
     const bool current_valid = SNAPSHOT_FLAG(snapshot, CURRENT_VALID);
     format_mv(voltage, sizeof(voltage), SNAPSHOT_FLAG(snapshot, PACK_VOLTAGE_VALID), snapshot->pack_voltage_mv);
     format_deci_amps(current, sizeof(current), current_valid, snapshot->current_deci_amps);
-    update_dashboard_soc_fill(soc_percent,
-                              soc_valid,
-                              current_valid && snapshot->current_deci_amps > 0);
+    const bool charging = current_valid && snapshot->current_deci_amps > 0;
+    update_dashboard_soc_fill(soc_percent, soc_valid, charging);
+    update_dashboard_battery_icon(soc_percent, soc_valid, charging);
     label_set_text_if_changed(s_ui.pack_voltage, voltage);
     label_set_text_if_changed(s_ui.current, current);
 
@@ -4340,7 +4812,11 @@ static void set_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
     format_cell_v(avg_cell, sizeof(avg_cell), SNAPSHOT_FLAG(snapshot, AVERAGE_CELL_VALID), snapshot->average_cell_voltage_mv);
     format_cell_v(max_cell, sizeof(max_cell), SNAPSHOT_FLAG(snapshot, MAX_CELL_VALID), snapshot->max_cell_voltage_mv);
     if (SNAPSHOT_FLAG(snapshot, DELTA_CELL_VALID)) {
-        (void)snprintf(delta_cell, sizeof(delta_cell), "%umV", snapshot->delta_cell_voltage_mv);
+        (void)snprintf(delta_cell,
+                       sizeof(delta_cell),
+                       "%u.%03uV",
+                       snapshot->delta_cell_voltage_mv / 1000U,
+                       snapshot->delta_cell_voltage_mv % 1000U);
     } else {
         (void)snprintf(delta_cell, sizeof(delta_cell), "--");
     }
@@ -4351,16 +4827,25 @@ static void set_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
 
     if (snapshot->bms_protection_count > 0U) {
         label_set_text_color_if_changed(s_ui.bms_error, COLOR_BAD);
-        label_set_text_fmt_if_changed(s_ui.bms_error, "BMS INFO\nPROT %.7s", snapshot->bms_protection_codes[0]);
+        label_set_text_if_changed(s_ui.bms_error, "BMS WARN\nPROTECTION");
     } else if (snapshot->bms_warning_count > 0U) {
         label_set_text_color_if_changed(s_ui.bms_error, COLOR_BAD);
-        label_set_text_fmt_if_changed(s_ui.bms_error, "BMS INFO\nWARN %.7s", snapshot->bms_warning_codes[0]);
-    } else if (snapshot->bms_info_text[0] != '\0') {
-        label_set_text_color_if_changed(s_ui.bms_error, COLOR_WARN);
-        label_set_text_fmt_if_changed(s_ui.bms_error, "BMS INFO\n%.15s", snapshot->bms_info_text);
-    } else {
+        label_set_text_if_changed(s_ui.bms_error, "BMS WARN\nWARNING");
+    } else if (SNAPSHOT_FLAG(snapshot, BMS_ONLINE)) {
         label_set_text_color_if_changed(s_ui.bms_error, COLOR_ACCENT);
-        label_set_text_if_changed(s_ui.bms_error, "BMS INFO\nOK");
+        label_set_text_if_changed(s_ui.bms_error, "BLE STATUS\nCONNECTED");
+    } else if (strstr(snapshot->bms_info_text, "FAIL") != NULL ||
+               strstr(snapshot->bms_info_text, "ERR") != NULL ||
+               strstr(snapshot->bms_info_text, "NO ") != NULL) {
+        label_set_text_color_if_changed(s_ui.bms_error, COLOR_BAD);
+        label_set_text_if_changed(s_ui.bms_error, "BLE STATUS\nFAILED");
+    } else if (snapshot->bms_info_text[0] != '\0' &&
+               strcmp(snapshot->bms_info_text, "BMS OFF") != 0) {
+        label_set_text_color_if_changed(s_ui.bms_error, COLOR_WARN);
+        label_set_text_if_changed(s_ui.bms_error, "BLE STATUS\nCONNECTING");
+    } else {
+        label_set_text_color_if_changed(s_ui.bms_error, COLOR_MUTED);
+        label_set_text_if_changed(s_ui.bms_error, "BLE STATUS\nDISCONNECTED");
     }
 
     format_temp_c(t1, sizeof(t1), esp_bms_dashboard_snapshot_temperature_valid(snapshot, 0U), snapshot->bms_temperature_celsius[0]);
@@ -4417,11 +4902,20 @@ static void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapsho
     set_dashboard(snapshot);
     if (had_last_snapshot && !previous_bms_online && SNAPSHOT_FLAG(snapshot, BMS_ONLINE)) {
         quick_toast_show_text("绑定成功");
+    } else if (s_ui.quick_connecting_toast_active &&
+               had_last_snapshot &&
+               strcmp(previous_bms_info_text, snapshot->bms_info_text) != 0 &&
+               snapshot->bms_info_text[0] != '\0' &&
+               strcmp(snapshot->bms_info_text, "BMS BIND") != 0 &&
+               strcmp(snapshot->bms_info_text, "BMS SCAN") != 0 &&
+               strcmp(snapshot->bms_info_text, "BMS CONN") != 0 &&
+               strcmp(snapshot->bms_info_text, "BMS DISC") != 0 &&
+               strcmp(snapshot->bms_info_text, "BMS ON") != 0 &&
+               strcmp(snapshot->bms_info_text, "BMS OFF") != 0) {
+        quick_toast_cancel();
+        set_obj_hidden(s_ui.quick_toast, true);
     }
 
-    if (s_ui.settings_bms_ble_popup_open && bms_scan_candidates_changed) {
-        settings_show_bms_ble_popup(false);
-    }
     if (s_ui.settings_detail_id == (uint8_t)SETTINGS_DETAIL_BLUETOOTH &&
         (!had_last_snapshot ||
          previous_bluetooth_enabled != SNAPSHOT_FLAG(snapshot, BLUETOOTH_ENABLED) ||
@@ -4430,9 +4924,20 @@ static void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapsho
          strcmp(previous_bluetooth_name, snapshot->bluetooth_name) != 0)) {
         settings_show_detail(SETTINGS_DETAIL_BLUETOOTH);
     }
-    if (s_ui.settings_detail_id == (uint8_t)SETTINGS_DETAIL_BMS &&
-        (!had_last_snapshot || previous_bms_type != snapshot->bms_type)) {
-        settings_show_detail(SETTINGS_DETAIL_BMS);
+    if (s_ui.settings_detail_id == (uint8_t)SETTINGS_DETAIL_BMS) {
+        const bool bms_online_changed =
+            !had_last_snapshot || previous_bms_online != SNAPSHOT_FLAG(snapshot, BMS_ONLINE);
+        const bool bms_type_changed = !had_last_snapshot || previous_bms_type != snapshot->bms_type;
+        if (s_ui.settings_bms_view == (uint8_t)SETTINGS_BMS_VIEW_BLE_LIST &&
+            (bms_scan_candidates_changed || bms_online_changed)) {
+            settings_show_bms_ble_popup(false);
+        } else if (s_ui.settings_bms_view == (uint8_t)SETTINGS_BMS_VIEW_TYPE_LIST &&
+                   bms_type_changed) {
+            settings_show_bms_type_picker();
+        } else if (s_ui.settings_bms_view == (uint8_t)SETTINGS_BMS_VIEW_ROOT &&
+                   (bms_scan_candidates_changed || bms_online_changed || bms_type_changed)) {
+            settings_show_bms_detail();
+        }
     }
 }
 
@@ -4641,7 +5146,7 @@ static void create_screen(lv_display_t *display)
     clear_style(s_ui.battery_page);
     lv_obj_set_pos(s_ui.battery_page, 0, 0);
     lv_obj_set_size(s_ui.battery_page, s_ui.width, page_h);
-    lv_obj_set_style_bg_color(s_ui.battery_page, COLOR_BG, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s_ui.battery_page, COLOR_DASHBOARD_BG, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_ui.battery_page, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_add_flag(s_ui.battery_page, LV_OBJ_FLAG_SNAPPABLE);
 
@@ -4654,79 +5159,157 @@ static void create_screen(lv_display_t *display)
     lv_obj_add_flag(s_ui.gps_page, LV_OBJ_FLAG_SNAPPABLE);
 
     if (portrait) {
-        lv_obj_t *soc_panel = panel(s_ui.battery_page, 8, 8, 108, 112, COLOR_PANEL);
+        lv_obj_t *soc_panel = dashboard_panel(s_ui.battery_page,
+                                              8,
+                                              8,
+                                              108,
+                                              112,
+                                              COLOR_DASHBOARD_SOC_PANEL,
+                                              COLOR_DASHBOARD_SOC_BORDER);
         UI_SET_FLAG(SOC_FILL_HORIZONTAL, false);
         dashboard_soc_fill_create(soc_panel);
-        s_ui.soc = label(soc_panel, 4, 38, 100, 30, &lv_font_montserrat_24);
-        s_ui.capacity = label(soc_panel, 4, 70, 100, 20, &lv_font_montserrat_14);
+        s_ui.soc = label(soc_panel, 4, 8, 100, 30, &lv_font_montserrat_24);
+        dashboard_battery_icon(soc_panel, 19, 43, 66, 22);
+        s_ui.capacity = label(soc_panel, 4, 76, 100, 20, &lv_font_montserrat_14);
 
-        lv_obj_t *pack_panel = panel(s_ui.battery_page, 124, 8, 108, 112, COLOR_PANEL);
-        s_ui.pack_voltage = label(pack_panel, 4, 26, 100, 30, &lv_font_montserrat_24);
-        s_ui.current = label(pack_panel, 4, 62, 100, 30, &lv_font_montserrat_24);
+        lv_obj_t *pack_panel = dashboard_panel(s_ui.battery_page,
+                                               124,
+                                               8,
+                                               108,
+                                               112,
+                                               COLOR_DASHBOARD_PANEL,
+                                               COLOR_DASHBOARD_BORDER);
+        s_ui.pack_voltage = label(pack_panel, 4, 12, 100, 34, &lv_font_montserrat_28);
+        dashboard_separator(pack_panel, 8, 52, 92);
+        s_ui.current = label(pack_panel, 4, 56, 100, 34, &lv_font_montserrat_28);
 
-        s_ui.bms_error = panel_label(s_ui.battery_page, 8, 128, 108, 120, COLOR_PANEL, &lv_font_montserrat_14);
+        lv_obj_t *bms_panel = dashboard_panel(s_ui.battery_page,
+                                              8,
+                                              128,
+                                              108,
+                                              120,
+                                              COLOR_DASHBOARD_PANEL,
+                                              COLOR_DASHBOARD_BORDER);
+        s_ui.bms_error = label(bms_panel, 4, 4, 100, 112, &lv_font_montserrat_14);
 
-        lv_obj_t *cell_panel = panel(s_ui.battery_page, 124, 128, 108, 120, COLOR_PANEL);
+        lv_obj_t *cell_panel = dashboard_panel(s_ui.battery_page,
+                                               124,
+                                               128,
+                                               108,
+                                               120,
+                                               COLOR_DASHBOARD_PANEL,
+                                               COLOR_DASHBOARD_BORDER);
         for (uint8_t index = 0; index < DASHBOARD_CELL_STAT_COUNT; ++index) {
             const int32_t row_y = 6 + ((int32_t)index * 26);
             lv_obj_t *key = dashboard_cell_key(cell_panel, 11, row_y + 2, index);
             if (index == 0U) {
                 s_ui.cell_stats = key;
             }
-            s_ui.cell_stat_values[index] = label(cell_panel, 55, row_y, 42, 20, &lv_font_montserrat_14);
+            s_ui.cell_stat_values[index] = label(cell_panel, 49, row_y, 53, 20, &lv_font_montserrat_14);
             lv_obj_set_style_text_align(s_ui.cell_stat_values[index], LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
+            lv_obj_set_style_text_color(s_ui.cell_stat_values[index], COLOR_DASHBOARD_VALUE, LV_PART_MAIN);
+            if (index + 1U < DASHBOARD_CELL_STAT_COUNT) {
+                dashboard_separator(cell_panel, 8, row_y + 23, 92);
+            }
         }
 
-        lv_obj_t *temp_panel = panel(s_ui.battery_page, 8, 256, content_w, 56, COLOR_PANEL);
+        lv_obj_t *temp_panel = dashboard_panel(s_ui.battery_page,
+                                               8,
+                                               256,
+                                               content_w,
+                                               56,
+                                               COLOR_DASHBOARD_PANEL,
+                                               COLOR_DASHBOARD_BORDER);
         const int32_t temp_col_w = content_w / (int32_t)ESP_BMS_BMS_TEMP_MAX_COUNT;
         for (uint8_t index = 0; index < ESP_BMS_BMS_TEMP_MAX_COUNT; ++index) {
             const int32_t col_x = (int32_t)index * temp_col_w;
-            lv_obj_t *key = label(temp_panel, col_x, 7, temp_col_w, 18, &lv_font_montserrat_14);
+            lv_obj_t *key = label(temp_panel, col_x, 2, temp_col_w, 18, &lv_font_montserrat_14);
             lv_label_set_text(key, DASHBOARD_TEMP_KEYS[index]);
             lv_obj_set_style_text_align(key, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
             if (index == 0U) {
                 s_ui.temperature = key;
             }
-            s_ui.temperature_values[index] = label(temp_panel, col_x, 31, temp_col_w, 18, &lv_font_montserrat_14);
+            dashboard_thermometer_icon(temp_panel, col_x + (temp_col_w / 2), 18);
+            s_ui.temperature_values[index] = label(temp_panel, col_x, 34, temp_col_w, 18, &lv_font_montserrat_14);
             lv_obj_set_style_text_align(s_ui.temperature_values[index], LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+            lv_obj_set_style_text_color(s_ui.temperature_values[index], COLOR_DASHBOARD_VALUE, LV_PART_MAIN);
         }
     } else {
-        lv_obj_t *soc_panel = panel(s_ui.battery_page, 8, 8, 148, 84, COLOR_PANEL);
+        lv_obj_t *soc_panel = dashboard_panel(s_ui.battery_page,
+                                              8,
+                                              8,
+                                              148,
+                                              84,
+                                              COLOR_DASHBOARD_SOC_PANEL,
+                                              COLOR_DASHBOARD_SOC_BORDER);
         UI_SET_FLAG(SOC_FILL_HORIZONTAL, true);
         dashboard_soc_fill_create(soc_panel);
-        s_ui.soc = label(soc_panel, 4, 25, 140, 30, &lv_font_montserrat_24);
-        s_ui.capacity = label(soc_panel, 4, 54, 140, 20, &lv_font_montserrat_14);
+        s_ui.soc = label(soc_panel, 4, 3, 140, 30, &lv_font_montserrat_24);
+        dashboard_battery_icon(soc_panel, 34, 35, 76, 19);
+        s_ui.capacity = label(soc_panel, 4, 58, 140, 20, &lv_font_montserrat_14);
 
-        lv_obj_t *pack_panel = panel(s_ui.battery_page, 164, 8, 148, 84, COLOR_PANEL);
-        s_ui.pack_voltage = label(pack_panel, 4, 15, 140, 30, &lv_font_montserrat_24);
-        s_ui.current = label(pack_panel, 4, 47, 140, 30, &lv_font_montserrat_24);
+        lv_obj_t *pack_panel = dashboard_panel(s_ui.battery_page,
+                                               164,
+                                               8,
+                                               148,
+                                               84,
+                                               COLOR_DASHBOARD_PANEL,
+                                               COLOR_DASHBOARD_BORDER);
+        s_ui.pack_voltage = label(pack_panel, 4, 3, 140, 34, &lv_font_montserrat_28);
+        dashboard_separator(pack_panel, 10, 40, 128);
+        s_ui.current = label(pack_panel, 4, 42, 140, 34, &lv_font_montserrat_28);
 
-        s_ui.bms_error = panel_label(s_ui.battery_page, 8, 100, 148, 70, COLOR_PANEL, &lv_font_montserrat_14);
+        lv_obj_t *bms_panel = dashboard_panel(s_ui.battery_page,
+                                              8,
+                                              100,
+                                              148,
+                                              70,
+                                              COLOR_DASHBOARD_PANEL,
+                                              COLOR_DASHBOARD_BORDER);
+        s_ui.bms_error = label(bms_panel, 4, 4, 140, 62, &lv_font_montserrat_14);
 
-        lv_obj_t *cell_panel = panel(s_ui.battery_page, 164, 100, 148, 70, COLOR_PANEL);
+        lv_obj_t *cell_panel = dashboard_panel(s_ui.battery_page,
+                                               164,
+                                               100,
+                                               148,
+                                               70,
+                                               COLOR_DASHBOARD_PANEL,
+                                               COLOR_DASHBOARD_BORDER);
         for (uint8_t index = 0; index < DASHBOARD_CELL_STAT_COUNT; ++index) {
             const int32_t row_y = 2 + ((int32_t)index * 16);
             lv_obj_t *key = dashboard_cell_key(cell_panel, 20, row_y, index);
             if (index == 0U) {
                 s_ui.cell_stats = key;
             }
-            s_ui.cell_stat_values[index] = label(cell_panel, 86, row_y, 42, 16, &lv_font_montserrat_14);
+            s_ui.cell_stat_values[index] = label(cell_panel, 74, row_y, 62, 16, &lv_font_montserrat_14);
             lv_obj_set_style_text_align(s_ui.cell_stat_values[index], LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
+            lv_obj_set_style_text_color(s_ui.cell_stat_values[index], COLOR_DASHBOARD_VALUE, LV_PART_MAIN);
+            if (index + 1U < DASHBOARD_CELL_STAT_COUNT) {
+                dashboard_separator(cell_panel, 12, row_y + 15, 124);
+            }
         }
 
-        lv_obj_t *temp_panel = panel(s_ui.battery_page, 8, 178, 304, 54, COLOR_PANEL);
+        lv_obj_t *temp_panel = dashboard_panel(s_ui.battery_page,
+                                               8,
+                                               178,
+                                               304,
+                                               54,
+                                               COLOR_DASHBOARD_PANEL,
+                                               COLOR_DASHBOARD_BORDER);
         const int32_t temp_col_w = 304 / (int32_t)ESP_BMS_BMS_TEMP_MAX_COUNT;
         const int32_t temp_left = (304 - (temp_col_w * (int32_t)ESP_BMS_BMS_TEMP_MAX_COUNT)) / 2;
         for (uint8_t index = 0; index < ESP_BMS_BMS_TEMP_MAX_COUNT; ++index) {
             const int32_t col_x = temp_left + ((int32_t)index * temp_col_w);
-            lv_obj_t *key = label(temp_panel, col_x, 6, temp_col_w, 18, &lv_font_montserrat_14);
+            lv_obj_t *key = label(temp_panel, col_x, 1, temp_col_w, 18, &lv_font_montserrat_14);
             lv_label_set_text(key, DASHBOARD_TEMP_KEYS[index]);
             lv_obj_set_style_text_align(key, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
             if (index == 0U) {
                 s_ui.temperature = key;
             }
-            s_ui.temperature_values[index] = label(temp_panel, col_x, 29, temp_col_w, 18, &lv_font_montserrat_14);
+            dashboard_thermometer_icon(temp_panel, col_x + (temp_col_w / 2), 17);
+            s_ui.temperature_values[index] = label(temp_panel, col_x, 32, temp_col_w, 18, &lv_font_montserrat_14);
             lv_obj_set_style_text_align(s_ui.temperature_values[index], LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+            lv_obj_set_style_text_color(s_ui.temperature_values[index], COLOR_DASHBOARD_VALUE, LV_PART_MAIN);
         }
     }
     lv_obj_set_style_text_align(s_ui.soc, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
@@ -4734,6 +5317,10 @@ static void create_screen(lv_display_t *display)
     lv_obj_set_style_text_align(s_ui.pack_voltage, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_align(s_ui.current, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_align(s_ui.bms_error, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.soc, COLOR_WHITE, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.capacity, COLOR_WHITE, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.pack_voltage, COLOR_WHITE, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.current, COLOR_WHITE, LV_PART_MAIN);
 
     s_ui.settings_page = lv_obj_create(screen);
     clear_style(s_ui.settings_page);
@@ -4797,6 +5384,7 @@ static void create_screen(lv_display_t *display)
     lv_obj_set_style_pad_top(s_ui.settings_detail,
                              SETTINGS_DETAIL_HEADER_H,
                              LV_PART_MAIN);
+    lv_obj_set_style_pad_bottom(s_ui.settings_detail, 16, LV_PART_MAIN);
     lv_obj_set_style_bg_color(s_ui.settings_detail, COLOR_SETTINGS_BG, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_ui.settings_detail, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_add_flag(s_ui.settings_detail, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
@@ -4844,6 +5432,7 @@ static void create_screen(lv_display_t *display)
                                   COLOR_SETTINGS_CARD);
     lv_obj_set_style_radius(detail_back, 6, LV_PART_MAIN);
     lv_obj_set_style_pad_all(detail_back, 0, LV_PART_MAIN);
+    lv_obj_set_ext_click_area(detail_back, 4);
     lv_obj_add_flag(detail_back, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(detail_back,
                         settings_detail_back_event_cb,
@@ -4901,6 +5490,7 @@ static void create_screen(lv_display_t *display)
     lv_obj_set_style_radius(s_ui.settings_swipe_indicator,
                             SETTINGS_SWIPE_INDICATOR_SIZE / 2,
                             LV_PART_MAIN);
+    lv_obj_set_style_pad_all(s_ui.settings_swipe_indicator, 0, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_ui.settings_swipe_indicator, LV_OPA_80, LV_PART_MAIN);
     lv_obj_clear_flag(s_ui.settings_swipe_indicator, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_t *back_icon = label(s_ui.settings_swipe_indicator,
@@ -4912,11 +5502,18 @@ static void create_screen(lv_display_t *display)
     lv_label_set_text(back_icon, "<");
     lv_obj_set_style_text_align(back_icon, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(back_icon, COLOR_WHITE, LV_PART_MAIN);
+    quick_symbol_icon_recenter(back_icon,
+                               SETTINGS_SWIPE_INDICATOR_SIZE,
+                               SETTINGS_SWIPE_INDICATOR_SIZE,
+                               "<",
+                               &lv_font_montserrat_24);
     set_obj_hidden(s_ui.settings_swipe_indicator, true);
     s_ui.setup_ap_control_row = NULL;
     s_ui.setup_ap_info = NULL;
+    s_ui.setup_ap_qr_panel = NULL;
     s_ui.setup_ap_qr = NULL;
-    s_ui.current_setup_ap_qr_payload[0] = '\0';
+    s_ui.setup_ap_qr_ready = false;
+    s_ui.setup_ap_qr_encode_attempted = false;
     settings_show_root();
     lv_obj_add_flag(s_ui.settings_page, LV_OBJ_FLAG_HIDDEN);
 
@@ -5025,10 +5622,9 @@ static esp_err_t rebuild_screen_if_resolution_changed(void)
     if (s_ui.pages) {
         lv_obj_stop_scroll_anim(s_ui.pages);
     }
-    quick_hold_cancel(false);
     quick_toast_cancel();
-    dashboard_soc_wave_stop();
     settings_bms_popup_close();
+    settings_restore_popup_close();
     if (s_ui.settings_swipe_indicator) {
         lv_obj_delete(s_ui.settings_swipe_indicator);
         s_ui.settings_swipe_indicator = NULL;
@@ -5076,6 +5672,25 @@ esp_err_t esp_bms_lvgl_ui_update(const esp_bms_dashboard_snapshot_t *snapshot)
     }
 
     apply_dashboard_snapshot(snapshot);
+    return ESP_OK;
+}
+
+esp_err_t esp_bms_lvgl_ui_show_dashboard(void)
+{
+    ESP_RETURN_ON_FALSE(UI_FLAG(INITIALIZED), ESP_ERR_INVALID_STATE, TAG, "UI is not initialized");
+    show_dashboard_view();
+    return ESP_OK;
+}
+
+esp_err_t esp_bms_lvgl_ui_touch_calibration_result(bool success)
+{
+    ESP_RETURN_ON_FALSE(UI_FLAG(INITIALIZED), ESP_ERR_INVALID_STATE, TAG, "UI is not initialized");
+    ESP_RETURN_ON_FALSE(s_ui.settings_system_view ==
+                            (uint8_t)SETTINGS_SYSTEM_VIEW_TOUCH_CALIBRATION,
+                        ESP_ERR_INVALID_STATE, TAG, "touch calibration view is not active");
+    set_obj_hidden(s_ui.settings_calibration_target, true);
+    label_set_text_if_changed(s_ui.settings_calibration_status,
+                              success ? "校准成功，返回系统设置" : "校准失败，返回后重试");
     return ESP_OK;
 }
 

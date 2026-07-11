@@ -60,6 +60,8 @@ typedef enum {
 #define ESP_BMS_IDF_RUNTIME_FLAG_LANGUAGE_ZH (UINT64_C(1) << 33)
 #define ESP_BMS_IDF_RUNTIME_FLAG_BMS_BIND_ACTIVE (UINT64_C(1) << 34)
 #define ESP_BMS_IDF_RUNTIME_FLAG_BMS_SCAN_SNAPSHOT_DIRTY (UINT64_C(1) << 35)
+#define ESP_BMS_IDF_RUNTIME_FLAG_HTTP_CONFIG_APPLIED (UINT64_C(1) << 36)
+#define ESP_BMS_IDF_RUNTIME_FLAG_BMS_SNAPSHOT_DIRTY (UINT64_C(1) << 37)
 
 typedef esp_bms_bms_scan_candidate_t esp_bms_idf_bms_scan_candidate_t;
 
@@ -96,6 +98,7 @@ typedef struct {
     char setup_ap_ssid[32];
     char setup_ap_password[9];
     char bms_bound_mac[18];
+    char bms_bound_name[ESP_BMS_IDF_BMS_SCAN_NAME_LEN + 1U];
     char bluetooth_name[32];
     esp_netif_t *setup_ap_netif;
     httpd_handle_t http_server;
@@ -144,6 +147,7 @@ esp_err_t esp_bms_idf_runtime_stop_setup_services(esp_bms_idf_runtime_t *runtime
 esp_err_t esp_bms_idf_runtime_start_bms_ble_if_bound(esp_bms_idf_runtime_t *runtime);
 esp_err_t esp_bms_idf_runtime_start_bms_ble_for_bind(esp_bms_idf_runtime_t *runtime);
 esp_err_t esp_bms_idf_runtime_start_bluetooth_advertising(esp_bms_idf_runtime_t *runtime);
+bool esp_bms_idf_runtime_apply_pending_http_config(esp_bms_idf_runtime_t *runtime);
 bool esp_bms_idf_runtime_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_ms);
 bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,
                                             const esp_bms_lvgl_action_event_t *event);

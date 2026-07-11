@@ -129,7 +129,7 @@ connects to the Setup AP and loads the Web settings page.
 - [ ] Opening the TFT BMS type list and selecting each supported type logs the
   expected `select-bms-*` action, updates the displayed type, and persists after
   the normal settings save path.
-- [ ] The protection-board root page shows only `蓝牙连接` and `保护板类型`,
+- [x] The protection-board root page shows only `蓝牙连接` and `保护板类型`,
   with no status cards, popup overlays, or extra controls.
 - [ ] `蓝牙连接` opens a full-page candidate list, starts a scan once on entry,
   refreshes in place as snapshot candidates change, and binds the tapped MAC.
@@ -137,12 +137,12 @@ connects to the Setup AP and loads the Web settings page.
   active type, and returns to the BMS root with the new value after selection.
 - [ ] Header-back and the left-edge gesture return from each BMS list to the BMS
   root before returning to the settings root.
-- [ ] With Setup AP off, neither the QR bitmap nor its white panel is visible.
+- [x] With Setup AP off, neither the QR bitmap nor its white panel is visible.
   With Setup AP on, the QR is centered in the panel and matches the displayed
   SSID/password.
-- [ ] Repeated dashboard snapshots and at least three hotspot off/on toggles do
+- [x] Repeated dashboard snapshots and at least three hotspot off/on toggles do
   not trigger another QR encode/update for the unchanged payload.
-- [ ] Portrait and landscape LVGL previews for hotspot off/on and both BMS list
+- [x] Portrait and landscape LVGL previews for hotspot off/on and both BMS list
   pages are stored under the repository-root `preview/` directory.
 - [ ] After a phone connects to the Setup AP and loads the Web page, the TFT
   still logs touch samples/releases and responds to navigation/settings taps.
@@ -158,8 +158,9 @@ connects to the Setup AP and loads the Web settings page.
 - [x] Hotspot and Bluetooth enabled-switch previews use the same green track
   and border with a white thumb.
 - [x] `./scripts/esp-idf-env.sh build` passes.
-- [ ] One RFC2217 flash attempt is performed, followed by monitor/log
-  validation.
+- [x] RFC2217 flashing is explicitly waived by the user for this follow-up;
+  desktop previews plus a successful ESP-IDF build are sufficient validation
+  for the QR and BMS settings UI changes.
 
 ## Out Of Scope
 

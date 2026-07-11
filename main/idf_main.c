@@ -114,18 +114,13 @@ void app_main(void)
     } else {
         ESP_LOGW(TAG, "display settings load failed: %s", esp_err_to_name(display_settings_ret));
     }
+    const esp_err_t touch_calibration_load_ret =
+        esp_bms_lvgl_bridge_load_touch_calibration();
+    if (touch_calibration_load_ret != ESP_OK) {
+        ESP_LOGW(TAG, "touch calibration load failed: %s",
+                 esp_err_to_name(touch_calibration_load_ret));
+    }
     log_heap_state("display_settings");
-
-    const esp_err_t bms_ble_ret = esp_bms_idf_runtime_start_bms_ble_if_bound(&runtime);
-    if (bms_ble_ret != ESP_OK) {
-        ESP_LOGW(TAG, "BMS BLE optional startup failed: %s", esp_err_to_name(bms_ble_ret));
-    }
-    if (esp_bms_idf_runtime_flag_get(&runtime, ESP_BMS_IDF_RUNTIME_FLAG_BMS_BLE_READY)) {
-        ESP_ERROR_CHECK(esp_bms_lvgl_bridge_lock(-1));
-        ESP_ERROR_CHECK(esp_bms_lvgl_ui_update(&runtime.snapshot));
-        esp_bms_lvgl_bridge_unlock();
-    }
-    log_heap_state("optional_bms_ble");
 
     bool delayed_display_settings_save_pending = false;
     uint32_t delayed_display_settings_save_ms = 0;
@@ -143,6 +138,8 @@ void app_main(void)
             ESP_LOGE(TAG, "LVGL lock failed while handling UI action: %s", esp_err_to_name(ret));
             continue;
         }
+        const bool http_config_changed =
+            esp_bms_idf_runtime_apply_pending_http_config(&runtime);
         esp_bms_lvgl_action_event_t action_event = { 0 };
         ret = esp_bms_lvgl_ui_take_action_event(&action_event);
         if (ret != ESP_OK) {
@@ -151,6 +148,8 @@ void app_main(void)
             continue;
         }
         const esp_bms_lvgl_action_t action = action_event.action;
+        const bool http_config_applied =
+            esp_bms_idf_runtime_flag_get(&runtime, ESP_BMS_IDF_RUNTIME_FLAG_HTTP_CONFIG_APPLIED);
         const bool setup_ap_started =
             esp_bms_idf_runtime_flag_get(&runtime, ESP_BMS_IDF_RUNTIME_FLAG_SETUP_AP_STARTED);
         const bool http_server_started =
@@ -167,9 +166,48 @@ void app_main(void)
             action == ESP_BMS_LVGL_ACTION_ENABLE_WIFI_REPROVISIONING &&
             setup_ap_enabled &&
             (setup_ap_started || http_server_started);
-        const bool action_changed = esp_bms_idf_runtime_apply_action_event(&runtime, &action_event);
+        const bool touch_calibration_action =
+            action == ESP_BMS_LVGL_ACTION_START_TOUCH_CALIBRATION ||
+            action == ESP_BMS_LVGL_ACTION_ADD_TOUCH_CALIBRATION_SAMPLE ||
+            action == ESP_BMS_LVGL_ACTION_CANCEL_TOUCH_CALIBRATION;
+        bool action_changed = false;
+        if (action == ESP_BMS_LVGL_ACTION_START_TOUCH_CALIBRATION) {
+            ret = esp_bms_lvgl_bridge_begin_touch_calibration();
+            if (ret != ESP_OK) {
+                ESP_LOGE(TAG, "start touch calibration failed: %s", esp_err_to_name(ret));
+                ESP_ERROR_CHECK_WITHOUT_ABORT(esp_bms_lvgl_ui_touch_calibration_result(false));
+            }
+        } else if (action == ESP_BMS_LVGL_ACTION_ADD_TOUCH_CALIBRATION_SAMPLE) {
+            bool finished = false;
+            ret = esp_bms_lvgl_bridge_add_touch_calibration_sample(
+                action_event.touch_target_index,
+                action_event.touch_observed_x,
+                action_event.touch_observed_y,
+                action_event.touch_target_x,
+                action_event.touch_target_y,
+                &finished);
+            if (ret != ESP_OK || finished) {
+                if (ret != ESP_OK) {
+                    ESP_LOGE(TAG, "touch calibration sample failed: %s", esp_err_to_name(ret));
+                }
+                ESP_ERROR_CHECK_WITHOUT_ABORT(
+                    esp_bms_lvgl_ui_touch_calibration_result(ret == ESP_OK && finished));
+            }
+        } else if (action == ESP_BMS_LVGL_ACTION_CANCEL_TOUCH_CALIBRATION) {
+            esp_bms_lvgl_bridge_cancel_touch_calibration();
+        } else {
+            action_changed = esp_bms_idf_runtime_apply_action_event(&runtime, &action_event);
+        }
+        if (!touch_calibration_action && action == ESP_BMS_LVGL_ACTION_RESTORE_DEFAULTS &&
+            action_changed) {
+            const esp_err_t reset_ret = esp_bms_lvgl_bridge_reset_touch_calibration();
+            if (reset_ret != ESP_OK) {
+                ESP_LOGW(TAG, "reset touch calibration failed: %s", esp_err_to_name(reset_ret));
+            }
+        }
         bool display_apply_failed = false;
-        if ((tick_changed || action_changed) && runtime.brightness_percent != previous_brightness) {
+        if ((tick_changed || action_changed || http_config_changed) &&
+            runtime.brightness_percent != previous_brightness) {
             ret = esp_bms_lvgl_bridge_set_brightness(runtime.brightness_percent);
             if (ret != ESP_OK) {
                 ESP_LOGE(TAG, "apply brightness action failed: %s", esp_err_to_name(ret));
@@ -178,7 +216,8 @@ void app_main(void)
                 display_apply_failed = true;
             }
         }
-        if ((tick_changed || action_changed) && runtime.display_rotation != previous_rotation) {
+        if ((tick_changed || action_changed || http_config_changed) &&
+            runtime.display_rotation != previous_rotation) {
             ret = esp_bms_lvgl_bridge_set_rotation(bridge_rotation_from_runtime(runtime.display_rotation));
             if (ret != ESP_OK) {
                 ESP_LOGE(TAG, "apply rotation action failed: %s", esp_err_to_name(ret));
@@ -186,10 +225,21 @@ void app_main(void)
                 display_apply_failed = true;
             }
         }
-        if (tick_changed || action_changed || display_apply_failed) {
+        if (tick_changed || action_changed || http_config_changed || display_apply_failed) {
             ret = esp_bms_lvgl_ui_update(&runtime.snapshot);
             if (ret != ESP_OK) {
                 ESP_LOGE(TAG, "update UI after action failed: %s", esp_err_to_name(ret));
+                display_apply_failed = true;
+            }
+        }
+        if (http_config_applied && !display_apply_failed) {
+            ret = esp_bms_lvgl_ui_show_dashboard();
+            if (ret == ESP_OK) {
+                esp_bms_idf_runtime_flag_set(&runtime,
+                                             ESP_BMS_IDF_RUNTIME_FLAG_HTTP_CONFIG_APPLIED,
+                                             false);
+            } else {
+                ESP_LOGE(TAG, "show dashboard after Web config failed: %s", esp_err_to_name(ret));
                 display_apply_failed = true;
             }
         }

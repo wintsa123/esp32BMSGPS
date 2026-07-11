@@ -121,6 +121,122 @@ idf.py -p /dev/ttyUSB0 flash
 ./scripts/esp-idf-env.sh -p "rfc2217://192.168.2.10:4000?ign_set_control" -b 115200 flash
 ```
 
+## Scenario: NimBLE CCCD Discovery
+
+### 1. Scope / Trigger
+
+- Trigger: discovering descriptors for a known NimBLE GATT characteristic.
+
+### 2. Signatures
+
+- `ble_gattc_disc_all_dscs(conn_handle, chr_val_handle, end_handle, cb, arg)`
+- The second handle is the characteristic value handle, not the first possible
+  descriptor handle.
+
+### 3. Contracts
+
+- NimBLE advances past `chr_val_handle` internally before scanning descriptors.
+- Pass the discovered `ble_gatt_chr.val_handle` unchanged. Adding one in the
+  caller skips a CCCD located immediately after the value.
+- Accept only UUID `0x2902` as the client characteristic configuration
+  descriptor, then subscribe by writing `{ 1, 0 }` to its returned handle.
+
+### 4. Validation & Error Matrix
+
+- CCCD returned -> write notification enable value and enter online only after
+  the write callback succeeds.
+- Online -> send the first status query immediately, then poll every 500 ms
+  while no GATT write is already in flight.
+- Discovery ends without CCCD -> report `BMS NO CCCD` and terminate cleanly.
+- Subscribe write fails -> report `BMS SUB` and terminate cleanly.
+
+### 5. Good/Base/Bad Cases
+
+- Good: value handle 16, CCCD 17 -> pass 16 and discover 17.
+- Base: value handle 17, CCCD 18 -> pass 17 and discover 18.
+- Bad: pass 18 for the base case; NimBLE starts after 18 and skips the CCCD.
+
+### 6. Tests Required
+
+- Build with `./scripts/esp-idf-env.sh build`.
+- On hardware, assert logs show FFE1 value handle, the immediately following
+  CCCD handle, subscription success, a status poll, notification RX, and
+  telemetry parsing.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```c
+ble_gattc_disc_all_dscs(conn, chr->val_handle + 1U, service_end, cb, arg);
+```
+
+#### Correct
+
+```c
+ble_gattc_disc_all_dscs(conn, chr->val_handle, service_end, cb, arg);
+```
+
+## Scenario: NimBLE Scan Re-entry
+
+### 1. Scope / Trigger
+
+- Trigger: a BMS scan or refresh action arrives while GAP discovery is active.
+
+### 2. Signatures
+
+- `runtime_bms_ble_start_scan(runtime)`
+- `ble_gap_disc_active()`
+
+### 3. Contracts
+
+- An active BMS discovery already satisfies a repeated scan request.
+- Keep `BMS_SCAN_ACTIVE`, clear deferred `BMS_SCAN_REQUESTED`, and return
+  `ESP_OK`; advertisements use `filter_duplicates = 0` and continue refreshing
+  the cleared candidate list.
+- Cache non-empty candidate names by MAC in bounded component memory. A later
+  nameless advertisement or visible-list refresh must reuse that name rather
+  than downgrade the row to `设备 N`.
+- Candidate array slots are immutable during one scan. When the array is full,
+  ignore unseen MACs; never reuse a visible row for a different device until an
+  explicit refresh clears the list.
+
+### 4. Validation & Error Matrix
+
+- Discovery active -> reuse it and keep `BMS SCAN` visible.
+- BMS connection active -> terminate and defer the scan through the disconnect
+  callback.
+- Address inference or a new `ble_gap_disc()` call fails -> keep the real
+  failure path and log the ESP/NimBLE result.
+
+### 5. Good/Base/Bad Cases
+
+- Good: repeated refresh during discovery logs `reused active discovery`.
+- Base: idle host starts a new 10-second discovery.
+- Bad: call `ble_gap_disc_cancel()` and immediately call `ble_gap_disc()`;
+  asynchronous cancellation can return busy and surface `BLE FAIL`.
+
+### 6. Tests Required
+
+- Build, flash, open the BMS candidate view, and tap refresh repeatedly during
+  an active scan. Assert no intermittent `BLE FAIL` and candidates continue to
+  populate.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```c
+ble_gap_disc_cancel();
+ble_gap_disc(...);
+```
+
+#### Correct
+
+```c
+if (BMS_SCAN_ACTIVE || ble_gap_disc_active()) return ESP_OK;
+```
+
 ## Required Patterns
 
 - Keep `main/idf_main.c` as orchestration only. Subsystem logic belongs in
@@ -160,8 +276,8 @@ idf.py -p /dev/ttyUSB0 flash
 - `esp_bms_idf_runtime_start_setup_ap(runtime)` starts SoftAP only.
 - `esp_bms_idf_runtime_start_http_server(runtime)` starts HTTP only after
   Setup AP is active.
-- `esp_bms_idf_runtime_start_bms_ble_if_bound(runtime)` starts NimBLE only
-  when a bound BMS MAC is present in NVS.
+- `esp_bms_idf_runtime_start_bms_ble_if_bound(runtime)` remains available for
+  explicit bound-device connection flows but is not called during boot.
 - `esp_bms_idf_runtime_start_bms_ble_for_bind(runtime)` starts NimBLE for a
   user-triggered bind or refresh scan.
 - `esp_bms_idf_runtime_start_wifi_scan(runtime)` starts Wi-Fi STA/APSTA for a
@@ -175,8 +291,9 @@ idf.py -p /dev/ttyUSB0 flash
   initialization so the QR page has stable current values, but this must not
   start Wi-Fi.
 - Setup AP and HTTP are started from the hotspot/config entry action.
-- BMS BLE is started on boot only through the bound-MAC path; no bound MAC means
-  NimBLE stays off until bind or refresh.
+- BMS BLE discovery is never started during boot, including when a bound MAC is
+  present. Opening the BMS candidate list or refreshing it starts NimBLE and
+  discovery through the user-triggered bind path.
 - Wi-Fi STA scan/connect is started from Wi-Fi settings actions only.
 
 ### 4. Validation & Error Matrix
@@ -191,8 +308,8 @@ idf.py -p /dev/ttyUSB0 flash
 
 ### 5. Good/Base/Bad Cases
 
-- Good: boot logs show `first_ui`, display settings, optional BMS check, and no
-  AP/HTTP/NimBLE startup when no BMS MAC is bound.
+- Good: boot logs show `first_ui` and display settings with no BMS scan, even
+  when a BMS MAC is already bound.
 - Base: tapping hotspot starts SoftAP and HTTP; tapping Wi-Fi scan starts Wi-Fi
   scan; tapping BMS bind starts NimBLE scan.
 - Bad: calling `esp_bms_idf_runtime_start_setup_ap()` from boot as a catch-all
@@ -201,8 +318,8 @@ idf.py -p /dev/ttyUSB0 flash
 ### 6. Tests Required
 
 - Build with `./scripts/esp-idf-env.sh build`.
-- Flash and inspect boot logs for absence of automatic AP/HTTP/NimBLE startup
-  when no BMS MAC is bound.
+- Flash and inspect boot logs for absence of automatic BMS discovery with and
+  without a bound BMS MAC; opening the candidate list must then start a scan.
 - Exercise hotspot, Wi-Fi scan/connect, and BMS bind paths on hardware.
 - Run `node .gitnexus/run.cjs detect-changes -r esp32BMSGPS` before commit.
 

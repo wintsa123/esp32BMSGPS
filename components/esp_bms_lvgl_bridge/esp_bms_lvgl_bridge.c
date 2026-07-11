@@ -2,6 +2,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <string.h>
 #include "driver/gpio.h"
 #include "driver/ledc.h"
 #include "driver/spi_master.h"
@@ -17,6 +18,7 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "nvs.h"
 
 static const char *TAG = "bms_lvgl_bridge";
 
@@ -28,6 +30,10 @@ static const char *TAG = "bms_lvgl_bridge";
 #define BACKLIGHT_PWM_CHANNEL LEDC_CHANNEL_0
 #define LVGL_SPI_DRAW_BUFFER_HEIGHT CONFIG_ESP_BMS_LVGL_BRIDGE_SPI_DRAW_BUFFER_HEIGHT
 #define LVGL_TASK_MAX_DELAY_MS CONFIG_ESP_BMS_LVGL_BRIDGE_TASK_MAX_DELAY_MS
+#define TOUCH_CALIBRATION_VERSION 1U
+#define TOUCH_CALIBRATION_POINT_COUNT 4U
+#define TOUCH_CALIBRATION_NVS_NAMESPACE "esp_bms"
+#define TOUCH_CALIBRATION_NVS_KEY "touch_cal"
 #if CONFIG_ESP_BMS_LVGL_BRIDGE_DOUBLE_BUFFER
 #define LVGL_REQUIRE_DOUBLE_BUFFER true
 #else
@@ -52,6 +58,219 @@ static bool s_initialized;
 static TickType_t s_touch_last_log_tick;
 static bool s_touch_read_callback_logged;
 static bool s_touch_was_pressed;
+
+typedef struct {
+    uint32_t version;
+    int32_t x_min;
+    int32_t x_max;
+    int32_t y_min;
+    int32_t y_max;
+} touch_calibration_t;
+
+typedef struct {
+    touch_calibration_t previous;
+    int32_t observed_x[TOUCH_CALIBRATION_POINT_COUNT];
+    int32_t observed_y[TOUCH_CALIBRATION_POINT_COUNT];
+    int32_t target_x[TOUCH_CALIBRATION_POINT_COUNT];
+    int32_t target_y[TOUCH_CALIBRATION_POINT_COUNT];
+    uint8_t seen_mask;
+    bool active;
+    bool previous_valid;
+} touch_calibration_session_t;
+
+static touch_calibration_t s_touch_calibration;
+static touch_calibration_session_t s_touch_calibration_session;
+static bool s_touch_calibration_valid;
+
+static void touch_rotation_flags(esp_bms_display_rotation_t rotation,
+                                 bool *swap_xy,
+                                 bool *mirror_x,
+                                 bool *mirror_y);
+
+static int32_t clamp_coordinate(int32_t value, int32_t maximum)
+{
+    if (value < 0) {
+        return 0;
+    }
+    return value > maximum ? maximum : value;
+}
+
+static void touch_display_to_canonical(uint16_t display_x,
+                                       uint16_t display_y,
+                                       int32_t *canonical_x,
+                                       int32_t *canonical_y)
+{
+    bool swap_xy = false;
+    bool mirror_x = false;
+    bool mirror_y = false;
+    touch_rotation_flags(s_rotation, &swap_xy, &mirror_x, &mirror_y);
+
+    int32_t x = display_x;
+    int32_t y = display_y;
+    if (swap_xy) {
+        const int32_t temporary = x;
+        x = y;
+        y = temporary;
+    }
+    if (mirror_x) {
+        x = (int32_t)s_physical_width - x;
+    }
+    if (mirror_y) {
+        y = (int32_t)s_physical_height - y;
+    }
+    *canonical_x = clamp_coordinate(x, s_physical_width);
+    *canonical_y = clamp_coordinate(y, s_physical_height);
+}
+
+static void touch_canonical_to_display(int32_t canonical_x,
+                                       int32_t canonical_y,
+                                       uint16_t *display_x,
+                                       uint16_t *display_y)
+{
+    bool swap_xy = false;
+    bool mirror_x = false;
+    bool mirror_y = false;
+    touch_rotation_flags(s_rotation, &swap_xy, &mirror_x, &mirror_y);
+
+    int32_t x = clamp_coordinate(canonical_x, s_physical_width);
+    int32_t y = clamp_coordinate(canonical_y, s_physical_height);
+    if (mirror_x) {
+        x = (int32_t)s_physical_width - x;
+    }
+    if (mirror_y) {
+        y = (int32_t)s_physical_height - y;
+    }
+    if (swap_xy) {
+        const int32_t temporary = x;
+        x = y;
+        y = temporary;
+    }
+
+    const int32_t display_width = (s_rotation == ESP_BMS_DISPLAY_ROTATION_LANDSCAPE ||
+                                   s_rotation == ESP_BMS_DISPLAY_ROTATION_INVERTED_LANDSCAPE)
+                                      ? s_physical_height
+                                      : s_physical_width;
+    const int32_t display_height = (s_rotation == ESP_BMS_DISPLAY_ROTATION_LANDSCAPE ||
+                                    s_rotation == ESP_BMS_DISPLAY_ROTATION_INVERTED_LANDSCAPE)
+                                       ? s_physical_width
+                                       : s_physical_height;
+    *display_x = (uint16_t)clamp_coordinate(x, display_width - 1);
+    *display_y = (uint16_t)clamp_coordinate(y, display_height - 1);
+}
+
+static bool touch_calibration_valid(const touch_calibration_t *calibration)
+{
+    if (!calibration || calibration->version != TOUCH_CALIBRATION_VERSION) {
+        return false;
+    }
+    const int32_t x_span = calibration->x_max - calibration->x_min;
+    const int32_t y_span = calibration->y_max - calibration->y_min;
+    return x_span >= (int32_t)s_physical_width / 2 &&
+           x_span <= (int32_t)s_physical_width * 2 &&
+           y_span >= (int32_t)s_physical_height / 2 &&
+           y_span <= (int32_t)s_physical_height * 2 &&
+           calibration->x_min >= -(int32_t)s_physical_width &&
+           calibration->x_max <= (int32_t)s_physical_width * 2 &&
+           calibration->y_min >= -(int32_t)s_physical_height &&
+           calibration->y_max <= (int32_t)s_physical_height * 2;
+}
+
+static int32_t touch_calibration_map(int32_t value, int32_t minimum, int32_t maximum, int32_t output_max)
+{
+    const int32_t span = maximum - minimum;
+    if (span <= 0) {
+        return clamp_coordinate(value, output_max);
+    }
+    const int64_t scaled = ((int64_t)value - minimum) * output_max;
+    return clamp_coordinate((int32_t)(scaled / span), output_max);
+}
+
+static void touch_calibration_apply(esp_lcd_touch_point_data_t *points, uint8_t count)
+{
+    if (!s_touch_calibration_valid || !points) {
+        return;
+    }
+    for (uint8_t index = 0; index < count; ++index) {
+        int32_t canonical_x = 0;
+        int32_t canonical_y = 0;
+        touch_display_to_canonical(points[index].x, points[index].y, &canonical_x, &canonical_y);
+        canonical_x = touch_calibration_map(canonical_x,
+                                            s_touch_calibration.x_min,
+                                            s_touch_calibration.x_max,
+                                            s_physical_width - 1);
+        canonical_y = touch_calibration_map(canonical_y,
+                                            s_touch_calibration.y_min,
+                                            s_touch_calibration.y_max,
+                                            s_physical_height - 1);
+        touch_canonical_to_display(canonical_x, canonical_y, &points[index].x, &points[index].y);
+    }
+}
+
+static bool touch_calibration_axis(const int32_t observed[TOUCH_CALIBRATION_POINT_COUNT],
+                                   const int32_t target[TOUCH_CALIBRATION_POINT_COUNT],
+                                   int32_t coordinate_max,
+                                   int32_t *minimum,
+                                   int32_t *maximum)
+{
+    int32_t observed_low = 0;
+    int32_t observed_high = 0;
+    int32_t target_low = 0;
+    int32_t target_high = 0;
+    uint8_t low_count = 0;
+    uint8_t high_count = 0;
+
+    for (uint8_t index = 0; index < TOUCH_CALIBRATION_POINT_COUNT; ++index) {
+        if (target[index] < coordinate_max / 2) {
+            observed_low += observed[index];
+            target_low += target[index];
+            low_count++;
+        } else {
+            observed_high += observed[index];
+            target_high += target[index];
+            high_count++;
+        }
+    }
+    if (low_count != 2U || high_count != 2U) {
+        return false;
+    }
+
+    observed_low /= low_count;
+    observed_high /= high_count;
+    target_low /= low_count;
+    target_high /= high_count;
+    const int32_t observed_span = observed_high - observed_low;
+    const int32_t target_span = target_high - target_low;
+    if (observed_span < coordinate_max / 3 || target_span < coordinate_max / 3) {
+        return false;
+    }
+
+    *minimum = observed_low - (int32_t)(((int64_t)target_low * observed_span) / target_span);
+    *maximum = *minimum + (int32_t)(((int64_t)coordinate_max * observed_span) / target_span);
+    return *maximum > *minimum;
+}
+
+static esp_err_t touch_calibration_save(const touch_calibration_t *calibration)
+{
+    nvs_handle_t handle = 0;
+    ESP_RETURN_ON_ERROR(nvs_open(TOUCH_CALIBRATION_NVS_NAMESPACE, NVS_READWRITE, &handle),
+                        TAG, "open touch calibration NVS failed");
+    esp_err_t ret = nvs_set_blob(handle,
+                                 TOUCH_CALIBRATION_NVS_KEY,
+                                 calibration,
+                                 sizeof(*calibration));
+    if (ret == ESP_OK) {
+        ret = nvs_commit(handle);
+    }
+    nvs_close(handle);
+    return ret;
+}
+
+static void touch_calibration_restore_previous(void)
+{
+    s_touch_calibration = s_touch_calibration_session.previous;
+    s_touch_calibration_valid = s_touch_calibration_session.previous_valid;
+    memset(&s_touch_calibration_session, 0, sizeof(s_touch_calibration_session));
+}
 
 static bool psram_can_hold_lvgl_buffers(size_t required_buffer_bytes,
                                         bool require_double_buffer,
@@ -332,6 +551,10 @@ static esp_err_t touch_read_with_diagnostics(esp_lcd_touch_handle_t tp,
         return ret;
     }
 
+    if (count && *count > 0U) {
+        touch_calibration_apply(points, *count);
+    }
+
     const bool pressed = count && *count > 0U;
     if (pressed) {
         if (!s_touch_was_pressed ||
@@ -557,4 +780,162 @@ lv_display_t *esp_bms_lvgl_bridge_get_display(void)
 lv_indev_t *esp_bms_lvgl_bridge_get_touch(void)
 {
     return s_touch_indev;
+}
+
+esp_err_t esp_bms_lvgl_bridge_load_touch_calibration(void)
+{
+    ESP_RETURN_ON_FALSE(s_initialized, ESP_ERR_INVALID_STATE, TAG, "bridge is not initialized");
+
+    nvs_handle_t handle = 0;
+    esp_err_t ret = nvs_open(TOUCH_CALIBRATION_NVS_NAMESPACE, NVS_READONLY, &handle);
+    if (ret == ESP_ERR_NVS_NOT_FOUND) {
+        s_touch_calibration_valid = false;
+        return ESP_OK;
+    }
+    ESP_RETURN_ON_ERROR(ret, TAG, "open touch calibration NVS failed");
+
+    touch_calibration_t calibration = { 0 };
+    size_t size = sizeof(calibration);
+    ret = nvs_get_blob(handle, TOUCH_CALIBRATION_NVS_KEY, &calibration, &size);
+    nvs_close(handle);
+    if (ret == ESP_ERR_NVS_NOT_FOUND) {
+        s_touch_calibration_valid = false;
+        return ESP_OK;
+    }
+    ESP_RETURN_ON_ERROR(ret, TAG, "load touch calibration failed");
+    if (size != sizeof(calibration) || !touch_calibration_valid(&calibration)) {
+        s_touch_calibration_valid = false;
+        ESP_LOGW(TAG, "ignoring invalid touch calibration blob");
+        return ESP_OK;
+    }
+
+    s_touch_calibration = calibration;
+    s_touch_calibration_valid = true;
+    ESP_LOGI(TAG, "touch calibration loaded x=%ld..%ld y=%ld..%ld",
+             (long)calibration.x_min,
+             (long)calibration.x_max,
+             (long)calibration.y_min,
+             (long)calibration.y_max);
+    return ESP_OK;
+}
+
+esp_err_t esp_bms_lvgl_bridge_begin_touch_calibration(void)
+{
+    ESP_RETURN_ON_FALSE(s_initialized && s_touch, ESP_ERR_INVALID_STATE, TAG, "touch is not initialized");
+    ESP_RETURN_ON_FALSE(!s_touch_calibration_session.active,
+                        ESP_ERR_INVALID_STATE, TAG, "touch calibration already active");
+
+    memset(&s_touch_calibration_session, 0, sizeof(s_touch_calibration_session));
+    s_touch_calibration_session.previous = s_touch_calibration;
+    s_touch_calibration_session.previous_valid = s_touch_calibration_valid;
+    s_touch_calibration_session.active = true;
+    s_touch_calibration_valid = false;
+    ESP_LOGI(TAG, "touch calibration started");
+    return ESP_OK;
+}
+
+esp_err_t esp_bms_lvgl_bridge_add_touch_calibration_sample(uint8_t target_index,
+                                                           uint16_t observed_x,
+                                                           uint16_t observed_y,
+                                                           uint16_t target_x,
+                                                           uint16_t target_y,
+                                                           bool *finished)
+{
+    ESP_RETURN_ON_FALSE(finished, ESP_ERR_INVALID_ARG, TAG, "finished output is required");
+    *finished = false;
+    ESP_RETURN_ON_FALSE(s_touch_calibration_session.active,
+                        ESP_ERR_INVALID_STATE, TAG, "touch calibration is not active");
+    ESP_RETURN_ON_FALSE(target_index < TOUCH_CALIBRATION_POINT_COUNT,
+                        ESP_ERR_INVALID_ARG, TAG, "invalid touch calibration target");
+
+    touch_display_to_canonical(observed_x,
+                               observed_y,
+                               &s_touch_calibration_session.observed_x[target_index],
+                               &s_touch_calibration_session.observed_y[target_index]);
+    touch_display_to_canonical(target_x,
+                               target_y,
+                               &s_touch_calibration_session.target_x[target_index],
+                               &s_touch_calibration_session.target_y[target_index]);
+    s_touch_calibration_session.seen_mask |= (uint8_t)(1U << target_index);
+    ESP_LOGI(TAG, "touch calibration point=%u observed=%u,%u target=%u,%u",
+             (unsigned)target_index,
+             (unsigned)observed_x,
+             (unsigned)observed_y,
+             (unsigned)target_x,
+             (unsigned)target_y);
+
+    if (s_touch_calibration_session.seen_mask !=
+        (uint8_t)((1U << TOUCH_CALIBRATION_POINT_COUNT) - 1U)) {
+        return ESP_OK;
+    }
+
+    touch_calibration_t calibration = {
+        .version = TOUCH_CALIBRATION_VERSION,
+    };
+    const bool valid = touch_calibration_axis(s_touch_calibration_session.observed_x,
+                                              s_touch_calibration_session.target_x,
+                                              s_physical_width,
+                                              &calibration.x_min,
+                                              &calibration.x_max) &&
+                       touch_calibration_axis(s_touch_calibration_session.observed_y,
+                                              s_touch_calibration_session.target_y,
+                                              s_physical_height,
+                                              &calibration.y_min,
+                                              &calibration.y_max) &&
+                       touch_calibration_valid(&calibration);
+    if (!valid) {
+        touch_calibration_restore_previous();
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    esp_err_t ret = touch_calibration_save(&calibration);
+    if (ret != ESP_OK) {
+        touch_calibration_restore_previous();
+        return ret;
+    }
+
+    s_touch_calibration = calibration;
+    s_touch_calibration_valid = true;
+    memset(&s_touch_calibration_session, 0, sizeof(s_touch_calibration_session));
+    *finished = true;
+    ESP_LOGI(TAG, "touch calibration saved x=%ld..%ld y=%ld..%ld",
+             (long)calibration.x_min,
+             (long)calibration.x_max,
+             (long)calibration.y_min,
+             (long)calibration.y_max);
+    return ESP_OK;
+}
+
+void esp_bms_lvgl_bridge_cancel_touch_calibration(void)
+{
+    if (!s_touch_calibration_session.active) {
+        return;
+    }
+    touch_calibration_restore_previous();
+    ESP_LOGI(TAG, "touch calibration cancelled");
+}
+
+esp_err_t esp_bms_lvgl_bridge_reset_touch_calibration(void)
+{
+    if (s_touch_calibration_session.active) {
+        memset(&s_touch_calibration_session, 0, sizeof(s_touch_calibration_session));
+    }
+    memset(&s_touch_calibration, 0, sizeof(s_touch_calibration));
+    s_touch_calibration_valid = false;
+
+    nvs_handle_t handle = 0;
+    esp_err_t ret = nvs_open(TOUCH_CALIBRATION_NVS_NAMESPACE, NVS_READWRITE, &handle);
+    if (ret == ESP_ERR_NVS_NOT_FOUND) {
+        return ESP_OK;
+    }
+    ESP_RETURN_ON_ERROR(ret, TAG, "open touch calibration NVS failed");
+    ret = nvs_erase_key(handle, TOUCH_CALIBRATION_NVS_KEY);
+    if (ret == ESP_ERR_NVS_NOT_FOUND) {
+        ret = ESP_OK;
+    }
+    if (ret == ESP_OK) {
+        ret = nvs_commit(handle);
+    }
+    nvs_close(handle);
+    return ret;
 }

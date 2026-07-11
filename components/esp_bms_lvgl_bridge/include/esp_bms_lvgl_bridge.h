@@ -70,6 +70,16 @@ typedef struct {
 esp_err_t esp_bms_lvgl_bridge_init(const esp_bms_lvgl_bridge_config_t *config);
 esp_err_t esp_bms_lvgl_bridge_set_brightness(uint8_t percent);
 esp_err_t esp_bms_lvgl_bridge_set_rotation(esp_bms_display_rotation_t rotation);
+esp_err_t esp_bms_lvgl_bridge_load_touch_calibration(void);
+esp_err_t esp_bms_lvgl_bridge_begin_touch_calibration(void);
+esp_err_t esp_bms_lvgl_bridge_add_touch_calibration_sample(uint8_t target_index,
+                                                           uint16_t observed_x,
+                                                           uint16_t observed_y,
+                                                           uint16_t target_x,
+                                                           uint16_t target_y,
+                                                           bool *finished);
+void esp_bms_lvgl_bridge_cancel_touch_calibration(void);
+esp_err_t esp_bms_lvgl_bridge_reset_touch_calibration(void);
 esp_err_t esp_bms_lvgl_bridge_lock(int32_t timeout_ms);
 void esp_bms_lvgl_bridge_unlock(void);
 lv_display_t *esp_bms_lvgl_bridge_get_display(void);

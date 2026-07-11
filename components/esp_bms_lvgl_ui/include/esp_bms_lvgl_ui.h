@@ -34,6 +34,9 @@ typedef enum {
     ESP_BMS_LVGL_ACTION_SELECT_BMS_DALY = 16,
     ESP_BMS_LVGL_ACTION_ENABLE_BLUETOOTH_ADVERTISING = 17,
     ESP_BMS_LVGL_ACTION_CYCLE_LEVEL_POSITION = 18,
+    ESP_BMS_LVGL_ACTION_START_TOUCH_CALIBRATION = 19,
+    ESP_BMS_LVGL_ACTION_ADD_TOUCH_CALIBRATION_SAMPLE = 20,
+    ESP_BMS_LVGL_ACTION_CANCEL_TOUCH_CALIBRATION = 21,
 } esp_bms_lvgl_action_t;
 
 #define ESP_BMS_LVGL_ACTION_EVENT_FLAG_COMMITTED (UINT8_C(1) << 0)
@@ -50,6 +53,11 @@ typedef struct {
     uint8_t volume_percent;
     uint8_t volume_feedback_percent;
     char bms_mac[18];
+    uint16_t touch_observed_x;
+    uint16_t touch_observed_y;
+    uint16_t touch_target_x;
+    uint16_t touch_target_y;
+    uint8_t touch_target_index;
 } esp_bms_lvgl_action_event_t;
 
 static inline bool esp_bms_lvgl_action_event_flag_get(const esp_bms_lvgl_action_event_t *event,
@@ -146,6 +154,7 @@ typedef struct {
     char setup_ap_qr_payload[96];
     uint8_t bms_scan_candidate_count;
     esp_bms_bms_scan_candidate_t bms_scan_candidates[ESP_BMS_BMS_SCAN_MAX_CANDIDATES];
+    char bms_bound_name[ESP_BMS_BMS_SCAN_NAME_LEN + 1U];
 } esp_bms_dashboard_snapshot_t;
 
 static inline bool esp_bms_dashboard_snapshot_flag_get(const esp_bms_dashboard_snapshot_t *snapshot,
@@ -194,6 +203,8 @@ static inline void esp_bms_dashboard_snapshot_temperature_valid_set(esp_bms_dash
 
 esp_err_t esp_bms_lvgl_ui_init(lv_display_t *display);
 esp_err_t esp_bms_lvgl_ui_update(const esp_bms_dashboard_snapshot_t *snapshot);
+esp_err_t esp_bms_lvgl_ui_show_dashboard(void);
+esp_err_t esp_bms_lvgl_ui_touch_calibration_result(bool success);
 esp_err_t esp_bms_lvgl_ui_set_page(esp_bms_lvgl_page_t page, bool animated);
 esp_err_t esp_bms_lvgl_ui_take_action_event(esp_bms_lvgl_action_event_t *event);
 esp_err_t esp_bms_lvgl_ui_take_action(esp_bms_lvgl_action_t *action);

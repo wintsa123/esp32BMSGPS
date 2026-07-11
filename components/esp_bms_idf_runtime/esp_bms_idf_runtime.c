@@ -55,14 +55,13 @@ static const char *TAG = "bms_idf_runtime";
 #define SETUP_AP_NVS_PASSWORD_KEY "setup_pw"
 #define ANT_BMS_SERVICE_UUID_16 0xFFE0U
 #define ANT_BMS_CHARACTERISTIC_UUID_16 0xFFE1U
-#define BMS_SCAN_NAME_PREFIX "ANT-"
 #define BMS_SCAN_DURATION_MS 10000
 #define BMS_SCAN_HOST_TASK_STACK 4096U
 #define BMS_SCAN_HOST_TASK_PRIORITY 5U
 #define LOCAL_BLUETOOTH_NAME "ESP32 BMS GPS"
 #define LOCAL_BLUETOOTH_ADV_INTERVAL_MS 500U
-#define BMS_CONNECT_TIMEOUT_MS 30000
-#define BMS_STATUS_POLL_PERIOD_MS 5000U
+#define BMS_CONNECT_TIMEOUT_MS 10000
+#define BMS_STATUS_POLL_PERIOD_MS 500U
 #define BMS_FRAME_MIN_LEN 10U
 #define BMS_FRAME_START_1 0x7EU
 #define BMS_FRAME_START_2 0xA1U
@@ -76,6 +75,7 @@ static const char *TAG = "bms_idf_runtime";
 #define BMS_STATUS_WARNING_MASK_OFFSET 18U
 #define BMS_STATUS_DYNAMIC_BASE_OFFSET 34U
 #define BMS_NVS_BOUND_MAC_KEY "bms_mac"
+#define BMS_NVS_BOUND_NAME_KEY "bms_name"
 #define DISPLAY_NVS_BRIGHTNESS_KEY "disp_bright"
 #define DISPLAY_NVS_VOLUME_KEY "disp_vol"
 #define DISPLAY_NVS_ROTATION_KEY "disp_rot"
@@ -124,13 +124,23 @@ typedef enum {
     BMS_BLE_PHASE_BACKOFF = 8,
 } bms_ble_phase_t;
 
+typedef struct {
+    char mac[18];
+    char name[ESP_BMS_IDF_BMS_SCAN_NAME_LEN + 1U];
+} bms_scan_name_cache_entry_t;
+
+static bms_scan_name_cache_entry_t s_bms_scan_name_cache[ESP_BMS_IDF_BMS_SCAN_MAX_CANDIDATES];
+static uint8_t s_bms_scan_name_cache_count;
+static uint8_t s_bms_scan_name_cache_next;
+
 static esp_err_t runtime_apply_setup_ap_wifi_config(const esp_bms_idf_runtime_t *runtime);
 static int runtime_bms_ble_gap_event(struct ble_gap_event *event, void *arg);
 static int runtime_bluetooth_gap_event(struct ble_gap_event *event, void *arg);
 static esp_err_t runtime_bms_ble_start_scan(esp_bms_idf_runtime_t *runtime);
 static esp_err_t runtime_bluetooth_start_advertising_now(esp_bms_idf_runtime_t *runtime);
 static esp_err_t runtime_bluetooth_stop_for_bms_scan(esp_bms_idf_runtime_t *runtime);
-static esp_err_t runtime_bms_ble_send_poll_request(esp_bms_idf_runtime_t *runtime);
+static esp_err_t runtime_bms_ble_send_poll_request(esp_bms_idf_runtime_t *runtime,
+                                                   bool include_device_info);
 static esp_err_t runtime_init_bms_ble(esp_bms_idf_runtime_t *runtime);
 static esp_err_t runtime_save_bms_binding(esp_bms_idf_runtime_t *runtime);
 static esp_err_t runtime_save_setup_ap_credentials(const esp_bms_idf_runtime_t *runtime);
@@ -176,6 +186,7 @@ static void runtime_set_bms_info(esp_bms_idf_runtime_t *runtime, const char *tex
                                sizeof(runtime->snapshot.bms_info_text),
                                text);
     runtime_set_error(runtime, text);
+    RUNTIME_SET_FLAG(runtime, BMS_SNAPSHOT_DIRTY, true);
 }
 
 static bool runtime_project_bluetooth_snapshot(esp_bms_idf_runtime_t *runtime)
@@ -319,21 +330,6 @@ static bool runtime_bms_name_copy(char *out, size_t out_len, const uint8_t *name
     return copied > 0U;
 }
 
-static bool runtime_bms_name_matches_ant(const char *name)
-{
-    return name && strncmp(name, BMS_SCAN_NAME_PREFIX, strlen(BMS_SCAN_NAME_PREFIX)) == 0;
-}
-
-static bool runtime_bms_adv_has_ant_service(const struct ble_hs_adv_fields *fields)
-{
-    for (uint8_t index = 0; index < fields->num_uuids16; index++) {
-        if (ble_uuid_u16(&fields->uuids16[index].u) == ANT_BMS_SERVICE_UUID_16) {
-            return true;
-        }
-    }
-    return false;
-}
-
 static bool runtime_bms_scan_project_snapshot(esp_bms_idf_runtime_t *runtime)
 {
     if (!runtime) {
@@ -391,15 +387,37 @@ static size_t runtime_bms_scan_find_candidate(const esp_bms_idf_runtime_t *runti
     return ESP_BMS_IDF_BMS_SCAN_MAX_CANDIDATES;
 }
 
-static size_t runtime_bms_scan_weakest_candidate(const esp_bms_idf_runtime_t *runtime)
+static const char *runtime_bms_scan_cached_name_locked(const char *mac)
 {
-    size_t weakest = 0;
-    for (size_t index = 1; index < ESP_BMS_IDF_BMS_SCAN_MAX_CANDIDATES; index++) {
-        if (runtime->bms_scan_candidates[index].rssi < runtime->bms_scan_candidates[weakest].rssi) {
-            weakest = index;
+    for (uint8_t index = 0; index < s_bms_scan_name_cache_count; index++) {
+        if (strcmp(s_bms_scan_name_cache[index].mac, mac) == 0) {
+            return s_bms_scan_name_cache[index].name;
         }
     }
-    return weakest;
+    return NULL;
+}
+
+static void runtime_bms_scan_cache_name_locked(const char *mac, const char *name)
+{
+    uint8_t index = 0;
+    for (; index < s_bms_scan_name_cache_count; index++) {
+        if (strcmp(s_bms_scan_name_cache[index].mac, mac) == 0) {
+            break;
+        }
+    }
+    if (index == s_bms_scan_name_cache_count) {
+        if (s_bms_scan_name_cache_count < ESP_BMS_IDF_BMS_SCAN_MAX_CANDIDATES) {
+            s_bms_scan_name_cache_count++;
+        } else {
+            index = s_bms_scan_name_cache_next++ % ESP_BMS_IDF_BMS_SCAN_MAX_CANDIDATES;
+        }
+    }
+    runtime_copy_snapshot_text(s_bms_scan_name_cache[index].mac,
+                               sizeof(s_bms_scan_name_cache[index].mac),
+                               mac);
+    runtime_copy_snapshot_text(s_bms_scan_name_cache[index].name,
+                               sizeof(s_bms_scan_name_cache[index].name),
+                               name);
 }
 
 static void runtime_bms_scan_store_candidate(esp_bms_idf_runtime_t *runtime,
@@ -413,6 +431,24 @@ static void runtime_bms_scan_store_candidate(esp_bms_idf_runtime_t *runtime,
     if (runtime->bms_scan_lock &&
         xSemaphoreTake(runtime->bms_scan_lock, pdMS_TO_TICKS(100)) != pdTRUE) {
         return;
+    }
+
+    if (name && name[0] != '\0') {
+        runtime_bms_scan_cache_name_locked(mac, name);
+    } else {
+        name = runtime_bms_scan_cached_name_locked(mac);
+    }
+
+    const bool bound_name_changed = name && name[0] != '\0' &&
+                                    strcmp(mac, runtime->bms_bound_mac) == 0 &&
+                                    strlen(name) > strlen(runtime->bms_bound_name);
+    if (bound_name_changed) {
+        runtime_copy_snapshot_text(runtime->bms_bound_name,
+                                   sizeof(runtime->bms_bound_name),
+                                   name);
+        runtime_copy_snapshot_text(runtime->snapshot.bms_bound_name,
+                                   sizeof(runtime->snapshot.bms_bound_name),
+                                   runtime->bms_bound_name);
     }
 
     size_t index = runtime_bms_scan_find_candidate(runtime, mac);
@@ -434,13 +470,10 @@ static void runtime_bms_scan_store_candidate(esp_bms_idf_runtime_t *runtime,
     if (runtime->bms_scan_candidate_count < ESP_BMS_IDF_BMS_SCAN_MAX_CANDIDATES) {
         index = runtime->bms_scan_candidate_count++;
     } else {
-        index = runtime_bms_scan_weakest_candidate(runtime);
-        if (rssi <= runtime->bms_scan_candidates[index].rssi) {
-            if (runtime->bms_scan_lock) {
-                xSemaphoreGive(runtime->bms_scan_lock);
-            }
-            return;
+        if (runtime->bms_scan_lock) {
+            xSemaphoreGive(runtime->bms_scan_lock);
         }
+        return;
     }
 
     runtime_copy_snapshot_text(runtime->bms_scan_candidates[index].mac,
@@ -723,6 +756,14 @@ static bool runtime_apply_bms_status_frame(esp_bms_idf_runtime_t *runtime,
            sizeof(runtime->snapshot.bms_temperature_celsius));
     runtime_apply_bms_fault_masks(&runtime->snapshot, protection_mask, warning_mask);
     runtime_set_bms_info(runtime, "BMS OK");
+    ESP_LOGI(TAG,
+             "[bms] telemetry parsed: voltage=%lumV current_deci_amps=%d soc=%u%% temps=%u prot=%u warn=%u",
+             (unsigned long)runtime->snapshot.pack_voltage_mv,
+             (int)current_deci_amps,
+             (unsigned)runtime->snapshot.soc_percent,
+             (unsigned)temperature_count,
+             (unsigned)runtime->snapshot.bms_protection_count,
+             (unsigned)runtime->snapshot.bms_warning_count);
     return true;
 }
 
@@ -741,6 +782,7 @@ static bool runtime_apply_bms_frame(esp_bms_idf_runtime_t *runtime,
     }
     if (function == BMS_FRAME_TYPE_DEVICE_INFO) {
         RUNTIME_SET_FLAG(runtime, BMS_DEVICE_INFO_KNOWN, true);
+        ESP_LOGI(TAG, "[bms] device info parsed: len=%u", (unsigned)protocol_len);
         return true;
     }
     return false;
@@ -1622,7 +1664,7 @@ static bool runtime_set_pending_http_config(esp_bms_idf_runtime_t *runtime,
     return true;
 }
 
-static bool runtime_apply_pending_http_config(esp_bms_idf_runtime_t *runtime)
+bool esp_bms_idf_runtime_apply_pending_http_config(esp_bms_idf_runtime_t *runtime)
 {
     if (!runtime->http_pending_lock) {
         return false;
@@ -1645,6 +1687,8 @@ static bool runtime_apply_pending_http_config(esp_bms_idf_runtime_t *runtime)
         return false;
     }
 
+    RUNTIME_SET_FLAG(runtime, HTTP_CONFIG_APPLIED, true);
+
     const bool changed = runtime->brightness_percent != brightness_percent ||
                          runtime->volume_percent != volume_percent ||
                          runtime->display_rotation != rotation ||
@@ -1652,7 +1696,8 @@ static bool runtime_apply_pending_http_config(esp_bms_idf_runtime_t *runtime)
                          RUNTIME_FLAG(runtime, LANGUAGE_ZH) != language_zh ||
                          runtime->bms_type != bms_type;
     if (!changed) {
-        return false;
+        ESP_LOGI(TAG, "[http] config consumed without value changes");
+        return true;
     }
 
     (void)runtime_set_brightness_percent(runtime, brightness_percent);
@@ -2488,8 +2533,11 @@ static esp_err_t runtime_load_bms_binding(esp_bms_idf_runtime_t *runtime)
     }
 
     char mac[sizeof(runtime->bms_bound_mac)] = { 0 };
+    char name[sizeof(runtime->bms_bound_name)] = { 0 };
     size_t mac_len = sizeof(mac);
     ret = nvs_get_str(handle, BMS_NVS_BOUND_MAC_KEY, mac, &mac_len);
+    size_t name_len = sizeof(name);
+    const esp_err_t name_ret = nvs_get_str(handle, BMS_NVS_BOUND_NAME_KEY, name, &name_len);
     nvs_close(handle);
     if (ret != ESP_OK) {
         return ret;
@@ -2502,6 +2550,17 @@ static esp_err_t runtime_load_bms_binding(esp_bms_idf_runtime_t *runtime)
     }
 
     runtime_copy_snapshot_text(runtime->bms_bound_mac, sizeof(runtime->bms_bound_mac), normalized_mac);
+    if (name_ret == ESP_OK) {
+        (void)runtime_bms_name_copy(runtime->bms_bound_name,
+                                    sizeof(runtime->bms_bound_name),
+                                    (const uint8_t *)name,
+                                    strlen(name));
+    } else {
+        runtime->bms_bound_name[0] = '\0';
+    }
+    runtime_copy_snapshot_text(runtime->snapshot.bms_bound_name,
+                               sizeof(runtime->snapshot.bms_bound_name),
+                               runtime->bms_bound_name);
     return ESP_OK;
 }
 
@@ -2528,6 +2587,9 @@ static esp_err_t runtime_save_bms_binding(esp_bms_idf_runtime_t *runtime)
     }
 
     ret = nvs_set_str(handle, BMS_NVS_BOUND_MAC_KEY, normalized_mac);
+    if (ret == ESP_OK) {
+        ret = nvs_set_str(handle, BMS_NVS_BOUND_NAME_KEY, runtime->bms_bound_name);
+    }
     if (ret == ESP_OK) {
         ret = nvs_commit(handle);
     }
@@ -2641,7 +2703,7 @@ static bool runtime_apply_pending_http_bms_scan(esp_bms_idf_runtime_t *runtime)
     }
 
     ESP_LOGI(TAG, "[bms] consume pending BLE scan request");
-    RUNTIME_SET_FLAG(runtime, BMS_BIND_ACTIVE, true);
+    RUNTIME_SET_FLAG(runtime, BMS_BIND_ACTIVE, false);
     runtime_clear_bms_telemetry(runtime);
     runtime_bms_scan_clear_candidates(runtime);
 
@@ -2699,13 +2761,39 @@ static bool runtime_apply_pending_http_bms_bind(esp_bms_idf_runtime_t *runtime)
     }
 
     char previous_mac[sizeof(runtime->bms_bound_mac)] = { 0 };
+    char previous_name[sizeof(runtime->bms_bound_name)] = { 0 };
+    char selected_name[sizeof(runtime->bms_bound_name)] = { 0 };
+    if (!runtime->bms_scan_lock ||
+        xSemaphoreTake(runtime->bms_scan_lock, pdMS_TO_TICKS(100)) == pdTRUE) {
+        const size_t candidate_index = runtime_bms_scan_find_candidate(runtime, mac);
+        if (candidate_index < ESP_BMS_IDF_BMS_SCAN_MAX_CANDIDATES &&
+            runtime->bms_scan_candidates[candidate_index].has_name) {
+            runtime_copy_snapshot_text(selected_name,
+                                       sizeof(selected_name),
+                                       runtime->bms_scan_candidates[candidate_index].name);
+        }
+        if (runtime->bms_scan_lock) {
+            xSemaphoreGive(runtime->bms_scan_lock);
+        }
+    }
     if (xSemaphoreTake(runtime->http_pending_lock, pdMS_TO_TICKS(100)) != pdTRUE) {
         return false;
     }
     runtime_copy_snapshot_text(previous_mac, sizeof(previous_mac), runtime->bms_bound_mac);
+    runtime_copy_snapshot_text(previous_name, sizeof(previous_name), runtime->bms_bound_name);
     if (strcmp(mac, runtime->bms_bound_mac) != 0) {
         runtime_copy_snapshot_text(runtime->bms_bound_mac, sizeof(runtime->bms_bound_mac), mac);
+        runtime_copy_snapshot_text(runtime->bms_bound_name,
+                                   sizeof(runtime->bms_bound_name),
+                                   selected_name);
+    } else if (selected_name[0] != '\0') {
+        runtime_copy_snapshot_text(runtime->bms_bound_name,
+                                   sizeof(runtime->bms_bound_name),
+                                   selected_name);
     }
+    runtime_copy_snapshot_text(runtime->snapshot.bms_bound_name,
+                               sizeof(runtime->snapshot.bms_bound_name),
+                               runtime->bms_bound_name);
     xSemaphoreGive(runtime->http_pending_lock);
 
     esp_err_t ret = runtime_save_bms_binding(runtime);
@@ -2726,6 +2814,12 @@ static bool runtime_apply_pending_http_bms_bind(esp_bms_idf_runtime_t *runtime)
         runtime_copy_snapshot_text(runtime->bms_bound_mac,
                                    sizeof(runtime->bms_bound_mac),
                                    previous_mac);
+        runtime_copy_snapshot_text(runtime->bms_bound_name,
+                                   sizeof(runtime->bms_bound_name),
+                                   previous_name);
+        runtime_copy_snapshot_text(runtime->snapshot.bms_bound_name,
+                                   sizeof(runtime->snapshot.bms_bound_name),
+                                   previous_name);
         xSemaphoreGive(runtime->http_pending_lock);
     }
     runtime_set_bms_info(runtime, "BMS SAVE");
@@ -2828,9 +2922,14 @@ static int runtime_bms_ble_write_cb(uint16_t conn_handle,
 
     if (runtime->bms_ble_phase == (uint8_t)BMS_BLE_PHASE_SUBSCRIBING) {
         runtime->bms_ble_phase = (uint8_t)BMS_BLE_PHASE_ONLINE;
-        runtime->bms_status_poll_elapsed_ms = BMS_STATUS_POLL_PERIOD_MS;
         runtime_set_bms_info(runtime, "BMS ON");
-        ESP_LOGI(TAG, "[bms] notifications subscribed: conn=%u", conn_handle);
+        ESP_LOGI(TAG, "[bms] notifications subscribed: conn=%u cccd=%u",
+                 conn_handle, runtime->bms_cccd_handle);
+        const esp_err_t poll_ret = runtime_bms_ble_send_poll_request(runtime, false);
+        if (poll_ret != ESP_OK) {
+            runtime->bms_status_poll_elapsed_ms = BMS_STATUS_POLL_PERIOD_MS;
+            ESP_LOGW(TAG, "[bms] initial status poll failed: %s", esp_err_to_name(poll_ret));
+        }
     }
     return 0;
 }
@@ -2860,7 +2959,8 @@ static esp_err_t runtime_bms_ble_write_frame(esp_bms_idf_runtime_t *runtime,
     return ESP_OK;
 }
 
-static esp_err_t runtime_bms_ble_send_poll_request(esp_bms_idf_runtime_t *runtime)
+static esp_err_t runtime_bms_ble_send_poll_request(esp_bms_idf_runtime_t *runtime,
+                                                   bool include_device_info)
 {
     static const uint8_t status_request[] = {
         0x7E, 0xA1, 0x01, 0x00, 0x00, 0xBE, 0x18, 0x55, 0xAA, 0x55,
@@ -2875,7 +2975,8 @@ static esp_err_t runtime_bms_ble_send_poll_request(esp_bms_idf_runtime_t *runtim
 
     const uint8_t *frame = status_request;
     size_t frame_len = sizeof(status_request);
-    const bool send_device_info = !RUNTIME_FLAG(runtime, BMS_DEVICE_INFO_REQUESTED);
+    const bool send_device_info = include_device_info &&
+                                  !RUNTIME_FLAG(runtime, BMS_DEVICE_INFO_REQUESTED);
     if (send_device_info) {
         frame = device_info_request;
         frame_len = sizeof(device_info_request);
@@ -2887,6 +2988,11 @@ static esp_err_t runtime_bms_ble_send_poll_request(esp_bms_idf_runtime_t *runtim
         if (send_device_info) {
             RUNTIME_SET_FLAG(runtime, BMS_DEVICE_INFO_REQUESTED, true);
         }
+        ESP_LOGI(TAG, "[bms] poll sent: type=%s conn=%u handle=%u len=%u",
+                 send_device_info ? "device-info" : "status",
+                 runtime->bms_conn_handle,
+                 runtime->bms_char_val_handle,
+                 (unsigned)frame_len);
     }
     return ret;
 }
@@ -2928,6 +3034,8 @@ static int runtime_bms_ble_dsc_cb(uint16_t conn_handle,
     if (error && error->status == 0 && dsc) {
         if (ble_uuid_cmp(&dsc->uuid.u, BLE_UUID16_DECLARE(BLE_GATT_DSC_CLT_CFG_UUID16)) == 0) {
             runtime->bms_cccd_handle = dsc->handle;
+            ESP_LOGI(TAG, "[bms] CCCD discovered: conn=%u value_handle=%u cccd=%u",
+                     conn_handle, chr_val_handle, dsc->handle);
         }
         return 0;
     }
@@ -2966,8 +3074,12 @@ static esp_err_t runtime_bms_ble_start_descriptor_discovery(esp_bms_idf_runtime_
 
     runtime->bms_ble_phase = (uint8_t)BMS_BLE_PHASE_DISCOVERING_CCCD;
     runtime->bms_cccd_handle = 0;
+    ESP_LOGI(TAG, "[bms] descriptor discovery: conn=%u start=%u end=%u",
+             runtime->bms_conn_handle,
+             runtime->bms_char_val_handle,
+             runtime->bms_service_end_handle);
     const int rc = ble_gattc_disc_all_dscs(runtime->bms_conn_handle,
-                                           runtime->bms_char_val_handle + 1U,
+                                           runtime->bms_char_val_handle,
                                            runtime->bms_service_end_handle,
                                            runtime_bms_ble_dsc_cb,
                                            runtime);
@@ -2986,6 +3098,8 @@ static int runtime_bms_ble_chr_cb(uint16_t conn_handle,
 
     if (error && error->status == 0 && chr) {
         runtime->bms_char_val_handle = chr->val_handle;
+        ESP_LOGI(TAG, "[bms] characteristic FFE1 discovered: def=%u value=%u props=0x%02x",
+                 chr->def_handle, chr->val_handle, chr->properties);
         if ((chr->properties & BLE_GATT_CHR_PROP_NOTIFY) == 0U) {
             ESP_LOGW(TAG, "[bms] characteristic has no notify property: props=0x%02x",
                      chr->properties);
@@ -3048,6 +3162,8 @@ static int runtime_bms_ble_service_cb(uint16_t conn_handle,
     if (error && error->status == 0 && service) {
         runtime->bms_service_start_handle = service->start_handle;
         runtime->bms_service_end_handle = service->end_handle;
+        ESP_LOGI(TAG, "[bms] service FFE0 discovered: start=%u end=%u",
+                 service->start_handle, service->end_handle);
         return 0;
     }
 
@@ -3142,6 +3258,9 @@ static void runtime_bms_ble_handle_notification(esp_bms_idf_runtime_t *runtime,
         return;
     }
 
+    ESP_LOGI(TAG, "[bms] notification received: attr=%u len=%d",
+             event->notify_rx.attr_handle, len);
+
     uint8_t chunk[ESP_BMS_IDF_BMS_FRAME_MAX_LEN] = { 0 };
     const int rc = os_mbuf_copydata(event->notify_rx.om, 0, len, chunk);
     if (rc != 0 || !runtime_bms_frame_push(runtime, chunk, (size_t)len)) {
@@ -3168,14 +3287,11 @@ static int runtime_bms_ble_gap_event(struct ble_gap_event *event, void *arg)
         char name[ESP_BMS_IDF_BMS_SCAN_NAME_LEN + 1U] = { 0 };
         runtime_ble_addr_to_mac_text(event->disc.addr.val, mac, sizeof(mac));
         const bool has_name = runtime_bms_name_copy(name, sizeof(name), fields.name, fields.name_len);
-        const bool matches_binding = runtime->bms_bound_mac[0] != '\0' &&
+        const bool matches_binding = RUNTIME_FLAG(runtime, BMS_BIND_ACTIVE) &&
+                                     runtime->bms_bound_mac[0] != '\0' &&
                                      strcmp(mac, runtime->bms_bound_mac) == 0;
-        const bool looks_like_ant = has_name && runtime_bms_name_matches_ant(name);
-        const bool has_ant_service = runtime_bms_adv_has_ant_service(&fields);
-        if (matches_binding || looks_like_ant || has_ant_service) {
-            const int8_t rssi = event->disc.rssi == 127 ? INT8_MIN : event->disc.rssi;
-            runtime_bms_scan_store_candidate(runtime, mac, has_name ? name : NULL, rssi);
-        }
+        const int8_t rssi = event->disc.rssi == 127 ? INT8_MIN : event->disc.rssi;
+        runtime_bms_scan_store_candidate(runtime, mac, has_name ? name : NULL, rssi);
         if (matches_binding) {
             const esp_err_t ret = runtime_bms_ble_connect_to_disc(runtime, &event->disc, mac);
             if (ret != ESP_OK) {
@@ -3253,6 +3369,15 @@ static esp_err_t runtime_bms_ble_start_scan(esp_bms_idf_runtime_t *runtime)
         return ESP_ERR_INVALID_STATE;
     }
 
+    if (RUNTIME_FLAG(runtime, BMS_SCAN_ACTIVE) || ble_gap_disc_active()) {
+        RUNTIME_SET_FLAG(runtime, BMS_SCAN_REQUESTED, false);
+        RUNTIME_SET_FLAG(runtime, BMS_SCAN_ACTIVE, true);
+        runtime->bms_ble_phase = (uint8_t)BMS_BLE_PHASE_SCANNING;
+        runtime_set_bms_info(runtime, "BMS SCAN");
+        ESP_LOGI(TAG, "[bms] BLE scan request reused active discovery");
+        return ESP_OK;
+    }
+
     const esp_err_t local_bt_ret = runtime_bluetooth_stop_for_bms_scan(runtime);
     if (local_bt_ret != ESP_OK) {
         RUNTIME_SET_FLAG(runtime, BMS_SCAN_REQUESTED, true);
@@ -3264,10 +3389,6 @@ static esp_err_t runtime_bms_ble_start_scan(esp_bms_idf_runtime_t *runtime)
         (void)ble_gap_terminate(runtime->bms_conn_handle, BLE_ERR_REM_USER_CONN_TERM);
         return ESP_ERR_INVALID_STATE;
     }
-    if (ble_gap_disc_active()) {
-        (void)ble_gap_disc_cancel();
-    }
-
     uint8_t own_addr_type = 0;
     const int addr_rc = ble_hs_id_infer_auto(0, &own_addr_type);
     if (addr_rc != 0) {
@@ -4046,14 +4167,15 @@ bool esp_bms_idf_runtime_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_m
         return false;
     }
 
-    bool changed = RUNTIME_FLAG(runtime, BLUETOOTH_SNAPSHOT_DIRTY);
+    bool changed = RUNTIME_FLAG(runtime, BLUETOOTH_SNAPSHOT_DIRTY) ||
+                   RUNTIME_FLAG(runtime, BMS_SNAPSHOT_DIRTY);
     RUNTIME_SET_FLAG(runtime, BLUETOOTH_SNAPSHOT_DIRTY, false);
+    RUNTIME_SET_FLAG(runtime, BMS_SNAPSHOT_DIRTY, false);
     if (RUNTIME_FLAG(runtime, BMS_SCAN_SNAPSHOT_DIRTY)) {
         RUNTIME_SET_FLAG(runtime, BMS_SCAN_SNAPSHOT_DIRTY, false);
         (void)runtime_bms_scan_project_snapshot(runtime);
         changed = true;
     }
-    changed = runtime_apply_pending_http_config(runtime) || changed;
     changed = runtime_apply_pending_http_ap_password(runtime) || changed;
     changed = runtime_apply_pending_http_bms_scan(runtime) || changed;
     changed = runtime_apply_pending_http_bms_bind(runtime) || changed;
@@ -4072,7 +4194,7 @@ bool esp_bms_idf_runtime_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_m
         runtime->bms_status_poll_elapsed_ms += elapsed_ms;
         if (runtime->bms_status_poll_elapsed_ms >= BMS_STATUS_POLL_PERIOD_MS &&
             !RUNTIME_FLAG(runtime, BMS_WRITE_IN_FLIGHT)) {
-            const esp_err_t poll_ret = runtime_bms_ble_send_poll_request(runtime);
+            const esp_err_t poll_ret = runtime_bms_ble_send_poll_request(runtime, true);
             if (poll_ret != ESP_OK) {
                 runtime_set_bms_info(runtime, "BMS POLL");
                 ESP_LOGW(TAG, "[bms] poll request failed: %s", esp_err_to_name(poll_ret));
@@ -4204,6 +4326,9 @@ bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,
     case ESP_BMS_LVGL_ACTION_SHOW_QUICK_MENU:
     case ESP_BMS_LVGL_ACTION_SHOW_SETTINGS:
     case ESP_BMS_LVGL_ACTION_CYCLE_LEVEL_POSITION:
+    case ESP_BMS_LVGL_ACTION_START_TOUCH_CALIBRATION:
+    case ESP_BMS_LVGL_ACTION_ADD_TOUCH_CALIBRATION_SAMPLE:
+    case ESP_BMS_LVGL_ACTION_CANCEL_TOUCH_CALIBRATION:
         return false;
     case ESP_BMS_LVGL_ACTION_NONE:
     default:
@@ -4248,6 +4373,12 @@ const char *esp_bms_idf_runtime_action_name(esp_bms_lvgl_action_t action)
         return "enable-bluetooth-advertising";
     case ESP_BMS_LVGL_ACTION_CYCLE_LEVEL_POSITION:
         return "cycle-level-position";
+    case ESP_BMS_LVGL_ACTION_START_TOUCH_CALIBRATION:
+        return "start-touch-calibration";
+    case ESP_BMS_LVGL_ACTION_ADD_TOUCH_CALIBRATION_SAMPLE:
+        return "add-touch-calibration-sample";
+    case ESP_BMS_LVGL_ACTION_CANCEL_TOUCH_CALIBRATION:
+        return "cancel-touch-calibration";
     case ESP_BMS_LVGL_ACTION_SELECT_BMS_ANT:
         return "select-bms-ant";
     case ESP_BMS_LVGL_ACTION_SELECT_BMS_JK:

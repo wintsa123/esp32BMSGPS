@@ -59,12 +59,8 @@
    - `./scripts/esp-idf-env.sh build`
 10. Run GitNexus detect changes:
    - `node .gitnexus/run.cjs detect-changes -r esp32BMSGPS`
-11. Flash through RFC2217:
-   - preferred project endpoint
-     `rfc2217://192.168.2.10:4000?ign_set_control` at `115200`.
-   - use app chunk flashing if full app flash times out.
-12. Monitor and validate acceptance criteria on hardware, including repeated
-    hotspot toggles and BMS subpage navigation.
+11. Do not flash for this follow-up. The user explicitly requested preview-only
+    UI validation after the successful ESP-IDF build.
 
 ## Risk Areas
 
