@@ -58,6 +58,24 @@ static bool block_valid(const esp_fardriver_state_t *state, uint8_t address)
     return (state->block_valid[address >> 3U] & (uint8_t)(1U << (address & 7U))) != 0U;
 }
 
+bool esp_fardriver_tire_circumference_mm(uint8_t rim_inch,
+                                         uint8_t aspect_percent,
+                                         uint16_t width_mm,
+                                         uint16_t *circumference_mm)
+{
+    if (!circumference_mm || rim_inch == 0U || aspect_percent == 0U || width_mm == 0U) {
+        return false;
+    }
+    const float diameter_mm = (float)rim_inch * 25.4f +
+                              2.0f * (float)width_mm * (float)aspect_percent / 100.0f;
+    const long rounded_mm = lroundf(diameter_mm * 3.14159265f);
+    if (rounded_mm <= 0L || rounded_mm > UINT16_MAX) {
+        return false;
+    }
+    *circumference_mm = (uint16_t)rounded_mm;
+    return true;
+}
+
 static void store_extended_block(esp_fardriver_state_t *state, uint8_t base, const uint8_t *data)
 {
     for (uint8_t offset = 0; offset < 6U; ++offset) {
@@ -134,16 +152,30 @@ void esp_fardriver_refresh_derived(esp_fardriver_state_t *state)
         }
         state->power_valid = true;
     }
-    if (block_valid(state, 0xD0U) && block_valid(state, 0xD1U) && block_valid(state, 0xD2U)) {
-        const uint8_t radius = state->blocks[0xD0U][0];
-        const uint8_t width = state->blocks[0xD0U][1];
-        const uint16_t wheel_ratio = le16(state->blocks[0xD1U]);
-        const uint16_t rate_ratio = le16(state->blocks[0xD2U]);
-        if (rate_ratio > 0U) {
-            state->wheel_circumference_mm =
-                (uint16_t)lroundf(3.76991136f * (radius * 1270.0f + width * wheel_ratio) / rate_ratio);
-            state->gear_ratio_centi = 100U;
-            state->controller_speed_params_valid = state->wheel_circumference_mm > 0U;
+    state->controller_speed_params_valid = false;
+    state->tire_rim_inch = 0U;
+    state->tire_aspect_percent = 0U;
+    state->tire_width_mm = 0U;
+    state->wheel_circumference_mm = 0U;
+    state->gear_ratio_centi = 0U;
+    if (block_valid(state, 0xD2U) && block_valid(state, 0xD3U) && block_valid(state, 0xD4U)) {
+        const uint8_t aspect_percent = state->blocks[0xD2U][0];
+        const uint8_t rim_inch = state->blocks[0xD2U][1];
+        const uint16_t width_mm = le16(state->blocks[0xD3U]);
+        const uint16_t rate_ratio = le16(state->blocks[0xD4U]);
+        const uint32_t ratio_centi = ((uint32_t)rate_ratio * 100U + 30U) / 60U;
+        uint16_t circumference_mm = 0U;
+        if (ratio_centi > 0U && ratio_centi <= UINT16_MAX &&
+            esp_fardriver_tire_circumference_mm(rim_inch,
+                                                aspect_percent,
+                                                width_mm,
+                                                &circumference_mm)) {
+            state->tire_rim_inch = rim_inch;
+            state->tire_aspect_percent = aspect_percent;
+            state->tire_width_mm = width_mm;
+            state->wheel_circumference_mm = circumference_mm;
+            state->gear_ratio_centi = (uint16_t)ratio_centi;
+            state->controller_speed_params_valid = true;
         }
     }
     const uint16_t circumference = state->controller_speed_params_valid
@@ -152,10 +184,16 @@ void esp_fardriver_refresh_derived(esp_fardriver_state_t *state)
     const uint16_t ratio = state->controller_speed_params_valid
                                ? state->gear_ratio_centi
                                : state->fallback_gear_ratio_centi;
+    state->speed_deci_kmh = 0U;
     state->speed_valid = state->rpm_valid && circumference > 0U && ratio > 0U;
     if (state->speed_valid) {
-        state->speed_deci_kmh = (uint16_t)(((uint64_t)state->rpm * circumference * 6000ULL) /
-                                          ((uint64_t)ratio * 1000000ULL));
+        const uint64_t speed_deci_kmh =
+            ((uint64_t)state->rpm * circumference * 60000ULL) /
+            ((uint64_t)ratio * 1000000ULL);
+        state->speed_valid = speed_deci_kmh <= UINT16_MAX;
+        if (state->speed_valid) {
+            state->speed_deci_kmh = (uint16_t)speed_deci_kmh;
+        }
     }
 }
 
@@ -186,4 +224,3 @@ bool esp_fardriver_parse_frame(esp_fardriver_state_t *state,
     esp_fardriver_refresh_derived(state);
     return true;
 }
-

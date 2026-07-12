@@ -29,6 +29,9 @@ typedef struct {
     int32_t power_w;
     int16_t controller_temp_c;
     int16_t motor_temp_c;
+    uint8_t tire_rim_inch;
+    uint8_t tire_aspect_percent;
+    uint16_t tire_width_mm;
     uint16_t wheel_circumference_mm;
     uint16_t gear_ratio_centi;
     uint16_t fallback_wheel_circumference_mm;
@@ -39,6 +42,10 @@ typedef struct {
 } esp_fardriver_state_t;
 
 uint16_t esp_fardriver_crc(const uint8_t *data, size_t len);
+bool esp_fardriver_tire_circumference_mm(uint8_t rim_inch,
+                                         uint8_t aspect_percent,
+                                         uint16_t width_mm,
+                                         uint16_t *circumference_mm);
 bool esp_fardriver_parse_frame(esp_fardriver_state_t *state,
                                const uint8_t *frame,
                                size_t len,
@@ -48,4 +55,3 @@ void esp_fardriver_refresh_derived(esp_fardriver_state_t *state);
 #ifdef __cplusplus
 }
 #endif
-
