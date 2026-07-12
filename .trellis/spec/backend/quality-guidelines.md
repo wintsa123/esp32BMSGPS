@@ -675,14 +675,23 @@ bound device update the runtime snapshot.
   `esp_bms_idf_runtime_set_active_data_source()`.
 - Parser entry: `esp_fardriver_parse_frame()` for 16-byte compact or extended
   frames with FarDriver CRC.
-- Persistent keys: `ctrl_conn`, `ctrl_page`, `ctrl_wheel`, `ctrl_ratio`,
-  `ctrl_mac`, and `ctrl_name` in namespace `esp_bms`.
+- Absolute setting actions: `ESP_BMS_LVGL_ACTION_SET_CONTROLLER_TIRE` carries
+  `controller_tire_rim_inch`, `controller_tire_aspect_percent`, and
+  `controller_tire_width_mm`; `ESP_BMS_LVGL_ACTION_SET_CONTROLLER_RATIO`
+  carries `controller_gear_ratio_centi`. Both require
+  `ESP_BMS_LVGL_ACTION_EVENT_FLAG_CONTROLLER_SETTING_VALID`.
+- Persistent keys: `ctl_conn`, `ctl_page`, legacy `ctl_wheel`, `ctl_ratio`,
+  `ctl_rim`, `ctl_aspect`, `ctl_width`, `ctl_mac`, and `ctl_name` in namespace
+  `esp_bms`.
+- Snapshot source: `controller_param_source` is one of unset, legacy wheel,
+  local specification, or controller-provided parameters. Snapshot fields keep
+  effective values separate from `controller_fallback_*` values.
 
 ### 3. Contracts
 
-- Missing controller keys load as disabled/zero without invalidating older
-  display settings. Restore defaults clears switches and fallback values but
-  preserves the bound MAC and name.
+- Missing controller keys do not invalidate older display settings. Tire
+  specification defaults to unset and ratio defaults to `1.00`; restore
+  defaults restores those values while preserving the bound MAC and name.
 - `controller_page_enabled` is the master lifecycle switch. When it is false,
   force controller connection state off, hide connection/bind UI, stop scan
   intent, and terminate current or late-arriving connections without clearing
@@ -693,13 +702,30 @@ bound device update the runtime snapshot.
 - A different bound MAC must terminate the current controller connection and
   defer scanning until the disconnect callback; never display a new binding
   while continuing to consume the old connection.
-- Controller speed parameters take priority over complete user fallback
-  circumference/ratio values. Incomplete parameters keep speed invalid.
+- FarDriver extended parameters come from `D2` (aspect/rim), `D3` (width), and
+  `D4` (`RateRatio`). Circumference uses the standard tire-diameter formula,
+  gear ratio is `RateRatio / 60`, and deci-km/h uses a 64-bit `60000` scale
+  factor. Controller parameters take priority over fallback values.
+- A complete in-range controller tuple synchronizes local tire/ratio fallback
+  values and raises one deferred settings-save request. Repeated frames with
+  the same tuple must not write NVS again. An out-of-editor-range tuple remains
+  effective/read-only but must not clamp or overwrite local fallback values.
+- Complete valid `ctl_rim`/`ctl_aspect`/`ctl_width` values recalculate
+  `ctl_wheel`. When only legacy `ctl_wheel` exists, retain it and project the
+  legacy-wheel source until the user confirms a new tire specification.
 
 ### 4. Validation & Error Matrix
 
 - Invalid length, header, index, or CRC -> reject the frame and retain the last
   validated telemetry.
+- Missing/zero `D2/D3/D4` inputs or arithmetic overflow -> controller speed
+  parameters invalid; use a complete local fallback or keep speed invalid.
+- Saved tire fields are partial, off-step, or out of range -> ignore the new
+  tuple and retain a valid legacy circumference; do not invalidate unrelated
+  display settings.
+- Controller tuple is valid for calculation but outside roller limits -> use
+  it for speed and read-only display, log one rejected-sync transition, and
+  leave fallback/NVS unchanged.
 - Disabled connection -> clear controller scan intent and terminate an active
   controller connection.
 - Connect callback arrives after the page or connection was disabled ->
@@ -712,16 +738,19 @@ bound device update the runtime snapshot.
 ### 5. Good/Base/Bad Cases
 
 - Good: controller page settles, CCCD enables, validated FFEC frames update
-  fixed label buffers; leaving the page disables the CCCD.
-- Base: page is enabled without a controller; all six telemetry values stay
-  invalid and the battery/controller/GPS mapping remains stable.
-- Bad: selecting a new MAC while connected only overwrites NVS and leaves the
-  old GATT connection active.
+  fixed label buffers; `12-70-90` plus `RateRatio=60` projects about `1353 mm`
+  and ratio `1.00`, then schedules one persistence update.
+- Base: page is enabled without a controller; telemetry stays invalid, tire
+  and ratio rows stay disabled, and legacy `ctl_wheel` still loads safely.
+- Bad: clamping a controller-provided `26-110-210` tuple into roller limits,
+  overwriting the user's fallback on every notification, or selecting a new
+  MAC while leaving the old GATT connection active.
 
 ### 6. Tests Required
 
-- Run the host parser self-test for compact/extended frames, CRC, telemetry,
-  internal speed parameters, fallback speed, and invalid frames.
+- Run the host parser self-test for compact/extended frames, exact `D2/D3/D4`
+  offsets, `12-70-90 ~= 1353 mm`, `RateRatio=60 -> 1.00`, exact fallback and
+  controller-priority speed, CRC, zero divisors, and overflow.
 - Run `git diff --check`, `./scripts/esp-idf-env.sh build`, GitNexus
   `detect-changes`, and one RFC2217 flash plus boot-log capture.
 - On hardware, verify two-page/three-page mapping, settings return, rotation,
@@ -742,6 +771,24 @@ start_controller_if_enabled(); /* old conn_handle makes this a no-op */
 copy_bound_mac(new_mac);
 request_controller_scan_after_disconnect();
 ble_gap_terminate(old_conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+```
+
+#### Wrong
+
+```c
+/* A notification callback writes NVS every time or clamps controller data. */
+fallback_rim = clamp(controller_rim, 8, 24);
+esp_bms_idf_runtime_save_display_settings(runtime);
+```
+
+#### Correct
+
+```c
+/* Cache the observed tuple, sync only selectable values, save from main. */
+if (controller_tuple_changed && controller_tuple_is_selectable) {
+    copy_controller_tuple_to_fallback();
+    RUNTIME_SET_FLAG(runtime, CONTROLLER_SETTINGS_SAVE_REQUESTED, true);
+}
 ```
 
 ## Validation Matrix
