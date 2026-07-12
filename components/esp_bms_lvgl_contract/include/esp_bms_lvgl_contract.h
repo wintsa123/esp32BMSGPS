@@ -34,3 +34,7 @@
 #if !LV_USE_QRCODE
 #error "ESP BMS LVGL components require CONFIG_LV_USE_QRCODE=y"
 #endif
+
+#if !LV_USE_ROLLER
+#error "ESP BMS LVGL components require CONFIG_LV_USE_ROLLER=y"
+#endif

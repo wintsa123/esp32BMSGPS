@@ -67,6 +67,7 @@ typedef enum {
 #define ESP_BMS_IDF_RUNTIME_FLAG_CONTROLLER_SCAN_ACTIVE (UINT64_C(1) << 39)
 #define ESP_BMS_IDF_RUNTIME_FLAG_CONTROLLER_SNAPSHOT_DIRTY (UINT64_C(1) << 40)
 #define ESP_BMS_IDF_RUNTIME_FLAG_CONTROLLER_SUBSCRIBED (UINT64_C(1) << 41)
+#define ESP_BMS_IDF_RUNTIME_FLAG_CONTROLLER_SETTINGS_SAVE_REQUESTED (UINT64_C(1) << 42)
 
 typedef esp_bms_bms_scan_candidate_t esp_bms_idf_bms_scan_candidate_t;
 
@@ -86,6 +87,7 @@ typedef struct {
     uint32_t gps_speed_knots_milli;
     uint32_t bms_status_poll_elapsed_ms;
     uint32_t controller_keepalive_elapsed_ms;
+    uint32_t controller_scan_revision;
     uint16_t gps_line_len;
     uint16_t bms_frame_len;
     uint16_t bms_conn_handle;
@@ -125,6 +127,13 @@ typedef struct {
     uint8_t controller_scan_candidate_count;
     bool controller_connection_enabled;
     bool controller_page_enabled;
+    uint8_t controller_fallback_tire_rim_inch;
+    uint8_t controller_fallback_tire_aspect_percent;
+    uint16_t controller_fallback_tire_width_mm;
+    uint8_t controller_observed_tire_rim_inch;
+    uint8_t controller_observed_tire_aspect_percent;
+    uint16_t controller_observed_tire_width_mm;
+    uint16_t controller_observed_gear_ratio_centi;
     esp_bms_lvgl_data_source_t active_data_source;
     esp_fardriver_state_t controller_state;
     uint8_t http_pending_brightness_percent;

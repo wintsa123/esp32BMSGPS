@@ -88,8 +88,22 @@ static const char *TAG = "bms_idf_runtime";
 #define CONTROLLER_NVS_PAGE_KEY "ctl_page"
 #define CONTROLLER_NVS_WHEEL_KEY "ctl_wheel"
 #define CONTROLLER_NVS_RATIO_KEY "ctl_ratio"
+#define CONTROLLER_NVS_RIM_KEY "ctl_rim"
+#define CONTROLLER_NVS_ASPECT_KEY "ctl_aspect"
+#define CONTROLLER_NVS_WIDTH_KEY "ctl_width"
 #define CONTROLLER_NVS_BOUND_MAC_KEY "ctl_mac"
 #define CONTROLLER_NVS_BOUND_NAME_KEY "ctl_name"
+#define CONTROLLER_TIRE_RIM_MIN ESP_BMS_CONTROLLER_TIRE_RIM_MIN
+#define CONTROLLER_TIRE_RIM_MAX ESP_BMS_CONTROLLER_TIRE_RIM_MAX
+#define CONTROLLER_TIRE_ASPECT_MIN ESP_BMS_CONTROLLER_TIRE_ASPECT_MIN
+#define CONTROLLER_TIRE_ASPECT_MAX ESP_BMS_CONTROLLER_TIRE_ASPECT_MAX
+#define CONTROLLER_TIRE_ASPECT_STEP ESP_BMS_CONTROLLER_TIRE_ASPECT_STEP
+#define CONTROLLER_TIRE_WIDTH_MIN ESP_BMS_CONTROLLER_TIRE_WIDTH_MIN
+#define CONTROLLER_TIRE_WIDTH_MAX ESP_BMS_CONTROLLER_TIRE_WIDTH_MAX
+#define CONTROLLER_TIRE_WIDTH_STEP ESP_BMS_CONTROLLER_TIRE_WIDTH_STEP
+#define CONTROLLER_RATIO_CENTI_MIN ESP_BMS_CONTROLLER_RATIO_CENTI_MIN
+#define CONTROLLER_RATIO_CENTI_MAX ESP_BMS_CONTROLLER_RATIO_CENTI_MAX
+#define CONTROLLER_RATIO_CENTI_DEFAULT ESP_BMS_CONTROLLER_RATIO_CENTI_DEFAULT
 #define HTTP_BODY_MAX_LEN 384U
 #define HTTP_JSON_MAX_LEN 1024U
 #define HTTP_AUTH_MAX_LEN 48U
@@ -172,6 +186,24 @@ static char runtime_hex_char(uint8_t value);
 
 static esp_bms_idf_runtime_t *s_bms_ble_runtime;
 
+static bool runtime_controller_tire_matches_policy(uint8_t rim_inch,
+                                                   uint8_t aspect_percent,
+                                                   uint16_t width_mm)
+{
+    return rim_inch >= CONTROLLER_TIRE_RIM_MIN && rim_inch <= CONTROLLER_TIRE_RIM_MAX &&
+           aspect_percent >= CONTROLLER_TIRE_ASPECT_MIN &&
+           aspect_percent <= CONTROLLER_TIRE_ASPECT_MAX &&
+           (aspect_percent - CONTROLLER_TIRE_ASPECT_MIN) % CONTROLLER_TIRE_ASPECT_STEP == 0U &&
+           width_mm >= CONTROLLER_TIRE_WIDTH_MIN && width_mm <= CONTROLLER_TIRE_WIDTH_MAX &&
+           (width_mm - CONTROLLER_TIRE_WIDTH_MIN) % CONTROLLER_TIRE_WIDTH_STEP == 0U;
+}
+
+static bool runtime_controller_ratio_matches_policy(uint16_t ratio_centi)
+{
+    return ratio_centi >= CONTROLLER_RATIO_CENTI_MIN &&
+           ratio_centi <= CONTROLLER_RATIO_CENTI_MAX;
+}
+
 static void runtime_project_controller_snapshot(esp_bms_idf_runtime_t *runtime)
 {
     esp_bms_dashboard_snapshot_t *snapshot = &runtime->snapshot;
@@ -194,8 +226,39 @@ static void runtime_project_controller_snapshot(esp_bms_idf_runtime_t *runtime)
     snapshot->controller_power_w = state->power_w;
     snapshot->controller_temp_c = state->controller_temp_c;
     snapshot->motor_temp_c = state->motor_temp_c;
+    snapshot->controller_fallback_tire_rim_inch = runtime->controller_fallback_tire_rim_inch;
+    snapshot->controller_fallback_tire_aspect_percent =
+        runtime->controller_fallback_tire_aspect_percent;
+    snapshot->controller_fallback_tire_width_mm = runtime->controller_fallback_tire_width_mm;
+    snapshot->controller_fallback_wheel_circumference_mm =
+        state->fallback_wheel_circumference_mm;
+    snapshot->controller_fallback_gear_ratio_centi = state->fallback_gear_ratio_centi;
+    snapshot->controller_tire_rim_inch = 0U;
+    snapshot->controller_tire_aspect_percent = 0U;
+    snapshot->controller_tire_width_mm = 0U;
     snapshot->controller_wheel_circumference_mm = state->fallback_wheel_circumference_mm;
     snapshot->controller_gear_ratio_centi = state->fallback_gear_ratio_centi;
+    snapshot->controller_scan_active = RUNTIME_FLAG(runtime, CONTROLLER_SCAN_ACTIVE) ? 1U : 0U;
+    snapshot->controller_scan_revision = runtime->controller_scan_revision;
+    snapshot->controller_param_source = (uint8_t)ESP_BMS_CONTROLLER_PARAM_SOURCE_UNSET;
+    if (state->controller_speed_params_valid) {
+        snapshot->controller_tire_rim_inch = state->tire_rim_inch;
+        snapshot->controller_tire_aspect_percent = state->tire_aspect_percent;
+        snapshot->controller_tire_width_mm = state->tire_width_mm;
+        snapshot->controller_wheel_circumference_mm = state->wheel_circumference_mm;
+        snapshot->controller_gear_ratio_centi = state->gear_ratio_centi;
+        snapshot->controller_param_source = (uint8_t)ESP_BMS_CONTROLLER_PARAM_SOURCE_CONTROLLER;
+    } else if (runtime_controller_tire_matches_policy(runtime->controller_fallback_tire_rim_inch,
+                                                       runtime->controller_fallback_tire_aspect_percent,
+                                                       runtime->controller_fallback_tire_width_mm)) {
+        snapshot->controller_tire_rim_inch = runtime->controller_fallback_tire_rim_inch;
+        snapshot->controller_tire_aspect_percent =
+            runtime->controller_fallback_tire_aspect_percent;
+        snapshot->controller_tire_width_mm = runtime->controller_fallback_tire_width_mm;
+        snapshot->controller_param_source = (uint8_t)ESP_BMS_CONTROLLER_PARAM_SOURCE_LOCAL;
+    } else if (state->fallback_wheel_circumference_mm > 0U) {
+        snapshot->controller_param_source = (uint8_t)ESP_BMS_CONTROLLER_PARAM_SOURCE_LEGACY_WHEEL;
+    }
     snapshot->controller_scan_candidate_count = runtime->controller_scan_candidate_count;
     memcpy(snapshot->controller_scan_candidates,
            runtime->controller_scan_candidates,
@@ -204,6 +267,59 @@ static void runtime_project_controller_snapshot(esp_bms_idf_runtime_t *runtime)
                                sizeof(snapshot->controller_bound_name),
                                runtime->controller_bound_name);
     RUNTIME_SET_FLAG(runtime, CONTROLLER_SNAPSHOT_DIRTY, true);
+}
+
+static void runtime_sync_controller_parameters(esp_bms_idf_runtime_t *runtime)
+{
+    const esp_fardriver_state_t *state = &runtime->controller_state;
+    if (!state->controller_speed_params_valid) {
+        return;
+    }
+    if (runtime->controller_observed_tire_rim_inch == state->tire_rim_inch &&
+        runtime->controller_observed_tire_aspect_percent == state->tire_aspect_percent &&
+        runtime->controller_observed_tire_width_mm == state->tire_width_mm &&
+        runtime->controller_observed_gear_ratio_centi == state->gear_ratio_centi) {
+        return;
+    }
+    runtime->controller_observed_tire_rim_inch = state->tire_rim_inch;
+    runtime->controller_observed_tire_aspect_percent = state->tire_aspect_percent;
+    runtime->controller_observed_tire_width_mm = state->tire_width_mm;
+    runtime->controller_observed_gear_ratio_centi = state->gear_ratio_centi;
+
+    if (!runtime_controller_tire_matches_policy(state->tire_rim_inch,
+                                                state->tire_aspect_percent,
+                                                state->tire_width_mm) ||
+        !runtime_controller_ratio_matches_policy(state->gear_ratio_centi)) {
+        ESP_LOGW(TAG,
+                 "[controller] parameters not synchronized: tire=%u-%u-%u ratio=%u.%02u",
+                 state->tire_rim_inch,
+                 state->tire_aspect_percent,
+                 state->tire_width_mm,
+                 state->gear_ratio_centi / 100U,
+                 state->gear_ratio_centi % 100U);
+        return;
+    }
+
+    if (runtime->controller_fallback_tire_rim_inch == state->tire_rim_inch &&
+        runtime->controller_fallback_tire_aspect_percent == state->tire_aspect_percent &&
+        runtime->controller_fallback_tire_width_mm == state->tire_width_mm &&
+        runtime->controller_state.fallback_gear_ratio_centi == state->gear_ratio_centi) {
+        return;
+    }
+    runtime->controller_fallback_tire_rim_inch = state->tire_rim_inch;
+    runtime->controller_fallback_tire_aspect_percent = state->tire_aspect_percent;
+    runtime->controller_fallback_tire_width_mm = state->tire_width_mm;
+    runtime->controller_state.fallback_wheel_circumference_mm =
+        state->wheel_circumference_mm;
+    runtime->controller_state.fallback_gear_ratio_centi = state->gear_ratio_centi;
+    RUNTIME_SET_FLAG(runtime, CONTROLLER_SETTINGS_SAVE_REQUESTED, true);
+    ESP_LOGI(TAG,
+             "[controller] parameters synchronized: tire=%u-%u-%u ratio=%u.%02u",
+             state->tire_rim_inch,
+             state->tire_aspect_percent,
+             state->tire_width_mm,
+             state->gear_ratio_centi / 100U,
+             state->gear_ratio_centi % 100U);
 }
 
 static void runtime_clear_controller_telemetry(esp_bms_idf_runtime_t *runtime)
@@ -1448,10 +1564,19 @@ static void runtime_reset_state(esp_bms_idf_runtime_t *runtime)
     runtime->controller_cccd_handle = 0;
     runtime->controller_ble_phase = BMS_BLE_PHASE_IDLE;
     runtime->controller_keepalive_elapsed_ms = 0;
+    runtime->controller_scan_revision = 0U;
     runtime->controller_connection_enabled = false;
     runtime->controller_page_enabled = false;
+    runtime->controller_fallback_tire_rim_inch = 0U;
+    runtime->controller_fallback_tire_aspect_percent = 0U;
+    runtime->controller_fallback_tire_width_mm = 0U;
+    runtime->controller_observed_tire_rim_inch = 0U;
+    runtime->controller_observed_tire_aspect_percent = 0U;
+    runtime->controller_observed_tire_width_mm = 0U;
+    runtime->controller_observed_gear_ratio_centi = 0U;
     runtime->active_data_source = ESP_BMS_LVGL_DATA_SOURCE_BMS;
     memset(&runtime->controller_state, 0, sizeof(runtime->controller_state));
+    runtime->controller_state.fallback_gear_ratio_centi = CONTROLLER_RATIO_CENTI_DEFAULT;
     runtime->bms_ble_phase = BMS_BLE_PHASE_IDLE;
     RUNTIME_SET_FLAG(runtime, BMS_WRITE_IN_FLIGHT, false);
     RUNTIME_SET_FLAG(runtime, BMS_DEVICE_INFO_REQUESTED, false);
@@ -1479,6 +1604,7 @@ static void runtime_reset_state(esp_bms_idf_runtime_t *runtime)
     RUNTIME_SET_FLAG(runtime, CONTROLLER_SCAN_REQUESTED, false);
     RUNTIME_SET_FLAG(runtime, CONTROLLER_SCAN_ACTIVE, false);
     RUNTIME_SET_FLAG(runtime, CONTROLLER_SUBSCRIBED, false);
+    RUNTIME_SET_FLAG(runtime, CONTROLLER_SETTINGS_SAVE_REQUESTED, false);
     (void)runtime_project_bluetooth_snapshot(runtime);
     runtime_bms_scan_clear_candidates(runtime);
     runtime_clear_bms_telemetry(runtime);
@@ -1642,6 +1768,9 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
     uint8_t bms_type = (uint8_t)ESP_BMS_IDF_BMS_TYPE_ANT;
     uint8_t controller_connection_enabled = 0;
     uint8_t controller_page_enabled = 0;
+    uint8_t controller_tire_rim_inch = 0;
+    uint8_t controller_tire_aspect_percent = 0;
+    uint16_t controller_tire_width_mm = 0;
     uint16_t controller_wheel_mm = 0;
     uint16_t controller_ratio_centi = 0;
 
@@ -1686,6 +1815,18 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
                                            &controller_ratio_centi);
     }
     if (ret == ESP_OK) {
+        ret = runtime_nvs_get_optional_u8(handle, CONTROLLER_NVS_RIM_KEY,
+                                          &controller_tire_rim_inch);
+    }
+    if (ret == ESP_OK) {
+        ret = runtime_nvs_get_optional_u8(handle, CONTROLLER_NVS_ASPECT_KEY,
+                                          &controller_tire_aspect_percent);
+    }
+    if (ret == ESP_OK) {
+        ret = runtime_nvs_get_optional_u16(handle, CONTROLLER_NVS_WIDTH_KEY,
+                                           &controller_tire_width_mm);
+    }
+    if (ret == ESP_OK) {
         ret = runtime_nvs_get_optional_string(handle, CONTROLLER_NVS_BOUND_MAC_KEY,
                                               runtime->controller_bound_mac,
                                               sizeof(runtime->controller_bound_mac));
@@ -1706,10 +1847,46 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
         !runtime_speed_unit_matches_policy(speed_unit) ||
         !runtime_language_matches_policy(language) ||
         !runtime_bms_type_matches_policy(bms_type) ||
-        controller_connection_enabled > 1U || controller_page_enabled > 1U ||
-        (controller_wheel_mm != 0U && (controller_wheel_mm < 500U || controller_wheel_mm > 4000U)) ||
-        (controller_ratio_centi != 0U && (controller_ratio_centi < 10U || controller_ratio_centi > 2000U))) {
+        controller_connection_enabled > 1U || controller_page_enabled > 1U) {
         return ESP_ERR_INVALID_STATE;
+    }
+
+    if (controller_wheel_mm != 0U &&
+        (controller_wheel_mm < 500U || controller_wheel_mm > 4000U)) {
+        ESP_LOGW(TAG, "[controller] ignored invalid legacy circumference: %u",
+                 controller_wheel_mm);
+        controller_wheel_mm = 0U;
+    }
+    if (!runtime_controller_ratio_matches_policy(controller_ratio_centi)) {
+        if (controller_ratio_centi != 0U) {
+            ESP_LOGW(TAG, "[controller] ignored invalid saved ratio: %u", controller_ratio_centi);
+        }
+        controller_ratio_centi = CONTROLLER_RATIO_CENTI_DEFAULT;
+    }
+    const bool tire_fields_present = controller_tire_rim_inch != 0U ||
+                                     controller_tire_aspect_percent != 0U ||
+                                     controller_tire_width_mm != 0U;
+    if (runtime_controller_tire_matches_policy(controller_tire_rim_inch,
+                                               controller_tire_aspect_percent,
+                                               controller_tire_width_mm)) {
+        uint16_t calculated_wheel_mm = 0U;
+        if (esp_fardriver_tire_circumference_mm(controller_tire_rim_inch,
+                                                controller_tire_aspect_percent,
+                                                controller_tire_width_mm,
+                                                &calculated_wheel_mm)) {
+            controller_wheel_mm = calculated_wheel_mm;
+        }
+    } else {
+        if (tire_fields_present) {
+            ESP_LOGW(TAG,
+                     "[controller] ignored incomplete/invalid saved tire: %u-%u-%u",
+                     controller_tire_rim_inch,
+                     controller_tire_aspect_percent,
+                     controller_tire_width_mm);
+        }
+        controller_tire_rim_inch = 0U;
+        controller_tire_aspect_percent = 0U;
+        controller_tire_width_mm = 0U;
     }
 
     (void)runtime_set_brightness_percent(runtime, brightness_percent);
@@ -1722,6 +1899,9 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
     runtime->controller_page_enabled = controller_page_enabled != 0U;
     runtime->controller_connection_enabled = runtime->controller_page_enabled &&
                                              controller_connection_enabled != 0U;
+    runtime->controller_fallback_tire_rim_inch = controller_tire_rim_inch;
+    runtime->controller_fallback_tire_aspect_percent = controller_tire_aspect_percent;
+    runtime->controller_fallback_tire_width_mm = controller_tire_width_mm;
     runtime->controller_state.fallback_wheel_circumference_mm = controller_wheel_mm;
     runtime->controller_state.fallback_gear_ratio_centi = controller_ratio_centi;
     runtime_project_controller_snapshot(runtime);
@@ -1743,6 +1923,22 @@ esp_err_t esp_bms_idf_runtime_save_display_settings(esp_bms_idf_runtime_t *runti
                         ESP_ERR_INVALID_STATE, TAG, "invalid speed unit");
     ESP_RETURN_ON_FALSE(runtime_bms_type_matches_policy(runtime->bms_type),
                         ESP_ERR_INVALID_STATE, TAG, "invalid BMS type");
+    ESP_RETURN_ON_FALSE(runtime_controller_ratio_matches_policy(
+                            runtime->controller_state.fallback_gear_ratio_centi),
+                        ESP_ERR_INVALID_STATE, TAG, "invalid controller ratio");
+    const bool tire_unset = runtime->controller_fallback_tire_rim_inch == 0U &&
+                            runtime->controller_fallback_tire_aspect_percent == 0U &&
+                            runtime->controller_fallback_tire_width_mm == 0U;
+    ESP_RETURN_ON_FALSE(tire_unset ||
+                            runtime_controller_tire_matches_policy(
+                                runtime->controller_fallback_tire_rim_inch,
+                                runtime->controller_fallback_tire_aspect_percent,
+                                runtime->controller_fallback_tire_width_mm),
+                        ESP_ERR_INVALID_STATE, TAG, "invalid controller tire");
+    ESP_RETURN_ON_FALSE(runtime->controller_state.fallback_wheel_circumference_mm == 0U ||
+                            (runtime->controller_state.fallback_wheel_circumference_mm >= 500U &&
+                             runtime->controller_state.fallback_wheel_circumference_mm <= 4000U),
+                        ESP_ERR_INVALID_STATE, TAG, "invalid controller circumference");
 
     ESP_RETURN_ON_ERROR(runtime_init_nvs(runtime), TAG, "NVS init failed");
 
@@ -1783,6 +1979,18 @@ esp_err_t esp_bms_idf_runtime_save_display_settings(esp_bms_idf_runtime_t *runti
     if (ret == ESP_OK) {
         ret = nvs_set_u16(handle, CONTROLLER_NVS_RATIO_KEY,
                           runtime->controller_state.fallback_gear_ratio_centi);
+    }
+    if (ret == ESP_OK) {
+        ret = nvs_set_u8(handle, CONTROLLER_NVS_RIM_KEY,
+                         runtime->controller_fallback_tire_rim_inch);
+    }
+    if (ret == ESP_OK) {
+        ret = nvs_set_u8(handle, CONTROLLER_NVS_ASPECT_KEY,
+                         runtime->controller_fallback_tire_aspect_percent);
+    }
+    if (ret == ESP_OK) {
+        ret = nvs_set_u16(handle, CONTROLLER_NVS_WIDTH_KEY,
+                          runtime->controller_fallback_tire_width_mm);
     }
     if (ret == ESP_OK && runtime->controller_bound_mac[0] != '\0') {
         ret = nvs_set_str(handle, CONTROLLER_NVS_BOUND_MAC_KEY, runtime->controller_bound_mac);
@@ -3594,6 +3802,7 @@ static int runtime_controller_gap_event(struct ble_gap_event *event, void *arg)
                                               frame,
                                               sizeof(frame),
                                               layout)) {
+                    runtime_sync_controller_parameters(runtime);
                     runtime_project_controller_snapshot(runtime);
                 }
             }
@@ -3676,13 +3885,51 @@ static void runtime_controller_store_candidate(esp_bms_idf_runtime_t *runtime,
                                                const char *name,
                                                int8_t rssi)
 {
+    if (!runtime || !mac || mac[0] == '\0') {
+        return;
+    }
+    if (runtime->bms_scan_lock &&
+        xSemaphoreTake(runtime->bms_scan_lock, pdMS_TO_TICKS(100)) != pdTRUE) {
+        return;
+    }
+    if (name && name[0] != '\0') {
+        runtime_bms_scan_cache_name_locked(mac, name);
+    } else {
+        name = runtime_bms_scan_cached_name_locked(mac);
+    }
+    bool changed = false;
+    if (name && name[0] != '\0' && strcmp(mac, runtime->controller_bound_mac) == 0 &&
+        strcmp(name, runtime->controller_bound_name) != 0) {
+        runtime_copy_snapshot_text(runtime->controller_bound_name,
+                                   sizeof(runtime->controller_bound_name),
+                                   name);
+        changed = true;
+    }
     for (uint8_t index = 0; index < runtime->controller_scan_candidate_count; ++index) {
         if (strcmp(runtime->controller_scan_candidates[index].mac, mac) == 0) {
             runtime->controller_scan_candidates[index].rssi = rssi;
+            if (name && name[0] != '\0' &&
+                (!runtime->controller_scan_candidates[index].has_name ||
+                 strcmp(runtime->controller_scan_candidates[index].name, name) != 0)) {
+                runtime_copy_snapshot_text(runtime->controller_scan_candidates[index].name,
+                                           sizeof(runtime->controller_scan_candidates[index].name),
+                                           name);
+                runtime->controller_scan_candidates[index].has_name = true;
+                changed = true;
+            }
+            if (runtime->bms_scan_lock) {
+                xSemaphoreGive(runtime->bms_scan_lock);
+            }
+            if (changed) {
+                runtime_project_controller_snapshot(runtime);
+            }
             return;
         }
     }
     if (runtime->controller_scan_candidate_count >= ESP_BMS_IDF_BMS_SCAN_MAX_CANDIDATES) {
+        if (runtime->bms_scan_lock) {
+            xSemaphoreGive(runtime->bms_scan_lock);
+        }
         return;
     }
     esp_bms_idf_bms_scan_candidate_t *candidate =
@@ -3691,6 +3938,9 @@ static void runtime_controller_store_candidate(esp_bms_idf_runtime_t *runtime,
     runtime_copy_snapshot_text(candidate->name, sizeof(candidate->name), name);
     candidate->has_name = name && name[0] != '\0';
     candidate->rssi = rssi;
+    if (runtime->bms_scan_lock) {
+        xSemaphoreGive(runtime->bms_scan_lock);
+    }
     runtime_project_controller_snapshot(runtime);
 }
 
@@ -3716,7 +3966,9 @@ static int runtime_bms_ble_gap_event(struct ble_gap_event *event, void *arg)
                                      runtime->bms_bound_mac[0] != '\0' &&
                                      strcmp(mac, runtime->bms_bound_mac) == 0;
         const int8_t rssi = event->disc.rssi == 127 ? INT8_MIN : event->disc.rssi;
-        runtime_bms_scan_store_candidate(runtime, mac, has_name ? name : NULL, rssi);
+        if (RUNTIME_FLAG(runtime, BMS_SCAN_ACTIVE)) {
+            runtime_bms_scan_store_candidate(runtime, mac, has_name ? name : NULL, rssi);
+        }
         if (RUNTIME_FLAG(runtime, CONTROLLER_SCAN_ACTIVE)) {
             runtime_controller_store_candidate(runtime, mac, has_name ? name : NULL, rssi);
             if (runtime->controller_connection_enabled &&
@@ -3775,6 +4027,7 @@ static int runtime_bms_ble_gap_event(struct ble_gap_event *event, void *arg)
         return 0;
     case BLE_GAP_EVENT_DISC_COMPLETE:
         RUNTIME_SET_FLAG(runtime, CONTROLLER_SCAN_ACTIVE, false);
+        runtime_project_controller_snapshot(runtime);
         if (runtime->bms_ble_phase == (uint8_t)BMS_BLE_PHASE_SCANNING) {
             runtime->bms_ble_phase = (uint8_t)BMS_BLE_PHASE_IDLE;
             RUNTIME_SET_FLAG(runtime, BMS_SCAN_ACTIVE, false);
@@ -3857,14 +4110,17 @@ static esp_err_t runtime_controller_start_scan(esp_bms_idf_runtime_t *runtime)
     }
     runtime->controller_scan_candidate_count = 0U;
     memset(runtime->controller_scan_candidates, 0, sizeof(runtime->controller_scan_candidates));
+    runtime->controller_scan_revision++;
     RUNTIME_SET_FLAG(runtime, CONTROLLER_SCAN_REQUESTED, false);
     RUNTIME_SET_FLAG(runtime, CONTROLLER_SCAN_ACTIVE, true);
     if (ble_gap_disc_active()) {
+        runtime_project_controller_snapshot(runtime);
         return ESP_OK;
     }
     uint8_t own_addr_type = 0;
     if (ble_hs_id_infer_auto(0, &own_addr_type) != 0) {
         RUNTIME_SET_FLAG(runtime, CONTROLLER_SCAN_ACTIVE, false);
+        runtime_project_controller_snapshot(runtime);
         return ESP_FAIL;
     }
     const struct ble_gap_disc_params params = {
@@ -3879,6 +4135,7 @@ static esp_err_t runtime_controller_start_scan(esp_bms_idf_runtime_t *runtime)
                      runtime_bms_ble_gap_event,
                      runtime) != 0) {
         RUNTIME_SET_FLAG(runtime, CONTROLLER_SCAN_ACTIVE, false);
+        runtime_project_controller_snapshot(runtime);
         return ESP_FAIL;
     }
     runtime_project_controller_snapshot(runtime);
@@ -4835,6 +5092,9 @@ bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,
                             event->numeric_delta;
             value = value < 0 ? 0 : value > 4000 ? 4000 : value;
             runtime->controller_state.fallback_wheel_circumference_mm = (uint16_t)value;
+            runtime->controller_fallback_tire_rim_inch = 0U;
+            runtime->controller_fallback_tire_aspect_percent = 0U;
+            runtime->controller_fallback_tire_width_mm = 0U;
         }
         esp_fardriver_refresh_derived(&runtime->controller_state);
         runtime_project_controller_snapshot(runtime);
@@ -4846,9 +5106,47 @@ bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,
         {
             int32_t value = (int32_t)runtime->controller_state.fallback_gear_ratio_centi +
                             event->numeric_delta;
-            value = value < 0 ? 0 : value > 2000 ? 2000 : value;
+            value = value < (int32_t)CONTROLLER_RATIO_CENTI_MIN
+                        ? (int32_t)CONTROLLER_RATIO_CENTI_MIN
+                        : value > (int32_t)CONTROLLER_RATIO_CENTI_MAX
+                              ? (int32_t)CONTROLLER_RATIO_CENTI_MAX
+                              : value;
             runtime->controller_state.fallback_gear_ratio_centi = (uint16_t)value;
         }
+        esp_fardriver_refresh_derived(&runtime->controller_state);
+        runtime_project_controller_snapshot(runtime);
+        return true;
+    case ESP_BMS_LVGL_ACTION_SET_CONTROLLER_TIRE:
+        if (!ACTION_EVENT_FLAG(event, CONTROLLER_SETTING_VALID) ||
+            !runtime_controller_tire_matches_policy(event->controller_tire_rim_inch,
+                                                    event->controller_tire_aspect_percent,
+                                                    event->controller_tire_width_mm)) {
+            return false;
+        }
+        {
+            uint16_t circumference_mm = 0U;
+            if (!esp_fardriver_tire_circumference_mm(event->controller_tire_rim_inch,
+                                                      event->controller_tire_aspect_percent,
+                                                      event->controller_tire_width_mm,
+                                                      &circumference_mm)) {
+                return false;
+            }
+            runtime->controller_fallback_tire_rim_inch = event->controller_tire_rim_inch;
+            runtime->controller_fallback_tire_aspect_percent =
+                event->controller_tire_aspect_percent;
+            runtime->controller_fallback_tire_width_mm = event->controller_tire_width_mm;
+            runtime->controller_state.fallback_wheel_circumference_mm = circumference_mm;
+        }
+        esp_fardriver_refresh_derived(&runtime->controller_state);
+        runtime_project_controller_snapshot(runtime);
+        return true;
+    case ESP_BMS_LVGL_ACTION_SET_CONTROLLER_RATIO:
+        if (!ACTION_EVENT_FLAG(event, CONTROLLER_SETTING_VALID) ||
+            !runtime_controller_ratio_matches_policy(event->controller_gear_ratio_centi)) {
+            return false;
+        }
+        runtime->controller_state.fallback_gear_ratio_centi =
+            event->controller_gear_ratio_centi;
         esp_fardriver_refresh_derived(&runtime->controller_state);
         runtime_project_controller_snapshot(runtime);
         return true;
@@ -4952,6 +5250,10 @@ const char *esp_bms_idf_runtime_action_name(esp_bms_lvgl_action_t action)
         return "adjust-controller-wheel";
     case ESP_BMS_LVGL_ACTION_ADJUST_CONTROLLER_RATIO:
         return "adjust-controller-ratio";
+    case ESP_BMS_LVGL_ACTION_SET_CONTROLLER_TIRE:
+        return "set-controller-tire";
+    case ESP_BMS_LVGL_ACTION_SET_CONTROLLER_RATIO:
+        return "set-controller-ratio";
     case ESP_BMS_LVGL_ACTION_START_BMS_BIND:
         return "start-bms-bind";
     case ESP_BMS_LVGL_ACTION_ENABLE_BLUETOOTH_ADVERTISING:

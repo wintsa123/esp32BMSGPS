@@ -50,6 +50,8 @@ typedef enum {
     ESP_BMS_LVGL_ACTION_START_CONTROLLER_BIND = 24,
     ESP_BMS_LVGL_ACTION_ADJUST_CONTROLLER_WHEEL = 25,
     ESP_BMS_LVGL_ACTION_ADJUST_CONTROLLER_RATIO = 26,
+    ESP_BMS_LVGL_ACTION_SET_CONTROLLER_TIRE = 27,
+    ESP_BMS_LVGL_ACTION_SET_CONTROLLER_RATIO = 28,
 } esp_bms_lvgl_action_t;
 
 #define ESP_BMS_LVGL_ACTION_EVENT_FLAG_COMMITTED (UINT8_C(1) << 0)
@@ -59,6 +61,7 @@ typedef enum {
 #define ESP_BMS_LVGL_ACTION_EVENT_FLAG_BMS_MAC_VALID (UINT8_C(1) << 4)
 #define ESP_BMS_LVGL_ACTION_EVENT_FLAG_CONTROLLER_MAC_VALID (UINT8_C(1) << 5)
 #define ESP_BMS_LVGL_ACTION_EVENT_FLAG_NUMERIC_DELTA_VALID (UINT8_C(1) << 6)
+#define ESP_BMS_LVGL_ACTION_EVENT_FLAG_CONTROLLER_SETTING_VALID (UINT8_C(1) << 7)
 #define ESP_BMS_LVGL_ROTATE_SAVE_DELAY_MS 2000U
 
 typedef struct {
@@ -70,6 +73,10 @@ typedef struct {
     char bms_mac[18];
     char controller_mac[18];
     int16_t numeric_delta;
+    uint8_t controller_tire_rim_inch;
+    uint8_t controller_tire_aspect_percent;
+    uint16_t controller_tire_width_mm;
+    uint16_t controller_gear_ratio_centi;
     uint16_t touch_observed_x;
     uint16_t touch_observed_y;
     uint16_t touch_target_x;
@@ -107,11 +114,29 @@ typedef enum {
     ESP_BMS_WIFI_OFFLINE = 1,
 } esp_bms_wifi_state_t;
 
+typedef enum {
+    ESP_BMS_CONTROLLER_PARAM_SOURCE_UNSET = 0,
+    ESP_BMS_CONTROLLER_PARAM_SOURCE_LEGACY_WHEEL,
+    ESP_BMS_CONTROLLER_PARAM_SOURCE_LOCAL,
+    ESP_BMS_CONTROLLER_PARAM_SOURCE_CONTROLLER,
+} esp_bms_controller_param_source_t;
+
 #define ESP_BMS_BMS_CODE_MAX_COUNT 6U
 #define ESP_BMS_BMS_CODE_TEXT_LEN 8U
 #define ESP_BMS_BMS_TEMP_MAX_COUNT 6U
 #define ESP_BMS_BMS_SCAN_MAX_CANDIDATES 6U
 #define ESP_BMS_BMS_SCAN_NAME_LEN 24U
+#define ESP_BMS_CONTROLLER_TIRE_RIM_MIN 8U
+#define ESP_BMS_CONTROLLER_TIRE_RIM_MAX 24U
+#define ESP_BMS_CONTROLLER_TIRE_ASPECT_MIN 30U
+#define ESP_BMS_CONTROLLER_TIRE_ASPECT_MAX 100U
+#define ESP_BMS_CONTROLLER_TIRE_ASPECT_STEP 5U
+#define ESP_BMS_CONTROLLER_TIRE_WIDTH_MIN 50U
+#define ESP_BMS_CONTROLLER_TIRE_WIDTH_MAX 200U
+#define ESP_BMS_CONTROLLER_TIRE_WIDTH_STEP 5U
+#define ESP_BMS_CONTROLLER_RATIO_CENTI_MIN 50U
+#define ESP_BMS_CONTROLLER_RATIO_CENTI_MAX 1000U
+#define ESP_BMS_CONTROLLER_RATIO_CENTI_DEFAULT 100U
 
 #define ESP_BMS_DASHBOARD_FLAG_SPEED_VALID (UINT32_C(1) << 0)
 #define ESP_BMS_DASHBOARD_FLAG_GPS_FIX_VALID (UINT32_C(1) << 1)
@@ -186,9 +211,20 @@ typedef struct {
     int32_t controller_power_w;
     int16_t controller_temp_c;
     int16_t motor_temp_c;
+    uint8_t controller_tire_rim_inch;
+    uint8_t controller_tire_aspect_percent;
+    uint16_t controller_tire_width_mm;
     uint16_t controller_wheel_circumference_mm;
     uint16_t controller_gear_ratio_centi;
+    uint8_t controller_param_source;
+    uint8_t controller_fallback_tire_rim_inch;
+    uint8_t controller_fallback_tire_aspect_percent;
+    uint16_t controller_fallback_tire_width_mm;
+    uint16_t controller_fallback_wheel_circumference_mm;
+    uint16_t controller_fallback_gear_ratio_centi;
     uint8_t controller_gear;
+    uint8_t controller_scan_active;
+    uint32_t controller_scan_revision;
     uint8_t controller_scan_candidate_count;
     esp_bms_bms_scan_candidate_t controller_scan_candidates[ESP_BMS_BMS_SCAN_MAX_CANDIDATES];
     char controller_bound_name[ESP_BMS_BMS_SCAN_NAME_LEN + 1U];

@@ -138,6 +138,18 @@ typedef enum {
     QUICK_DRAG_TARGET_ITEM,
 } quick_drag_target_kind_t;
 
+typedef enum {
+    SETTINGS_BLE_SOURCE_BMS = 0,
+    SETTINGS_BLE_SOURCE_CONTROLLER,
+} settings_ble_source_t;
+
+typedef enum {
+    SETTINGS_CONTROLLER_VIEW_ROOT = 0,
+    SETTINGS_CONTROLLER_VIEW_BLE_LIST,
+    SETTINGS_CONTROLLER_VIEW_TIRE_EDIT,
+    SETTINGS_CONTROLLER_VIEW_RATIO_EDIT,
+} settings_controller_view_t;
+
 typedef struct {
     int16_t x;
     int16_t y;
@@ -224,6 +236,10 @@ _Static_assert(ESP_BMS_LVGL_ACTION_ADD_TOUCH_CALIBRATION_SAMPLE == 20,
                "esp_bms_lvgl_action_t value changed; update C action consumers too");
 _Static_assert(ESP_BMS_LVGL_ACTION_CANCEL_TOUCH_CALIBRATION == 21,
                "esp_bms_lvgl_action_t value changed; update C action consumers too");
+_Static_assert(ESP_BMS_LVGL_ACTION_SET_CONTROLLER_TIRE == 27,
+               "esp_bms_lvgl_action_t value changed; update C action consumers too");
+_Static_assert(ESP_BMS_LVGL_ACTION_SET_CONTROLLER_RATIO == 28,
+               "esp_bms_lvgl_action_t value changed; update C action consumers too");
 
 typedef struct {
     lv_display_t *display;
@@ -242,6 +258,8 @@ typedef struct {
     lv_obj_t *settings_detail_edge_zone;
     lv_obj_t *settings_bms_popup;
     lv_obj_t *settings_bms_ble_status;
+    lv_obj_t *settings_controller_tire_rollers[3];
+    lv_obj_t *settings_controller_ratio_roller;
     lv_obj_t *settings_restore_popup;
     lv_obj_t *settings_system_value;
     lv_obj_t *settings_system_slider;
@@ -365,6 +383,8 @@ typedef struct {
     uint8_t quick_drag_target_index;
     uint8_t settings_detail_id;
     uint8_t settings_bms_view;
+    uint8_t settings_ble_source;
+    uint8_t settings_controller_view;
     uint8_t settings_system_view;
     uint8_t settings_system_slider_kind;
     uint8_t settings_calibration_target_index;
@@ -1177,6 +1197,22 @@ static void queue_bms_bind_action(const char *mac)
     ACTION_EVENT_SET_FLAG(&s_ui.pending_event, COMMITTED, true);
     ACTION_EVENT_SET_FLAG(&s_ui.pending_event, BMS_MAC_VALID, true);
     (void)snprintf(s_ui.pending_event.bms_mac, sizeof(s_ui.pending_event.bms_mac), "%s", mac);
+}
+
+static void queue_controller_bind_action(const char *mac)
+{
+    if (!mac || mac[0] == '\0') {
+        return;
+    }
+
+    memset(&s_ui.pending_event, 0, sizeof(s_ui.pending_event));
+    s_ui.pending_event.action = ESP_BMS_LVGL_ACTION_START_CONTROLLER_BIND;
+    ACTION_EVENT_SET_FLAG(&s_ui.pending_event, COMMITTED, true);
+    ACTION_EVENT_SET_FLAG(&s_ui.pending_event, CONTROLLER_MAC_VALID, true);
+    (void)snprintf(s_ui.pending_event.controller_mac,
+                   sizeof(s_ui.pending_event.controller_mac),
+                   "%s",
+                   mac);
 }
 
 static void queue_touch_calibration_sample(uint8_t target_index,
@@ -2083,13 +2119,6 @@ static const settings_detail_row_t SETTINGS_BMS_ROWS[] = {
     { "蓝牙连接", "扫描绑定", ESP_BMS_LVGL_ACTION_START_BMS_BIND, SETTINGS_SYSTEM_VIEW_ROOT },
 };
 
-static const settings_detail_row_t SETTINGS_CONTROLLER_ROWS[] = {
-    { "控制器页面显示", "首页显示控制器数据页", ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_PAGE, SETTINGS_SYSTEM_VIEW_ROOT },
-    { "控制器连接", "连接远驱控制器", ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_CONNECTION, SETTINGS_SYSTEM_VIEW_ROOT },
-    { "蓝牙选择", "扫描绑定", ESP_BMS_LVGL_ACTION_START_CONTROLLER_BIND, SETTINGS_SYSTEM_VIEW_ROOT },
-    { "控制器类型", "远驱", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
-};
-
 static const char *const SETTINGS_BMS_TYPE_LABELS[] = {
     "蚂蚁 ANT",
     "极空 JK",
@@ -2661,16 +2690,6 @@ static void settings_navigation_set_hidden(bool hidden, bool animated)
     }
 
     const int32_t target = hidden ? SETTINGS_DETAIL_HEADER_H : 0;
-    lv_obj_t *scroll_target = s_ui.settings_detail_id == (uint8_t)SETTINGS_DETAIL_NONE ?
-                                  s_ui.settings_carousel : s_ui.settings_detail;
-    ESP_LOGI(TAG,
-             "[settings-diag] nav request hidden=%d animated=%d current_hidden=%d y=%ld top=%ld bottom=%ld",
-             hidden,
-             animated,
-             s_ui.settings_nav_hidden,
-             (long)lv_obj_get_scroll_y(scroll_target),
-             (long)lv_obj_get_scroll_top(scroll_target),
-             (long)lv_obj_get_scroll_bottom(scroll_target));
     if (animated && s_ui.settings_nav_hidden == hidden) {
         return;
     }
@@ -2722,22 +2741,10 @@ static void settings_navigation_scroll_event_cb(lv_event_t *event)
     const int32_t scroll_y = lv_obj_get_scroll_y(target);
     if (code == LV_EVENT_SCROLL_BEGIN) {
         s_ui.settings_nav_scroll_anchor_y = scroll_y;
-        ESP_LOGI(TAG,
-                 "[settings-diag] scroll begin target=%s y=%ld bottom=%ld hidden=%d",
-                 target == s_ui.settings_carousel ? "root" : "detail",
-                 (long)scroll_y,
-                 (long)lv_obj_get_scroll_bottom(target),
-                 s_ui.settings_nav_hidden);
         return;
     }
     if (code == LV_EVENT_SCROLL_END) {
         s_ui.settings_nav_scroll_anchor_y = scroll_y;
-        ESP_LOGI(TAG,
-                 "[settings-diag] scroll end target=%s y=%ld bottom=%ld hidden=%d",
-                 target == s_ui.settings_carousel ? "root" : "detail",
-                 (long)scroll_y,
-                 (long)lv_obj_get_scroll_bottom(target),
-                 s_ui.settings_nav_hidden);
         return;
     }
     if (code != LV_EVENT_SCROLL) {
@@ -2748,13 +2755,9 @@ static void settings_navigation_scroll_event_cb(lv_event_t *event)
     lv_indev_t *indev = lv_indev_active();
     const bool pointer_pressed = indev && lv_indev_get_state(indev) == LV_INDEV_STATE_PRESSED;
     if (delta >= SETTINGS_NAV_SCROLL_THRESHOLD) {
-        ESP_LOGI(TAG, "[settings-diag] scroll direction=up delta=%ld", (long)delta);
         settings_navigation_set_hidden(true, true);
         s_ui.settings_nav_scroll_anchor_y = scroll_y;
     } else if (delta <= -SETTINGS_NAV_SCROLL_THRESHOLD && pointer_pressed) {
-        ESP_LOGI(TAG,
-                 "[settings-diag] scroll direction=down delta=%ld pointer_pressed=1",
-                 (long)delta);
         settings_navigation_set_hidden(false, true);
         s_ui.settings_nav_scroll_anchor_y = scroll_y;
     }
@@ -2778,12 +2781,6 @@ static void settings_navigation_track_drag(const lv_point_t *point)
     }
 
     UI_SET_FLAG(SETTINGS_SWIPE_CONSUMED, true);
-    ESP_LOGI(TAG,
-             "[settings-diag] direct drag direction=%s dy=%ld total=(%ld,%ld)",
-             drag_dy < 0 ? "up" : "down",
-             (long)drag_dy,
-             (long)total_dx,
-             (long)total_dy);
     settings_navigation_set_hidden(drag_dy < 0, true);
     s_ui.settings_nav_drag_anchor_y = point->y;
 }
@@ -2796,6 +2793,7 @@ static void settings_show_root(void)
     }
     s_ui.settings_detail_id = (uint8_t)SETTINGS_DETAIL_NONE;
     s_ui.settings_bms_view = (uint8_t)SETTINGS_BMS_VIEW_ROOT;
+    s_ui.settings_controller_view = (uint8_t)SETTINGS_CONTROLLER_VIEW_ROOT;
     s_ui.settings_bms_ble_status = NULL;
     UI_SET_FLAG(SETTINGS_SWIPE_TRACKING, false);
     set_obj_hidden(s_ui.settings_detail, true);
@@ -2837,6 +2835,12 @@ static void settings_navigate_back(void)
     if (s_ui.settings_detail_id == (uint8_t)SETTINGS_DETAIL_BMS &&
         s_ui.settings_bms_view != (uint8_t)SETTINGS_BMS_VIEW_ROOT) {
         settings_show_bms_detail();
+        settings_navigation_set_hidden(false, false);
+        return;
+    }
+    if (s_ui.settings_detail_id == (uint8_t)SETTINGS_DETAIL_CONTROLLER &&
+        s_ui.settings_controller_view != (uint8_t)SETTINGS_CONTROLLER_VIEW_ROOT) {
+        settings_show_controller_detail();
         settings_navigation_set_hidden(false, false);
         return;
     }
@@ -2927,13 +2931,6 @@ static void settings_swipe_event_cb(lv_event_t *event)
         const bool edge_start = pointer_ready &&
                                 s_ui.settings_swipe_start.x <= SETTINGS_SWIPE_EDGE_WIDTH;
         UI_SET_FLAG(SETTINGS_SWIPE_TRACKING, settings_view_is_visible() && edge_start);
-        ESP_LOGI(TAG,
-                 "[settings-diag] press target=%p parent=%p point=(%ld,%ld) detail=%u",
-                 lv_event_get_target(event),
-                 lv_obj_get_parent((lv_obj_t *)lv_event_get_target(event)),
-                 (long)s_ui.settings_swipe_start.x,
-                 (long)s_ui.settings_swipe_start.y,
-                 (unsigned)s_ui.settings_detail_id);
         if (!edge_start) {
             settings_swipe_indicator_hide();
         }
@@ -3135,24 +3132,46 @@ static void settings_show_bms_type_picker(void)
 static void settings_bms_ble_format_status(char *out,
                                            size_t out_len,
                                            const esp_bms_dashboard_snapshot_t *snapshot,
+                                           settings_ble_source_t source,
                                            bool scan_requested)
 {
     if (!out || out_len == 0U) {
         return;
     }
-    if (scan_requested || strcmp(snapshot->bms_info_text, "BMS SCAN") == 0) {
+    if (scan_requested ||
+        (source == SETTINGS_BLE_SOURCE_CONTROLLER && snapshot->controller_scan_active != 0U) ||
+        (source == SETTINGS_BLE_SOURCE_BMS &&
+         strcmp(snapshot->bms_info_text, "BMS SCAN") == 0)) {
         (void)snprintf(out, out_len, "扫描...");
-    } else if (SNAPSHOT_FLAG(snapshot, BMS_ONLINE)) {
+    } else if (source == SETTINGS_BLE_SOURCE_CONTROLLER &&
+               SNAPSHOT_FLAG(snapshot, CONTROLLER_ONLINE)) {
+        (void)snprintf(out,
+                       out_len,
+                       "%s",
+                       snapshot->controller_bound_name[0] != '\0'
+                           ? snapshot->controller_bound_name
+                           : "已连接");
+    } else if (source == SETTINGS_BLE_SOURCE_BMS && SNAPSHOT_FLAG(snapshot, BMS_ONLINE)) {
         (void)snprintf(out,
                        out_len,
                        "%s",
                        snapshot->bms_bound_name[0] != '\0' ? snapshot->bms_bound_name : "已连接");
-    } else if (snapshot->bms_scan_candidate_count > 0U) {
-        (void)snprintf(out, out_len, "发现 %u", (unsigned)snapshot->bms_scan_candidate_count);
-    } else if (snapshot->bms_info_text[0] != '\0') {
+    } else if ((source == SETTINGS_BLE_SOURCE_BMS ? snapshot->bms_scan_candidate_count
+                                                  : snapshot->controller_scan_candidate_count) > 0U) {
+        const uint8_t count = source == SETTINGS_BLE_SOURCE_BMS
+                                  ? snapshot->bms_scan_candidate_count
+                                  : snapshot->controller_scan_candidate_count;
+        (void)snprintf(out, out_len, "发现 %u", (unsigned)count);
+    } else if (source == SETTINGS_BLE_SOURCE_CONTROLLER &&
+               snapshot->controller_bound_name[0] != '\0') {
+        (void)snprintf(out, out_len, "%s", snapshot->controller_bound_name);
+    } else if (source == SETTINGS_BLE_SOURCE_BMS && snapshot->bms_info_text[0] != '\0') {
         (void)snprintf(out, out_len, "%.15s", snapshot->bms_info_text);
     } else {
-        (void)snprintf(out, out_len, "未发现保护板");
+        (void)snprintf(out,
+                       out_len,
+                       "%s",
+                       source == SETTINGS_BLE_SOURCE_BMS ? "未发现保护板" : "未发现控制器");
     }
 }
 
@@ -3161,11 +3180,14 @@ static void settings_bms_ble_start_scan(void)
     if (s_ui.settings_bms_ble_status) {
         label_set_text_if_changed(s_ui.settings_bms_ble_status, "扫描...");
     }
-    ESP_LOGI(TAG, "[bms-ui] queue BLE scan from list page");
-    queue_action(ESP_BMS_LVGL_ACTION_START_BMS_BIND);
+    const settings_ble_source_t source = (settings_ble_source_t)s_ui.settings_ble_source;
+    ESP_LOGI(TAG, "[ble-ui] queue %s scan from list page",
+             source == SETTINGS_BLE_SOURCE_BMS ? "BMS" : "controller");
+    queue_action(source == SETTINGS_BLE_SOURCE_BMS ? ESP_BMS_LVGL_ACTION_START_BMS_BIND
+                                                    : ESP_BMS_LVGL_ACTION_START_CONTROLLER_BIND);
 }
 
-static void settings_show_bms_ble_popup(bool start_scan)
+static void settings_show_bms_ble_popup(settings_ble_source_t source, bool start_scan)
 {
     const bool portrait = s_ui.width < s_ui.height;
     const int32_t card_x = 8;
@@ -3180,7 +3202,12 @@ static void settings_show_bms_ble_popup(bool start_scan)
     const esp_bms_dashboard_snapshot_t *snapshot = settings_current_snapshot();
     char status_text[24] = { 0 };
 
-    s_ui.settings_bms_view = (uint8_t)SETTINGS_BMS_VIEW_BLE_LIST;
+    s_ui.settings_ble_source = (uint8_t)source;
+    if (source == SETTINGS_BLE_SOURCE_BMS) {
+        s_ui.settings_bms_view = (uint8_t)SETTINGS_BMS_VIEW_BLE_LIST;
+    } else {
+        s_ui.settings_controller_view = (uint8_t)SETTINGS_CONTROLLER_VIEW_BLE_LIST;
+    }
     s_ui.settings_bms_ble_status = NULL;
     lv_obj_clean(s_ui.settings_detail);
     label_set_text_if_changed(s_ui.settings_detail_title, "蓝牙连接");
@@ -3196,7 +3223,11 @@ static void settings_show_bms_ble_popup(bool start_scan)
     lv_obj_set_style_border_width(status, 1, LV_PART_MAIN);
     lv_obj_set_style_border_color(status, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
     lv_obj_set_style_border_opa(status, LV_OPA_COVER, LV_PART_MAIN);
-    settings_bms_ble_format_status(status_text, sizeof(status_text), snapshot, start_scan);
+    settings_bms_ble_format_status(status_text,
+                                   sizeof(status_text),
+                                   snapshot,
+                                   source,
+                                   start_scan);
     s_ui.settings_bms_ble_status = label(status,
                                          10,
                                          (status_h - ((int32_t)settings_zh_13.line_height + 4)) / 2,
@@ -3216,9 +3247,15 @@ static void settings_show_bms_ble_popup(bool start_scan)
                                 settings_bms_ble_refresh_event_cb,
                                 NULL);
 
-    const uint8_t count = snapshot->bms_scan_candidate_count > ESP_BMS_BMS_SCAN_MAX_CANDIDATES
+    const uint8_t source_count = source == SETTINGS_BLE_SOURCE_BMS
+                                     ? snapshot->bms_scan_candidate_count
+                                     : snapshot->controller_scan_candidate_count;
+    const esp_bms_bms_scan_candidate_t *candidates =
+        source == SETTINGS_BLE_SOURCE_BMS ? snapshot->bms_scan_candidates
+                                          : snapshot->controller_scan_candidates;
+    const uint8_t count = source_count > ESP_BMS_BMS_SCAN_MAX_CANDIDATES
                               ? ESP_BMS_BMS_SCAN_MAX_CANDIDATES
-                              : snapshot->bms_scan_candidate_count;
+                              : source_count;
     if (count == 0U || start_scan) {
         const int32_t empty_h = (int32_t)settings_zh_13.line_height + 8;
         lv_obj_t *empty = label(s_ui.settings_detail,
@@ -3227,12 +3264,16 @@ static void settings_show_bms_ble_popup(bool start_scan)
                                 card_w,
                                 empty_h,
                                 &settings_zh_13);
-        lv_label_set_text(empty, start_scan ? "扫描..." : "未发现保护板");
+        lv_label_set_text(empty,
+                          start_scan
+                              ? "扫描..."
+                              : source == SETTINGS_BLE_SOURCE_BMS ? "未发现保护板"
+                                                                  : "未发现控制器");
         lv_obj_set_style_text_align(empty, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
         lv_obj_set_style_text_color(empty, COLOR_SETTINGS_MUTED, LV_PART_MAIN);
     } else {
         for (uint8_t index = 0; index < count; ++index) {
-            const esp_bms_bms_scan_candidate_t *candidate = &snapshot->bms_scan_candidates[index];
+            const esp_bms_bms_scan_candidate_t *candidate = &candidates[index];
             lv_obj_t *row = panel(s_ui.settings_detail,
                                   card_x,
                                   list_y + ((int32_t)index * (row_h + gap)),
@@ -3413,12 +3454,21 @@ static void settings_show_bms_detail(void)
     char ble_status[ESP_BMS_BMS_SCAN_NAME_LEN + 1U] = { 0 };
 
     s_ui.settings_bms_view = (uint8_t)SETTINGS_BMS_VIEW_ROOT;
+    s_ui.settings_controller_view = (uint8_t)SETTINGS_CONTROLLER_VIEW_ROOT;
+    memset(s_ui.settings_controller_tire_rollers,
+           0,
+           sizeof(s_ui.settings_controller_tire_rollers));
+    s_ui.settings_controller_ratio_roller = NULL;
     s_ui.settings_bms_ble_status = NULL;
     lv_obj_clean(s_ui.settings_detail);
     label_set_text_if_changed(s_ui.settings_detail_title, "保护板设置");
     lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
 
-    settings_bms_ble_format_status(ble_status, sizeof(ble_status), snapshot, false);
+    settings_bms_ble_format_status(ble_status,
+                                   sizeof(ble_status),
+                                   snapshot,
+                                   SETTINGS_BLE_SOURCE_BMS,
+                                   false);
     const settings_detail_row_t ble_row = {
         "蓝牙连接",
         ble_status,
@@ -3459,88 +3509,274 @@ static void settings_show_bms_detail(void)
     lv_obj_set_style_text_color(arrow, COLOR_SETTINGS_ACCENT, LV_PART_MAIN);
 }
 
-typedef struct {
-    esp_bms_lvgl_action_t action;
-    int16_t delta;
-} controller_step_action_t;
+static const char CONTROLLER_RIM_OPTIONS[] =
+    "8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23\n24";
+static const char CONTROLLER_ASPECT_OPTIONS[] =
+    "30\n35\n40\n45\n50\n55\n60\n65\n70\n75\n80\n85\n90\n95\n100";
+static const char CONTROLLER_WIDTH_OPTIONS[] =
+    "50\n55\n60\n65\n70\n75\n80\n85\n90\n95\n100\n105\n110\n115\n120\n125\n130\n135\n140\n145\n150\n155\n160\n165\n170\n175\n180\n185\n190\n195\n200";
 
-static const controller_step_action_t CONTROLLER_STEPS[] = {
-    { ESP_BMS_LVGL_ACTION_ADJUST_CONTROLLER_WHEEL, -10 },
-    { ESP_BMS_LVGL_ACTION_ADJUST_CONTROLLER_WHEEL, 10 },
-    { ESP_BMS_LVGL_ACTION_ADJUST_CONTROLLER_RATIO, -5 },
-    { ESP_BMS_LVGL_ACTION_ADJUST_CONTROLLER_RATIO, 5 },
-};
+static lv_obj_t *settings_controller_roller(lv_obj_t *parent,
+                                            int32_t x,
+                                            int32_t y,
+                                            int32_t w,
+                                            int32_t h,
+                                            const char *options,
+                                            uint32_t selected)
+{
+    lv_obj_t *roller = lv_roller_create(parent);
+    lv_roller_set_options(roller, options, LV_ROLLER_MODE_NORMAL);
+    lv_roller_set_selected(roller, selected, LV_ANIM_OFF);
+    lv_obj_set_pos(roller, x, y);
+    lv_obj_set_size(roller, w, h);
+    lv_obj_set_style_text_font(roller, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_set_style_text_font(roller, &lv_font_montserrat_14, LV_PART_SELECTED);
+    lv_obj_set_style_text_color(roller, COLOR_SETTINGS_MUTED, LV_PART_MAIN);
+    lv_obj_set_style_text_color(roller, COLOR_WHITE, LV_PART_SELECTED);
+    lv_obj_set_style_bg_color(roller, COLOR_SETTINGS_CARD, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(roller, COLOR_SWITCH_ACTIVE, LV_PART_SELECTED);
+    lv_obj_set_style_border_color(roller, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(roller, 1, LV_PART_MAIN);
+    lv_obj_set_style_radius(roller, 8, LV_PART_MAIN);
+    lv_obj_set_style_radius(roller, 6, LV_PART_SELECTED);
+    settings_add_swipe_handlers(roller);
+    return roller;
+}
 
-static void settings_controller_step_event_cb(lv_event_t *event)
+static char *settings_controller_ratio_options(void)
+{
+    const size_t capacity = 6000U;
+    char *options = lv_malloc(capacity);
+    if (!options) {
+        return NULL;
+    }
+    size_t used = 0U;
+    for (uint16_t value = ESP_BMS_CONTROLLER_RATIO_CENTI_MIN;
+         value <= ESP_BMS_CONTROLLER_RATIO_CENTI_MAX;
+         ++value) {
+        const int written = lv_snprintf(options + used,
+                                        capacity - used,
+                                        value == ESP_BMS_CONTROLLER_RATIO_CENTI_MAX
+                                            ? "%u.%02u"
+                                            : "%u.%02u\n",
+                                        value / 100U,
+                                        value % 100U);
+        if (written < 0 || (size_t)written >= capacity - used) {
+            lv_free(options);
+            return NULL;
+        }
+        used += (size_t)written;
+    }
+    return options;
+}
+
+static void settings_controller_confirm_event_cb(lv_event_t *event)
 {
     if (lv_event_get_code(event) != LV_EVENT_CLICKED || UI_FLAG(SETTINGS_SWIPE_CONSUMED)) {
         return;
     }
-    const controller_step_action_t *step = lv_event_get_user_data(event);
-    if (!step) {
+    memset(&s_ui.pending_event, 0, sizeof(s_ui.pending_event));
+    if (s_ui.settings_controller_view == (uint8_t)SETTINGS_CONTROLLER_VIEW_TIRE_EDIT) {
+        if (!s_ui.settings_controller_tire_rollers[0] ||
+            !s_ui.settings_controller_tire_rollers[1] ||
+            !s_ui.settings_controller_tire_rollers[2]) {
+            return;
+        }
+        s_ui.pending_event.action = ESP_BMS_LVGL_ACTION_SET_CONTROLLER_TIRE;
+        s_ui.pending_event.controller_tire_rim_inch =
+            (uint8_t)(ESP_BMS_CONTROLLER_TIRE_RIM_MIN +
+                      lv_roller_get_selected(s_ui.settings_controller_tire_rollers[0]));
+        s_ui.pending_event.controller_tire_aspect_percent =
+            (uint8_t)(ESP_BMS_CONTROLLER_TIRE_ASPECT_MIN +
+                      lv_roller_get_selected(s_ui.settings_controller_tire_rollers[1]) *
+                          ESP_BMS_CONTROLLER_TIRE_ASPECT_STEP);
+        s_ui.pending_event.controller_tire_width_mm =
+            (uint16_t)(ESP_BMS_CONTROLLER_TIRE_WIDTH_MIN +
+                       lv_roller_get_selected(s_ui.settings_controller_tire_rollers[2]) *
+                           ESP_BMS_CONTROLLER_TIRE_WIDTH_STEP);
+    } else if (s_ui.settings_controller_view == (uint8_t)SETTINGS_CONTROLLER_VIEW_RATIO_EDIT &&
+               s_ui.settings_controller_ratio_roller) {
+        s_ui.pending_event.action = ESP_BMS_LVGL_ACTION_SET_CONTROLLER_RATIO;
+        s_ui.pending_event.controller_gear_ratio_centi =
+            (uint16_t)(ESP_BMS_CONTROLLER_RATIO_CENTI_MIN +
+                       lv_roller_get_selected(s_ui.settings_controller_ratio_roller));
+    } else {
         return;
     }
-    memset(&s_ui.pending_event, 0, sizeof(s_ui.pending_event));
-    s_ui.pending_event.action = step->action;
-    s_ui.pending_event.numeric_delta = step->delta;
-    ACTION_EVENT_SET_FLAG(&s_ui.pending_event, NUMERIC_DELTA_VALID, true);
+    ACTION_EVENT_SET_FLAG(&s_ui.pending_event, CONTROLLER_SETTING_VALID, true);
     ACTION_EVENT_SET_FLAG(&s_ui.pending_event, COMMITTED, true);
+    settings_show_controller_detail();
+    lv_indev_wait_release(lv_indev_active());
 }
 
-static void settings_controller_candidate_event_cb(lv_event_t *event)
+static void settings_controller_confirm_button(lv_obj_t *parent, int32_t y)
+{
+    const int32_t button_w = clamp_i32(s_ui.width - 64, 160, 240);
+    lv_obj_t *button = panel(parent,
+                             (s_ui.width - button_w) / 2,
+                             y,
+                             button_w,
+                             42,
+                             COLOR_SWITCH_ACTIVE);
+    lv_obj_set_style_radius(button, 8, LV_PART_MAIN);
+    lv_obj_set_style_border_width(button, 0, LV_PART_MAIN);
+    lv_obj_add_flag(button, LV_OBJ_FLAG_CLICKABLE);
+    settings_add_swipe_handlers(button);
+    lv_obj_add_event_cb(button, settings_controller_confirm_event_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *text = label(button, 0, 10, button_w, 20, &settings_zh_16);
+    lv_label_set_text(text, "确认");
+    lv_obj_set_style_text_align(text, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(text, COLOR_WHITE, LV_PART_MAIN);
+}
+
+static void settings_show_controller_tire_edit(void)
+{
+    const esp_bms_dashboard_snapshot_t *snapshot = settings_current_snapshot();
+    const bool portrait = s_ui.width < s_ui.height;
+    const uint8_t rim = snapshot->controller_fallback_tire_rim_inch >=
+                                    ESP_BMS_CONTROLLER_TIRE_RIM_MIN &&
+                                snapshot->controller_fallback_tire_rim_inch <=
+                                    ESP_BMS_CONTROLLER_TIRE_RIM_MAX
+                            ? snapshot->controller_fallback_tire_rim_inch
+                            : 12U;
+    const uint8_t aspect = snapshot->controller_fallback_tire_aspect_percent >=
+                                       ESP_BMS_CONTROLLER_TIRE_ASPECT_MIN &&
+                                   snapshot->controller_fallback_tire_aspect_percent <=
+                                       ESP_BMS_CONTROLLER_TIRE_ASPECT_MAX
+                               ? snapshot->controller_fallback_tire_aspect_percent
+                               : 70U;
+    const uint16_t width = snapshot->controller_fallback_tire_width_mm >=
+                                       ESP_BMS_CONTROLLER_TIRE_WIDTH_MIN &&
+                                   snapshot->controller_fallback_tire_width_mm <=
+                                       ESP_BMS_CONTROLLER_TIRE_WIDTH_MAX
+                               ? snapshot->controller_fallback_tire_width_mm
+                               : 90U;
+
+    lv_obj_clean(s_ui.settings_detail);
+    s_ui.settings_controller_view = (uint8_t)SETTINGS_CONTROLLER_VIEW_TIRE_EDIT;
+    label_set_text_if_changed(s_ui.settings_detail_title, "轮胎规格");
+    lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
+    const int32_t card_x = 12;
+    const int32_t card_w = s_ui.width - 24;
+    const int32_t card_h = portrait ? 188 : 118;
+    lv_obj_t *card = panel(s_ui.settings_detail, card_x, 12, card_w, card_h, COLOR_SETTINGS_CARD);
+    lv_obj_set_style_radius(card, 8, LV_PART_MAIN);
+    lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(card, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(card, 0, LV_PART_MAIN);
+    const char *const titles[] = { "轮辋", "扁平比", "胎宽" };
+    const char *const options[] = {
+        CONTROLLER_RIM_OPTIONS,
+        CONTROLLER_ASPECT_OPTIONS,
+        CONTROLLER_WIDTH_OPTIONS,
+    };
+    const uint32_t selected[] = {
+        rim - ESP_BMS_CONTROLLER_TIRE_RIM_MIN,
+        (aspect - ESP_BMS_CONTROLLER_TIRE_ASPECT_MIN) /
+            ESP_BMS_CONTROLLER_TIRE_ASPECT_STEP,
+        (width - ESP_BMS_CONTROLLER_TIRE_WIDTH_MIN) /
+            ESP_BMS_CONTROLLER_TIRE_WIDTH_STEP,
+    };
+    const int32_t gap = 6;
+    const int32_t roller_w = (card_w - 24 - gap * 2) / 3;
+    const int32_t roller_h = card_h - 42;
+    for (uint8_t index = 0; index < 3U; ++index) {
+        const int32_t x = 12 + index * (roller_w + gap);
+        lv_obj_t *title = label(card, x, 7, roller_w, 20, &settings_zh_13);
+        lv_label_set_text(title, titles[index]);
+        lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+        s_ui.settings_controller_tire_rollers[index] =
+            settings_controller_roller(card,
+                                       x,
+                                       30,
+                                       roller_w,
+                                       roller_h,
+                                       options[index],
+                                       selected[index]);
+    }
+    s_ui.settings_controller_ratio_roller = NULL;
+    settings_controller_confirm_button(s_ui.settings_detail, 20 + card_h);
+}
+
+static void settings_show_controller_ratio_edit(void)
+{
+    const esp_bms_dashboard_snapshot_t *snapshot = settings_current_snapshot();
+    const uint16_t ratio = snapshot->controller_fallback_gear_ratio_centi >=
+                                       ESP_BMS_CONTROLLER_RATIO_CENTI_MIN &&
+                                   snapshot->controller_fallback_gear_ratio_centi <=
+                                       ESP_BMS_CONTROLLER_RATIO_CENTI_MAX
+                               ? snapshot->controller_fallback_gear_ratio_centi
+                               : ESP_BMS_CONTROLLER_RATIO_CENTI_DEFAULT;
+    char *options = settings_controller_ratio_options();
+    if (!options) {
+        return;
+    }
+    lv_obj_clean(s_ui.settings_detail);
+    s_ui.settings_controller_view = (uint8_t)SETTINGS_CONTROLLER_VIEW_RATIO_EDIT;
+    label_set_text_if_changed(s_ui.settings_detail_title, "传动比");
+    lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
+    const int32_t roller_w = clamp_i32(s_ui.width - 96, 128, 220);
+    const int32_t roller_h = s_ui.width < s_ui.height ? 178 : 112;
+    s_ui.settings_controller_ratio_roller =
+        settings_controller_roller(s_ui.settings_detail,
+                                   (s_ui.width - roller_w) / 2,
+                                   12,
+                                   roller_w,
+                                   roller_h,
+                                   options,
+                                   ratio - ESP_BMS_CONTROLLER_RATIO_CENTI_MIN);
+    lv_free(options);
+    memset(s_ui.settings_controller_tire_rollers,
+           0,
+           sizeof(s_ui.settings_controller_tire_rollers));
+    settings_controller_confirm_button(s_ui.settings_detail, 20 + roller_h);
+}
+
+static void settings_controller_value_event_cb(lv_event_t *event)
 {
     if (lv_event_get_code(event) != LV_EVENT_CLICKED || UI_FLAG(SETTINGS_SWIPE_CONSUMED)) {
         return;
     }
-    const esp_bms_bms_scan_candidate_t *candidate = lv_event_get_user_data(event);
-    if (!candidate || candidate->mac[0] == '\0') {
-        return;
+    const settings_controller_view_t view =
+        (settings_controller_view_t)(uintptr_t)lv_event_get_user_data(event);
+    if (view == SETTINGS_CONTROLLER_VIEW_TIRE_EDIT) {
+        settings_show_controller_tire_edit();
+    } else if (view == SETTINGS_CONTROLLER_VIEW_RATIO_EDIT) {
+        settings_show_controller_ratio_edit();
     }
-    memset(&s_ui.pending_event, 0, sizeof(s_ui.pending_event));
-    s_ui.pending_event.action = ESP_BMS_LVGL_ACTION_START_CONTROLLER_BIND;
-    snprintf(s_ui.pending_event.controller_mac,
-             sizeof(s_ui.pending_event.controller_mac),
-             "%s",
-             candidate->mac);
-    ACTION_EVENT_SET_FLAG(&s_ui.pending_event, CONTROLLER_MAC_VALID, true);
-    ACTION_EVENT_SET_FLAG(&s_ui.pending_event, COMMITTED, true);
 }
 
-static void settings_controller_step_row(lv_obj_t *parent,
-                                         int32_t y,
-                                         const char *title,
-                                         const char *value,
-                                         const controller_step_action_t *minus,
-                                         const controller_step_action_t *plus)
+static void settings_controller_value_row(lv_obj_t *parent,
+                                          int32_t y,
+                                          int32_t w,
+                                          int32_t h,
+                                          const char *title,
+                                          const char *value,
+                                          settings_controller_view_t view,
+                                          bool editable)
 {
-    const int32_t row_h = s_ui.width < s_ui.height ? 56 : 48;
-    lv_obj_t *row = panel(parent, 0, y, lv_obj_get_width(parent), row_h, COLOR_SETTINGS_LIST);
-    lv_obj_set_style_radius(row, 0, LV_PART_MAIN);
-    lv_obj_set_style_border_width(row, 1, LV_PART_MAIN);
-    lv_obj_set_style_border_side(row, LV_BORDER_SIDE_BOTTOM, LV_PART_MAIN);
-    lv_obj_set_style_border_color(row, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
-    lv_obj_t *name = label(row, 12, 5, lv_obj_get_width(row) - 130, 20, &settings_zh_13);
-    lv_label_set_text(name, title);
-    lv_obj_t *current = label(row, 12, 27, lv_obj_get_width(row) - 130, 16, &lv_font_montserrat_14);
-    lv_label_set_text(current, value);
-    const controller_step_action_t *steps[2] = { minus, plus };
-    const char *texts[2] = { "-", "+" };
-    for (uint8_t index = 0; index < 2U; ++index) {
-        lv_obj_t *button = panel(row,
-                                 lv_obj_get_width(row) - 104 + index * 50,
-                                 7,
-                                 42,
-                                 row_h - 14,
-                                 COLOR_SETTINGS_CARD);
-        lv_obj_set_style_border_width(button, 1, LV_PART_MAIN);
-        lv_obj_set_style_border_color(button, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
-        lv_obj_add_flag(button, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_add_event_cb(button, settings_controller_step_event_cb, LV_EVENT_CLICKED,
-                            (void *)steps[index]);
-        lv_obj_t *text = label(button, 0, 2, 42, row_h - 18, &lv_font_montserrat_24);
-        lv_label_set_text(text, texts[index]);
-        lv_obj_set_style_text_align(text, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    const settings_detail_row_t descriptor = {
+        title,
+        value,
+        ESP_BMS_LVGL_ACTION_NONE,
+        SETTINGS_SYSTEM_VIEW_ROOT,
+    };
+    lv_obj_t *box = settings_detail_row(parent, 0, y, w, h, &descriptor);
+    if (!editable) {
+        lv_obj_clear_flag(box, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_state(box, LV_STATE_DISABLED);
+        lv_obj_set_style_opa(box, LV_OPA_40, LV_PART_MAIN | LV_STATE_DISABLED);
+        return;
     }
+    lv_obj_add_event_cb(box,
+                        settings_controller_value_event_cb,
+                        LV_EVENT_CLICKED,
+                        (void *)(uintptr_t)view);
+    lv_obj_t *arrow = label(box, w - 24, 0, 14, 15, &settings_zh_13);
+    lv_label_set_text(arrow, ">");
+    lv_obj_align(arrow, LV_ALIGN_RIGHT_MID, -10, 0);
+    lv_obj_set_style_text_align(arrow, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(arrow, COLOR_SETTINGS_ACCENT, LV_PART_MAIN);
 }
 
 static void settings_show_controller_detail(void)
@@ -3548,10 +3784,40 @@ static void settings_show_controller_detail(void)
     const int32_t card_x = 12;
     const int32_t card_w = s_ui.width - 24;
     const int32_t row_h = s_ui.width < s_ui.height ? 56 : 48;
-    const size_t base_count = ARRAY_SIZE(SETTINGS_CONTROLLER_ROWS);
     const esp_bms_dashboard_snapshot_t *snapshot = settings_current_snapshot();
     const bool page_enabled = SNAPSHOT_FLAG(snapshot, CONTROLLER_PAGE_ENABLED);
-    const size_t visible_row_count = page_enabled ? base_count + 2U : base_count - 2U;
+    const bool online = SNAPSHOT_FLAG(snapshot, CONTROLLER_ONLINE);
+    const bool controller_synced =
+        snapshot->controller_param_source ==
+        (uint8_t)ESP_BMS_CONTROLLER_PARAM_SOURCE_CONTROLLER;
+    const bool values_editable = online && !controller_synced;
+    const size_t visible_row_count = page_enabled ? 6U : 2U;
+    char ble_status[ESP_BMS_BMS_SCAN_NAME_LEN + 1U] = { 0 };
+    char tire[48] = { 0 };
+    char ratio[40] = { 0 };
+
+    lv_obj_clean(s_ui.settings_detail);
+    s_ui.settings_detail_id = (uint8_t)SETTINGS_DETAIL_CONTROLLER;
+    s_ui.settings_controller_view = (uint8_t)SETTINGS_CONTROLLER_VIEW_ROOT;
+    s_ui.settings_bms_ble_status = NULL;
+    label_set_text_if_changed(s_ui.settings_detail_title, "控制器设置");
+    lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
+
+    settings_bms_ble_format_status(ble_status,
+                                   sizeof(ble_status),
+                                   snapshot,
+                                   SETTINGS_BLE_SOURCE_CONTROLLER,
+                                   false);
+    const settings_detail_row_t rows[] = {
+        { "控制器页面显示", "首页显示控制器数据页",
+          ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_PAGE, SETTINGS_SYSTEM_VIEW_ROOT },
+        { "控制器连接", "连接远驱控制器",
+          ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_CONNECTION, SETTINGS_SYSTEM_VIEW_ROOT },
+        { "蓝牙选择", ble_status,
+          ESP_BMS_LVGL_ACTION_START_CONTROLLER_BIND, SETTINGS_SYSTEM_VIEW_ROOT },
+        { "控制器类型", "远驱", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
+    };
+
     lv_obj_t *card = settings_list_card(s_ui.settings_detail,
                                         card_x,
                                         12,
@@ -3559,78 +3825,65 @@ static void settings_show_controller_detail(void)
                                         row_h,
                                         visible_row_count);
     size_t visible_index = 0U;
-    for (size_t index = 0; index < base_count; ++index) {
-        const esp_bms_lvgl_action_t action = SETTINGS_CONTROLLER_ROWS[index].action;
+    for (size_t index = 0; index < ARRAY_SIZE(rows); ++index) {
         if (!page_enabled &&
-            (action == ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_CONNECTION ||
-             action == ESP_BMS_LVGL_ACTION_START_CONTROLLER_BIND)) {
+            (rows[index].action == ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_CONNECTION ||
+             rows[index].action == ESP_BMS_LVGL_ACTION_START_CONTROLLER_BIND)) {
             continue;
         }
-        settings_detail_row(card, 0, (int32_t)visible_index * row_h, card_w, row_h,
-                            &SETTINGS_CONTROLLER_ROWS[index]);
-        visible_index++;
-    }
-    if (page_enabled) {
-        char wheel[24];
-        char ratio[24];
-        if (snapshot->controller_wheel_circumference_mm > 0U) {
-            snprintf(wheel, sizeof(wheel), "%u mm", snapshot->controller_wheel_circumference_mm);
-        } else {
-            snprintf(wheel, sizeof(wheel), "-");
-        }
-        if (snapshot->controller_gear_ratio_centi > 0U) {
-            snprintf(ratio, sizeof(ratio), "%u.%02u",
-                     snapshot->controller_gear_ratio_centi / 100U,
-                     snapshot->controller_gear_ratio_centi % 100U);
-        } else {
-            snprintf(ratio, sizeof(ratio), "-");
-        }
-        settings_controller_step_row(card, (int32_t)visible_index * row_h,
-                                     "轮胎周长", wheel, &CONTROLLER_STEPS[0], &CONTROLLER_STEPS[1]);
-        visible_index++;
-        settings_controller_step_row(card, (int32_t)visible_index * row_h,
-                                     "传动比", ratio, &CONTROLLER_STEPS[2], &CONTROLLER_STEPS[3]);
+        settings_detail_row(card,
+                            0,
+                            (int32_t)visible_index * row_h,
+                            card_w,
+                            row_h,
+                            &rows[index]);
         visible_index++;
     }
 
-    if (page_enabled && snapshot->controller_scan_candidate_count > 0U) {
-        const int32_t list_y = 24 + (int32_t)visible_index * row_h;
-        lv_obj_t *devices = settings_list_card(s_ui.settings_detail,
-                                               card_x,
-                                               list_y,
-                                               card_w,
-                                               row_h,
-                                               snapshot->controller_scan_candidate_count);
-        for (uint8_t index = 0; index < snapshot->controller_scan_candidate_count; ++index) {
-            const esp_bms_bms_scan_candidate_t *candidate =
-                &snapshot->controller_scan_candidates[index];
-            settings_detail_row_t row = {
-                .title = candidate->has_name ? candidate->name : "FarDriver",
-                .subtitle = candidate->mac,
-                .action = ESP_BMS_LVGL_ACTION_NONE,
-                .system_view = SETTINGS_SYSTEM_VIEW_ROOT,
-            };
-            lv_obj_t *box = settings_detail_row(devices, 0, (int32_t)index * row_h,
-                                                card_w, row_h, &row);
-            lv_obj_add_flag(box, LV_OBJ_FLAG_CLICKABLE);
-            lv_obj_add_event_cb(box, settings_controller_candidate_event_cb, LV_EVENT_CLICKED,
-                                (void *)candidate);
+    if (page_enabled) {
+        if (snapshot->controller_param_source ==
+                (uint8_t)ESP_BMS_CONTROLLER_PARAM_SOURCE_CONTROLLER ||
+            snapshot->controller_param_source ==
+                (uint8_t)ESP_BMS_CONTROLLER_PARAM_SOURCE_LOCAL) {
+            (void)snprintf(tire,
+                           sizeof(tire),
+                           controller_synced ? "%u-%u-%u 控制器同步" : "%u-%u-%u",
+                           snapshot->controller_tire_rim_inch,
+                           snapshot->controller_tire_aspect_percent,
+                           snapshot->controller_tire_width_mm);
+        } else if (snapshot->controller_param_source ==
+                   (uint8_t)ESP_BMS_CONTROLLER_PARAM_SOURCE_LEGACY_WHEEL) {
+            (void)snprintf(tire,
+                           sizeof(tire),
+                           "旧周长 %u mm",
+                           snapshot->controller_wheel_circumference_mm);
+        } else {
+            (void)snprintf(tire, sizeof(tire), "未设置");
         }
+        (void)snprintf(ratio,
+                       sizeof(ratio),
+                       controller_synced ? "%u.%02u 控制器同步" : "%u.%02u",
+                       snapshot->controller_gear_ratio_centi / 100U,
+                       snapshot->controller_gear_ratio_centi % 100U);
+        settings_controller_value_row(card,
+                                      (int32_t)visible_index++ * row_h,
+                                      card_w,
+                                      row_h,
+                                      "轮胎规格",
+                                      tire,
+                                      SETTINGS_CONTROLLER_VIEW_TIRE_EDIT,
+                                      values_editable);
+        settings_controller_value_row(card,
+                                      (int32_t)visible_index * row_h,
+                                      card_w,
+                                      row_h,
+                                      "传动比",
+                                      ratio,
+                                      SETTINGS_CONTROLLER_VIEW_RATIO_EDIT,
+                                      values_editable);
     }
     lv_obj_update_layout(s_ui.settings_detail);
     lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
-    lv_obj_update_layout(s_ui.settings_detail);
-    lv_area_t card_area = { 0 };
-    lv_obj_get_coords(card, &card_area);
-    ESP_LOGI(TAG,
-             "[settings-diag] controller card page=%d visible=%u h=%ld area_y=%ld..%ld detail_children=%u scroll_bottom=%ld",
-             page_enabled,
-             (unsigned)visible_index,
-             (long)lv_obj_get_height(card),
-             (long)card_area.y1,
-             (long)card_area.y2,
-             (unsigned)lv_obj_get_child_count(s_ui.settings_detail),
-             (long)lv_obj_get_scroll_bottom(s_ui.settings_detail));
 }
 
 static bool settings_detail_action_uses_switch(esp_bms_lvgl_action_t action)
@@ -3788,7 +4041,12 @@ static void settings_detail_action_event_cb(lv_event_t *event)
 
     if (action == ESP_BMS_LVGL_ACTION_START_BMS_BIND) {
         ESP_LOGI(TAG, "[bms-ui] open BLE list page and start scan");
-        settings_show_bms_ble_popup(true);
+        settings_show_bms_ble_popup(SETTINGS_BLE_SOURCE_BMS, true);
+        return;
+    }
+    if (action == ESP_BMS_LVGL_ACTION_START_CONTROLLER_BIND) {
+        ESP_LOGI(TAG, "[controller-ui] open BLE list page and start scan");
+        settings_show_bms_ble_popup(SETTINGS_BLE_SOURCE_CONTROLLER, true);
         return;
     }
     if (action == ESP_BMS_LVGL_ACTION_RESTORE_DEFAULTS) {
@@ -3843,7 +4101,7 @@ static void settings_bms_bind_confirm_cancel_event_cb(lv_event_t *event)
     }
     lv_indev_wait_release(lv_indev_active());
     settings_bms_popup_close();
-    settings_show_bms_ble_popup(false);
+    settings_show_bms_ble_popup((settings_ble_source_t)s_ui.settings_ble_source, false);
 }
 
 static void settings_bms_bind_confirm_accept_event_cb(lv_event_t *event)
@@ -3855,13 +4113,22 @@ static void settings_bms_bind_confirm_accept_event_cb(lv_event_t *event)
 
     char mac[sizeof(s_ui.settings_bms_confirm_mac)] = { 0 };
     (void)snprintf(mac, sizeof(mac), "%s", s_ui.settings_bms_confirm_mac);
+    const settings_ble_source_t source = (settings_ble_source_t)s_ui.settings_ble_source;
     lv_indev_wait_release(lv_indev_active());
     settings_bms_popup_close();
-    queue_bms_bind_action(mac);
-    settings_show_bms_detail();
+    if (source == SETTINGS_BLE_SOURCE_BMS) {
+        queue_bms_bind_action(mac);
+        settings_show_bms_detail();
+    } else {
+        queue_controller_bind_action(mac);
+        settings_show_controller_detail();
+    }
     settings_navigation_set_hidden(false, false);
     quick_toast_show_connecting();
-    ESP_LOGI(TAG, "[bms-ui] BMS bind confirmed: mac=%s", mac);
+    ESP_LOGI(TAG,
+             "[ble-ui] %s bind confirmed: mac=%s",
+             source == SETTINGS_BLE_SOURCE_BMS ? "BMS" : "controller",
+             mac);
 }
 
 static void settings_show_bms_bind_confirm(const esp_bms_bms_scan_candidate_t *candidate)
@@ -3959,7 +4226,11 @@ static void settings_bms_ble_candidate_event_cb(lv_event_t *event)
         return;
     }
 
-    ESP_LOGI(TAG, "[bms-ui] BMS candidate confirmation opened: mac=%s", candidate->mac);
+    ESP_LOGI(TAG,
+             "[ble-ui] %s candidate confirmation opened: mac=%s",
+             s_ui.settings_ble_source == (uint8_t)SETTINGS_BLE_SOURCE_BMS ? "BMS"
+                                                                          : "controller",
+             candidate->mac);
     settings_show_bms_bind_confirm(candidate);
 }
 
@@ -3993,11 +4264,6 @@ static const settings_detail_row_t *settings_detail_rows_for_id(settings_detail_
             *count = ARRAY_SIZE(SETTINGS_BMS_ROWS);
         }
         return SETTINGS_BMS_ROWS;
-    case SETTINGS_DETAIL_CONTROLLER:
-        if (count) {
-            *count = ARRAY_SIZE(SETTINGS_CONTROLLER_ROWS);
-        }
-        return SETTINGS_CONTROLLER_ROWS;
     case SETTINGS_DETAIL_SYSTEM:
         if (count) {
             *count = ARRAY_SIZE(SETTINGS_SYSTEM_ROWS);
@@ -4421,6 +4687,11 @@ static void settings_show_detail(settings_detail_id_t detail_id)
     s_ui.settings_bms_ble_status = NULL;
     s_ui.settings_bms_ble_popup_open = false;
     s_ui.settings_bms_view = (uint8_t)SETTINGS_BMS_VIEW_ROOT;
+    s_ui.settings_controller_view = (uint8_t)SETTINGS_CONTROLLER_VIEW_ROOT;
+    memset(s_ui.settings_controller_tire_rollers,
+           0,
+           sizeof(s_ui.settings_controller_tire_rollers));
+    s_ui.settings_controller_ratio_roller = NULL;
     s_ui.settings_system_value = NULL;
     s_ui.settings_system_slider = NULL;
     s_ui.settings_system_slider_fill = NULL;
@@ -5386,18 +5657,18 @@ static void set_controller_dashboard(const esp_bms_dashboard_snapshot_t *snapsho
                          sizeof(s_ui.controller_motor_temp_buf), text);
 }
 
-static bool settings_controller_candidate_rows_changed(
-    const esp_bms_dashboard_snapshot_t *previous,
-    const esp_bms_dashboard_snapshot_t *current)
+static bool settings_ble_candidate_rows_changed(
+    const esp_bms_bms_scan_candidate_t *previous,
+    uint8_t previous_count,
+    const esp_bms_bms_scan_candidate_t *current,
+    uint8_t current_count)
 {
-    if (previous->controller_scan_candidate_count != current->controller_scan_candidate_count) {
+    if (previous_count != current_count) {
         return true;
     }
-    for (uint8_t index = 0; index < current->controller_scan_candidate_count; ++index) {
-        const esp_bms_bms_scan_candidate_t *old_candidate =
-            &previous->controller_scan_candidates[index];
-        const esp_bms_bms_scan_candidate_t *new_candidate =
-            &current->controller_scan_candidates[index];
+    for (uint8_t index = 0; index < current_count; ++index) {
+        const esp_bms_bms_scan_candidate_t *old_candidate = &previous[index];
+        const esp_bms_bms_scan_candidate_t *new_candidate = &current[index];
         if (old_candidate->has_name != new_candidate->has_name ||
             strcmp(old_candidate->mac, new_candidate->mac) != 0 ||
             strcmp(old_candidate->name, new_candidate->name) != 0) {
@@ -5405,6 +5676,16 @@ static bool settings_controller_candidate_rows_changed(
         }
     }
     return false;
+}
+
+static bool settings_controller_candidate_rows_changed(
+    const esp_bms_dashboard_snapshot_t *previous,
+    const esp_bms_dashboard_snapshot_t *current)
+{
+    return settings_ble_candidate_rows_changed(previous->controller_scan_candidates,
+                                               previous->controller_scan_candidate_count,
+                                               current->controller_scan_candidates,
+                                               current->controller_scan_candidate_count);
 }
 
 static bool settings_controller_view_changed(const esp_bms_dashboard_snapshot_t *previous,
@@ -5416,19 +5697,32 @@ static bool settings_controller_view_changed(const esp_bms_dashboard_snapshot_t 
                SNAPSHOT_FLAG(current, CONTROLLER_PAGE_ENABLED) ||
            SNAPSHOT_FLAG(previous, CONTROLLER_CONNECTION_ENABLED) !=
                SNAPSHOT_FLAG(current, CONTROLLER_CONNECTION_ENABLED) ||
+           SNAPSHOT_FLAG(previous, CONTROLLER_ONLINE) !=
+               SNAPSHOT_FLAG(current, CONTROLLER_ONLINE) ||
+           previous->controller_scan_active != current->controller_scan_active ||
+           previous->controller_scan_revision != current->controller_scan_revision ||
+           previous->controller_param_source != current->controller_param_source ||
+           previous->controller_tire_rim_inch != current->controller_tire_rim_inch ||
+           previous->controller_tire_aspect_percent != current->controller_tire_aspect_percent ||
+           previous->controller_tire_width_mm != current->controller_tire_width_mm ||
            previous->controller_wheel_circumference_mm !=
                current->controller_wheel_circumference_mm ||
            previous->controller_gear_ratio_centi != current->controller_gear_ratio_centi ||
+           previous->controller_fallback_tire_rim_inch !=
+               current->controller_fallback_tire_rim_inch ||
+           previous->controller_fallback_tire_aspect_percent !=
+               current->controller_fallback_tire_aspect_percent ||
+           previous->controller_fallback_tire_width_mm !=
+               current->controller_fallback_tire_width_mm ||
+           previous->controller_fallback_gear_ratio_centi !=
+               current->controller_fallback_gear_ratio_centi ||
+           strcmp(previous->controller_bound_name, current->controller_bound_name) != 0 ||
            settings_controller_candidate_rows_changed(previous, current);
 }
 
 static void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapshot)
 {
     const bool had_last_snapshot = UI_FLAG(LAST_SNAPSHOT_VALID);
-    const bool previous_controller_page_enabled =
-        SNAPSHOT_FLAG(&s_ui.last_snapshot, CONTROLLER_PAGE_ENABLED);
-    const bool previous_controller_connection_enabled =
-        SNAPSHOT_FLAG(&s_ui.last_snapshot, CONTROLLER_CONNECTION_ENABLED);
     const bool previous_bms_online = SNAPSHOT_FLAG(&s_ui.last_snapshot, BMS_ONLINE);
     const uint8_t previous_bms_type = s_ui.last_snapshot.bms_type;
     const bool previous_bluetooth_enabled = SNAPSHOT_FLAG(&s_ui.last_snapshot, BLUETOOTH_ENABLED);
@@ -5449,13 +5743,22 @@ static void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapsho
     }
     const bool bms_scan_candidates_changed =
         !had_last_snapshot ||
-        previous_bms_scan_candidate_count != snapshot->bms_scan_candidate_count ||
         strcmp(previous_bms_info_text, snapshot->bms_info_text) != 0 ||
-        memcmp(s_ui.last_snapshot.bms_scan_candidates,
-               snapshot->bms_scan_candidates,
-               sizeof(snapshot->bms_scan_candidates)) != 0;
+        settings_ble_candidate_rows_changed(s_ui.last_snapshot.bms_scan_candidates,
+                                            previous_bms_scan_candidate_count,
+                                            snapshot->bms_scan_candidates,
+                                            snapshot->bms_scan_candidate_count);
     const bool controller_view_changed =
         settings_controller_view_changed(&s_ui.last_snapshot, snapshot, had_last_snapshot);
+    const bool controller_ble_changed =
+        !had_last_snapshot ||
+        SNAPSHOT_FLAG(&s_ui.last_snapshot, CONTROLLER_ONLINE) !=
+            SNAPSHOT_FLAG(snapshot, CONTROLLER_ONLINE) ||
+        s_ui.last_snapshot.controller_scan_active != snapshot->controller_scan_active ||
+        s_ui.last_snapshot.controller_scan_revision != snapshot->controller_scan_revision ||
+        strcmp(s_ui.last_snapshot.controller_bound_name,
+               snapshot->controller_bound_name) != 0 ||
+        settings_controller_candidate_rows_changed(&s_ui.last_snapshot, snapshot);
     memcpy(&s_ui.last_snapshot, snapshot, sizeof(s_ui.last_snapshot));
     UI_SET_FLAG(LAST_SNAPSHOT_VALID, true);
 
@@ -5492,7 +5795,7 @@ static void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapsho
         const bool bms_type_changed = !had_last_snapshot || previous_bms_type != snapshot->bms_type;
         if (s_ui.settings_bms_view == (uint8_t)SETTINGS_BMS_VIEW_BLE_LIST &&
             (bms_scan_candidates_changed || bms_online_changed)) {
-            settings_show_bms_ble_popup(false);
+            settings_show_bms_ble_popup(SETTINGS_BLE_SOURCE_BMS, false);
         } else if (s_ui.settings_bms_view == (uint8_t)SETTINGS_BMS_VIEW_TYPE_LIST &&
                    bms_type_changed) {
             settings_show_bms_type_picker();
@@ -5503,16 +5806,13 @@ static void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapsho
     }
     if (s_ui.settings_detail_id == (uint8_t)SETTINGS_DETAIL_CONTROLLER &&
         controller_view_changed) {
-        ESP_LOGI(TAG,
-                 "[settings-diag] controller snapshot page=%d->%d connection=%d->%d wheel=%u ratio=%u candidates=%u",
-                 previous_controller_page_enabled,
-                 SNAPSHOT_FLAG(snapshot, CONTROLLER_PAGE_ENABLED),
-                 previous_controller_connection_enabled,
-                 SNAPSHOT_FLAG(snapshot, CONTROLLER_CONNECTION_ENABLED),
-                 snapshot->controller_wheel_circumference_mm,
-                 snapshot->controller_gear_ratio_centi,
-                 snapshot->controller_scan_candidate_count);
-        settings_show_detail(SETTINGS_DETAIL_CONTROLLER);
+        if (s_ui.settings_controller_view == (uint8_t)SETTINGS_CONTROLLER_VIEW_ROOT) {
+            settings_show_controller_detail();
+        } else if (s_ui.settings_controller_view ==
+                       (uint8_t)SETTINGS_CONTROLLER_VIEW_BLE_LIST &&
+                   controller_ble_changed) {
+            settings_show_bms_ble_popup(SETTINGS_BLE_SOURCE_CONTROLLER, false);
+        }
     }
 }
 

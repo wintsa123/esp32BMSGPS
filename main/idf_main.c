@@ -52,6 +52,8 @@ static bool action_should_save_display_settings(esp_bms_lvgl_action_t action)
            action == ESP_BMS_LVGL_ACTION_START_CONTROLLER_BIND ||
            action == ESP_BMS_LVGL_ACTION_ADJUST_CONTROLLER_WHEEL ||
            action == ESP_BMS_LVGL_ACTION_ADJUST_CONTROLLER_RATIO ||
+           action == ESP_BMS_LVGL_ACTION_SET_CONTROLLER_TIRE ||
+           action == ESP_BMS_LVGL_ACTION_SET_CONTROLLER_RATIO ||
            action == ESP_BMS_LVGL_ACTION_RESTORE_DEFAULTS;
 }
 
@@ -254,11 +256,20 @@ void app_main(void)
         }
         const bool action_committed =
             esp_bms_lvgl_action_event_flag_get(&action_event, ESP_BMS_LVGL_ACTION_EVENT_FLAG_COMMITTED);
+        const bool controller_settings_save_requested =
+            esp_bms_idf_runtime_flag_get(
+                &runtime,
+                ESP_BMS_IDF_RUNTIME_FLAG_CONTROLLER_SETTINGS_SAVE_REQUESTED);
         bool should_save_display_settings = false;
         if (!display_apply_failed && action == ESP_BMS_LVGL_ACTION_ROTATE_DISPLAY && action_changed) {
             delayed_display_settings_save_pending = true;
             delayed_display_settings_save_ms = ESP_BMS_LVGL_ROTATE_SAVE_DELAY_MS;
-        } else if (action_committed && !display_apply_failed && action_should_save_display_settings(action)) {
+        } else if (action_committed && !display_apply_failed &&
+                   action_should_save_display_settings(action) &&
+                   (action != ESP_BMS_LVGL_ACTION_START_CONTROLLER_BIND ||
+                    esp_bms_lvgl_action_event_flag_get(
+                        &action_event,
+                        ESP_BMS_LVGL_ACTION_EVENT_FLAG_CONTROLLER_MAC_VALID))) {
             should_save_display_settings = !delayed_display_settings_save_pending;
         }
         if (delayed_display_settings_save_pending && action != ESP_BMS_LVGL_ACTION_ROTATE_DISPLAY) {
@@ -269,6 +280,9 @@ void app_main(void)
             } else {
                 delayed_display_settings_save_ms -= 50U;
             }
+        }
+        if (controller_settings_save_requested && !display_apply_failed) {
+            should_save_display_settings = true;
         }
         esp_bms_lvgl_bridge_unlock();
 
@@ -281,6 +295,11 @@ void app_main(void)
             const esp_err_t save_ret = esp_bms_idf_runtime_save_display_settings(&runtime);
             if (save_ret != ESP_OK) {
                 ESP_LOGW(TAG, "display settings save failed: %s", esp_err_to_name(save_ret));
+            } else if (controller_settings_save_requested) {
+                esp_bms_idf_runtime_flag_set(
+                    &runtime,
+                    ESP_BMS_IDF_RUNTIME_FLAG_CONTROLLER_SETTINGS_SAVE_REQUESTED,
+                    false);
             }
         }
 
