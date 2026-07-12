@@ -2432,7 +2432,10 @@ static esp_err_t runtime_http_bms_candidates_handler(httpd_req_t *req,
 
     char json[HTTP_JSON_MAX_LEN] = { 0 };
     size_t offset = 0;
-    int written = snprintf(json, sizeof(json), "{\"candidates\":[");
+    int written = snprintf(json,
+                           sizeof(json),
+                           "{\"scan_active\":%s,\"candidates\":[",
+                           RUNTIME_FLAG(runtime, BMS_SCAN_ACTIVE) ? "true" : "false");
     if (written < 0 || (size_t)written >= sizeof(json)) {
         return runtime_http_send_text(req, "500 Internal Server Error", "json too large");
     }

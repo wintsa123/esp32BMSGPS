@@ -214,6 +214,8 @@
     };
     let uiLanguage = "zh";
     let setupPassword = sessionStorage.getItem("setupPassword") || "";
+    let bmsScanPollTimer = 0;
+    let bmsScanPollDeadline = 0;
 
     function t(key) {
       return (I18N[uiLanguage] || I18N.zh)[key] || I18N.zh[key] || key;
@@ -278,14 +280,40 @@
       }
     }
 
+    function stopBmsScanPolling() {
+      if (bmsScanPollTimer) clearTimeout(bmsScanPollTimer);
+      bmsScanPollTimer = 0;
+      bmsScanPollDeadline = 0;
+      $("bms-scan").disabled = false;
+    }
+
     async function loadBmsCandidates() {
       try {
         const data = await api("/api/bms/candidates");
         const items = Array.isArray(data.candidates) ? data.candidates : [];
         $("bms-candidates").replaceChildren(...items.map(renderBmsCandidate));
+        return data.scan_active === true;
       } catch {
         $("bms-candidates").replaceChildren();
+        return false;
       }
+    }
+
+    async function pollBmsCandidates() {
+      const scanActive = await loadBmsCandidates();
+      if (scanActive && Date.now() < bmsScanPollDeadline) {
+        bmsScanPollTimer = setTimeout(pollBmsCandidates, 700);
+      } else {
+        stopBmsScanPolling();
+      }
+    }
+
+    async function startBmsScan() {
+      stopBmsScanPolling();
+      $("bms-scan").disabled = true;
+      await api("/api/bms/scan", { method: "POST" });
+      bmsScanPollDeadline = Date.now() + 15000;
+      bmsScanPollTimer = setTimeout(pollBmsCandidates, 350);
     }
 
     function renderBmsCandidate(candidate) {
@@ -379,7 +407,7 @@
     }
 
     $("refresh").addEventListener("click", refresh);
-    $("bms-scan").addEventListener("click", () => api("/api/bms/scan", { method: "POST" }).then(loadBmsCandidates));
+    $("bms-scan").addEventListener("click", () => startBmsScan().catch(stopBmsScanPolling));
     $("bms-bind").addEventListener("click", () => bindBmsMac().then(refresh));
     $("bms-form").addEventListener("submit", (event) => {
       event.preventDefault();
