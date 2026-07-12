@@ -75,6 +75,19 @@ Questions to answer:
 - Keep voltage/current and cell-stat separators at 1px. Temperature columns use fixed small thermometer primitives so all six `T1`-`T4`/`BAL`/`MOS` columns remain stable in 240x320 and 320x240 layouts.
 - Render dashboard previews through `preview/lvgl_render_compat.py`; the local LVGL 9 MicroPython binding initializes through module `__init__()` rather than `lv.init()`.
 
+### LVGL Controller Dashboard Visuals
+
+- Use `preview/controller_display_v2_dual_hero.png` as the controller dashboard visual contract. Both orientations require an outer frame, separately bordered speed and gear regions, and a blue vertical-gradient gear region. The auxiliary area is one four-column row in landscape and a 2x2 grid in portrait.
+- Keep speed, gear, auxiliary values, headings, and units in separate labels. Do not encode a whole auxiliary column as a multi-line string such as `"CTRL\n52C"`; separate labels are required to preserve the design's font size, color, and vertical-spacing hierarchy.
+- Place each auxiliary unit immediately to the right of its value on the same row (`8.4 kW`, `3780 RPM`, `52 C`). Use built-in `lv_font_montserrat_14` for auxiliary ASCII instead of a generated sparse font; the built-in font avoids target-only glyph corruption. Keep `CTRL` and `MOTOR` as white headings at the top-left of their cells, with green temperature values and units on the row below.
+- Dynamic controller labels own persistent buffers and use `lv_label_set_text_static()`. Online/offline transitions replace only the numeric text (`"42.6"` -> `"-"`); they must not create/delete widgets or move static headings and units.
+- The 320x240 and 240x320 layouts use explicit fixed geometry because they target one physical TFT in two orientations. Landscape uses one horizontal four-column stats row; portrait uses a 2x2 grid with power/RPM above controller/motor temperature.
+- Large numeric fonts should contain only the glyphs used by telemetry (`-.0123456789`) to control flash use. Generate component-local LVGL fonts with `--lv-include lvgl.h`; the generator default `lvgl/lvgl.h` does not resolve through this component's ESP-IDF include path.
+- The desktop LVGL runtime may lack the custom component font. A preview may scale an available Montserrat font to validate geometry, but the checked-in Pillow reference must use the same Montserrat TTF and native target size to validate crisp glyph metrics.
+- The current ST7789 hardware requires `LCD_RGB_ELEMENT_ORDER_RGB` in `esp_bms_lvgl_bridge_init()`. Setting BGR flips red and blue on the physical panel, turning the controller gear panel's intended blue into orange even though desktop previews remain blue.
+- `LV_OBJ_FLAG_SCROLL_ONE` is not the complete carousel contract. At `LV_EVENT_SCROLL_END`, clamp the raw snapped page to at most one physical page width from the current stable `s_ui.page`, then animate back to that adjacent page before flushing deferred telemetry. Programmatic `move_to_page()` remains unrestricted because it updates `s_ui.page` before starting its animation.
+- Validate every fixed-width label against the native font's actual glyph width. In particular, Montserrat 24 `km/h` is about 65px wide; its label needs extra width and right-frame clearance in both orientations.
+
 ### LVGL Settings Navigation
 
 - The settings root and all settings detail pages reuse one persistent top navigation object. The root title is `设置` and its back action returns to the dashboard; detail titles come from `SETTINGS_OPTIONS` and return to the settings root.
