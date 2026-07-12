@@ -57,6 +57,7 @@ Questions to answer:
 - Controller tire/ratio rows remain visible when the controller page is enabled. Offline rows and controller-synchronized rows use `LV_STATE_DISABLED`; only online rows without controller parameters navigate to an editor.
 - Bounded numeric roller editors hold a local draft and queue one absolute-value action only from the green confirmation button. Back/cancel queues no action, and refresh/scan actions must not be treated as settings changes that write NVS.
 - A confirmed bind uses the existing toast objects for a persistent rotating `LV_SYMBOL_LOOP` plus `连接...`. Stop the animation on terminal connection states and replace it with `绑定成功` only on the offline-to-online snapshot transition.
+- FarDriver controller telemetry subscription and notification parsing stay active after the controller GATT path reaches online, independent of the currently visible dashboard page. The stable page may gate the 2-second active gather request, but must not unsubscribe or discard notifications; otherwise the controller carousel opens with no cached telemetry.
 - Regenerate `settings_zh_10/13/16.c` from every Han character actually present in `esp_bms_lvgl_ui.c`; do not maintain an ad hoc glyph tail. Before build, compare the generated `--symbols` list with UI literals and require zero missing glyphs.
 
 ### LVGL Fixed QR Lifecycle

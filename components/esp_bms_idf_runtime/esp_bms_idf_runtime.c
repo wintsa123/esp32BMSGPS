@@ -3806,9 +3806,7 @@ static int runtime_controller_dsc_cb(uint16_t conn_handle,
     if (error && error->status == BLE_HS_EDONE && runtime->controller_cccd_handle != 0U) {
         runtime->controller_ble_phase = (uint8_t)BMS_BLE_PHASE_ONLINE;
         runtime_project_controller_snapshot(runtime);
-        runtime_controller_set_subscription(runtime,
-                                            runtime->active_data_source ==
-                                                ESP_BMS_LVGL_DATA_SOURCE_CONTROLLER);
+        runtime_controller_set_subscription(runtime, true);
         return 0;
     }
     (void)ble_gap_terminate(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
@@ -3952,8 +3950,7 @@ static int runtime_controller_gap_event(struct ble_gap_event *event, void *arg)
         return 0;
     case BLE_GAP_EVENT_NOTIFY_RX:
         if (event->notify_rx.conn_handle == runtime->controller_conn_handle &&
-            event->notify_rx.attr_handle == runtime->controller_char_val_handle &&
-            runtime->active_data_source == ESP_BMS_LVGL_DATA_SOURCE_CONTROLLER) {
+            event->notify_rx.attr_handle == runtime->controller_char_val_handle) {
             uint8_t frame[ESP_FARDRIVER_FRAME_LEN];
             const int len = OS_MBUF_PKTLEN(event->notify_rx.om);
             if (len == (int)sizeof(frame) &&
@@ -5053,8 +5050,6 @@ void esp_bms_idf_runtime_set_active_data_source(esp_bms_idf_runtime_t *runtime,
     runtime->bms_status_poll_elapsed_ms = source == ESP_BMS_LVGL_DATA_SOURCE_BMS
                                               ? BMS_STATUS_POLL_PERIOD_MS
                                               : 0U;
-    runtime_controller_set_subscription(runtime,
-                                        source == ESP_BMS_LVGL_DATA_SOURCE_CONTROLLER);
 }
 
 bool esp_bms_idf_runtime_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_ms)

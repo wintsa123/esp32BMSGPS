@@ -3555,11 +3555,16 @@ static lv_obj_t *settings_controller_roller(lv_obj_t *parent,
     lv_obj_set_style_text_color(roller, COLOR_WHITE, LV_PART_SELECTED);
     lv_obj_set_style_bg_color(roller, COLOR_SETTINGS_CARD, LV_PART_MAIN);
     lv_obj_set_style_bg_color(roller, COLOR_SWITCH_ACTIVE, LV_PART_SELECTED);
+    lv_obj_set_style_border_color(roller, COLOR_WHITE, LV_PART_SELECTED);
+    lv_obj_set_style_border_width(roller, 1, LV_PART_SELECTED);
+    lv_obj_set_style_border_side(roller,
+                                 LV_BORDER_SIDE_TOP | LV_BORDER_SIDE_BOTTOM,
+                                 LV_PART_SELECTED);
     lv_obj_set_style_border_color(roller, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
     lv_obj_set_style_border_width(roller, 1, LV_PART_MAIN);
     lv_obj_set_style_radius(roller, 8, LV_PART_MAIN);
     lv_obj_set_style_radius(roller, 6, LV_PART_SELECTED);
-    settings_add_swipe_handlers(roller);
+    /* Roller vertical drags select values; the persistent edge zone owns back navigation. */
     return roller;
 }
 
@@ -5404,15 +5409,20 @@ static void format_mv(char *out, size_t len, bool valid, uint32_t mv)
     snprintf(out, len, "%lu.%02luV", (unsigned long)(mv / 1000), (unsigned long)((mv % 1000) / 10));
 }
 
-static void format_deci_amps(char *out, size_t len, bool valid, int16_t deci_amps)
+static void format_deci_amps(char *out, size_t len, bool valid, int32_t deci_amps)
 {
     if (!valid) {
         snprintf(out, len, "--");
         return;
     }
     const char sign = deci_amps < 0 ? '-' : '+';
-    uint16_t abs_value = deci_amps < 0 ? (uint16_t)(-deci_amps) : (uint16_t)deci_amps;
-    snprintf(out, len, "%c%u.%uA", sign, abs_value / 10, abs_value % 10);
+    const uint32_t abs_value = deci_amps < 0 ? (uint32_t)(-deci_amps) : (uint32_t)deci_amps;
+    snprintf(out,
+             len,
+             "%c%lu.%luA",
+             sign,
+             (unsigned long)(abs_value / 10U),
+             (unsigned long)(abs_value % 10U));
 }
 
 static void format_cell_v(char *out, size_t len, bool valid, uint16_t mv)
@@ -5556,8 +5566,9 @@ static void set_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
 
     const bool current_valid = SNAPSHOT_FLAG(snapshot, CURRENT_VALID);
     format_mv(voltage, sizeof(voltage), SNAPSHOT_FLAG(snapshot, PACK_VOLTAGE_VALID), snapshot->pack_voltage_mv);
-    format_deci_amps(current, sizeof(current), current_valid, snapshot->current_deci_amps);
-    const bool charging = current_valid && snapshot->current_deci_amps > 0;
+    const int32_t display_current_deci_amps = -(int32_t)snapshot->current_deci_amps;
+    format_deci_amps(current, sizeof(current), current_valid, display_current_deci_amps);
+    const bool charging = current_valid && display_current_deci_amps < 0;
     update_dashboard_soc_fill(soc_percent, soc_valid, charging);
     update_dashboard_battery_icon(soc_percent, soc_valid, charging);
     label_set_text_if_changed(s_ui.pack_voltage, voltage);
@@ -6014,6 +6025,8 @@ static void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapsho
 {
     const bool had_last_snapshot = UI_FLAG(LAST_SNAPSHOT_VALID);
     const bool previous_bms_online = SNAPSHOT_FLAG(&s_ui.last_snapshot, BMS_ONLINE);
+    const bool previous_controller_online =
+        SNAPSHOT_FLAG(&s_ui.last_snapshot, CONTROLLER_ONLINE);
     const uint8_t previous_bms_type = s_ui.last_snapshot.bms_type;
     const bool previous_bluetooth_enabled = SNAPSHOT_FLAG(&s_ui.last_snapshot, BLUETOOTH_ENABLED);
     const bool previous_bluetooth_advertising = SNAPSHOT_FLAG(&s_ui.last_snapshot, BLUETOOTH_ADVERTISING);
@@ -6055,7 +6068,9 @@ static void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapsho
     set_header(snapshot);
     set_dashboard(snapshot);
     set_controller_dashboard(snapshot);
-    if (had_last_snapshot && !previous_bms_online && SNAPSHOT_FLAG(snapshot, BMS_ONLINE)) {
+    if (had_last_snapshot &&
+        ((!previous_bms_online && SNAPSHOT_FLAG(snapshot, BMS_ONLINE)) ||
+         (!previous_controller_online && SNAPSHOT_FLAG(snapshot, CONTROLLER_ONLINE)))) {
         quick_toast_show_text("绑定成功");
     } else if (s_ui.quick_connecting_toast_active &&
                had_last_snapshot &&
