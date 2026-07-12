@@ -1,5 +1,7 @@
 #include "esp_bms_idf_runtime.h"
 
+#include "esp_bms_lvgl_bridge.h"
+
 #include "esp_event.h"
 #include "esp_err.h"
 #include "esp_check.h"
@@ -109,6 +111,39 @@ static const char *TAG = "bms_idf_runtime";
 #define HTTP_AUTH_MAX_LEN 48U
 #define HTTP_SETUP_USER "esp32"
 #define HTTP_SERVER_TASK_PRIORITY 3U
+#define CAST_PROTOCOL_VERSION 1U
+#define CAST_BLOCK_MAX_SIDE 16U
+#define CAST_BLOCK_MAX_BYTES (CAST_BLOCK_MAX_SIDE * CAST_BLOCK_MAX_SIDE * 2U)
+#define CAST_MESSAGE_MAX_BYTES (8U + CAST_BLOCK_MAX_BYTES)
+#define CAST_HEARTBEAT_TIMEOUT_MS 5000U
+#define CAST_TYPE_FRAME_BEGIN 1U
+#define CAST_TYPE_RGB565_BLOCK 2U
+#define CAST_TYPE_FRAME_END 3U
+#define CAST_TYPE_HEARTBEAT 4U
+#define CAST_TYPE_ACK 0x81U
+
+static uint16_t runtime_cast_width(const esp_bms_idf_runtime_t *runtime)
+{
+    return runtime->display_rotation == ESP_BMS_IDF_DISPLAY_ROTATION_LANDSCAPE ||
+                   runtime->display_rotation == ESP_BMS_IDF_DISPLAY_ROTATION_INVERTED_LANDSCAPE
+               ? 320U
+               : 240U;
+}
+
+static uint16_t runtime_cast_height(const esp_bms_idf_runtime_t *runtime)
+{
+    return runtime_cast_width(runtime) == 320U ? 240U : 320U;
+}
+
+static void runtime_cast_stop(esp_bms_idf_runtime_t *runtime, const char *reason)
+{
+    if (runtime->cast_active) {
+        ESP_LOGI(TAG, "[cast] stopped: %s", reason);
+    }
+    runtime->cast_active = false;
+    runtime->cast_socket_fd = -1;
+    runtime->cast_heartbeat_elapsed_ms = 0U;
+}
 
 static void runtime_log_heap_state(const char *stage)
 {
@@ -2739,6 +2774,115 @@ static esp_err_t runtime_http_post_bms_scan_handler(httpd_req_t *req, esp_bms_id
     return runtime_http_send_no_content(req);
 }
 
+static esp_err_t runtime_http_cast_info_handler(httpd_req_t *req, esp_bms_idf_runtime_t *runtime)
+{
+    char json[192] = { 0 };
+    const int written = snprintf(json,
+                                 sizeof(json),
+                                 "{\"protocol_version\":%u,\"width\":%u,\"height\":%u,"
+                                 "\"rotation\":%u,\"max_block_side\":%u,\"active\":%s}",
+                                 CAST_PROTOCOL_VERSION,
+                                 runtime_cast_width(runtime),
+                                 runtime_cast_height(runtime),
+                                 runtime->display_rotation,
+                                 CAST_BLOCK_MAX_SIDE,
+                                 runtime->cast_active ? "true" : "false");
+    if (written < 0 || (size_t)written >= sizeof(json)) {
+        return runtime_http_send_text(req, "500 Internal Server Error", "cast info format error");
+    }
+    return runtime_http_send_json(req, json);
+}
+
+static uint16_t runtime_cast_u16(const uint8_t *value)
+{
+    return (uint16_t)((uint16_t)value[0] << 8U) | value[1];
+}
+
+static uint32_t runtime_cast_u32(const uint8_t *value)
+{
+    return ((uint32_t)value[0] << 24U) | ((uint32_t)value[1] << 16U) |
+           ((uint32_t)value[2] << 8U) | value[3];
+}
+
+static esp_err_t runtime_cast_send_ack(httpd_req_t *req, uint32_t sequence)
+{
+    uint8_t ack[] = { CAST_TYPE_ACK, 0U, 0U, 0U, 0U };
+    ack[1] = (uint8_t)(sequence >> 24U);
+    ack[2] = (uint8_t)(sequence >> 16U);
+    ack[3] = (uint8_t)(sequence >> 8U);
+    ack[4] = (uint8_t)sequence;
+    httpd_ws_frame_t frame = {
+        .type = HTTPD_WS_TYPE_BINARY,
+        .payload = ack,
+        .len = sizeof(ack),
+    };
+    return httpd_ws_send_frame(req, &frame);
+}
+
+static esp_err_t runtime_http_cast_ws_handler(httpd_req_t *req)
+{
+    esp_bms_idf_runtime_t *runtime = (esp_bms_idf_runtime_t *)req->user_ctx;
+    if (!runtime) {
+        return ESP_FAIL;
+    }
+    if (req->method == HTTP_GET) {
+        if (!runtime_http_auth_ok(req, runtime)) {
+            return runtime_http_send_unauthorized(req);
+        }
+        if (runtime->cast_active) {
+            ESP_LOGW(TAG, "[cast] reject second client fd=%d", httpd_req_to_sockfd(req));
+            return ESP_FAIL;
+        }
+        runtime->cast_active = true;
+        runtime->cast_socket_fd = httpd_req_to_sockfd(req);
+        runtime->cast_heartbeat_elapsed_ms = 0U;
+        ESP_LOGI(TAG, "[cast] client connected fd=%d", runtime->cast_socket_fd);
+        return ESP_OK;
+    }
+
+    httpd_ws_frame_t frame = { 0 };
+    ESP_RETURN_ON_ERROR(httpd_ws_recv_frame(req, &frame, 0), TAG, "read cast frame header failed");
+    if (frame.type != HTTPD_WS_TYPE_BINARY || frame.len == 0U || frame.len > CAST_MESSAGE_MAX_BYTES) {
+        runtime_cast_stop(runtime, "invalid frame");
+        return ESP_ERR_INVALID_SIZE;
+    }
+    uint8_t message[CAST_MESSAGE_MAX_BYTES] = { 0 };
+    frame.payload = message;
+    ESP_RETURN_ON_ERROR(httpd_ws_recv_frame(req, &frame, frame.len), TAG, "read cast frame failed");
+    runtime->cast_heartbeat_elapsed_ms = 0U;
+
+    if (message[0] == CAST_TYPE_HEARTBEAT && frame.len == 1U) {
+        return ESP_OK;
+    }
+    if (message[0] == CAST_TYPE_FRAME_BEGIN && frame.len == 6U && message[1] == CAST_PROTOCOL_VERSION) {
+        return ESP_OK;
+    }
+    if (message[0] == CAST_TYPE_FRAME_END && frame.len == 5U) {
+        return runtime_cast_send_ack(req, runtime_cast_u32(&message[1]));
+    }
+    if (message[0] != CAST_TYPE_RGB565_BLOCK || frame.len < 9U) {
+        runtime_cast_stop(runtime, "unknown message");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    const uint16_t x = runtime_cast_u16(&message[1]);
+    const uint16_t y = runtime_cast_u16(&message[3]);
+    const uint8_t width = message[5];
+    const uint8_t height = message[6];
+    const size_t pixel_bytes = (size_t)width * height * sizeof(uint16_t);
+    if (width == 0U || height == 0U || width > CAST_BLOCK_MAX_SIDE || height > CAST_BLOCK_MAX_SIDE ||
+        x >= runtime_cast_width(runtime) || y >= runtime_cast_height(runtime) ||
+        width > runtime_cast_width(runtime) - x || height > runtime_cast_height(runtime) - y ||
+        frame.len != 9U + pixel_bytes) {
+        runtime_cast_stop(runtime, "block out of bounds");
+        return ESP_ERR_INVALID_SIZE;
+    }
+    ESP_RETURN_ON_ERROR(esp_bms_lvgl_bridge_lock(-1), TAG, "lock display for cast failed");
+    const esp_err_t ret = esp_bms_lvgl_bridge_write_rgb565(x, y, width, height, &message[9], pixel_bytes);
+    esp_bms_lvgl_bridge_unlock();
+    return ret;
+}
+
 static esp_err_t runtime_http_api_handler(httpd_req_t *req)
 {
     esp_bms_idf_runtime_t *runtime = (esp_bms_idf_runtime_t *)req->user_ctx;
@@ -2762,6 +2906,9 @@ static esp_err_t runtime_http_api_handler(httpd_req_t *req)
 
     if (req->method == HTTP_GET && strcmp(req->uri, "/api/status") == 0) {
         return runtime_http_status_handler(req, runtime);
+    }
+    if (req->method == HTTP_GET && strcmp(req->uri, "/api/cast/info") == 0) {
+        return runtime_http_cast_info_handler(req, runtime);
     }
     if (req->method == HTTP_GET && strcmp(req->uri, "/api/config") == 0) {
         return runtime_http_config_handler(req, runtime);
@@ -2793,7 +2940,7 @@ static esp_err_t runtime_start_http_server(esp_bms_idf_runtime_t *runtime)
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.max_open_sockets = 4;
-    config.max_uri_handlers = 4;
+    config.max_uri_handlers = 5;
     config.stack_size = 4096;
     config.task_priority = HTTP_SERVER_TASK_PRIORITY;
     config.lru_purge_enable = true;
@@ -2816,10 +2963,20 @@ static esp_err_t runtime_start_http_server(esp_bms_idf_runtime_t *runtime)
         .handler = runtime_http_api_handler,
         .user_ctx = runtime,
     };
+    const httpd_uri_t cast = {
+        .uri = "/cast",
+        .method = HTTP_GET,
+        .handler = runtime_http_cast_ws_handler,
+        .user_ctx = runtime,
+        .is_websocket = true,
+    };
 
     ret = httpd_register_uri_handler(runtime->http_server, &root);
     if (ret == ESP_OK) {
         ret = httpd_register_uri_handler(runtime->http_server, &api);
+    }
+    if (ret == ESP_OK) {
+        ret = httpd_register_uri_handler(runtime->http_server, &cast);
     }
     if (ret != ESP_OK) {
         httpd_stop(runtime->http_server);
@@ -2828,7 +2985,7 @@ static esp_err_t runtime_start_http_server(esp_bms_idf_runtime_t *runtime)
     }
 
     RUNTIME_SET_FLAG(runtime, HTTP_SERVER_STARTED, true);
-    ESP_LOGI(TAG, "[http] server started: port=80 routes=/,/api/*");
+    ESP_LOGI(TAG, "[http] server started: port=80 routes=/,/api/*,/cast");
     runtime_log_heap_state("http_server_started");
     return ESP_OK;
 }
@@ -3756,6 +3913,9 @@ static int runtime_controller_gap_event(struct ble_gap_event *event, void *arg)
                 return 0;
             }
             runtime->controller_conn_handle = event->connect.conn_handle;
+            __atomic_fetch_or(&runtime->pending_audio_events,
+                              ESP_BMS_IDF_RUNTIME_AUDIO_EVENT_CONTROLLER_CONNECTED,
+                              __ATOMIC_RELAXED);
             runtime->controller_service_start_handle = 0U;
             runtime->controller_service_end_handle = 0U;
             runtime->controller_ble_phase = (uint8_t)BMS_BLE_PHASE_DISCOVERING_SERVICE;
@@ -3993,6 +4153,9 @@ static int runtime_bms_ble_gap_event(struct ble_gap_event *event, void *arg)
     case BLE_GAP_EVENT_CONNECT:
         if (event->connect.status == 0) {
             runtime->bms_conn_handle = event->connect.conn_handle;
+            __atomic_fetch_or(&runtime->pending_audio_events,
+                              ESP_BMS_IDF_RUNTIME_AUDIO_EVENT_BMS_CONNECTED,
+                              __ATOMIC_RELAXED);
             RUNTIME_SET_FLAG(runtime, BMS_SCAN_ACTIVE, false);
             runtime->bms_ble_phase = (uint8_t)BMS_BLE_PHASE_DISCOVERING_SERVICE;
             runtime_set_bms_info(runtime, "BMS DISC");
@@ -4657,6 +4820,7 @@ void esp_bms_idf_runtime_init(esp_bms_idf_runtime_t *runtime)
     }
 
     memset(runtime, 0, sizeof(*runtime));
+    runtime->cast_socket_fd = -1;
     runtime->http_pending_lock = xSemaphoreCreateMutex();
     if (!runtime->http_pending_lock) {
         ESP_LOGW(TAG, "[http] pending config mutex allocation failed");
@@ -4740,6 +4904,7 @@ esp_err_t esp_bms_idf_runtime_stop_setup_services(esp_bms_idf_runtime_t *runtime
     }
 
     esp_err_t result = ESP_OK;
+    runtime_cast_stop(runtime, "setup AP stopped");
     if (runtime->http_server) {
         const esp_err_t http_ret = httpd_stop(runtime->http_server);
         if (http_ret != ESP_OK) {
@@ -4898,6 +5063,13 @@ bool esp_bms_idf_runtime_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_m
         return false;
     }
 
+    if (runtime->cast_active) {
+        runtime->cast_heartbeat_elapsed_ms += elapsed_ms;
+        if (runtime->cast_heartbeat_elapsed_ms >= CAST_HEARTBEAT_TIMEOUT_MS) {
+            runtime_cast_stop(runtime, "heartbeat timeout");
+        }
+    }
+
     bool changed = RUNTIME_FLAG(runtime, BLUETOOTH_SNAPSHOT_DIRTY) ||
                    RUNTIME_FLAG(runtime, BMS_SNAPSHOT_DIRTY) ||
                    RUNTIME_FLAG(runtime, CONTROLLER_SNAPSHOT_DIRTY);
@@ -4960,6 +5132,11 @@ bool esp_bms_idf_runtime_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_m
         runtime->tick_count++;
     }
     return changed;
+}
+
+uint8_t esp_bms_idf_runtime_take_connection_audio_events(esp_bms_idf_runtime_t *runtime)
+{
+    return runtime ? __atomic_exchange_n(&runtime->pending_audio_events, 0U, __ATOMIC_RELAXED) : 0U;
 }
 
 bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,
@@ -5205,6 +5382,7 @@ bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,
     case ESP_BMS_LVGL_ACTION_START_TOUCH_CALIBRATION:
     case ESP_BMS_LVGL_ACTION_ADD_TOUCH_CALIBRATION_SAMPLE:
     case ESP_BMS_LVGL_ACTION_CANCEL_TOUCH_CALIBRATION:
+    case ESP_BMS_LVGL_ACTION_PLAY_BMS_CONNECTION_AUDIO:
         return false;
     case ESP_BMS_LVGL_ACTION_NONE:
     default:
@@ -5257,6 +5435,8 @@ const char *esp_bms_idf_runtime_action_name(esp_bms_lvgl_action_t action)
         return "set-controller-tire";
     case ESP_BMS_LVGL_ACTION_SET_CONTROLLER_RATIO:
         return "set-controller-ratio";
+    case ESP_BMS_LVGL_ACTION_PLAY_BMS_CONNECTION_AUDIO:
+        return "play-bms-connection-audio";
     case ESP_BMS_LVGL_ACTION_START_BMS_BIND:
         return "start-bms-bind";
     case ESP_BMS_LVGL_ACTION_ENABLE_BLUETOOTH_ADVERTISING:

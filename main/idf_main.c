@@ -150,6 +150,16 @@ void app_main(void)
         const uint8_t previous_brightness = runtime.brightness_percent;
         const esp_bms_idf_display_rotation_t previous_rotation = runtime.display_rotation;
         const bool tick_changed = esp_bms_idf_runtime_tick(&runtime, 50);
+        const uint8_t connection_audio_events =
+            esp_bms_idf_runtime_take_connection_audio_events(&runtime);
+        if ((connection_audio_events & ESP_BMS_IDF_RUNTIME_AUDIO_EVENT_BMS_CONNECTED) != 0U) {
+            esp_bms_audio_feedback_play_voice(ESP_BMS_AUDIO_VOICE_BMS_CONNECTED,
+                                              runtime.volume_percent);
+        }
+        if ((connection_audio_events & ESP_BMS_IDF_RUNTIME_AUDIO_EVENT_CONTROLLER_CONNECTED) != 0U) {
+            esp_bms_audio_feedback_play_voice(ESP_BMS_AUDIO_VOICE_CONTROLLER_CONNECTED,
+                                              runtime.volume_percent);
+        }
 
         esp_err_t ret = esp_bms_lvgl_bridge_lock(-1);
         if (ret != ESP_OK) {
@@ -298,6 +308,10 @@ void app_main(void)
         if (esp_bms_lvgl_action_event_flag_get(&action_event,
                                                ESP_BMS_LVGL_ACTION_EVENT_FLAG_VOLUME_FEEDBACK_VALID)) {
             esp_bms_audio_feedback_play_volume(action_event.volume_feedback_percent);
+        }
+        if (action == ESP_BMS_LVGL_ACTION_PLAY_BMS_CONNECTION_AUDIO) {
+            esp_bms_audio_feedback_play_voice(ESP_BMS_AUDIO_VOICE_BMS_CONNECTED,
+                                              runtime.volume_percent);
         }
 
         if (should_save_display_settings) {

@@ -69,6 +69,9 @@ typedef enum {
 #define ESP_BMS_IDF_RUNTIME_FLAG_CONTROLLER_SUBSCRIBED (UINT64_C(1) << 41)
 #define ESP_BMS_IDF_RUNTIME_FLAG_CONTROLLER_SETTINGS_SAVE_REQUESTED (UINT64_C(1) << 42)
 
+#define ESP_BMS_IDF_RUNTIME_AUDIO_EVENT_BMS_CONNECTED (UINT8_C(1) << 0)
+#define ESP_BMS_IDF_RUNTIME_AUDIO_EVENT_CONTROLLER_CONNECTED (UINT8_C(1) << 1)
+
 typedef esp_bms_bms_scan_candidate_t esp_bms_idf_bms_scan_candidate_t;
 
 typedef struct {
@@ -125,6 +128,10 @@ typedef struct {
     uint8_t setup_ap_clients;
     uint8_t bms_scan_candidate_count;
     uint8_t controller_scan_candidate_count;
+    uint8_t pending_audio_events;
+    bool cast_active;
+    int cast_socket_fd;
+    uint32_t cast_heartbeat_elapsed_ms;
     bool controller_connection_enabled;
     bool controller_page_enabled;
     uint8_t controller_fallback_tire_rim_inch;
@@ -181,6 +188,7 @@ void esp_bms_idf_runtime_set_active_data_source(esp_bms_idf_runtime_t *runtime,
                                                 esp_bms_lvgl_data_source_t source);
 bool esp_bms_idf_runtime_apply_pending_http_config(esp_bms_idf_runtime_t *runtime);
 bool esp_bms_idf_runtime_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_ms);
+uint8_t esp_bms_idf_runtime_take_connection_audio_events(esp_bms_idf_runtime_t *runtime);
 bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,
                                             const esp_bms_lvgl_action_event_t *event);
 bool esp_bms_idf_runtime_apply_action(esp_bms_idf_runtime_t *runtime, esp_bms_lvgl_action_t action);

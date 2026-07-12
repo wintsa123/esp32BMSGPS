@@ -241,6 +241,8 @@ _Static_assert(ESP_BMS_LVGL_ACTION_SET_CONTROLLER_TIRE == 27,
                "esp_bms_lvgl_action_t value changed; update C action consumers too");
 _Static_assert(ESP_BMS_LVGL_ACTION_SET_CONTROLLER_RATIO == 28,
                "esp_bms_lvgl_action_t value changed; update C action consumers too");
+_Static_assert(ESP_BMS_LVGL_ACTION_PLAY_BMS_CONNECTION_AUDIO == 29,
+               "esp_bms_lvgl_action_t value changed; update C action consumers too");
 
 typedef struct {
     lv_display_t *display;
@@ -256,6 +258,7 @@ typedef struct {
     lv_obj_t *settings_detail;
     lv_obj_t *settings_detail_header;
     lv_obj_t *settings_detail_title;
+    lv_obj_t *settings_bms_audio_test_button;
     lv_obj_t *settings_detail_edge_zone;
     lv_obj_t *settings_bms_popup;
     lv_obj_t *settings_bms_ble_status;
@@ -2827,6 +2830,7 @@ static void settings_detail_chrome_show(settings_detail_id_t detail_id)
     label_set_text_if_changed(s_ui.settings_detail_title,
                               settings_detail_title_text(detail_id));
     set_obj_hidden(s_ui.settings_detail_header, false);
+    set_obj_hidden(s_ui.settings_bms_audio_test_button, detail_id != SETTINGS_DETAIL_BMS);
     set_obj_hidden(s_ui.settings_detail_edge_zone, false);
     settings_navigation_set_hidden(false, false);
     s_ui.settings_nav_scroll_anchor_y = 0;
@@ -3514,6 +3518,15 @@ static void settings_show_bms_detail(void)
     lv_obj_align(arrow, LV_ALIGN_RIGHT_MID, -10, 0);
     lv_obj_set_style_text_align(arrow, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(arrow, COLOR_SETTINGS_ACCENT, LV_PART_MAIN);
+}
+
+static void settings_bms_audio_test_event_cb(lv_event_t *event)
+{
+    if (lv_event_get_code(event) != LV_EVENT_CLICKED) {
+        return;
+    }
+    queue_action(ESP_BMS_LVGL_ACTION_PLAY_BMS_CONNECTION_AUDIO);
+    lv_indev_wait_release(lv_indev_active());
 }
 
 static const char CONTROLLER_RIM_OPTIONS[] =
@@ -7016,6 +7029,30 @@ static void create_screen(lv_display_t *display)
     lv_obj_set_style_text_color(s_ui.settings_detail_title,
                                 COLOR_SETTINGS_TEXT,
                                 LV_PART_MAIN);
+    s_ui.settings_bms_audio_test_button = panel(s_ui.settings_detail_header,
+                                                s_ui.width - 48,
+                                                3,
+                                                44,
+                                                SETTINGS_DETAIL_HEADER_H - 6,
+                                                COLOR_SETTINGS_CARD);
+    lv_obj_set_style_radius(s_ui.settings_bms_audio_test_button, 6, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(s_ui.settings_bms_audio_test_button, 0, LV_PART_MAIN);
+    lv_obj_set_ext_click_area(s_ui.settings_bms_audio_test_button, 4);
+    lv_obj_add_flag(s_ui.settings_bms_audio_test_button, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(s_ui.settings_bms_audio_test_button,
+                        settings_bms_audio_test_event_cb,
+                        LV_EVENT_CLICKED,
+                        NULL);
+    lv_obj_t *audio_test_icon = label(s_ui.settings_bms_audio_test_button,
+                                      0,
+                                      4,
+                                      44,
+                                      SETTINGS_DETAIL_HEADER_H - 10,
+                                      &lv_font_montserrat_24);
+    lv_label_set_text(audio_test_icon, LV_SYMBOL_PLAY);
+    lv_obj_set_style_text_align(audio_test_icon, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(audio_test_icon, COLOR_SWITCH_ACTIVE, LV_PART_MAIN);
+    set_obj_hidden(s_ui.settings_bms_audio_test_button, true);
     set_obj_hidden(s_ui.settings_detail_header, true);
 
     s_ui.settings_detail_edge_zone = lv_obj_create(s_ui.settings_page);

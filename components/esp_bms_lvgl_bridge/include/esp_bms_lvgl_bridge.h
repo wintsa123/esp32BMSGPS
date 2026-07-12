@@ -82,6 +82,13 @@ void esp_bms_lvgl_bridge_cancel_touch_calibration(void);
 esp_err_t esp_bms_lvgl_bridge_reset_touch_calibration(void);
 esp_err_t esp_bms_lvgl_bridge_lock(int32_t timeout_ms);
 void esp_bms_lvgl_bridge_unlock(void);
+/* Caller holds the LVGL bridge lock. Pixels are RGB565 big-endian. */
+esp_err_t esp_bms_lvgl_bridge_write_rgb565(uint16_t x,
+                                           uint16_t y,
+                                           uint16_t width,
+                                           uint16_t height,
+                                           const uint8_t *pixels,
+                                           size_t pixel_bytes);
 lv_display_t *esp_bms_lvgl_bridge_get_display(void);
 lv_indev_t *esp_bms_lvgl_bridge_get_touch(void);
 

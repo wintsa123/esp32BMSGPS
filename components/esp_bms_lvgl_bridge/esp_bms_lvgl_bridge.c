@@ -939,6 +939,32 @@ void esp_bms_lvgl_bridge_unlock(void)
     esp_lv_adapter_unlock();
 }
 
+esp_err_t esp_bms_lvgl_bridge_write_rgb565(uint16_t x,
+                                           uint16_t y,
+                                           uint16_t width,
+                                           uint16_t height,
+                                           const uint8_t *pixels,
+                                           size_t pixel_bytes)
+{
+    ESP_RETURN_ON_FALSE(s_initialized && s_panel && s_display,
+                        ESP_ERR_INVALID_STATE,
+                        TAG,
+                        "bridge is not initialized");
+    ESP_RETURN_ON_FALSE(pixels && width > 0U && height > 0U,
+                        ESP_ERR_INVALID_ARG,
+                        TAG,
+                        "invalid RGB565 block");
+    const uint16_t hres = lv_display_get_horizontal_resolution(s_display);
+    const uint16_t vres = lv_display_get_vertical_resolution(s_display);
+    const size_t expected = (size_t)width * height * sizeof(uint16_t);
+    ESP_RETURN_ON_FALSE(pixel_bytes == expected && x < hres && y < vres &&
+                            width <= hres - x && height <= vres - y,
+                        ESP_ERR_INVALID_SIZE,
+                        TAG,
+                        "RGB565 block out of bounds");
+    return esp_lcd_panel_draw_bitmap(s_panel, x, y, x + width, y + height, pixels);
+}
+
 lv_display_t *esp_bms_lvgl_bridge_get_display(void)
 {
     return s_display;
