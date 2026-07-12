@@ -62,12 +62,21 @@ static void log_heap_state(const char *stage)
     const uint32_t internal_dma_caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA;
     const uint32_t internal_8bit_caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
     const uint32_t psram_caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
+    const size_t internal8_free = heap_caps_get_free_size(internal_8bit_caps);
+    const size_t internal8_largest = heap_caps_get_largest_free_block(internal_8bit_caps);
+    const size_t main_stack_words = uxTaskGetStackHighWaterMark(NULL);
+    const unsigned internal8_fragment_pct = internal8_free == 0U
+                                               ? 0U
+                                               : (unsigned)((100U * (internal8_free - internal8_largest)) / internal8_free);
     ESP_LOGI(TAG,
-             "heap[%s] default_free=%u default_min=%u internal8_free=%u dma_free=%u dma_largest=%u dma_min=%u psram_free=%u psram_largest=%u",
+             "heap[%s] default_free=%u default_min=%u internal8_free=%u internal8_largest=%u internal8_frag=%u%% main_stack_free=%uB dma_free=%u dma_largest=%u dma_min=%u psram_free=%u psram_largest=%u",
              stage,
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_DEFAULT),
              (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_DEFAULT),
-             (unsigned)heap_caps_get_free_size(internal_8bit_caps),
+             (unsigned)internal8_free,
+             (unsigned)internal8_largest,
+             internal8_fragment_pct,
+             (unsigned)(main_stack_words * sizeof(StackType_t)),
              (unsigned)heap_caps_get_free_size(internal_dma_caps),
              (unsigned)heap_caps_get_largest_free_block(internal_dma_caps),
              (unsigned)heap_caps_get_minimum_free_size(internal_dma_caps),
