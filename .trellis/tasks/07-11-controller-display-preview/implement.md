@@ -31,4 +31,4 @@
 - 字体从 `esp_bms_lvgl_ui.c` 的 151 个实际汉字重生成，缺字审计为 0；构建镜像 `0x159680`，RFC2217 刷写与启动验证通过。
 - `dual_hero` 视觉修订后主数字使用 72px 精简字体，辅助区使用内置 Montserrat 14；横屏四列与竖屏 2×2 无裁切。RFC2217 最终启动日志的 ELF SHA `fae8453c6…` 与本地一致，ST7789/LVGL/XPT2046 正常，无 panic/watchdog。
 - 乱码/布局回归：删除 `controller_aux_12`，`CTRL` / `MOTOR` 移到单元格左上角，温度换到下方，车速单位左移并加宽。带值横竖 Pillow/LVGL 预览已目视检查。
-- 轮播回归：`LV_EVENT_SCROLL_END` 按稳定页夹到相邻一页；控制器页开/关的所有起点→原始目标组合表均满足最多一页。ESP-IDF 构建镜像 `0x147910`，分区剩余 32%。
+- 轮播回归：`LV_EVENT_SCROLL_END` 按稳定页夹到相邻一页；控制器页开/关的所有起点→原始目标组合表均满足最多一页。ESP-IDF 构建镜像 `0x147910`，分区剩余 32%；RFC2217 写入全部哈希通过，启动 ELF SHA 为 `18cc41747…`，无 panic/watchdog。
