@@ -34,6 +34,11 @@ static const char *TAG = "bms_lvgl_bridge";
 #define TOUCH_CALIBRATION_POINT_COUNT 4U
 #define TOUCH_CALIBRATION_NVS_NAMESPACE "esp_bms"
 #define TOUCH_CALIBRATION_NVS_KEY "touch_cal"
+#define TOUCH_FILTER_HISTORY_COUNT 3U
+#define TOUCH_FILTER_MIN_SPIKE_DISTANCE 24U
+#define TOUCH_FILTER_MAX_SPEED_PX_PER_MS 4U
+#define TOUCH_FILTER_LOG_INTERVAL_MS 1000U
+#define TOUCH_FILTER_PRESS_STABILITY_DISTANCE 16U
 #if CONFIG_ESP_BMS_LVGL_BRIDGE_DOUBLE_BUFFER
 #define LVGL_REQUIRE_DOUBLE_BUFFER true
 #else
@@ -56,8 +61,31 @@ static bool s_touch_base_mirror_y;
 static bool s_backlight_pwm_ready;
 static bool s_initialized;
 static TickType_t s_touch_last_log_tick;
+static TickType_t s_touch_last_filter_log_tick;
 static bool s_touch_read_callback_logged;
 static bool s_touch_was_pressed;
+
+typedef struct {
+    uint16_t x[TOUCH_FILTER_HISTORY_COUNT];
+    uint16_t y[TOUCH_FILTER_HISTORY_COUNT];
+    uint16_t accepted_x;
+    uint16_t accepted_y;
+    uint16_t candidate_x;
+    uint16_t candidate_y;
+    TickType_t accepted_tick;
+    uint8_t count;
+    bool candidate_pending;
+    bool pressed;
+    bool reported;
+} touch_filter_t;
+
+typedef enum {
+    TOUCH_FILTER_HOLD,
+    TOUCH_FILTER_ACCEPT,
+    TOUCH_FILTER_REJECTED_SPIKE,
+} touch_filter_result_t;
+
+static touch_filter_t s_touch_filter;
 
 typedef struct {
     uint32_t version;
@@ -204,6 +232,122 @@ static void touch_calibration_apply(esp_lcd_touch_point_data_t *points, uint8_t 
                                             s_physical_height - 1);
         touch_canonical_to_display(canonical_x, canonical_y, &points[index].x, &points[index].y);
     }
+}
+
+static uint16_t touch_abs_difference(uint16_t left, uint16_t right)
+{
+    return left >= right ? left - right : right - left;
+}
+
+static uint16_t touch_median3(uint16_t first, uint16_t second, uint16_t third)
+{
+    if (first > second) {
+        const uint16_t temporary = first;
+        first = second;
+        second = temporary;
+    }
+    if (second > third) {
+        const uint16_t temporary = second;
+        second = third;
+        third = temporary;
+    }
+    return first > second ? first : second;
+}
+
+static void touch_filter_reset(void)
+{
+    memset(&s_touch_filter, 0, sizeof(s_touch_filter));
+}
+
+static uint16_t touch_filter_spike_limit(TickType_t now)
+{
+    const TickType_t elapsed_ticks = now - s_touch_filter.accepted_tick;
+    const uint32_t elapsed_ms = (uint32_t)pdTICKS_TO_MS(elapsed_ticks);
+    const uint32_t limit = TOUCH_FILTER_MIN_SPIKE_DISTANCE +
+                           elapsed_ms * TOUCH_FILTER_MAX_SPEED_PX_PER_MS;
+    return limit > UINT16_MAX ? UINT16_MAX : (uint16_t)limit;
+}
+
+static bool touch_filter_is_spike(uint16_t x, uint16_t y, uint16_t limit)
+{
+    const uint32_t distance = (uint32_t)touch_abs_difference(x, s_touch_filter.accepted_x) +
+                              (uint32_t)touch_abs_difference(y, s_touch_filter.accepted_y);
+    return distance > limit;
+}
+
+static void touch_filter_push(uint16_t x, uint16_t y)
+{
+    if (s_touch_filter.count < TOUCH_FILTER_HISTORY_COUNT) {
+        s_touch_filter.x[s_touch_filter.count] = x;
+        s_touch_filter.y[s_touch_filter.count] = y;
+        s_touch_filter.count++;
+        return;
+    }
+
+    s_touch_filter.x[0] = s_touch_filter.x[1];
+    s_touch_filter.x[1] = s_touch_filter.x[2];
+    s_touch_filter.x[2] = x;
+    s_touch_filter.y[0] = s_touch_filter.y[1];
+    s_touch_filter.y[1] = s_touch_filter.y[2];
+    s_touch_filter.y[2] = y;
+}
+
+static touch_filter_result_t touch_filter_apply(esp_lcd_touch_point_data_t *point, TickType_t now)
+{
+    if (!s_touch_filter.pressed) {
+        touch_filter_reset();
+        s_touch_filter.pressed = true;
+        s_touch_filter.candidate_x = point->x;
+        s_touch_filter.candidate_y = point->y;
+        return TOUCH_FILTER_HOLD;
+    }
+
+    if (!s_touch_filter.reported) {
+        const uint32_t candidate_distance =
+            (uint32_t)touch_abs_difference(point->x, s_touch_filter.candidate_x) +
+            (uint32_t)touch_abs_difference(point->y, s_touch_filter.candidate_y);
+        if (candidate_distance > TOUCH_FILTER_PRESS_STABILITY_DISTANCE) {
+            s_touch_filter.candidate_x = point->x;
+            s_touch_filter.candidate_y = point->y;
+            return TOUCH_FILTER_HOLD;
+        }
+
+        s_touch_filter.reported = true;
+        s_touch_filter.accepted_x = point->x;
+        s_touch_filter.accepted_y = point->y;
+        s_touch_filter.accepted_tick = now;
+        touch_filter_push(s_touch_filter.candidate_x, s_touch_filter.candidate_y);
+        touch_filter_push(point->x, point->y);
+        return TOUCH_FILTER_ACCEPT;
+    }
+
+    const uint16_t limit = touch_filter_spike_limit(now);
+    const bool spike = touch_filter_is_spike(point->x, point->y, limit);
+    if (spike && (!s_touch_filter.candidate_pending ||
+                  touch_abs_difference(point->x, s_touch_filter.candidate_x) +
+                          touch_abs_difference(point->y, s_touch_filter.candidate_y) > limit)) {
+        s_touch_filter.candidate_x = point->x;
+        s_touch_filter.candidate_y = point->y;
+        s_touch_filter.candidate_pending = true;
+        point->x = s_touch_filter.accepted_x;
+        point->y = s_touch_filter.accepted_y;
+        return TOUCH_FILTER_REJECTED_SPIKE;
+    }
+
+    if (spike) {
+        s_touch_filter.count = 0;
+        touch_filter_push(s_touch_filter.candidate_x, s_touch_filter.candidate_y);
+    }
+    s_touch_filter.candidate_pending = false;
+    touch_filter_push(point->x, point->y);
+    if (s_touch_filter.count == TOUCH_FILTER_HISTORY_COUNT) {
+        point->x = touch_median3(s_touch_filter.x[0], s_touch_filter.x[1], s_touch_filter.x[2]);
+        point->y = touch_median3(s_touch_filter.y[0], s_touch_filter.y[1], s_touch_filter.y[2]);
+    }
+    s_touch_filter.accepted_x = point->x;
+    s_touch_filter.accepted_y = point->y;
+    s_touch_filter.accepted_tick = now;
+    return TOUCH_FILTER_ACCEPT;
 }
 
 static bool touch_calibration_axis(const int32_t observed[TOUCH_CALIBRATION_POINT_COUNT],
@@ -533,9 +677,13 @@ static esp_err_t touch_read_with_diagnostics(esp_lcd_touch_handle_t tp,
 
     esp_err_t ret = esp_lcd_touch_read_data(tp);
     if (ret != ESP_OK) {
+        const bool was_pressed = s_touch_filter.pressed;
+        touch_filter_reset();
         if (s_touch_last_log_tick == 0 ||
             now - s_touch_last_log_tick >= pdMS_TO_TICKS(1000)) {
-            ESP_LOGW(TAG, "touch read failed: %s", esp_err_to_name(ret));
+            ESP_LOGW(TAG, "touch read failed: %s%s",
+                     esp_err_to_name(ret),
+                     was_pressed ? "; forcing release" : "");
             s_touch_last_log_tick = now;
         }
         return ret;
@@ -543,9 +691,13 @@ static esp_err_t touch_read_with_diagnostics(esp_lcd_touch_handle_t tp,
 
     ret = esp_lcd_touch_get_data(tp, points, count, max_count);
     if (ret != ESP_OK) {
+        const bool was_pressed = s_touch_filter.pressed;
+        touch_filter_reset();
         if (s_touch_last_log_tick == 0 ||
             now - s_touch_last_log_tick >= pdMS_TO_TICKS(1000)) {
-            ESP_LOGW(TAG, "touch data failed: %s", esp_err_to_name(ret));
+            ESP_LOGW(TAG, "touch data failed: %s%s",
+                     esp_err_to_name(ret),
+                     was_pressed ? "; forcing release" : "");
             s_touch_last_log_tick = now;
         }
         return ret;
@@ -553,6 +705,21 @@ static esp_err_t touch_read_with_diagnostics(esp_lcd_touch_handle_t tp,
 
     if (count && *count > 0U) {
         touch_calibration_apply(points, *count);
+        const touch_filter_result_t filter_result = touch_filter_apply(&points[0], now);
+        if (filter_result == TOUCH_FILTER_HOLD) {
+            *count = 0;
+        } else if (filter_result == TOUCH_FILTER_REJECTED_SPIKE &&
+            (s_touch_last_filter_log_tick == 0 ||
+             now - s_touch_last_filter_log_tick >= pdMS_TO_TICKS(TOUCH_FILTER_LOG_INTERVAL_MS))) {
+            ESP_LOGW(TAG, "touch spike rejected candidate=%u,%u held=%u,%u",
+                     (unsigned)s_touch_filter.candidate_x,
+                     (unsigned)s_touch_filter.candidate_y,
+                     (unsigned)points[0].x,
+                     (unsigned)points[0].y);
+            s_touch_last_filter_log_tick = now;
+        }
+    } else {
+        touch_filter_reset();
     }
 
     const bool pressed = count && *count > 0U;
@@ -560,7 +727,7 @@ static esp_err_t touch_read_with_diagnostics(esp_lcd_touch_handle_t tp,
         if (!s_touch_was_pressed ||
             s_touch_last_log_tick == 0 ||
             now - s_touch_last_log_tick >= pdMS_TO_TICKS(300)) {
-            ESP_LOGI(TAG, "touch sample count=%u x=%u y=%u strength=%u",
+            ESP_LOGI(TAG, "touch sample accepted count=%u x=%u y=%u strength=%u",
                      (unsigned)*count,
                      (unsigned)points[0].x,
                      (unsigned)points[0].y,

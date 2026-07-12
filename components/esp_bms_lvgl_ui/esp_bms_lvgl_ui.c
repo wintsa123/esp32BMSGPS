@@ -358,7 +358,11 @@ typedef struct {
     bool dragging;
     bool settling;
     bool controller_page_enabled;
+    bool page_scroll_gesture_active;
+    bool page_scroll_throw_frozen;
     int32_t drag_start_pages_x;
+    int32_t drag_pages_dx;
+    int32_t drag_release_pages_dx;
     uint32_t drag_last_sample_log_ms;
     lv_point_t quick_pull_start;
     lv_point_t return_swipe_start;
@@ -376,6 +380,7 @@ typedef struct {
     int32_t screen_lock_drag_dy;
     int32_t screen_unlock_knob_x;
     esp_bms_lvgl_page_t page;
+    esp_bms_lvgl_page_t drag_start_page;
     esp_bms_lvgl_action_event_t pending_event;
     lv_obj_t *quick_drag_obj;
     int32_t quick_drag_obj_x;
@@ -2742,6 +2747,7 @@ static void settings_navigation_scroll_event_cb(lv_event_t *event)
     const lv_event_code_t code = lv_event_get_code(event);
     const int32_t scroll_y = lv_obj_get_scroll_y(target);
     if (code == LV_EVENT_SCROLL_BEGIN) {
+        UI_SET_FLAG(SETTINGS_SWIPE_CONSUMED, true);
         s_ui.settings_nav_scroll_anchor_y = scroll_y;
         return;
     }
@@ -3483,7 +3489,6 @@ static void settings_show_bms_detail(void)
         ESP_BMS_LVGL_ACTION_NONE,
         SETTINGS_SYSTEM_VIEW_ROOT,
     };
-
     lv_obj_t *list_card = settings_list_card(s_ui.settings_detail,
                                              card_x,
                                              12,
@@ -3793,7 +3798,7 @@ static void settings_show_controller_detail(void)
         snapshot->controller_param_source ==
         (uint8_t)ESP_BMS_CONTROLLER_PARAM_SOURCE_CONTROLLER;
     const bool values_editable = online && !controller_synced;
-    const size_t visible_row_count = page_enabled ? 6U : 2U;
+    const size_t visible_row_count = page_enabled ? 7U : 3U;
     char ble_status[ESP_BMS_BMS_SCAN_NAME_LEN + 1U] = { 0 };
     char tire[48] = { 0 };
     char ratio[40] = { 0 };
@@ -3818,6 +3823,8 @@ static void settings_show_controller_detail(void)
         { "蓝牙选择", ble_status,
           ESP_BMS_LVGL_ACTION_START_CONTROLLER_BIND, SETTINGS_SYSTEM_VIEW_ROOT },
         { "控制器类型", "远驱", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
+        { "速度单位", snapshot->speed_unit == ESP_BMS_SPEED_UNIT_MPH ? "mph" : "km/h",
+          ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_UNIT, SETTINGS_SYSTEM_VIEW_ROOT },
     };
 
     lv_obj_t *card = settings_list_card(s_ui.settings_detail,
@@ -5784,7 +5791,7 @@ static void create_controller_dashboard(void)
     s_ui.controller_gear = controller_dashboard_label(gear_panel,
                                                       s_ui.controller_gear_buf,
                                                       2,
-                                                      portrait ? 42 : 58,
+                                                      portrait ? 24 : 58,
                                                       gear_w - 4,
                                                       controller_digits_72.line_height,
                                                       &controller_digits_72,
@@ -5962,6 +5969,7 @@ static bool settings_controller_view_changed(const esp_bms_dashboard_snapshot_t 
                                              bool had_previous)
 {
     return !had_previous ||
+           previous->speed_unit != current->speed_unit ||
            SNAPSHOT_FLAG(previous, CONTROLLER_PAGE_ENABLED) !=
                SNAPSHOT_FLAG(current, CONTROLLER_PAGE_ENABLED) ||
            SNAPSHOT_FLAG(previous, CONTROLLER_CONNECTION_ENABLED) !=
@@ -6154,6 +6162,11 @@ static void finish_page_scroll_state(bool flush_snapshot)
 
     UI_SET_FLAG(DRAGGING, false);
     UI_SET_FLAG(SETTLING, false);
+    s_ui.page_scroll_gesture_active = false;
+    s_ui.page_scroll_throw_frozen = false;
+    s_ui.drag_pages_dx = 0;
+    s_ui.drag_release_pages_dx = 0;
+    s_ui.drag_start_page = s_ui.page;
     if (flush_snapshot) {
         flush_deferred_dashboard_snapshot();
     }
@@ -6500,30 +6513,30 @@ static void page_scroll_event_cb(lv_event_t *event)
     }
 
     const lv_event_code_t code = lv_event_get_code(event);
-    if (code == LV_EVENT_PRESSED) {
-        s_ui.drag_start_pages_x = lv_obj_get_scroll_x(s_ui.pages);
-#if CONFIG_ESP_BMS_LVGL_UI_DRAG_DIAGNOSTICS
-        ESP_LOGI(TAG, "[drag] press scroll_x=%ld page=%d",
-                 (long)s_ui.drag_start_pages_x,
-                 (int)s_ui.page);
-#endif
-        return;
-    }
-
     if (code == LV_EVENT_SCROLL_BEGIN) {
         UI_SET_FLAG(DRAGGING, true);
-        s_ui.drag_start_pages_x = lv_obj_get_scroll_x(s_ui.pages);
+        if (!s_ui.page_scroll_gesture_active) {
+            s_ui.page_scroll_gesture_active = true;
+            s_ui.page_scroll_throw_frozen = false;
+            s_ui.drag_start_page = s_ui.page;
+            s_ui.drag_start_pages_x = lv_obj_get_scroll_x(s_ui.pages);
+            s_ui.drag_pages_dx = 0;
+            s_ui.drag_release_pages_dx = 0;
+        }
         s_ui.drag_last_sample_log_ms = lv_tick_get();
 #if CONFIG_ESP_BMS_LVGL_UI_DRAG_DIAGNOSTICS
         ESP_LOGI(TAG, "[drag] scroll_begin scroll_x=%ld page=%d",
                  (long)s_ui.drag_start_pages_x,
-                 (int)s_ui.page);
+                 (int)s_ui.drag_start_page);
 #endif
         return;
     }
 
     if (code == LV_EVENT_SCROLL) {
         invalidate_dashboard_viewport();
+        if (s_ui.page_scroll_gesture_active && !s_ui.page_scroll_throw_frozen) {
+            s_ui.drag_pages_dx = lv_obj_get_scroll_x(s_ui.pages) - s_ui.drag_start_pages_x;
+        }
 #if CONFIG_ESP_BMS_LVGL_UI_DRAG_SAMPLE_DIAGNOSTICS
         if (lv_tick_elaps(s_ui.drag_last_sample_log_ms) >= CONFIG_ESP_BMS_LVGL_UI_DRAG_SAMPLE_PERIOD_MS) {
             s_ui.drag_last_sample_log_ms = lv_tick_get();
@@ -6536,26 +6549,59 @@ static void page_scroll_event_cb(lv_event_t *event)
         return;
     }
 
+    if (code == LV_EVENT_SCROLL_THROW_BEGIN) {
+        if (s_ui.page_scroll_gesture_active && !s_ui.page_scroll_throw_frozen) {
+            s_ui.drag_pages_dx = lv_obj_get_scroll_x(s_ui.pages) - s_ui.drag_start_pages_x;
+            s_ui.drag_release_pages_dx = s_ui.drag_pages_dx;
+            s_ui.page_scroll_throw_frozen = true;
+#if CONFIG_ESP_BMS_LVGL_UI_DRAG_DIAGNOSTICS
+            ESP_LOGI(TAG, "[drag] throw_begin release_dx=%ld page=%d",
+                     (long)s_ui.drag_release_pages_dx,
+                     (int)s_ui.drag_start_page);
+#endif
+        }
+        return;
+    }
+
     if (code == LV_EVENT_SCROLL_END) {
         const int32_t scroll_x = lv_obj_get_scroll_x(s_ui.pages);
-        const int32_t stable_x = page_target_scroll_x(s_ui.page);
+        const bool pointer_gesture = s_ui.page_scroll_gesture_active &&
+                                     s_ui.page_scroll_throw_frozen;
+        const esp_bms_lvgl_page_t stable_page = pointer_gesture
+                                                    ? s_ui.drag_start_page
+                                                    : s_ui.page;
+        const int32_t stable_x = page_target_scroll_x(stable_page);
         const int32_t last_x = page_target_scroll_x(ESP_BMS_LVGL_PAGE_GPS);
         const esp_bms_lvgl_page_t raw_target = page_from_scroll_x(scroll_x);
         const int32_t raw_target_x = page_target_scroll_x(raw_target);
-        const int32_t min_target_x = stable_x > s_ui.width ? stable_x - s_ui.width : 0;
-        const int32_t max_target_x = stable_x + s_ui.width < last_x
-                                         ? stable_x + s_ui.width
-                                         : last_x;
-        const int32_t target_x = clamp_i32(raw_target_x, min_target_x, max_target_x);
+        int32_t target_x = raw_target_x;
+        if (pointer_gesture) {
+            const int32_t trigger_px = s_ui.width / 5;
+            if (s_ui.drag_release_pages_dx >= trigger_px) {
+                target_x = stable_x + s_ui.width < last_x ? stable_x + s_ui.width : last_x;
+            } else if (s_ui.drag_release_pages_dx <= -trigger_px) {
+                target_x = stable_x > s_ui.width ? stable_x - s_ui.width : 0;
+            } else {
+                target_x = stable_x;
+            }
+        }
         const esp_bms_lvgl_page_t target = page_from_scroll_x(target_x);
-        UI_SET_FLAG(DRAGGING, false);
-        s_ui.page = target;
 #if CONFIG_ESP_BMS_LVGL_UI_DRAG_DIAGNOSTICS
-        ESP_LOGI(TAG, "[drag] scroll_end scroll_x=%ld raw_target=%d target=%d",
+        ESP_LOGI(TAG,
+                 "[drag] scroll_end scroll_x=%ld release_dx=%ld gesture=%d raw_target=%d target=%d",
                  (long)scroll_x,
+                 (long)s_ui.drag_release_pages_dx,
+                 pointer_gesture ? 1 : 0,
                  (int)raw_target,
                  (int)target);
 #endif
+        s_ui.page_scroll_gesture_active = false;
+        s_ui.page_scroll_throw_frozen = false;
+        s_ui.drag_pages_dx = 0;
+        s_ui.drag_release_pages_dx = 0;
+        s_ui.drag_start_page = target;
+        UI_SET_FLAG(DRAGGING, false);
+        s_ui.page = target;
         if (scroll_x != target_x) {
             UI_SET_FLAG(SETTLING, true);
             lv_obj_scroll_to_x(s_ui.pages, target_x, LV_ANIM_ON);
@@ -6617,9 +6663,9 @@ static void create_screen(lv_display_t *display)
     lv_obj_set_scroll_snap_x(s_ui.pages, LV_SCROLL_SNAP_START);
     lv_obj_set_scroll_snap_y(s_ui.pages, LV_SCROLL_SNAP_NONE);
     lv_obj_set_scrollbar_mode(s_ui.pages, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_add_event_cb(s_ui.pages, page_scroll_event_cb, LV_EVENT_PRESSED, NULL);
     lv_obj_add_event_cb(s_ui.pages, page_scroll_event_cb, LV_EVENT_SCROLL_BEGIN, NULL);
     lv_obj_add_event_cb(s_ui.pages, page_scroll_event_cb, LV_EVENT_SCROLL, NULL);
+    lv_obj_add_event_cb(s_ui.pages, page_scroll_event_cb, LV_EVENT_SCROLL_THROW_BEGIN, NULL);
     lv_obj_add_event_cb(s_ui.pages, page_scroll_event_cb, LV_EVENT_SCROLL_END, NULL);
     lv_obj_add_event_cb(s_ui.pages, quick_pull_event_cb, LV_EVENT_PRESSED, NULL);
     lv_obj_add_event_cb(s_ui.pages, quick_pull_event_cb, LV_EVENT_PRESSING, NULL);
