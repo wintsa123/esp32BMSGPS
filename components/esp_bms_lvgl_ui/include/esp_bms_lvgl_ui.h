@@ -13,6 +13,7 @@ typedef enum {
     ESP_BMS_LVGL_PAGE_BATTERY = 0,
     ESP_BMS_LVGL_PAGE_CONTROLLER = 1,
     ESP_BMS_LVGL_PAGE_GPS = 2,
+    ESP_BMS_LVGL_PAGE_CAST = 3,
 } esp_bms_lvgl_page_t;
 
 typedef enum {
@@ -52,7 +53,6 @@ typedef enum {
     ESP_BMS_LVGL_ACTION_ADJUST_CONTROLLER_RATIO = 26,
     ESP_BMS_LVGL_ACTION_SET_CONTROLLER_TIRE = 27,
     ESP_BMS_LVGL_ACTION_SET_CONTROLLER_RATIO = 28,
-    ESP_BMS_LVGL_ACTION_PLAY_BMS_CONNECTION_AUDIO = 29,
 } esp_bms_lvgl_action_t;
 
 #define ESP_BMS_LVGL_ACTION_EVENT_FLAG_COMMITTED (UINT8_C(1) << 0)
@@ -177,6 +177,7 @@ typedef struct {
 typedef struct {
     uint32_t flags;
     uint32_t gps_sentences_seen;
+    uint32_t uptime_seconds;
     uint32_t pack_voltage_mv;
     uint32_t total_capacity_mah;
     uint32_t capacity_remaining_mah;
@@ -229,6 +230,7 @@ typedef struct {
     uint8_t controller_scan_candidate_count;
     esp_bms_bms_scan_candidate_t controller_scan_candidates[ESP_BMS_BMS_SCAN_MAX_CANDIDATES];
     char controller_bound_name[ESP_BMS_BMS_SCAN_NAME_LEN + 1U];
+    bool cast_active;
 } esp_bms_dashboard_snapshot_t;
 
 static inline bool esp_bms_dashboard_snapshot_flag_get(const esp_bms_dashboard_snapshot_t *snapshot,

@@ -11,7 +11,7 @@ Rust/Cargo firmware path has been removed.
 - MCU: ESP32-WROOM-32E, 4 MB flash, no PSRAM assumed.
 - Display: TPM408 2.8 inch, ST7789, 240 x 320, BGR color order.
 - Touch: XPT2046 / XP2046 compatible.
-- GPS: 336H, UART NMEA, 9600 baud, wired to UART0.
+- GPS: 336H, UART NMEA, currently detected at 115200 baud; UART1 RX/TX on GPIO27/GPIO18 during debugging.
 - BMS: Ant BMS over BLE, service `0xFFE0`, characteristic `0xFFE1`.
 
 ## Pin Map
@@ -23,13 +23,16 @@ Rust/Cargo firmware path has been removed.
 | TFT MISO/MOSI/SCLK/CS/DC/BL | GPIO12 / GPIO13 / GPIO14 / GPIO15 / GPIO2 / GPIO21 |
 | TFT reset | not connected |
 | Touch IRQ/MISO/MOSI/CS/CLK | GPIO36 / GPIO39 / GPIO32 / GPIO33 / GPIO25 |
-| GPS UART0 TX/RX | GPIO1 / GPIO3 |
+| GPS NMEA TX → ESP32 UART1 RX | GPIO27 |
+| GPS NMEA RX ← ESP32 UART1 TX | GPIO18 |
+| GPS PPS | GPIO35 |
 | Audio reserved IN/EN | GPIO26 / GPIO4 |
 | Expansion SPI CS reserved | GPIO27 |
 | SD SPI reserved MOSI/MISO/SCK/CS | GPIO23 / GPIO19 / GPIO18 / GPIO5 |
 
 Boot validation is required with GPIO2, GPIO4, GPIO5, GPIO12, and GPIO15
-attached. GPS on UART0 can interfere with flashing and logs.
+attached. GPIO18 is temporarily used by GPS TX during debugging and must be
+released before enabling the planned TF-card SPI clock on that pin.
 
 ## Build Prerequisites
 
@@ -93,7 +96,7 @@ Implemented on the ESP-IDF path:
   setup AP QR, and BMS bind actions.
 - Display settings persisted in NVS.
 - GPIO34 local battery sampling through ADC1.
-- UART0 RX GPIO3 NMEA RMC parsing for GPS speed/fix.
+- UART1 GPIO27/GPIO18 NMEA RMC parsing for GPS speed/fix/UTC, plus GPIO35 PPS diagnostics.
 - Native ESP-IDF setup AP:
   - SSID policy: `fuckingBms_` plus six lowercase hex characters.
   - Password policy: eight random digits.
@@ -164,9 +167,9 @@ Default UI language is Chinese. English is selectable from device settings.
 
 The repository also contains a browser-hosted control page under
 `vercel/index.html`. Deploy the repo to Vercel, join the phone/laptop to the
-ESP32 setup AP, and press `连接热点 API`. The page prompts for the current setup
-password shown on the TFT QR screen and sends it as both `X-Setup-Password` and
-HTTP Basic auth.
+ESP32 setup AP, and press `连接热点 API`. The page connects without a second
+password prompt; access is protected by the setup AP password shown on the TFT
+QR screen.
 
 The ESP32 HTTP API returns CORS plus Private Network Access headers so a public
 HTTPS Vercel origin can call `http://192.168.4.1`.
@@ -179,6 +182,16 @@ Primary validation:
 ./scripts/esp-idf-env.sh build
 ```
 
-Hardware validation remains pending for GPS UART0, GPIO34 ADC scaling against a
+Hardware validation remains pending for GPS UART1/GPIO35 PPS, GPIO34 ADC scaling against a
 multimeter, phone scan and join of the setup AP shown on the TFT QR screen,
 HTTP access to `http://192.168.4.1`, BLE BMS, and update by phone flashing.
+
+## License
+
+This project is available under the
+[PolyForm Noncommercial License 1.0.0](LICENSE). You may use, modify, and
+distribute it only for noncommercial purposes. Commercial use requires separate
+written permission from the copyright holder.
+
+本项目采用 [PolyForm Noncommercial License 1.0.0](LICENSE)。仅允许用于非商业目的；
+任何商业使用均需事先获得版权持有人的单独书面授权。

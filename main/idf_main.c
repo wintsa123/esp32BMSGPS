@@ -13,6 +13,8 @@
 static const char *TAG = "bms_idf_main";
 
 #define MAIN_LOOP_TASK_PRIORITY 4U
+#define MAIN_LOOP_PERIOD_MS 50U
+#define SETUP_AP_IDLE_TIMEOUT_MS (5U * 60U * 1000U)
 
 typedef enum {
     SETUP_SERVICE_START_IDLE = 0,
@@ -142,10 +144,12 @@ void app_main(void)
 
     bool delayed_display_settings_save_pending = false;
     uint32_t delayed_display_settings_save_ms = 0;
+    uint32_t setup_ap_idle_elapsed_ms = 0;
+    bool cast_ui_active = false;
     setup_service_start_stage_t setup_service_start_stage = SETUP_SERVICE_START_IDLE;
 
     while (true) {
-        vTaskDelay(pdMS_TO_TICKS(50));
+        vTaskDelay(pdMS_TO_TICKS(MAIN_LOOP_PERIOD_MS));
         esp_bms_audio_feedback_tick();
         const uint8_t previous_brightness = runtime.brightness_percent;
         const esp_bms_idf_display_rotation_t previous_rotation = runtime.display_rotation;
@@ -187,15 +191,23 @@ void app_main(void)
         const bool setup_ap_enabled =
             esp_bms_dashboard_snapshot_flag_get(&runtime.snapshot,
                                                 ESP_BMS_DASHBOARD_FLAG_SETUP_AP_ENABLED);
+        if ((setup_ap_started || http_server_started) && runtime.setup_ap_clients == 0U) {
+            if (setup_ap_idle_elapsed_ms <= SETUP_AP_IDLE_TIMEOUT_MS - MAIN_LOOP_PERIOD_MS) {
+                setup_ap_idle_elapsed_ms += MAIN_LOOP_PERIOD_MS;
+            }
+        } else {
+            setup_ap_idle_elapsed_ms = 0;
+        }
         const bool should_start_setup_services =
             action == ESP_BMS_LVGL_ACTION_ENABLE_WIFI_REPROVISIONING &&
             !setup_ap_enabled &&
             setup_service_start_stage == SETUP_SERVICE_START_IDLE &&
             (!setup_ap_started || !http_server_started);
         const bool should_stop_setup_services =
-            action == ESP_BMS_LVGL_ACTION_ENABLE_WIFI_REPROVISIONING &&
-            setup_ap_enabled &&
-            (setup_ap_started || http_server_started);
+            (action == ESP_BMS_LVGL_ACTION_ENABLE_WIFI_REPROVISIONING &&
+             setup_ap_enabled &&
+             (setup_ap_started || http_server_started)) ||
+            (setup_ap_idle_elapsed_ms >= SETUP_AP_IDLE_TIMEOUT_MS);
         const bool touch_calibration_action =
             action == ESP_BMS_LVGL_ACTION_START_TOUCH_CALIBRATION ||
             action == ESP_BMS_LVGL_ACTION_ADD_TOUCH_CALIBRATION_SAMPLE ||
@@ -273,6 +285,27 @@ void app_main(void)
                 display_apply_failed = true;
             }
         }
+        if (!display_apply_failed && cast_ui_active != runtime.snapshot.cast_active) {
+            ret = esp_bms_lvgl_ui_show_dashboard();
+            if (ret == ESP_OK) {
+                const esp_bms_lvgl_page_t target_page = runtime.snapshot.cast_active
+                                                            ? ESP_BMS_LVGL_PAGE_CAST
+                                                            : ESP_BMS_LVGL_PAGE_BATTERY;
+                ret = esp_bms_lvgl_ui_set_page(target_page, false);
+            }
+            if (ret == ESP_OK) {
+                cast_ui_active = runtime.snapshot.cast_active;
+                ESP_LOGI(TAG,
+                         "cast UI %s; page=%s",
+                         cast_ui_active ? "entered" : "restored",
+                         cast_ui_active ? "cast" : "battery");
+            } else {
+                ESP_LOGE(TAG,
+                         "apply cast UI transition failed: %s",
+                         esp_err_to_name(ret));
+                display_apply_failed = true;
+            }
+        }
         const bool action_committed =
             esp_bms_lvgl_action_event_flag_get(&action_event, ESP_BMS_LVGL_ACTION_EVENT_FLAG_COMMITTED);
         const bool controller_settings_save_requested =
@@ -309,11 +342,6 @@ void app_main(void)
                                                ESP_BMS_LVGL_ACTION_EVENT_FLAG_VOLUME_FEEDBACK_VALID)) {
             esp_bms_audio_feedback_play_volume(action_event.volume_feedback_percent);
         }
-        if (action == ESP_BMS_LVGL_ACTION_PLAY_BMS_CONNECTION_AUDIO) {
-            esp_bms_audio_feedback_play_voice(ESP_BMS_AUDIO_VOICE_BMS_CONNECTED,
-                                              runtime.volume_percent);
-        }
-
         if (should_save_display_settings) {
             const esp_err_t save_ret = esp_bms_idf_runtime_save_display_settings(&runtime);
             if (save_ret != ESP_OK) {
@@ -334,6 +362,11 @@ void app_main(void)
 
         if (should_stop_setup_services) {
             setup_service_start_stage = SETUP_SERVICE_START_IDLE;
+            if (setup_ap_idle_elapsed_ms >= SETUP_AP_IDLE_TIMEOUT_MS) {
+                ESP_LOGI(TAG, "setup AP idle for %u ms; stopping setup services",
+                         (unsigned)setup_ap_idle_elapsed_ms);
+            }
+            setup_ap_idle_elapsed_ms = 0;
             log_heap_state("setup_stop_before");
             ret = esp_bms_idf_runtime_stop_setup_services(&runtime);
             if (ret != ESP_OK) {

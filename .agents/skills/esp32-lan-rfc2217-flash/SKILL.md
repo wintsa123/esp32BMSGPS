@@ -1,6 +1,6 @@
 ---
 name: esp32-lan-rfc2217-flash
-description: Flash and monitor this project's ESP32 hardware through the fixed LAN RFC2217 bridge. Use when finishing any code task in this repository, when the user asks to burn/flash/monitor logs, or when ESP-IDF hardware validation is needed from the Linux host through the Windows COM3 bridge.
+description: Flash and monitor this project's ESP32 hardware through the fixed LAN RFC2217 bridge. Use when finishing a firmware-impacting code task that changes ESP-IDF sources, configuration, build inputs, or device runtime behavior; when the user asks to burn/flash/monitor logs; or when ESP-IDF hardware validation is needed from the Linux host through the Windows COM3 bridge. Do not trigger for host-only tools, documentation, generated previews, or Trellis/agent files that do not affect the firmware image.
 ---
 
 # ESP32 LAN RFC2217 Flash
@@ -10,10 +10,9 @@ serial port when this bridge information is available.
 
 ## Current Endpoint
 
-- ESP-IDF port: `rfc2217://100.118.146.11:4000?ign_set_control`
+- ESP-IDF port: `rfc2217://192.168.2.10:4000?ign_set_control`
 - Baud: `115200`
-- Current Windows host: `100.118.146.11`
-- Previous LAN bridge host: `192.168.2.10`
+- Current Windows host: `192.168.2.10`
 - Windows serial port: `COM3`
 - TCP listen address: `0.0.0.0:4000`
 - Previous allowed remote: `192.168.2.108/32`
@@ -24,23 +23,29 @@ serial port when this bridge information is available.
 
 ## Completion Workflow
 
-After completing each code task, run one flash attempt before reporting final
-completion:
+After completing a firmware-impacting code task, run one flash attempt before
+reporting final completion. Firmware-impacting tasks include changes to ESP-IDF
+sources, components, `sdkconfig*`, partition tables, firmware build files, or
+other inputs that alter the device image or runtime behavior.
+
+Do not flash for host-only utility scripts, documentation, generated images or
+previews, Trellis/spec files, or agent/skill files unless the user explicitly
+asks for hardware validation or those changes also affect the firmware image.
 
 ```bash
-./scripts/esp-idf-env.sh -p "rfc2217://100.118.146.11:4000?ign_set_control" -b 115200 flash
+./scripts/esp-idf-env.sh -p "rfc2217://192.168.2.10:4000?ign_set_control" -b 115200 flash
 ```
 
 If boot logs are required, monitor separately:
 
 ```bash
-./scripts/esp-idf-env.sh -p "rfc2217://100.118.146.11:4000?ign_set_control" -b 115200 monitor
+./scripts/esp-idf-env.sh -p "rfc2217://192.168.2.10:4000?ign_set_control" -b 115200 monitor
 ```
 
 For flash plus monitor in one command:
 
 ```bash
-./scripts/esp-idf-env.sh -p "rfc2217://100.118.146.11:4000?ign_set_control" -b 115200 flash monitor
+./scripts/esp-idf-env.sh -p "rfc2217://192.168.2.10:4000?ign_set_control" -b 115200 flash monitor
 ```
 
 ## Rules

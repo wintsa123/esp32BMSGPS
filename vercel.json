@@ -1,12 +1,10 @@
 {
-  "installCommand": "cd vercel && npm ci",
-  "buildCommand": "cd vercel && npm run build",
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "vite",
+  "installCommand": "npm ci --prefix vercel",
+  "buildCommand": "npm run build --prefix vercel",
   "outputDirectory": "vercel/dist",
   "rewrites": [
-    {
-      "source": "/",
-      "destination": "/index.html"
-    },
     {
       "source": "/(.*)",
       "destination": "/index.html"

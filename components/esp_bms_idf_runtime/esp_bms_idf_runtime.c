@@ -2,6 +2,7 @@
 
 #include "esp_bms_lvgl_bridge.h"
 
+#include "driver/gpio.h"
 #include "esp_event.h"
 #include "esp_err.h"
 #include "esp_check.h"
@@ -11,6 +12,7 @@
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_random.h"
+#include "esp_timer.h"
 #include "esp_wifi.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -41,12 +43,17 @@ static const char *TAG = "bms_idf_runtime";
 #define BATTERY_REFERENCE_MV 3300U
 #define BATTERY_DIVIDER_TOP_OHMS 100000U
 #define BATTERY_DIVIDER_BOTTOM_OHMS 100000U
-#define GPS_UART_PORT UART_NUM_0
-#define GPS_UART_TX_GPIO 1
-#define GPS_UART_RX_GPIO 3
-#define GPS_UART_BAUD 9600
+#define GPS_UART_PORT UART_NUM_1
+#define GPS_UART_TX_GPIO 18
+#define GPS_UART_RX_GPIO 27
+#define GPS_UART_BAUD 115200
 #define GPS_UART_RX_BUFFER_SIZE 1024
 #define GPS_RMC_MAX_LINE 96U
+#define GPS_PPS_GPIO GPIO_NUM_35
+#define GPS_PPS_TIMEOUT_SECONDS 3U
+#define GPS_DIAGNOSTIC_LOG_PERIOD_SECONDS 60U
+#define GPS_RMC_TIMEOUT_SECONDS 3U
+#define GPS_UART_STARTUP_DIAGNOSTIC_SECONDS 10U
 #define SETUP_AP_SSID_PREFIX "fuckingBms_"
 #define SETUP_AP_SSID_SUFFIX_LEN 6U
 #define SETUP_AP_PASSWORD_LEN 8U
@@ -108,8 +115,6 @@ static const char *TAG = "bms_idf_runtime";
 #define CONTROLLER_RATIO_CENTI_DEFAULT ESP_BMS_CONTROLLER_RATIO_CENTI_DEFAULT
 #define HTTP_BODY_MAX_LEN 384U
 #define HTTP_JSON_MAX_LEN 1024U
-#define HTTP_AUTH_MAX_LEN 48U
-#define HTTP_SETUP_USER "esp32"
 #define HTTP_SERVER_TASK_PRIORITY 3U
 #define CAST_PROTOCOL_VERSION 1U
 #define CAST_BLOCK_MAX_SIDE 16U
@@ -121,6 +126,9 @@ static const char *TAG = "bms_idf_runtime";
 #define CAST_TYPE_FRAME_END 3U
 #define CAST_TYPE_HEARTBEAT 4U
 #define CAST_TYPE_ACK 0x81U
+#define CAST_FRAME_BEGIN_BYTES 7U
+#define CAST_FRAME_END_BYTES 5U
+#define CAST_BLOCK_HEADER_BYTES 7U
 
 static uint16_t runtime_cast_width(const esp_bms_idf_runtime_t *runtime)
 {
@@ -137,11 +145,13 @@ static uint16_t runtime_cast_height(const esp_bms_idf_runtime_t *runtime)
 
 static void runtime_cast_stop(esp_bms_idf_runtime_t *runtime, const char *reason)
 {
-    if (runtime->cast_active) {
+    if (__atomic_load_n(&runtime->cast_active, __ATOMIC_RELAXED)) {
         ESP_LOGI(TAG, "[cast] stopped: %s", reason);
     }
-    runtime->cast_active = false;
+    __atomic_store_n(&runtime->cast_active, false, __ATOMIC_RELAXED);
+    runtime->cast_frame_active = false;
     runtime->cast_socket_fd = -1;
+    runtime->cast_sequence = 0U;
     runtime->cast_heartbeat_elapsed_ms = 0U;
 }
 
@@ -168,6 +178,15 @@ typedef enum {
     GPS_PARSE_ERROR,
     GPS_PARSE_FIX,
 } gps_parse_result_t;
+
+typedef struct {
+    uint16_t year;
+    uint8_t month;
+    uint8_t day;
+    uint8_t hour;
+    uint8_t minute;
+    uint8_t second;
+} gps_utc_time_t;
 
 typedef enum {
     BMS_BLE_PHASE_IDLE = 0,
@@ -1155,10 +1174,59 @@ static bool runtime_validate_nmea_checksum(const char *payload, size_t payload_l
     return actual == (uint8_t)((high << 4) | low);
 }
 
+static bool runtime_parse_two_digits(const char *field, uint8_t *value)
+{
+    if (!isdigit((unsigned char)field[0]) || !isdigit((unsigned char)field[1])) {
+        return false;
+    }
+    *value = (uint8_t)(((uint8_t)(field[0] - '0') * 10U) + (uint8_t)(field[1] - '0'));
+    return true;
+}
+
+static bool runtime_parse_rmc_utc_time(const char *field,
+                                       size_t len,
+                                       gps_utc_time_t *utc)
+{
+    if (len < 6U || !runtime_parse_two_digits(field, &utc->hour) ||
+        !runtime_parse_two_digits(field + 2, &utc->minute) ||
+        !runtime_parse_two_digits(field + 4, &utc->second) || utc->hour > 23U ||
+        utc->minute > 59U || utc->second > 60U) {
+        return false;
+    }
+    if (len == 6U) {
+        return true;
+    }
+    if (field[6] != '.' || len == 7U) {
+        return false;
+    }
+    for (size_t index = 7U; index < len; ++index) {
+        if (!isdigit((unsigned char)field[index])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool runtime_parse_rmc_utc_date(const char *field,
+                                       size_t len,
+                                       gps_utc_time_t *utc)
+{
+    uint8_t year = 0U;
+    if (len != 6U || !runtime_parse_two_digits(field, &utc->day) ||
+        !runtime_parse_two_digits(field + 2, &utc->month) ||
+        !runtime_parse_two_digits(field + 4, &year) || utc->day == 0U ||
+        utc->day > 31U || utc->month == 0U || utc->month > 12U) {
+        return false;
+    }
+    utc->year = year >= 80U ? (uint16_t)(1900U + year) : (uint16_t)(2000U + year);
+    return true;
+}
+
 static gps_parse_result_t runtime_parse_rmc(const uint8_t *line,
                                             size_t len,
                                             bool *fix_valid,
-                                            uint32_t *speed_knots_milli)
+                                            uint32_t *speed_knots_milli,
+                                            gps_utc_time_t *utc)
 {
     if (len == 0) {
         return GPS_PARSE_IGNORE;
@@ -1185,6 +1253,8 @@ static gps_parse_result_t runtime_parse_rmc(const uint8_t *line,
     bool is_rmc = false;
     bool status_seen = false;
     bool speed_seen = false;
+    bool time_seen = false;
+    bool date_seen = false;
     uint8_t status = 'V';
     uint32_t parsed_speed_milli = 0;
     size_t field_index = 0;
@@ -1204,6 +1274,12 @@ static gps_parse_result_t runtime_parse_rmc(const uint8_t *line,
                 return GPS_PARSE_IGNORE;
             }
             break;
+        case 1:
+            if (!runtime_parse_rmc_utc_time(field, field_len, utc)) {
+                return GPS_PARSE_ERROR;
+            }
+            time_seen = true;
+            break;
         case 2:
             if (field_len == 0) {
                 return GPS_PARSE_ERROR;
@@ -1212,10 +1288,18 @@ static gps_parse_result_t runtime_parse_rmc(const uint8_t *line,
             status_seen = true;
             break;
         case 7:
-            if (!runtime_parse_decimal_milli(field, field_len, &parsed_speed_milli)) {
+            if (field_len == 0U && status_seen && status != 'A') {
+                parsed_speed_milli = 0U;
+            } else if (!runtime_parse_decimal_milli(field, field_len, &parsed_speed_milli)) {
                 return GPS_PARSE_ERROR;
             }
             speed_seen = true;
+            break;
+        case 9:
+            if (!runtime_parse_rmc_utc_date(field, field_len, utc)) {
+                return GPS_PARSE_ERROR;
+            }
+            date_seen = true;
             break;
         default:
             break;
@@ -1225,7 +1309,7 @@ static gps_parse_result_t runtime_parse_rmc(const uint8_t *line,
         field_start = index + 1U;
     }
 
-    if (!status_seen || !speed_seen) {
+    if (!status_seen || !speed_seen || !time_seen || !date_seen) {
         return GPS_PARSE_ERROR;
     }
 
@@ -1582,6 +1666,20 @@ static void runtime_reset_state(esp_bms_idf_runtime_t *runtime)
     runtime->gps_parse_errors = 0;
     runtime->gps_speed_knots_milli = 0;
     runtime->gps_line_len = 0;
+    runtime->gps_debug_lines_logged = 0U;
+    runtime->gps_raw_sample_len = 0U;
+    runtime->gps_pps_processed_count = runtime->gps_pps_isr_count;
+    runtime->gps_pps_last_tick = 0U;
+    runtime->gps_pps_last_summary_tick = 0U;
+    runtime->gps_rmc_last_tick = 0U;
+    runtime->gps_rmc_last_log_tick = 0U;
+    runtime->gps_pps_active = false;
+    runtime->gps_pps_ever_seen = false;
+    runtime->gps_rmc_seen = false;
+    runtime->gps_rmc_timed_out = false;
+    runtime->gps_utc_valid = false;
+    runtime->gps_utc_logged = false;
+    runtime->gps_uart_diagnostic_logged = false;
     runtime->bms_status_poll_elapsed_ms = 0;
     runtime->bms_frame_len = 0;
     runtime->bms_conn_handle = 0xFFFFU;
@@ -1621,6 +1719,7 @@ static void runtime_reset_state(esp_bms_idf_runtime_t *runtime)
                                LOCAL_BLUETOOTH_NAME);
 
     runtime->snapshot.speed_unit = ESP_BMS_SPEED_UNIT_KMH;
+    runtime->snapshot.uptime_seconds = 0U;
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, SETUP_AP_ENABLED, false);
     runtime->snapshot.wifi = ESP_BMS_WIFI_OFFLINE;
     runtime->bms_type = (uint8_t)ESP_BMS_IDF_BMS_TYPE_ANT;
@@ -1691,18 +1790,45 @@ static void runtime_init_battery_adc(esp_bms_idf_runtime_t *runtime)
     ESP_LOGI(TAG, "battery ADC ready: gpio=%d unit=ADC1 channel=%d", BATTERY_GPIO, channel);
 }
 
-static void runtime_init_gps_uart(esp_bms_idf_runtime_t *runtime)
+static void runtime_gps_pps_isr(void *arg)
 {
-#if CONFIG_ESP_CONSOLE_UART
-    if ((int)GPS_UART_PORT == CONFIG_ESP_CONSOLE_UART_NUM) {
-        ESP_LOGW(TAG,
-                 "GPS UART disabled: uart=%d shares ESP console at %d baud; use a non-console UART for GPS",
-                 GPS_UART_PORT,
-                 CONFIG_ESP_CONSOLE_UART_BAUDRATE);
+    esp_bms_idf_runtime_t *runtime = (esp_bms_idf_runtime_t *)arg;
+    runtime->gps_pps_isr_count++;
+}
+
+static void runtime_init_gps_pps(esp_bms_idf_runtime_t *runtime)
+{
+    const gpio_config_t config = {
+        .pin_bit_mask = UINT64_C(1) << GPS_PPS_GPIO,
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_POSEDGE,
+    };
+    esp_err_t ret = gpio_config(&config);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "[gps] PPS GPIO%d config failed: %s", GPS_PPS_GPIO,
+                 esp_err_to_name(ret));
         return;
     }
-#endif
 
+    ret = gpio_install_isr_service(0);
+    if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
+        ESP_LOGW(TAG, "[gps] PPS ISR service failed: %s", esp_err_to_name(ret));
+        return;
+    }
+    ret = gpio_isr_handler_add(GPS_PPS_GPIO, runtime_gps_pps_isr, runtime);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "[gps] PPS GPIO%d handler failed: %s", GPS_PPS_GPIO,
+                 esp_err_to_name(ret));
+        return;
+    }
+
+    ESP_LOGI(TAG, "[gps] PPS ready: gpio=%d edge=rising pull=external", GPS_PPS_GPIO);
+}
+
+static void runtime_init_gps_uart(esp_bms_idf_runtime_t *runtime)
+{
     uart_config_t config = {
         .baud_rate = GPS_UART_BAUD,
         .data_bits = UART_DATA_8_BITS,
@@ -2129,7 +2255,7 @@ static esp_err_t runtime_http_set_common_headers(httpd_req_t *req)
     if (ret == ESP_OK) {
         ret = httpd_resp_set_hdr(req,
                                  "Access-Control-Allow-Headers",
-                                 "Content-Type, X-Setup-Password, Authorization");
+                                 "Content-Type");
     }
     if (ret == ESP_OK) {
         ret = httpd_resp_set_hdr(req, "Access-Control-Max-Age", "600");
@@ -2140,142 +2266,12 @@ static esp_err_t runtime_http_set_common_headers(httpd_req_t *req)
     return ret;
 }
 
-static size_t runtime_base64_encode(const uint8_t *input, size_t input_len, char *out, size_t out_len)
-{
-    static const char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    size_t out_index = 0;
-    const uint8_t *cursor = input;
-    const uint8_t *const end = input + input_len;
-    while (cursor < end) {
-        const size_t remaining = (size_t)(end - cursor);
-        const uint32_t first = *cursor++;
-        const uint32_t second = remaining > 1U ? *cursor++ : 0U;
-        const uint32_t third = remaining > 2U ? *cursor++ : 0U;
-        const uint32_t triple = (first << 16) | (second << 8) | third;
-        if (out_index + 4U >= out_len) {
-            return 0;
-        }
-        out[out_index++] = alphabet[(triple >> 18) & 0x3FU];
-        out[out_index++] = alphabet[(triple >> 12) & 0x3FU];
-        out[out_index++] = remaining > 1U ? alphabet[(triple >> 6) & 0x3FU] : '=';
-        out[out_index++] = remaining > 2U ? alphabet[triple & 0x3FU] : '=';
-    }
-    if (out_index >= out_len) {
-        return 0;
-    }
-    out[out_index] = '\0';
-    return out_index;
-}
-
-static void runtime_copy_auth_passwords(const esp_bms_idf_runtime_t *runtime,
-                                        char *current,
-                                        size_t current_len,
-                                        bool *has_pending,
-                                        char *pending,
-                                        size_t pending_len)
-{
-    if (current_len > 0) {
-        current[0] = '\0';
-    }
-    *has_pending = false;
-    if (pending_len > 0) {
-        pending[0] = '\0';
-    }
-
-    if (!runtime->http_pending_lock) {
-        runtime_copy_snapshot_text(current, current_len, runtime->setup_ap_password);
-        return;
-    }
-    if (xSemaphoreTake(runtime->http_pending_lock, pdMS_TO_TICKS(100)) != pdTRUE) {
-        return;
-    }
-    runtime_copy_snapshot_text(current, current_len, runtime->setup_ap_password);
-    if (RUNTIME_FLAG(runtime, HTTP_SETUP_AP_PASSWORD_PENDING)) {
-        runtime_copy_snapshot_text(pending, pending_len, runtime->http_pending_setup_ap_password);
-        *has_pending = true;
-    }
-    xSemaphoreGive(runtime->http_pending_lock);
-}
-
-static bool runtime_http_basic_password_matches(const char *header, const char *password)
-{
-    if (!password || password[0] == '\0') {
-        return false;
-    }
-
-    char credential[sizeof(HTTP_SETUP_USER) + SETUP_AP_PASSWORD_LEN + 1U] = { 0 };
-    const int credential_len = snprintf(credential,
-                                        sizeof(credential),
-                                        HTTP_SETUP_USER ":%s",
-                                        password);
-    if (credential_len < 0 || (size_t)credential_len >= sizeof(credential)) {
-        return false;
-    }
-
-    char encoded[32] = { 0 };
-    if (runtime_base64_encode((const uint8_t *)credential,
-                              (size_t)credential_len,
-                              encoded,
-                              sizeof(encoded)) == 0) {
-        return false;
-    }
-
-    char expected[HTTP_AUTH_MAX_LEN] = { 0 };
-    const int expected_len = snprintf(expected, sizeof(expected), "Basic %s", encoded);
-    return expected_len > 0 && (size_t)expected_len < sizeof(expected) &&
-           strcmp(header, expected) == 0;
-}
-
-static bool runtime_http_auth_ok(httpd_req_t *req, const esp_bms_idf_runtime_t *runtime)
-{
-    char current_password[sizeof(runtime->setup_ap_password)] = { 0 };
-    char pending_password[sizeof(runtime->setup_ap_password)] = { 0 };
-    bool has_pending_password = false;
-    runtime_copy_auth_passwords(runtime,
-                                current_password,
-                                sizeof(current_password),
-                                &has_pending_password,
-                                pending_password,
-                                sizeof(pending_password));
-    if (current_password[0] == '\0' && !has_pending_password) {
-        return false;
-    }
-
-    char header[HTTP_AUTH_MAX_LEN] = { 0 };
-    if (httpd_req_get_hdr_value_str(req, "X-Setup-Password", header, sizeof(header)) == ESP_OK &&
-        (strcmp(header, current_password) == 0 ||
-         (has_pending_password && strcmp(header, pending_password) == 0))) {
-        return true;
-    }
-
-    memset(header, 0, sizeof(header));
-    if (httpd_req_get_hdr_value_str(req, "Authorization", header, sizeof(header)) != ESP_OK) {
-        return false;
-    }
-
-    return runtime_http_basic_password_matches(header, current_password) ||
-           (has_pending_password && runtime_http_basic_password_matches(header, pending_password));
-}
-
 static esp_err_t runtime_http_send_text(httpd_req_t *req, const char *status, const char *text)
 {
     ESP_RETURN_ON_ERROR(runtime_http_set_common_headers(req), TAG, "set HTTP headers failed");
     ESP_RETURN_ON_ERROR(httpd_resp_set_status(req, status), TAG, "set HTTP status failed");
     ESP_RETURN_ON_ERROR(httpd_resp_set_type(req, "text/plain; charset=utf-8"), TAG, "set HTTP type failed");
     return httpd_resp_send(req, text, HTTPD_RESP_USE_STRLEN);
-}
-
-static esp_err_t runtime_http_send_unauthorized(httpd_req_t *req)
-{
-    ESP_RETURN_ON_ERROR(runtime_http_set_common_headers(req), TAG, "set HTTP headers failed");
-    ESP_RETURN_ON_ERROR(httpd_resp_set_hdr(req,
-                                           "WWW-Authenticate",
-                                           "Basic realm=\"esp32-bms-gps\", charset=\"UTF-8\""),
-                        TAG,
-                        "set auth header failed");
-    ESP_RETURN_ON_ERROR(httpd_resp_set_status(req, "401 Unauthorized"), TAG, "set HTTP status failed");
-    ESP_RETURN_ON_ERROR(httpd_resp_set_type(req, "text/plain; charset=utf-8"), TAG, "set HTTP type failed");
-    return httpd_resp_send(req, "unauthorized", HTTPD_RESP_USE_STRLEN);
 }
 
 static esp_err_t runtime_http_send_no_content(httpd_req_t *req)
@@ -2786,7 +2782,7 @@ static esp_err_t runtime_http_cast_info_handler(httpd_req_t *req, esp_bms_idf_ru
                                  runtime_cast_height(runtime),
                                  runtime->display_rotation,
                                  CAST_BLOCK_MAX_SIDE,
-                                 runtime->cast_active ? "true" : "false");
+                                 __atomic_load_n(&runtime->cast_active, __ATOMIC_RELAXED) ? "true" : "false");
     if (written < 0 || (size_t)written >= sizeof(json)) {
         return runtime_http_send_text(req, "500 Internal Server Error", "cast info format error");
     }
@@ -2826,15 +2822,14 @@ static esp_err_t runtime_http_cast_ws_handler(httpd_req_t *req)
         return ESP_FAIL;
     }
     if (req->method == HTTP_GET) {
-        if (!runtime_http_auth_ok(req, runtime)) {
-            return runtime_http_send_unauthorized(req);
-        }
-        if (runtime->cast_active) {
+        if (__atomic_load_n(&runtime->cast_active, __ATOMIC_RELAXED)) {
             ESP_LOGW(TAG, "[cast] reject second client fd=%d", httpd_req_to_sockfd(req));
             return ESP_FAIL;
         }
-        runtime->cast_active = true;
+        __atomic_store_n(&runtime->cast_active, true, __ATOMIC_RELAXED);
+        runtime->cast_frame_active = false;
         runtime->cast_socket_fd = httpd_req_to_sockfd(req);
+        runtime->cast_sequence = 0U;
         runtime->cast_heartbeat_elapsed_ms = 0U;
         ESP_LOGI(TAG, "[cast] client connected fd=%d", runtime->cast_socket_fd);
         return ESP_OK;
@@ -2854,13 +2849,19 @@ static esp_err_t runtime_http_cast_ws_handler(httpd_req_t *req)
     if (message[0] == CAST_TYPE_HEARTBEAT && frame.len == 1U) {
         return ESP_OK;
     }
-    if (message[0] == CAST_TYPE_FRAME_BEGIN && frame.len == 6U && message[1] == CAST_PROTOCOL_VERSION) {
+    if (message[0] == CAST_TYPE_FRAME_BEGIN && frame.len == CAST_FRAME_BEGIN_BYTES &&
+        message[1] == CAST_PROTOCOL_VERSION && message[6] <= 3U && !runtime->cast_frame_active) {
+        runtime->cast_sequence = runtime_cast_u32(&message[2]);
+        runtime->cast_frame_active = true;
         return ESP_OK;
     }
-    if (message[0] == CAST_TYPE_FRAME_END && frame.len == 5U) {
-        return runtime_cast_send_ack(req, runtime_cast_u32(&message[1]));
+    if (message[0] == CAST_TYPE_FRAME_END && frame.len == CAST_FRAME_END_BYTES &&
+        runtime->cast_frame_active && runtime_cast_u32(&message[1]) == runtime->cast_sequence) {
+        runtime->cast_frame_active = false;
+        return runtime_cast_send_ack(req, runtime->cast_sequence);
     }
-    if (message[0] != CAST_TYPE_RGB565_BLOCK || frame.len < 9U) {
+    if (message[0] != CAST_TYPE_RGB565_BLOCK || !runtime->cast_frame_active ||
+        frame.len < CAST_BLOCK_HEADER_BYTES) {
         runtime_cast_stop(runtime, "unknown message");
         return ESP_ERR_INVALID_ARG;
     }
@@ -2873,12 +2874,13 @@ static esp_err_t runtime_http_cast_ws_handler(httpd_req_t *req)
     if (width == 0U || height == 0U || width > CAST_BLOCK_MAX_SIDE || height > CAST_BLOCK_MAX_SIDE ||
         x >= runtime_cast_width(runtime) || y >= runtime_cast_height(runtime) ||
         width > runtime_cast_width(runtime) - x || height > runtime_cast_height(runtime) - y ||
-        frame.len != 9U + pixel_bytes) {
+        frame.len != CAST_BLOCK_HEADER_BYTES + pixel_bytes) {
         runtime_cast_stop(runtime, "block out of bounds");
         return ESP_ERR_INVALID_SIZE;
     }
     ESP_RETURN_ON_ERROR(esp_bms_lvgl_bridge_lock(-1), TAG, "lock display for cast failed");
-    const esp_err_t ret = esp_bms_lvgl_bridge_write_rgb565(x, y, width, height, &message[9], pixel_bytes);
+    const esp_err_t ret = esp_bms_lvgl_bridge_write_rgb565(x, y, width, height,
+                                                           &message[CAST_BLOCK_HEADER_BYTES], pixel_bytes);
     esp_bms_lvgl_bridge_unlock();
     return ret;
 }
@@ -2893,10 +2895,6 @@ static esp_err_t runtime_http_api_handler(httpd_req_t *req)
     if (req->method == HTTP_OPTIONS) {
         return runtime_http_send_no_content(req);
     }
-    if (!runtime_http_auth_ok(req, runtime)) {
-        return runtime_http_send_unauthorized(req);
-    }
-
     ESP_LOGI(TAG,
              "[http] api request: method=%d uri=%s clients=%u",
              req->method,
@@ -3174,6 +3172,7 @@ static bool runtime_apply_pending_http_ap_password(esp_bms_idf_runtime_t *runtim
     if (strcmp(password, runtime->setup_ap_password) == 0) {
         xSemaphoreGive(runtime->http_pending_lock);
         runtime_clear_pending_http_ap_password(runtime, password);
+        RUNTIME_SET_FLAG(runtime, HTTP_CONFIG_APPLIED, true);
         return false;
     }
     runtime_copy_snapshot_text(runtime->setup_ap_password, sizeof(runtime->setup_ap_password), password);
@@ -3189,6 +3188,7 @@ static bool runtime_apply_pending_http_ap_password(esp_bms_idf_runtime_t *runtim
     }
     if (ret == ESP_OK) {
         runtime_clear_pending_http_ap_password(runtime, password);
+        RUNTIME_SET_FLAG(runtime, HTTP_CONFIG_APPLIED, true);
         runtime_set_error(runtime, "AP PW SET");
         ESP_LOGI(TAG, "[wifi] setup AP password updated: ssid='%s' ap_pw_len=%u",
                  runtime->setup_ap_ssid, (unsigned)strlen(runtime->setup_ap_password));
@@ -4734,14 +4734,34 @@ static bool runtime_apply_gps_line(esp_bms_idf_runtime_t *runtime)
         return false;
     }
 
+    if (runtime->gps_debug_lines_logged < 8U) {
+        ESP_LOGI(TAG,
+                 "[gps] NMEA sample %u: %.*s",
+                 (unsigned)(runtime->gps_debug_lines_logged + 1U),
+                 (int)runtime->gps_line_len,
+                 (const char *)runtime->gps_line);
+        runtime->gps_debug_lines_logged++;
+    }
+
     bool fix_valid = false;
     uint32_t speed_knots_milli = 0;
+    gps_utc_time_t utc = { 0 };
     const gps_parse_result_t result =
-        runtime_parse_rmc(runtime->gps_line, runtime->gps_line_len, &fix_valid, &speed_knots_milli);
+        runtime_parse_rmc(runtime->gps_line,
+                          runtime->gps_line_len,
+                          &fix_valid,
+                          &speed_knots_milli,
+                          &utc);
     if (result == GPS_PARSE_IGNORE) {
         return false;
     }
     if (result == GPS_PARSE_ERROR) {
+        if (runtime->gps_parse_errors == 0U) {
+            ESP_LOGW(TAG,
+                     "[gps] invalid RMC: %.*s",
+                     (int)runtime->gps_line_len,
+                     (const char *)runtime->gps_line);
+        }
         runtime->gps_parse_errors++;
         return false;
     }
@@ -4749,6 +4769,16 @@ static bool runtime_apply_gps_line(esp_bms_idf_runtime_t *runtime)
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, GPS_FIX_VALID, fix_valid);
     runtime->gps_speed_knots_milli = speed_knots_milli;
     runtime->snapshot.gps_sentences_seen++;
+    runtime->gps_rmc_seen = true;
+    runtime->gps_rmc_timed_out = false;
+    runtime->gps_rmc_last_tick = runtime->tick_count;
+    runtime->gps_utc_year = utc.year;
+    runtime->gps_utc_month = utc.month;
+    runtime->gps_utc_day = utc.day;
+    runtime->gps_utc_hour = utc.hour;
+    runtime->gps_utc_minute = utc.minute;
+    runtime->gps_utc_second = utc.second;
+    runtime->gps_utc_valid = true;
     runtime_update_snapshot_speed(runtime);
     return true;
 }
@@ -4802,11 +4832,116 @@ static bool runtime_poll_gps_uart(esp_bms_idf_runtime_t *runtime)
 
     bool changed = false;
     runtime->gps_bytes_seen += (uint32_t)read;
+    if (runtime->gps_raw_sample_len < sizeof(runtime->gps_raw_sample)) {
+        size_t sample_len = sizeof(runtime->gps_raw_sample) - runtime->gps_raw_sample_len;
+        if (sample_len > (size_t)read) {
+            sample_len = (size_t)read;
+        }
+        memcpy(&runtime->gps_raw_sample[runtime->gps_raw_sample_len], bytes, sample_len);
+        runtime->gps_raw_sample_len += (uint8_t)sample_len;
+    }
     const uint8_t *cursor = bytes;
     const uint8_t *const end = bytes + read;
     while (cursor < end) {
         changed = runtime_feed_gps_byte(runtime, *cursor++) || changed;
     }
+    return changed;
+}
+
+static bool runtime_update_gps_diagnostics(esp_bms_idf_runtime_t *runtime)
+{
+    bool changed = false;
+    const uint32_t now = runtime->tick_count;
+    const uint32_t pps_count = runtime->gps_pps_isr_count;
+
+    if (pps_count != runtime->gps_pps_processed_count) {
+        const uint32_t edges = pps_count - runtime->gps_pps_processed_count;
+        runtime->gps_pps_processed_count = pps_count;
+        runtime->gps_pps_last_tick = now;
+        if (!runtime->gps_pps_ever_seen) {
+            ESP_LOGI(TAG, "[gps] PPS first: count=%lu uptime_s=%lu",
+                     (unsigned long)pps_count, (unsigned long)now);
+            runtime->gps_pps_ever_seen = true;
+            runtime->gps_pps_last_summary_tick = now;
+        } else if (!runtime->gps_pps_active) {
+            ESP_LOGI(TAG, "[gps] PPS recovered: count=%lu uptime_s=%lu",
+                     (unsigned long)pps_count, (unsigned long)now);
+        } else if (edges > 1U) {
+            ESP_LOGW(TAG, "[gps] PPS backlog: edges=%lu count=%lu uptime_s=%lu",
+                     (unsigned long)edges,
+                     (unsigned long)pps_count,
+                     (unsigned long)now);
+        }
+        runtime->gps_pps_active = true;
+    }
+
+    if (runtime->gps_pps_active &&
+        now - runtime->gps_pps_last_tick >= GPS_PPS_TIMEOUT_SECONDS) {
+        runtime->gps_pps_active = false;
+        ESP_LOGW(TAG, "[gps] PPS lost: last_count=%lu uptime_s=%lu",
+                 (unsigned long)runtime->gps_pps_processed_count,
+                 (unsigned long)now);
+    }
+
+    if (runtime->gps_pps_active &&
+        now - runtime->gps_pps_last_summary_tick >= GPS_DIAGNOSTIC_LOG_PERIOD_SECONDS) {
+        runtime->gps_pps_last_summary_tick = now;
+        ESP_LOGI(TAG, "[gps] PPS stable: count=%lu uptime_s=%lu",
+                 (unsigned long)runtime->gps_pps_processed_count,
+                 (unsigned long)now);
+    }
+
+    if (runtime->gps_rmc_seen && !runtime->gps_rmc_timed_out &&
+        now - runtime->gps_rmc_last_tick >= GPS_RMC_TIMEOUT_SECONDS) {
+        runtime->gps_rmc_timed_out = true;
+        RUNTIME_SET_SNAPSHOT_FLAG(runtime, GPS_FIX_VALID, false);
+        runtime->gps_speed_knots_milli = 0U;
+        runtime_update_snapshot_speed(runtime);
+        ESP_LOGW(TAG, "[gps] RMC timeout: uptime_s=%lu", (unsigned long)now);
+        changed = true;
+    }
+
+    if (runtime->gps_utc_valid &&
+        (!runtime->gps_utc_logged ||
+         now - runtime->gps_rmc_last_log_tick >= GPS_DIAGNOSTIC_LOG_PERIOD_SECONDS)) {
+        runtime->gps_utc_logged = true;
+        runtime->gps_rmc_last_log_tick = now;
+        ESP_LOGI(TAG,
+                 "[gps] UTC=%04u-%02u-%02uT%02u:%02u:%02uZ fix=%d pps=%d uptime_s=%lu",
+                 runtime->gps_utc_year,
+                 runtime->gps_utc_month,
+                 runtime->gps_utc_day,
+                 runtime->gps_utc_hour,
+                 runtime->gps_utc_minute,
+                 runtime->gps_utc_second,
+                 RUNTIME_SNAPSHOT_FLAG(runtime, GPS_FIX_VALID) ? 1 : 0,
+                 runtime->gps_pps_active ? 1 : 0,
+                 (unsigned long)now);
+    }
+
+    if (!runtime->gps_uart_diagnostic_logged &&
+        now >= GPS_UART_STARTUP_DIAGNOSTIC_SECONDS) {
+        runtime->gps_uart_diagnostic_logged = true;
+        if (runtime->gps_bytes_seen == 0U) {
+            ESP_LOGW(TAG,
+                     "[gps] no NMEA bytes: uart=%d rx=%d level=%d uptime_s=%lu",
+                     runtime->gps_uart,
+                     GPS_UART_RX_GPIO,
+                     gpio_get_level(GPS_UART_RX_GPIO),
+                     (unsigned long)now);
+        } else if (runtime->snapshot.gps_sentences_seen == 0U) {
+            ESP_LOGW(TAG,
+                     "[gps] NMEA received without valid RMC: bytes=%lu parse_errors=%lu uptime_s=%lu",
+                     (unsigned long)runtime->gps_bytes_seen,
+                     (unsigned long)runtime->gps_parse_errors,
+                     (unsigned long)now);
+            ESP_LOG_BUFFER_HEX_LEVEL(TAG,
+                                     runtime->gps_raw_sample,
+                                     runtime->gps_raw_sample_len,
+                                     ESP_LOG_WARN);
+        }
+    }
+
     return changed;
 }
 
@@ -4830,6 +4965,7 @@ void esp_bms_idf_runtime_init(esp_bms_idf_runtime_t *runtime)
     runtime_ensure_setup_ap_credentials(runtime);
     runtime_init_battery_adc(runtime);
     (void)runtime_sample_battery(runtime);
+    runtime_init_gps_pps(runtime);
     runtime_init_gps_uart(runtime);
 }
 
@@ -5058,7 +5194,8 @@ bool esp_bms_idf_runtime_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_m
         return false;
     }
 
-    if (runtime->cast_active) {
+    const bool cast_active = __atomic_load_n(&runtime->cast_active, __ATOMIC_RELAXED);
+    if (cast_active) {
         runtime->cast_heartbeat_elapsed_ms += elapsed_ms;
         if (runtime->cast_heartbeat_elapsed_ms >= CAST_HEARTBEAT_TIMEOUT_MS) {
             runtime_cast_stop(runtime, "heartbeat timeout");
@@ -5068,6 +5205,10 @@ bool esp_bms_idf_runtime_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_m
     bool changed = RUNTIME_FLAG(runtime, BLUETOOTH_SNAPSHOT_DIRTY) ||
                    RUNTIME_FLAG(runtime, BMS_SNAPSHOT_DIRTY) ||
                    RUNTIME_FLAG(runtime, CONTROLLER_SNAPSHOT_DIRTY);
+    if (runtime->snapshot.cast_active != cast_active) {
+        runtime->snapshot.cast_active = cast_active;
+        changed = true;
+    }
     RUNTIME_SET_FLAG(runtime, BLUETOOTH_SNAPSHOT_DIRTY, false);
     RUNTIME_SET_FLAG(runtime, BMS_SNAPSHOT_DIRTY, false);
     RUNTIME_SET_FLAG(runtime, CONTROLLER_SNAPSHOT_DIRTY, false);
@@ -5108,11 +5249,7 @@ bool esp_bms_idf_runtime_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_m
         runtime->battery_sample_elapsed_ms = 0;
         changed = runtime_sample_battery(runtime) || changed;
     }
-    if (runtime->active_data_source == ESP_BMS_LVGL_DATA_SOURCE_GPS) {
-        changed = runtime_poll_gps_uart(runtime) || changed;
-    } else if (RUNTIME_FLAG(runtime, GPS_UART_READY)) {
-        (void)uart_flush_input(runtime->gps_uart);
-    }
+    changed = runtime_poll_gps_uart(runtime) || changed;
     if (runtime->active_data_source == ESP_BMS_LVGL_DATA_SOURCE_CONTROLLER &&
         RUNTIME_FLAG(runtime, CONTROLLER_SUBSCRIBED)) {
         runtime->controller_keepalive_elapsed_ms += elapsed_ms;
@@ -5126,6 +5263,15 @@ bool esp_bms_idf_runtime_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_m
         runtime->elapsed_ms -= 1000;
         runtime->tick_count++;
     }
+    const uint64_t uptime_seconds = (uint64_t)esp_timer_get_time() / UINT64_C(1000000);
+    const uint32_t displayed_uptime = uptime_seconds > UINT32_MAX
+                                          ? UINT32_MAX
+                                          : (uint32_t)uptime_seconds;
+    if (runtime->snapshot.uptime_seconds != displayed_uptime) {
+        runtime->snapshot.uptime_seconds = displayed_uptime;
+        changed = true;
+    }
+    changed = runtime_update_gps_diagnostics(runtime) || changed;
     return changed;
 }
 
@@ -5377,7 +5523,6 @@ bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,
     case ESP_BMS_LVGL_ACTION_START_TOUCH_CALIBRATION:
     case ESP_BMS_LVGL_ACTION_ADD_TOUCH_CALIBRATION_SAMPLE:
     case ESP_BMS_LVGL_ACTION_CANCEL_TOUCH_CALIBRATION:
-    case ESP_BMS_LVGL_ACTION_PLAY_BMS_CONNECTION_AUDIO:
         return false;
     case ESP_BMS_LVGL_ACTION_NONE:
     default:
@@ -5430,8 +5575,6 @@ const char *esp_bms_idf_runtime_action_name(esp_bms_lvgl_action_t action)
         return "set-controller-tire";
     case ESP_BMS_LVGL_ACTION_SET_CONTROLLER_RATIO:
         return "set-controller-ratio";
-    case ESP_BMS_LVGL_ACTION_PLAY_BMS_CONNECTION_AUDIO:
-        return "play-bms-connection-audio";
     case ESP_BMS_LVGL_ACTION_START_BMS_BIND:
         return "start-bms-bind";
     case ESP_BMS_LVGL_ACTION_ENABLE_BLUETOOTH_ADVERTISING:

@@ -7,7 +7,7 @@ import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
-API_BASE = "https://api.squarefaceicon.org"
+API_BASE = "https://api.cdn-krill-ai.com"
 LOCAL_API_KEY_FILE = ".gpt_image2_api_key"
 
 
@@ -22,8 +22,12 @@ def _load_api_key():
         return ""
 
 
-API_KEY = _load_api_key()
+API_KEY = "nb_Df3C6ZvyFc1JzlbnDfqkLNvdns4D5a5ICw_L9I81a-w"
 MODEL = "gpt-image-2"
+USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "Chrome/138 Safari/537.36"
+)
 
 
 def generate_image(prompt, size="1024x1024", quality="medium", n=1, output_dir=".",
@@ -31,7 +35,10 @@ def generate_image(prompt, size="1024x1024", quality="medium", n=1, output_dir="
     key = api_key or API_KEY
     if ref_images:
         url = f"{API_BASE}/v1/images/edits"
-        headers = {"Authorization": f"Bearer {key}"}
+        headers = {
+            "Authorization": f"Bearer {key}",
+            "User-Agent": USER_AGENT,
+        }
         files = []
         for img_path in ref_images:
             files.append(("image[]", (os.path.basename(img_path), open(img_path, "rb"), "image/png")))
@@ -48,7 +55,7 @@ def generate_image(prompt, size="1024x1024", quality="medium", n=1, output_dir="
         log("生成中（约 30~90 秒）...")
         t0 = time.time()
         try:
-            r = requests.post(url, headers=headers, files=files, data=data, timeout=180)
+            r = requests.post(url, headers=headers, files=files, data=data, timeout=300)
         except Exception as e:
             log(f"请求异常: {e}")
             return []
@@ -63,6 +70,7 @@ def generate_image(prompt, size="1024x1024", quality="medium", n=1, output_dir="
         headers = {
             "Authorization": f"Bearer {key}",
             "Content-Type": "application/json",
+            "User-Agent": USER_AGENT,
         }
         payload = {
             "model": MODEL,
@@ -76,7 +84,7 @@ def generate_image(prompt, size="1024x1024", quality="medium", n=1, output_dir="
         log("生成中（约 30~90 秒）...")
         t0 = time.time()
         try:
-            r = requests.post(url, headers=headers, json=payload, timeout=180)
+            r = requests.post(url, headers=headers, json=payload, timeout=300)
         except Exception as e:
             log(f"请求异常: {e}")
             return []

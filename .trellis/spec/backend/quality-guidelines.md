@@ -13,6 +13,12 @@ Primary validation:
 ./scripts/esp-idf-env.sh build
 ```
 
+## Scenario: 投屏二维码可见性
+
+- `set_cast_page()` 的二维码载荷包含 HTTPS 落地页、SSID、密码与设备地址；缓冲区必须至少为 `256` 字节，不能沿用短域名时代的 `128` 字节假设。
+- 投屏二维码是常驻界面元素：热点关闭时仍显示；页面只显示“扫码投屏”标题，不显示连接状态、SSID 或密码文字。
+- 修改投屏 URL、SSID 长度或二维码逻辑后，必须用最长可能载荷验证 `snprintf()` 未截断，并确认 `lv_qrcode_update()` 返回成功；不得把编码失败静默处理成隐藏二维码。
+
 Run GitNexus change detection before commit:
 
 ```bash
@@ -99,8 +105,14 @@ PY
 
 ### 7. Completion Flash Requirement
 
-- After completing a code task, run one flash attempt through this LAN bridge
-  before reporting final completion.
+- After completing a firmware-impacting code task, run one flash attempt
+  through this LAN bridge before reporting final completion. This applies to
+  ESP-IDF sources, components, `sdkconfig*`, partition tables, firmware build
+  files, and other changes that alter the device image or runtime behavior.
+- Do not flash for host-only utility scripts, documentation, generated images
+  or previews, Trellis/spec files, or agent/skill files unless the user
+  explicitly requests hardware validation or the change also affects the
+  firmware image.
 - Do not ask for a serial port when the recorded bridge is available; use
   `rfc2217://192.168.2.10:4000?ign_set_control`.
 - If the flash attempt fails, report the exact esptool error and whether the
@@ -119,6 +131,61 @@ idf.py -p /dev/ttyUSB0 flash
 
 ```bash
 ./scripts/esp-idf-env.sh -p "rfc2217://192.168.2.10:4000?ign_set_control" -b 115200 flash
+```
+
+## Scenario: GPS NMEA And UART0 Console Pin Conflict
+
+### 1. Scope / Trigger
+
+- Trigger: receiving 336H GPS NMEA while keeping UART0 logs and RFC2217 flashing available.
+
+### 2. Signatures
+
+- Console: UART0, TX/GPIO1, RX/GPIO3, 115200 baud.
+- GPS: 9600 baud NMEA; PPS input on GPIO35 rising edge with external bias.
+- Runtime diagnostic: `[gps] no NMEA bytes: uart=<n> rx=<gpio> level=<0|1> uptime_s=<n>`.
+
+### 3. Contracts
+
+- GPIO35 is input-only and has no internal pull-up/down; the PPS source must be a single signal no higher than 3.3 V.
+- A UART peripheral can receive GPS through the GPIO matrix, but remapping UART1 RX to GPIO3 does not remove electrical contention: the USB-UART TX and GPS TX remain two outputs connected to the same net.
+- Keep UART0 for logs only when GPS TX is physically moved to a free input-capable GPIO, or when hardware provides a safe disconnect/multiplexer between flashing and GPS operation.
+- GPS reading must run independently of the visible LVGL carousel page. ISR code only counts PPS edges; parsing and logging run in task context.
+
+### 4. Validation & Error Matrix
+
+- UART/PPS initialization succeeds, NMEA bytes increase, valid RMC appears -> GPS path is operational.
+- UART initializes but bytes remain zero and RX level remains high -> inspect USB-UART/GPS output contention, power, crossed TX/RX, and baud rate.
+- Bytes increase but valid RMC remains zero -> inspect NMEA checksum, talker type, baud, and sentence format.
+- PPS has no edges -> verify GPS fix/PPS configuration and GPIO35 voltage; NMEA speed must continue working.
+
+### 5. Good/Base/Bad Cases
+
+- Good: GPS TX has its own ESP32 input GPIO; UART0 remains dedicated to flash/logs; GPIO35 receives PPS.
+- Base: GPS is absent; UI shows invalid speed while boot uptime, BMS, touch, Wi-Fi, and logs remain operational.
+- Bad: GPS TX and USB-UART TX are both directly wired to GPIO3; the idle-high USB-UART can hold the net high and prevent all NMEA reception.
+
+### 6. Tests Required
+
+- Build with `./scripts/esp-idf-env.sh build` and flash through the recorded RFC2217 endpoint.
+- Assert boot logs show the selected GPS UART/RX and `PPS ready: gpio=35`.
+- Within 10 seconds, assert either NMEA/RMC diagnostics show activity or the one-shot no-byte diagnostic explains the missing input.
+- Switch away from and back to the GPS page; assert the latest speed remains current and boot uptime never resets.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```c
+/* Two physical transmitters still fight on GPIO3 even if UART1 samples it. */
+#define GPS_UART_RX_GPIO GPIO_NUM_3
+```
+
+#### Correct
+
+```c
+/* Use a GPS-only input GPIO selected by the board wiring. */
+#define GPS_UART_RX_GPIO GPS_DEDICATED_RX_GPIO
 ```
 
 ## Scenario: NimBLE CCCD Discovery
