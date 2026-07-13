@@ -737,6 +737,140 @@ GATT discovery, or frame parsing has not produced real data.
 Keep BMS fields offline/invalid until validated BLE notifications from the
 bound device update the runtime snapshot.
 
+## Scenario: Unified Speed Dashboard And Source Selection
+
+### 1. Scope / Trigger
+
+- Trigger: changing the speed carousel page, GPS/controller speed selection,
+  RMC local time, trip-efficiency accumulation, `/api/config` speed fields, or
+  the NVS migration from the legacy controller-page setting.
+
+### 2. Signatures
+
+- Preference enum: `esp_bms_speed_source_t` with `GPS=0` and `CONTROLLER=1`.
+- Action: `ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_SOURCE`; legacy
+  `ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_PAGE` remains an alias for the same
+  preference transition.
+- Stable collection source:
+  `ESP_BMS_LVGL_DATA_SOURCE_SPEED_DASHBOARD`.
+- Persistent keys: `speed_src` is authoritative; `ctl_page` is a compatibility
+  mirror and migration source only; `ctl_conn` remains independent.
+- Snapshot fields: `speed_source`, `active_speed_source`,
+  `gps_local_time_valid`, `gps_local_hour`, `gps_local_minute`,
+  `average_consumption_valid`, and
+  `average_consumption_deci_wh_per_distance`.
+- `GET /api/config` returns `speed_source`, `active_speed_source`, and
+  `controller_online`. `POST /api/config` accepts
+  `speed_source: "gps" | "controller"`.
+- Page enum values remain Battery=0, Controller=1, GPS=2, Cast=3. Controller
+  and GPS both navigate to the canonical unified speed page.
+
+### 3. Contracts
+
+- A missing `speed_src` migrates `ctl_page=1` to controller preference and any
+  other valid legacy value to GPS, then persists both keys. A new/default
+  configuration prefers GPS.
+- Controller preference plus an online controller selects controller as the
+  active source. A disconnected or disabled controller selects GPS without
+  changing the preference; reconnect restores controller automatically.
+- Controller speed-field validity never determines the active source. An
+  online controller with invalid speed renders `-`; it must not borrow GPS.
+  GPS as active source also renders `-` while the RMC fix is invalid/stale.
+- GPS UART parsing is page-independent. Valid RMC UTC is converted to UTC+8
+  with Gregorian day/month/year rollover; timeout clears local-time validity.
+- Trip efficiency starts at the first valid GPS speed at or above 5 km/h.
+  Distance always integrates GPS speed. Energy integrates pack voltage and
+  sign-normalized display current; discharge is positive and regeneration
+  subtracts. Both interval endpoints require fresh GPS/BMS data, intervals
+  over 3 seconds are discarded, and values remain invalid below 0.1 km.
+- The fixed carousel is Battery -> unified Speed -> Cast. The speed page keeps
+  BMS polling and FarDriver gather/keepalive active together; after trip
+  accumulation starts, BMS polling continues on other pages.
+- The V4 page uses a custom draw object rather than a full-screen canvas.
+  Metric range is 0..180 km/h and imperial range is 0..120 mph; the color band
+  clamps at the range while the numeric speed keeps the real value.
+- The dashboard may use the compact Chinese temperature labels `控` and `电机`
+  through `settings_zh_10`; every compiled settings-font subset must contain
+  `控`, `电`, and `机`, plus settings punctuation such as U+00B7 in
+  `离线·当前 GPS`. Do not add a separate large CJK font for the dashboard.
+- The dashboard renders SOC only through the small battery outline and slanted
+  charge segments; it never renders a numeric SOC percentage. Missing SOC
+  draws the outline without inventing segments.
+- `BMS_ONLINE=false` hides the complete battery graphic and trip-consumption
+  label. Once BMS reconnects, both reappear from the latest snapshot; an online
+  BMS with invalid SOC still draws only the outline, and invalid trip
+  consumption still renders `-- Wh/km` or `-- Wh/mi`.
+- Gear remains visible. An offline controller or invalid gear field projects
+  gear `1`; controller and motor temperatures remain independently hidden
+  unless the controller is online and the corresponding field is valid.
+
+### 4. Validation & Error Matrix
+
+- `speed_source` is neither `gps` nor `controller` -> HTTP 400; do not queue or
+  persist a partial configuration.
+- Controller preference is offline -> report preference=controller,
+  active=GPS, keep bound identity/parameters, hide controller/motor
+  temperature fields, and display gear `1`.
+- Controller is online but speed is invalid -> active=controller and
+  `SPEED_VALID=false`; do not fall back.
+- GPS RMC or BMS freshness is lost -> break the efficiency anchor so recovery
+  cannot backfill the missing interval.
+- RMC checksum/date/time is invalid or times out -> render `--:--` and keep the
+  last invalid sample from changing the trip totals.
+- Distance below 100000 mm -> render `-- Wh/km` or `-- Wh/mi`.
+- BMS offline -> hide both the battery graphic and consumption label; do not
+  show stale SOC, stale consumption, an empty outline, or an offline placeholder.
+- A new dashboard boolean would exceed the existing 32-bit flag mask -> add an
+  explicit snapshot field instead of allocating another flag bit.
+
+### 5. Good / Base / Bad Cases
+
+- Good: controller preference reconnects after an offline GPS fallback,
+  restores controller speed automatically, and Web/TFT both show the same
+  persisted preference.
+- Base: no GPS fix, no controller, and no BMS; the unified page remains visible
+  with `-`, `--:--`, an orange GPS point, hidden battery/consumption/temperatures,
+  and default gear `1`.
+- Bad: removing the speed page when controller mode is disabled, using speed
+  validity as online state, resetting trip totals on a page swipe, or adding a
+  full-screen framebuffer on the 4 MB/no-PSRAM target.
+
+### 6. Tests Required
+
+- Run `tests/speed_dashboard_selftest.c` for UTC+8 rollover, 5 km/h start,
+  invalid/long intervals, 0.1 km threshold, regeneration, and km/mi projection.
+- Run `tests/fardriver_protocol_selftest.c`, Web inline-script syntax/field
+  checks, compiled-font glyph checks, and `git diff --check`.
+- Render and inspect real LVGL 320x240 and 240x320 previews for 0, intermediate,
+  maximum, invalid, mph, GPS search/fix, controller online/offline, and missing
+  SOC states. Assert the landscape status bar is one row, numeric SOC is
+  absent, missing controller gear renders `1`, and there is no clipping,
+  overlap, scrollbar, or stale temperature field.
+- Render explicit BMS-offline landscape and portrait states. Assert the entire
+  battery graphic and consumption label are absent while GPS/controller/time
+  content keeps its normal geometry.
+- Run `./scripts/esp-idf-env.sh build`, confirm both OTA-slot fit and warnings,
+  then run GitNexus `detect-changes` against the task base.
+- Flash through the fixed RFC2217 endpoint and monitor for at least five
+  minutes when GPS/controller inputs are unavailable; record unavailable
+  online or user-interaction branches explicitly instead of claiming them.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```c
+/* Invalid controller speed is not the same as an offline controller. */
+active = controller.speed_valid ? CONTROLLER : GPS;
+```
+
+#### Correct
+
+```c
+active = preference == CONTROLLER && controller_online ? CONTROLLER : GPS;
+speed_valid = active == CONTROLLER ? controller.speed_valid : gps_fix_valid;
+```
+
 ## Scenario: FarDriver BLE Controller Telemetry
 
 ### 1. Scope / Trigger
@@ -818,7 +952,8 @@ bound device update the runtime snapshot.
 - Disconnect during rebind -> clear telemetry, then start the deferred scan
   only when connection remains enabled.
 - Offline controller -> keep the unified page present, hide controller-only
-  gear/temperature fields, and preserve saved controller parameters.
+  temperature fields, render default gear `1`, and preserve saved controller
+  parameters.
 - Online controller with invalid speed -> keep controller as the active source
   and render `-`; do not silently switch to GPS.
 
@@ -828,8 +963,8 @@ bound device update the runtime snapshot.
   update fixed label buffers; `12-70-90` plus `RateRatio=60` projects about
   `1353 mm` and ratio `1.00`, then schedules one persistence update.
 - Base: the unified page remains available without a controller; telemetry
-  stays invalid, controller-only settings hide, and legacy `ctl_wheel` still
-  loads safely.
+  stays invalid, controller-only settings and temperatures hide, gear renders
+  `1`, and legacy `ctl_wheel` still loads safely.
 - Bad: clamping a controller-provided `26-110-210` tuple into roller limits,
   overwriting the user's fallback on every notification, removing the speed
   page when controller preference is off, or selecting a new MAC while leaving

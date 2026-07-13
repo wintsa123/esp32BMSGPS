@@ -93,7 +93,7 @@ preference = CONTROLLER + controller down/off -> active = GPS
 speed_page
 ├─ speed_art (一个透明 lv_obj，LV_EVENT_DRAW_MAIN)
 ├─ speed_value / speed_unit
-├─ soc / consumption
+├─ soc（兼容对象，始终隐藏）/ consumption
 ├─ controller_temp / motor_temp
 ├─ gear
 ├─ local_time
@@ -105,6 +105,11 @@ speed_page
 - 同一回调用 line/triangle/rect 描述符绘制外轮廓、刻度、卫星、电池、状态点和电量斜段。
 - 方向差异仅存在于 `speed_dashboard_apply_layout()` 的对象位置/尺寸及绘制 geometry 选择；创建与数据更新路径不含分散的横竖屏条件。
 - 快速变化标签使用 `s_ui` 持久缓冲与 `lv_label_set_text_static`，仅内容变化时刷新；绘制状态变化时调用 `lv_obj_invalidate(speed_art)`。
+- `BMS_ONLINE=false` 时绘制回调直接跳过整个电池图形，电耗 label 通过 `LV_OBJ_FLAG_HIDDEN` 隐藏；创建时先隐藏电耗，避免首个 snapshot 前闪现占位值。
+- BMS 在线后，SOC 仅驱动缩小后的电池图标和倾斜电量段，百分比 label 保持隐藏；SOC 无效时只绘制轮廓，电耗无效时保留 `-- Wh/km|mi`。
+- 温度 label 使用 `settings_zh_10`，文本固定为 `控 %dC` 与 `电机 %dC`；三套 settings 中文子集都包含“电”，避免不同字号复用时缺字。
+- 挡位方块使用 Montserrat 28 并缩小几何；控制器离线或挡位字段无效时投影为 `1`，温度字段仍按在线和各自有效位隐藏。
+- 横屏顶部状态项位于同一行且分隔线为 y=34；速度数字和单位使用集中布局整体左移。竖屏继续使用两行状态布局。
 
 ## 页面映射
 
