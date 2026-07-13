@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 7
-- **Last Active**: 2026-07-11
+- **Total Sessions**: 8
+- **Last Active**: 2026-07-13
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~241 | Active |
+| `journal-1.md` | ~275 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 8 | 2026-07-13 | 统一速度仪表 V4 与速度来源选择 | `6de4c66`, `ee02e28` | `main` |
 | 7 | 2026-07-11 | Quick Panel Slide Lock | `112c04d` | `main` |
 | 6 | 2026-07-11 | Unify settings list card style | `8a33b12` | `main` |
 | 5 | 2026-07-11 | Complete system settings and touch calibration | `15bdc23`, `54d09f0` | `main` |

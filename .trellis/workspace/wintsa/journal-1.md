@@ -239,3 +239,37 @@ Added a primitive-drawn quick-panel lock icon, full-screen interaction guard, fr
 ### Next Steps
 
 - None - task complete
+
+
+## Session 8: 统一速度仪表 V4 与速度来源选择
+
+**Date**: 2026-07-13
+**Task**: 统一速度仪表 V4 与速度来源选择
+**Branch**: `main`
+
+### Summary
+
+完成统一速度仪表横竖屏布局、中文温度缩写、默认挡位、BMS 离线隐藏电池与电耗、完整 LVGL 预览、ESP-IDF 构建与 RFC2217 真机验证；GPS 室外定位成功且 PPS 稳定。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6de4c66` | (see git log) |
+| `ee02e28` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
