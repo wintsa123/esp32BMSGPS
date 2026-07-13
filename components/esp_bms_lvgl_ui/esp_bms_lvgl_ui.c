@@ -195,6 +195,20 @@ static void ui_flag_set(uint8_t *flags, uint32_t index, bool enabled)
 
 _Static_assert(sizeof(esp_bms_lvgl_action_t) == 4,
                "esp_bms_lvgl_action_t ABI size changed; update C action consumers too");
+_Static_assert(sizeof(esp_bms_lvgl_data_source_t) == 4,
+               "esp_bms_lvgl_data_source_t ABI size changed; update C data-source consumers too");
+_Static_assert(ESP_BMS_LVGL_DATA_SOURCE_NONE == 0 &&
+                   ESP_BMS_LVGL_DATA_SOURCE_BMS == 1 &&
+                   ESP_BMS_LVGL_DATA_SOURCE_CONTROLLER == 2 &&
+                   ESP_BMS_LVGL_DATA_SOURCE_GPS == 3 &&
+                   ESP_BMS_LVGL_DATA_SOURCE_SPEED_DASHBOARD == 4,
+               "esp_bms_lvgl_data_source_t value changed; update runtime consumers too");
+_Static_assert(sizeof(esp_bms_speed_source_t) == 4 &&
+                   ESP_BMS_SPEED_SOURCE_GPS == 0 &&
+                   ESP_BMS_SPEED_SOURCE_CONTROLLER == 1,
+               "esp_bms_speed_source_t ABI changed; update runtime and Web consumers too");
+_Static_assert(sizeof(esp_bms_dashboard_snapshot_t) == 1032,
+               "dashboard snapshot ABI size changed; update all C consumers too");
 _Static_assert(ESP_BMS_LVGL_ACTION_NONE == 0,
                "esp_bms_lvgl_action_t value changed; update C action consumers too");
 _Static_assert(ESP_BMS_LVGL_ACTION_SHOW_DASHBOARD == 1,
@@ -6343,16 +6357,16 @@ static void speed_dashboard_apply_layout(void)
         lv_obj_set_size(s_ui.gps_speed_unit, 76, 26);
         lv_obj_set_pos(s_ui.speed_soc, 90, 7);
         lv_obj_set_size(s_ui.speed_soc, 30, 18);
-        lv_obj_set_pos(s_ui.speed_consumption, 121, 7);
-        lv_obj_set_size(s_ui.speed_consumption, 112, 18);
+        lv_obj_set_pos(s_ui.speed_consumption, 124, 7);
+        lv_obj_set_size(s_ui.speed_consumption, 109, 18);
         lv_obj_set_pos(s_ui.speed_controller_temp, 66, 29);
         lv_obj_set_size(s_ui.speed_controller_temp, 76, 18);
         lv_obj_set_pos(s_ui.speed_motor_temp, 144, 29);
         lv_obj_set_size(s_ui.speed_motor_temp, 90, 18);
         lv_obj_set_pos(s_ui.speed_gear, 157, 234);
         lv_obj_set_size(s_ui.speed_gear, 50, 54);
-        lv_obj_set_pos(s_ui.gps_detail, 150, 286);
-        lv_obj_set_size(s_ui.gps_detail, 82, 26);
+        lv_obj_set_pos(s_ui.gps_detail, 112, 278);
+        lv_obj_set_size(s_ui.gps_detail, 120, 34);
         static const int16_t positions[SPEED_DASHBOARD_SCALE_LABEL_COUNT][2] = {
             { 16, 264 }, { 56, 218 }, { 101, 160 }, { 139, 111 }, { 178, 67 }, { 207, 51 },
         };
@@ -6375,8 +6389,8 @@ static void speed_dashboard_apply_layout(void)
         lv_obj_set_size(s_ui.speed_motor_temp, 80, 18);
         lv_obj_set_pos(s_ui.speed_gear, 259, 149);
         lv_obj_set_size(s_ui.speed_gear, 48, 50);
-        lv_obj_set_pos(s_ui.gps_detail, 244, 202);
-        lv_obj_set_size(s_ui.gps_detail, 72, 26);
+        lv_obj_set_pos(s_ui.gps_detail, 196, 195);
+        lv_obj_set_size(s_ui.gps_detail, 120, 34);
         static const int16_t positions[SPEED_DASHBOARD_SCALE_LABEL_COUNT][2] = {
             { 8, 168 }, { 53, 148 }, { 111, 124 }, { 174, 102 }, { 244, 84 }, { 286, 80 },
         };
@@ -6565,6 +6579,7 @@ static void create_gps_dashboard(void)
                                                  lv_font_montserrat_24.line_height,
                                                  &lv_font_montserrat_24,
                                                  COLOR_TEXT);
+    lv_obj_set_style_text_align(s_ui.gps_detail, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
     for (uint32_t index = 0U; index < SPEED_DASHBOARD_SCALE_LABEL_COUNT; ++index) {
         s_ui.speed_scale_labels[index] = controller_dashboard_label(
             s_ui.gps_page,

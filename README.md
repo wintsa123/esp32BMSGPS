@@ -28,10 +28,9 @@
 
 | 目标 | 开发进度 | 状态 |
 | --- | --- | :---: |
-| 🧱 在 4 MB Flash、无 PSRAM 的 ESP32-WROOM-32E 上构建稳定、可恢复、易维护的固件基础 | 已完成纯 ESP-IDF/CMake 迁移、启动编排、NVS、双 OTA 分区基础和运行时快照 | ✅ 已实现 |
 | 🖥️ 用 240 × 320 TFT 提供适合骑行的速度、BMS、控制器和 GPS 仪表 | ST7789、XPT2046、LVGL 仪表与设置、旋转、亮度、触摸校准和快捷面板均已接入 | 🚧 持续优化 |
-| 🔋 通过 BLE 接入 ANT BMS，所有遥测均来自真实保护板 | 已接入扫描、绑定、连接、订阅、轮询和状态帧解析，正在进行真实保护板长时间验证 | 🚧 实机验证中 |
-| 🛞 通过 BLE 接入 FarDriver 控制器并准确换算车辆参数 | 已接入 BLE 协议、真实遥测、轮胎参数和传动比换算，继续完善设备兼容与数据校准 | 🚧 持续优化 |
+| 🔋 通过 BLE 接入各两轮平台的电池保护板，所有遥测均来自真实设备 | ANT BMS 已完成扫描、绑定、连接、订阅、轮询和状态帧解析并通过实测，其他品牌与型号的保护板待适配验证 | 🚧 ANT 已实测，其他待测 |
+| 🛞 通过 BLE 接入远驱控制器并准确换算车辆参数 | 已接入 BLE 协议、真实遥测、轮胎参数和传动比换算，继续完善设备兼容与数据校准 | 🚧 持续优化 |
 | 🛰️ 提供 GPS 定位、速度、授时、轨迹记录和地图能力 | 已接入 336H UART NMEA、RMC 速度/定位/UTC 和 GPIO35 PPS 诊断，轨迹与地图尚未完成 | 🚧 基础链路可用 |
 | 📡 通过 Setup AP、本地 Web UI 和公网 HTTPS 控制站完成配置、诊断与维护 | 随机热点凭据、二维码、`192.168.4.1`、配置 API 和 BMS 扫描/绑定入口已接入；Vercel 控制站已上线 | ✅ 已实现 |
 | 🔊 为连接状态和设备操作提供清晰的音频反馈 | GPIO26 DAC 与 GPIO4 功放使能已用于连接提示和音量反馈 | ✅ 已实现 |
@@ -47,7 +46,7 @@
 - 屏幕：TPM408 2.8 英寸，ST7789，240 × 320，BGR。
 - 触摸：XPT2046 / XP2046。
 - GPS：336H，UART NMEA + PPS。
-- BMS：当前重点为 ANT BMS BLE；控制器协议为 FarDriver BLE。
+- BMS：已实测 ANT BMS BLE；其他两轮平台保护板待适配验证；控制器协议为远驱 BLE。
 
 GPIO 不在 README 中重复维护，代码中的配置位置如下：
 
@@ -86,20 +85,6 @@ Windows 本地串口：
 
 ```powershell
 .\scripts\flash.ps1 -Port COM3 -Monitor
-```
-
-通过项目固定的 LAN RFC2217 桥接烧录：
-
-```bash
-./scripts/esp-idf-env.sh \
-  -p "rfc2217://192.168.2.10:4000?ign_set_control" \
-  -b 115200 flash monitor
-```
-
-Windows 端桥接服务由以下脚本启动：
-
-```powershell
-.\scripts\serial_tcp_bridge.ps1 -PortName COM3
 ```
 
 如果设备此前使用其他分区表，首次切换时需要先擦除 Flash。详细的构建、擦除、诊断镜像、分区布局和故障排查见[固件硬件、构建与烧录规范](./.trellis/spec/backend/hardware-build-flash.md)。

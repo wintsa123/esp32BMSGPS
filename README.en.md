@@ -1,23 +1,20 @@
-# ESP32 BMS GPS
+<h1 align="center">⚡ ESP32 BMS GPS 🛰️</h1>
 
-[简体中文](./README.md) · [English](./README.en.md)
+<p align="center">
+  <a href="./README.md">简体中文</a>
+  ·
+  <a href="./README.en.md">English</a>
+</p>
 
 ESP32 smart dashboard firmware for electric motorcycles, e-bikes, and light vehicles. It brings BMS, motor-controller, GPS, touchscreen, device hotspot, Web control, and phone casting into one system.
 
 > The project is under active development and hardware validation. The core firmware and primary interaction paths are usable; OTA, track storage, and some hardware compatibility work are not complete.
 
-## Goals
+## 🌐 Online Control Page
 
-- Provide glanceable speed, BMS, controller, and GPS dashboards on a 240 × 320 TFT.
-- Connect to protection boards and controllers over BLE without fabricating telemetry.
-- Support configuration, diagnostics, and maintenance through the device Setup AP, embedded Web UI, and public HTTPS control page.
-- Extend maps, navigation, and complex views through low-latency Android casting.
-- Remain bootable, recoverable, and maintainable within the ESP32-WROOM-32E limits of 4 MB Flash and no PSRAM.
-- Use Chinese by default, with English selectable from device settings.
-
-## Online Control Page
-
-**Vercel control page: <https://esp-bms-setting.vercel.app/>**
+<p align="center">
+  <strong>🌐 <a href="https://esp-bms-setting.vercel.app/">Open the Vercel Control Page</a></strong>
+</p>
 
 To control the device through its hotspot API:
 
@@ -27,30 +24,29 @@ To control the device through its hotspot API:
 
 The control page is Chinese-first and can switch to English. The hotspot HTTP API is the primary working transport. A Web Bluetooth entry also exists, but it requires the matching firmware-side BLE control service. The `/cast` path launches the Android casting app.
 
-## Implementation Status
+## 🎯 Project Goals and Development Progress
 
-| Area | Status | Current scope |
-| --- | --- | --- |
-| ESP-IDF foundation | Implemented | Pure ESP-IDF/CMake migration, boot orchestration, NVS, dual OTA-slot foundation, and runtime snapshot |
-| TFT and touch | Implemented, still being refined | ST7789, XPT2046, LVGL dashboards/settings, rotation, brightness, touch calibration, and quick panel |
-| Setup AP and embedded Web | Implemented | Random hotspot credentials, QR, `192.168.4.1`, configuration APIs, and BMS scan/bind entry points |
-| ANT BMS | Code implemented; full hardware validation pending | BLE scan, bind, connect, subscribe, poll, and status-frame parsing; long-running validation with a real board continues |
-| FarDriver controller | Core path implemented | BLE protocol, telemetry, tire parameters, and gear-ratio conversion; device compatibility and calibration continue |
-| GPS / PPS | Core path implemented | 336H UART NMEA, RMC speed/fix/UTC, and GPIO35 PPS diagnostics; track storage and maps are not complete |
-| Audio feedback | Implemented | GPIO26 DAC and GPIO4 amplifier enable for connection prompts and volume feedback |
-| Vercel control page | Deployed | React control UI supports the hotspot API; Web Bluetooth still depends on firmware service support |
-| Android casting | In development | A standalone Kotlin app and casting protocol exist; latency, stability, and device compatibility are being refined |
-| OTA / TF card / tracks and maps | Not complete | OTA does not yet provide a complete upgrade loop; TF-card recording, history, and maps are later phases |
+| Goal | Development progress | Status |
+| --- | --- | :---: |
+| 🖥️ Provide glanceable speed, BMS, controller, and GPS dashboards on a 240 × 320 TFT | ST7789, XPT2046, LVGL dashboards and settings, rotation, brightness, touch calibration, and the quick panel are integrated | 🚧 Being refined |
+| 🔋 Connect to battery protection boards used across two-wheel vehicle platforms over BLE, with all telemetry coming from real devices | ANT BMS scanning, binding, connection, subscription, polling, and status-frame parsing are implemented and hardware-tested; other brands and models await adaptation and validation | 🚧 ANT tested; others pending |
+| 🛞 Connect to FarDriver controllers over BLE and accurately convert vehicle parameters | BLE protocol, real telemetry, tire parameters, and gear-ratio conversion are integrated; device compatibility and data calibration continue | 🚧 Being refined |
+| 🛰️ Provide GPS positioning, speed, time synchronization, track recording, and maps | 336H UART NMEA, RMC speed/fix/UTC, and GPIO35 PPS diagnostics are integrated; track storage and maps are not complete | 🚧 Core path available |
+| 📡 Support configuration, diagnostics, and maintenance through the Setup AP, embedded Web UI, and public HTTPS control page | Random hotspot credentials, QR code, `192.168.4.1`, configuration APIs, and BMS scan/bind entry points are integrated; the Vercel control page is live | ✅ Implemented |
+| 🔊 Provide clear audio feedback for connection state and device actions | GPIO26 DAC and GPIO4 amplifier enable are integrated for connection prompts and volume feedback | ✅ Implemented |
+| 📱 Extend maps, navigation, and complex views through low-latency Android casting | A standalone Kotlin app and casting protocol exist; latency, stability, and device compatibility are being refined | 🚧 In development |
+| 🌏 Use Chinese by default and provide an English switch in device settings | The Chinese-first UI and settings-based language policy are defined; the TFT uses ASCII `ZH` / `EN` language markers | 🚧 In progress |
+| 🔄 Complete the OTA, TF-card recording, track history, and map workflow | OTA does not yet provide a complete upgrade loop; TF-card recording, track history, and maps are planned for later phases | ⏳ Pending |
 
 “Implemented” means the code path exists; it does not mean every target hardware combination has completed long-duration validation.
 
-## Target Hardware and GPIO Configuration
+## 🧩 Target Hardware and GPIO Configuration
 
 - MCU: ESP32-WROOM-32E, 4 MB Flash, no PSRAM.
 - Display: TPM408 2.8-inch ST7789, 240 × 320, BGR.
 - Touch: XPT2046 / XP2046.
 - GPS: 336H, UART NMEA plus PPS.
-- BMS: ANT BMS BLE is the current priority; the controller protocol is FarDriver BLE.
+- BMS: ANT BMS BLE has been hardware-tested; boards from other two-wheel platforms await adaptation and validation. The controller protocol is FarDriver BLE.
 
 The GPIO map is intentionally not duplicated in the README. Code configuration lives in:
 
@@ -61,7 +57,7 @@ The GPIO map is intentionally not duplicated in the README. Code configuration l
 
 When a GPIO changes, update both its code authority and the project spec. Do not update the README alone.
 
-## Development Stack
+## 🛠️ Development Stack
 
 | Layer | Technology |
 | --- | --- |
@@ -75,7 +71,7 @@ When a GPIO changes, update both its code authority and the project spec. Do not
 
 Dependency versions, partitions, diagnostic images, and platform build commands are defined in the [project build contract](./.trellis/spec/backend/hardware-build-flash.md).
 
-## Flashing
+## 🚀 Flashing
 
 Install ESP-IDF 5.5.x. The repository wrapper first loads `$IDF_PATH/export.sh`, then falls back to `$HOME/esp/esp-idf-v5.5.4/export.sh`.
 
@@ -91,23 +87,9 @@ Windows local serial:
 .\scripts\flash.ps1 -Port COM3 -Monitor
 ```
 
-Use the project's fixed LAN RFC2217 bridge:
-
-```bash
-./scripts/esp-idf-env.sh \
-  -p "rfc2217://192.168.2.10:4000?ign_set_control" \
-  -b 115200 flash monitor
-```
-
-Start the bridge on Windows with:
-
-```powershell
-.\scripts\serial_tcp_bridge.ps1 -PortName COM3
-```
-
 Erase Flash once when switching from a different partition table. See the [firmware hardware, build, and flash contract](./.trellis/spec/backend/hardware-build-flash.md) for build-only commands, erase flow, diagnostic images, partition layout, and troubleshooting.
 
-## Repository Layout
+## 📁 Repository Layout
 
 ```text
 main/                         Boot entry point and embedded Web UI
@@ -122,6 +104,6 @@ preview/                      The only location for UI preview images
 
 `main/idf_main.c` owns boot orchestration only. Hardware, protocol, state, and UI logic belong in focused ESP-IDF components.
 
-## License
+## 📄 License
 
 This project is available under the [PolyForm Noncommercial License 1.0.0](./LICENSE). You may use, modify, and distribute it only for noncommercial purposes. Commercial use requires separate written permission from the copyright holder.
