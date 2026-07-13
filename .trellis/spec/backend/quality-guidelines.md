@@ -13,6 +13,9 @@ Primary validation:
 ./scripts/esp-idf-env.sh build
 ```
 
+GPIO ownership, toolchain inputs, partition layout, and supported flash paths
+are defined in [Hardware, Build, and Flash](./hardware-build-flash.md).
+
 ## Scenario: 投屏二维码可见性
 
 - `set_cast_page()` 的二维码载荷包含 HTTPS 落地页、SSID、密码与设备地址；缓冲区必须至少为 `256` 字节，不能沿用短域名时代的 `128` 字节假设。
@@ -133,37 +136,41 @@ idf.py -p /dev/ttyUSB0 flash
 ./scripts/esp-idf-env.sh -p "rfc2217://192.168.2.10:4000?ign_set_control" -b 115200 flash
 ```
 
-## Scenario: GPS NMEA And UART0 Console Pin Conflict
+## Scenario: GPS NMEA And UART Ownership
 
 ### 1. Scope / Trigger
 
-- Trigger: receiving 336H GPS NMEA while keeping UART0 logs and RFC2217 flashing available.
+- Trigger: receiving 336H GPS NMEA on its dedicated UART1 wiring while keeping
+  UART0 logs and RFC2217 flashing available.
 
 ### 2. Signatures
 
 - Console: UART0, TX/GPIO1, RX/GPIO3, 115200 baud.
-- GPS: 9600 baud NMEA; PPS input on GPIO35 rising edge with external bias.
+- GPS: UART1 at 115200 baud, RX/GPIO27, TX/GPIO18; PPS input on GPIO35 rising
+  edge with external bias.
 - Runtime diagnostic: `[gps] no NMEA bytes: uart=<n> rx=<gpio> level=<0|1> uptime_s=<n>`.
 
 ### 3. Contracts
 
 - GPIO35 is input-only and has no internal pull-up/down; the PPS source must be a single signal no higher than 3.3 V.
-- A UART peripheral can receive GPS through the GPIO matrix, but remapping UART1 RX to GPIO3 does not remove electrical contention: the USB-UART TX and GPS TX remain two outputs connected to the same net.
-- Keep UART0 for logs only when GPS TX is physically moved to a free input-capable GPIO, or when hardware provides a safe disconnect/multiplexer between flashing and GPS operation.
+- Keep UART0 GPIO1/GPIO3 dedicated to flashing and logs. GPS module TX connects
+  only to UART1 RX/GPIO27; GPS module RX connects to UART1 TX/GPIO18.
+- GPIO18 is also reserved as the future TF-card SCLK. Do not enable TF-card SPI
+  until GPS TX ownership is moved or safely multiplexed.
 - GPS reading must run independently of the visible LVGL carousel page. ISR code only counts PPS edges; parsing and logging run in task context.
 
 ### 4. Validation & Error Matrix
 
 - UART/PPS initialization succeeds, NMEA bytes increase, valid RMC appears -> GPS path is operational.
-- UART initializes but bytes remain zero and RX level remains high -> inspect USB-UART/GPS output contention, power, crossed TX/RX, and baud rate.
+- UART initializes but bytes remain zero and RX level remains high -> inspect power, crossed TX/RX, GPIO27 ownership, and 115200 baud.
 - Bytes increase but valid RMC remains zero -> inspect NMEA checksum, talker type, baud, and sentence format.
 - PPS has no edges -> verify GPS fix/PPS configuration and GPIO35 voltage; NMEA speed must continue working.
 
 ### 5. Good/Base/Bad Cases
 
-- Good: GPS TX has its own ESP32 input GPIO; UART0 remains dedicated to flash/logs; GPIO35 receives PPS.
+- Good: GPS TX uses UART1 RX/GPIO27; UART0 remains dedicated to flash/logs; GPIO35 receives PPS.
 - Base: GPS is absent; UI shows invalid speed while boot uptime, BMS, touch, Wi-Fi, and logs remain operational.
-- Bad: GPS TX and USB-UART TX are both directly wired to GPIO3; the idle-high USB-UART can hold the net high and prevent all NMEA reception.
+- Bad: TF-card SCLK and GPS module RX both drive/use GPIO18 without an explicit ownership change, or GPS TX is tied to UART0 RX/GPIO3.
 
 ### 6. Tests Required
 
@@ -177,15 +184,17 @@ idf.py -p /dev/ttyUSB0 flash
 #### Wrong
 
 ```c
-/* Two physical transmitters still fight on GPIO3 even if UART1 samples it. */
+/* Do not move GPS RX onto the UART0 console input. */
 #define GPS_UART_RX_GPIO GPIO_NUM_3
 ```
 
 #### Correct
 
 ```c
-/* Use a GPS-only input GPIO selected by the board wiring. */
-#define GPS_UART_RX_GPIO GPS_DEDICATED_RX_GPIO
+/* Current board wiring gives GPS its own UART1 pins. */
+#define GPS_UART_RX_GPIO GPIO_NUM_27
+#define GPS_UART_TX_GPIO GPIO_NUM_18
+#define GPS_UART_BAUD 115200
 ```
 
 ## Scenario: NimBLE CCCD Discovery
@@ -884,5 +893,6 @@ if (controller_tuple_changed && controller_tuple_is_selectable) {
   LVGL config, Wi-Fi, HTTP, NVS, BLE, or OTA changes.
 - Run `node .gitnexus/run.cjs detect-changes -r esp32BMSGPS` before commit.
 - Hardware validation is still required for phone scan/join of the displayed
-  setup AP, Web UI load at `192.168.4.1`, GPS UART0, GPIO34 ADC scaling, BLE
+  setup AP, Web UI load at `192.168.4.1`, GPS UART1 GPIO27/GPIO18 plus GPIO35
+  PPS, GPIO34 ADC scaling, BLE
   BMS, and OTA slot switching.

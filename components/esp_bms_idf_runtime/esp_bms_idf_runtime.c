@@ -54,6 +54,7 @@ static const char *TAG = "bms_idf_runtime";
 #define GPS_DIAGNOSTIC_LOG_PERIOD_SECONDS 60U
 #define GPS_RMC_TIMEOUT_SECONDS 3U
 #define GPS_UART_STARTUP_DIAGNOSTIC_SECONDS 10U
+#define BMS_TELEMETRY_FRESHNESS_US INT64_C(2000000)
 #define SETUP_AP_SSID_PREFIX "fuckingBms_"
 #define SETUP_AP_SSID_SUFFIX_LEN 6U
 #define SETUP_AP_PASSWORD_LEN 8U
@@ -91,6 +92,7 @@ static const char *TAG = "bms_idf_runtime";
 #define DISPLAY_NVS_VOLUME_KEY "disp_vol"
 #define DISPLAY_NVS_ROTATION_KEY "disp_rot"
 #define DISPLAY_NVS_SPEED_UNIT_KEY "speed_unit"
+#define DISPLAY_NVS_SPEED_SOURCE_KEY "speed_src"
 #define DISPLAY_NVS_LANGUAGE_KEY "lang"
 #define DISPLAY_NVS_BMS_TYPE_KEY "bms_type"
 #define CONTROLLER_NVS_CONNECTION_KEY "ctl_conn"
@@ -225,6 +227,7 @@ static esp_err_t runtime_save_bms_binding(esp_bms_idf_runtime_t *runtime);
 static esp_err_t runtime_save_setup_ap_credentials(const esp_bms_idf_runtime_t *runtime);
 static void runtime_ensure_setup_ap_credentials(esp_bms_idf_runtime_t *runtime);
 static char runtime_hex_char(uint8_t value);
+static void runtime_update_snapshot_speed(esp_bms_idf_runtime_t *runtime);
 
 #define RUNTIME_FLAG(runtime, name) \
     esp_bms_idf_runtime_flag_get((runtime), ESP_BMS_IDF_RUNTIME_FLAG_##name)
@@ -262,6 +265,7 @@ static void runtime_project_controller_snapshot(esp_bms_idf_runtime_t *runtime)
 {
     esp_bms_dashboard_snapshot_t *snapshot = &runtime->snapshot;
     const esp_fardriver_state_t *state = &runtime->controller_state;
+    runtime->controller_page_enabled = snapshot->speed_source == ESP_BMS_SPEED_SOURCE_CONTROLLER;
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, CONTROLLER_CONNECTION_ENABLED, runtime->controller_connection_enabled);
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, CONTROLLER_PAGE_ENABLED, runtime->controller_page_enabled);
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, CONTROLLER_ONLINE, runtime->controller_conn_handle != 0xFFFFU);
@@ -320,6 +324,7 @@ static void runtime_project_controller_snapshot(esp_bms_idf_runtime_t *runtime)
     runtime_copy_snapshot_text(snapshot->controller_bound_name,
                                sizeof(snapshot->controller_bound_name),
                                runtime->controller_bound_name);
+    runtime_update_snapshot_speed(runtime);
     RUNTIME_SET_FLAG(runtime, CONTROLLER_SNAPSHOT_DIRTY, true);
 }
 
@@ -730,6 +735,8 @@ static void runtime_bms_scan_store_candidate(esp_bms_idf_runtime_t *runtime,
 
 static void runtime_clear_bms_telemetry(esp_bms_idf_runtime_t *runtime)
 {
+    runtime->bms_telemetry_last_us = 0;
+    runtime->trip_efficiency.anchor_valid = false;
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, BMS_ONLINE, false);
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, PACK_VOLTAGE_VALID, false);
     runtime->snapshot.pack_voltage_mv = 0;
@@ -966,6 +973,7 @@ static bool runtime_apply_bms_status_frame(esp_bms_idf_runtime_t *runtime,
     runtime->snapshot.pack_voltage_mv = (uint32_t)pack_voltage_dv * 10U;
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, CURRENT_VALID, true);
     runtime->snapshot.current_deci_amps = current_deci_amps;
+    runtime->bms_telemetry_last_us = esp_timer_get_time();
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, SOC_VALID, true);
     runtime->snapshot.soc_percent = soc_percent;
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, MAX_CELL_VALID, true);
@@ -1339,12 +1347,57 @@ static uint16_t runtime_speed_deci_units(esp_bms_speed_unit_t unit, uint32_t spe
 
 static void runtime_update_snapshot_speed(esp_bms_idf_runtime_t *runtime)
 {
-    const bool speed_valid = RUNTIME_SNAPSHOT_FLAG(runtime, GPS_FIX_VALID);
+    esp_bms_dashboard_snapshot_t *snapshot = &runtime->snapshot;
+    const bool controller_online = runtime->controller_connection_enabled &&
+                                   runtime->controller_conn_handle != 0xFFFFU;
+    snapshot->active_speed_source =
+        snapshot->speed_source == ESP_BMS_SPEED_SOURCE_CONTROLLER && controller_online
+            ? ESP_BMS_SPEED_SOURCE_CONTROLLER
+            : ESP_BMS_SPEED_SOURCE_GPS;
+
+    const bool speed_valid = snapshot->active_speed_source == ESP_BMS_SPEED_SOURCE_CONTROLLER
+                                 ? runtime->controller_state.speed_valid
+                                 : RUNTIME_SNAPSHOT_FLAG(runtime, GPS_FIX_VALID);
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, SPEED_VALID, speed_valid);
-    runtime->snapshot.speed_deci_units = speed_valid
-                                             ? runtime_speed_deci_units(runtime->snapshot.speed_unit,
-                                                                        runtime->gps_speed_knots_milli)
-                                             : 0;
+    if (!speed_valid) {
+        snapshot->speed_deci_units = 0U;
+    } else if (snapshot->active_speed_source == ESP_BMS_SPEED_SOURCE_CONTROLLER) {
+        snapshot->speed_deci_units = runtime->controller_state.speed_deci_kmh;
+        if (snapshot->speed_unit == ESP_BMS_SPEED_UNIT_MPH) {
+            snapshot->speed_deci_units =
+                (uint16_t)(((uint32_t)runtime->controller_state.speed_deci_kmh * 621371U) /
+                           1000000U);
+        }
+    } else {
+        snapshot->speed_deci_units = runtime_speed_deci_units(snapshot->speed_unit,
+                                                               runtime->gps_speed_knots_milli);
+    }
+
+    snapshot->gps_local_time_valid = false;
+    if (runtime->gps_utc_valid && !runtime->gps_rmc_timed_out) {
+        const esp_bms_gps_datetime_t utc = {
+            .year = runtime->gps_utc_year,
+            .month = runtime->gps_utc_month,
+            .day = runtime->gps_utc_day,
+            .hour = runtime->gps_utc_hour,
+            .minute = runtime->gps_utc_minute,
+            .second = runtime->gps_utc_second,
+        };
+        esp_bms_gps_datetime_t local = { 0 };
+        if (esp_bms_gps_utc_to_local_utc8(&utc, &local)) {
+            snapshot->gps_local_hour = local.hour;
+            snapshot->gps_local_minute = local.minute;
+            snapshot->gps_local_time_valid = true;
+        }
+    }
+
+    snapshot->average_consumption_valid =
+        esp_bms_trip_efficiency_consumption(&runtime->trip_efficiency,
+                                            snapshot->speed_unit == ESP_BMS_SPEED_UNIT_MPH,
+                                            &snapshot->average_consumption_deci_wh_per_distance);
+    if (!snapshot->average_consumption_valid) {
+        snapshot->average_consumption_deci_wh_per_distance = 0;
+    }
 }
 
 static esp_bms_idf_display_rotation_t runtime_next_rotation(esp_bms_idf_display_rotation_t rotation)
@@ -1427,6 +1480,25 @@ static bool runtime_parse_speed_unit_config_text(const char *text, esp_bms_speed
     }
     if (strcmp(text, "mph") == 0) {
         *out_unit = ESP_BMS_SPEED_UNIT_MPH;
+        return true;
+    }
+    return false;
+}
+
+static const char *runtime_speed_source_config_text(esp_bms_speed_source_t source)
+{
+    return source == ESP_BMS_SPEED_SOURCE_CONTROLLER ? "controller" : "gps";
+}
+
+static bool runtime_parse_speed_source_config_text(const char *text,
+                                                   esp_bms_speed_source_t *out_source)
+{
+    if (strcmp(text, "gps") == 0) {
+        *out_source = ESP_BMS_SPEED_SOURCE_GPS;
+        return true;
+    }
+    if (strcmp(text, "controller") == 0) {
+        *out_source = ESP_BMS_SPEED_SOURCE_CONTROLLER;
         return true;
     }
     return false;
@@ -1533,6 +1605,12 @@ static bool runtime_speed_unit_matches_policy(uint8_t speed_unit)
 {
     return speed_unit == (uint8_t)ESP_BMS_SPEED_UNIT_KMH ||
            speed_unit == (uint8_t)ESP_BMS_SPEED_UNIT_MPH;
+}
+
+static bool runtime_speed_source_matches_policy(uint8_t speed_source)
+{
+    return speed_source == (uint8_t)ESP_BMS_SPEED_SOURCE_GPS ||
+           speed_source == (uint8_t)ESP_BMS_SPEED_SOURCE_CONTROLLER;
 }
 
 static bool runtime_language_matches_policy(uint8_t language)
@@ -1673,6 +1751,7 @@ static void runtime_reset_state(esp_bms_idf_runtime_t *runtime)
     runtime->gps_pps_last_summary_tick = 0U;
     runtime->gps_rmc_last_tick = 0U;
     runtime->gps_rmc_last_log_tick = 0U;
+    runtime->bms_telemetry_last_us = 0;
     runtime->gps_pps_active = false;
     runtime->gps_pps_ever_seen = false;
     runtime->gps_rmc_seen = false;
@@ -1708,6 +1787,7 @@ static void runtime_reset_state(esp_bms_idf_runtime_t *runtime)
     runtime->controller_observed_tire_width_mm = 0U;
     runtime->controller_observed_gear_ratio_centi = 0U;
     runtime->active_data_source = ESP_BMS_LVGL_DATA_SOURCE_BMS;
+    esp_bms_trip_efficiency_reset(&runtime->trip_efficiency);
     memset(&runtime->controller_state, 0, sizeof(runtime->controller_state));
     runtime->controller_state.fallback_gear_ratio_centi = CONTROLLER_RATIO_CENTI_DEFAULT;
     runtime->bms_ble_phase = BMS_BLE_PHASE_IDLE;
@@ -1719,6 +1799,8 @@ static void runtime_reset_state(esp_bms_idf_runtime_t *runtime)
                                LOCAL_BLUETOOTH_NAME);
 
     runtime->snapshot.speed_unit = ESP_BMS_SPEED_UNIT_KMH;
+    runtime->snapshot.speed_source = ESP_BMS_SPEED_SOURCE_GPS;
+    runtime->snapshot.active_speed_source = ESP_BMS_SPEED_SOURCE_GPS;
     runtime->snapshot.uptime_seconds = 0U;
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, SETUP_AP_ENABLED, false);
     runtime->snapshot.wifi = ESP_BMS_WIFI_OFFLINE;
@@ -1925,6 +2007,7 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
     uint8_t volume_percent = 0;
     uint8_t rotation = 0;
     uint8_t speed_unit = 0;
+    uint8_t speed_source = (uint8_t)ESP_BMS_SPEED_SOURCE_GPS;
     uint8_t language = 0;
     uint8_t bms_type = (uint8_t)ESP_BMS_IDF_BMS_TYPE_ANT;
     uint8_t controller_connection_enabled = 0;
@@ -1934,6 +2017,7 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
     uint16_t controller_tire_width_mm = 0;
     uint16_t controller_wheel_mm = 0;
     uint16_t controller_ratio_centi = 0;
+    bool speed_source_migration_needed = false;
 
     ret = nvs_get_u8(handle, DISPLAY_NVS_BRIGHTNESS_KEY, &brightness_percent);
     if (ret == ESP_OK) {
@@ -1966,6 +2050,19 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
     if (ret == ESP_OK) {
         ret = runtime_nvs_get_optional_u8(handle, CONTROLLER_NVS_PAGE_KEY,
                                           &controller_page_enabled);
+    }
+    if (ret == ESP_OK) {
+        const esp_err_t source_ret = nvs_get_u8(handle,
+                                                DISPLAY_NVS_SPEED_SOURCE_KEY,
+                                                &speed_source);
+        if (source_ret == ESP_ERR_NVS_NOT_FOUND) {
+            speed_source = controller_page_enabled != 0U
+                               ? (uint8_t)ESP_BMS_SPEED_SOURCE_CONTROLLER
+                               : (uint8_t)ESP_BMS_SPEED_SOURCE_GPS;
+            speed_source_migration_needed = true;
+        } else {
+            ret = source_ret;
+        }
     }
     if (ret == ESP_OK) {
         ret = runtime_nvs_get_optional_u16(handle, CONTROLLER_NVS_WHEEL_KEY,
@@ -2006,6 +2103,7 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
         !runtime_volume_matches_policy(volume_percent) ||
         !runtime_rotation_matches_policy(rotation) ||
         !runtime_speed_unit_matches_policy(speed_unit) ||
+        !runtime_speed_source_matches_policy(speed_source) ||
         !runtime_language_matches_policy(language) ||
         !runtime_bms_type_matches_policy(bms_type) ||
         controller_connection_enabled > 1U || controller_page_enabled > 1U) {
@@ -2054,12 +2152,13 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
     (void)runtime_set_volume_percent(runtime, volume_percent);
     runtime->display_rotation = (esp_bms_idf_display_rotation_t)rotation;
     runtime->snapshot.speed_unit = (esp_bms_speed_unit_t)speed_unit;
+    runtime->snapshot.speed_source = (esp_bms_speed_source_t)speed_source;
     RUNTIME_SET_FLAG(runtime, LANGUAGE_ZH, language != 0U);
     runtime->bms_type = bms_type;
     runtime->snapshot.bms_type = runtime->bms_type;
-    runtime->controller_page_enabled = controller_page_enabled != 0U;
-    runtime->controller_connection_enabled = runtime->controller_page_enabled &&
-                                             controller_connection_enabled != 0U;
+    runtime->controller_page_enabled =
+        runtime->snapshot.speed_source == ESP_BMS_SPEED_SOURCE_CONTROLLER;
+    runtime->controller_connection_enabled = controller_connection_enabled != 0U;
     runtime->controller_fallback_tire_rim_inch = controller_tire_rim_inch;
     runtime->controller_fallback_tire_aspect_percent = controller_tire_aspect_percent;
     runtime->controller_fallback_tire_width_mm = controller_tire_width_mm;
@@ -2068,6 +2167,13 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
     runtime_project_controller_snapshot(runtime);
     runtime_update_snapshot_speed(runtime);
     *loaded = true;
+    if (speed_source_migration_needed) {
+        const esp_err_t migration_ret = esp_bms_idf_runtime_save_display_settings(runtime);
+        if (migration_ret != ESP_OK) {
+            ESP_LOGW(TAG, "[settings] speed source migration save failed: %s",
+                     esp_err_to_name(migration_ret));
+        }
+    }
     return ESP_OK;
 }
 
@@ -2082,6 +2188,9 @@ esp_err_t esp_bms_idf_runtime_save_display_settings(esp_bms_idf_runtime_t *runti
                         ESP_ERR_INVALID_STATE, TAG, "invalid display rotation");
     ESP_RETURN_ON_FALSE(runtime_speed_unit_matches_policy((uint8_t)runtime->snapshot.speed_unit),
                         ESP_ERR_INVALID_STATE, TAG, "invalid speed unit");
+    ESP_RETURN_ON_FALSE(runtime_speed_source_matches_policy(
+                            (uint8_t)runtime->snapshot.speed_source),
+                        ESP_ERR_INVALID_STATE, TAG, "invalid speed source");
     ESP_RETURN_ON_FALSE(runtime_bms_type_matches_policy(runtime->bms_type),
                         ESP_ERR_INVALID_STATE, TAG, "invalid BMS type");
     ESP_RETURN_ON_FALSE(runtime_controller_ratio_matches_policy(
@@ -2120,6 +2229,11 @@ esp_err_t esp_bms_idf_runtime_save_display_settings(esp_bms_idf_runtime_t *runti
         ret = nvs_set_u8(handle, DISPLAY_NVS_SPEED_UNIT_KEY, (uint8_t)runtime->snapshot.speed_unit);
     }
     if (ret == ESP_OK) {
+        ret = nvs_set_u8(handle,
+                         DISPLAY_NVS_SPEED_SOURCE_KEY,
+                         (uint8_t)runtime->snapshot.speed_source);
+    }
+    if (ret == ESP_OK) {
         ret = nvs_set_u8(handle, DISPLAY_NVS_LANGUAGE_KEY, RUNTIME_FLAG(runtime, LANGUAGE_ZH) ? 1U : 0U);
     }
     if (ret == ESP_OK) {
@@ -2131,7 +2245,7 @@ esp_err_t esp_bms_idf_runtime_save_display_settings(esp_bms_idf_runtime_t *runti
     }
     if (ret == ESP_OK) {
         ret = nvs_set_u8(handle, CONTROLLER_NVS_PAGE_KEY,
-                         runtime->controller_page_enabled ? 1U : 0U);
+                         runtime->snapshot.speed_source == ESP_BMS_SPEED_SOURCE_CONTROLLER ? 1U : 0U);
     }
     if (ret == ESP_OK) {
         ret = nvs_set_u16(handle, CONTROLLER_NVS_WHEEL_KEY,
@@ -2171,6 +2285,7 @@ static bool runtime_set_pending_http_config(esp_bms_idf_runtime_t *runtime,
                                             uint8_t volume_percent,
                                             esp_bms_idf_display_rotation_t rotation,
                                             esp_bms_speed_unit_t speed_unit,
+                                            esp_bms_speed_source_t speed_source,
                                             bool language_zh,
                                             esp_bms_idf_bms_type_t bms_type)
 {
@@ -2185,6 +2300,7 @@ static bool runtime_set_pending_http_config(esp_bms_idf_runtime_t *runtime,
     runtime->http_pending_volume_percent = volume_percent;
     runtime->http_pending_display_rotation = rotation;
     runtime->http_pending_speed_unit = speed_unit;
+    runtime->http_pending_speed_source = speed_source;
     RUNTIME_SET_FLAG(runtime, HTTP_PENDING_LANGUAGE_ZH, language_zh);
     runtime->http_pending_bms_type = (uint8_t)bms_type;
     RUNTIME_SET_FLAG(runtime, HTTP_CONFIG_PENDING, true);
@@ -2207,6 +2323,7 @@ bool esp_bms_idf_runtime_apply_pending_http_config(esp_bms_idf_runtime_t *runtim
     const uint8_t volume_percent = runtime->http_pending_volume_percent;
     const esp_bms_idf_display_rotation_t rotation = runtime->http_pending_display_rotation;
     const esp_bms_speed_unit_t speed_unit = runtime->http_pending_speed_unit;
+    const esp_bms_speed_source_t speed_source = runtime->http_pending_speed_source;
     const bool language_zh = RUNTIME_FLAG(runtime, HTTP_PENDING_LANGUAGE_ZH);
     const uint8_t bms_type = runtime->http_pending_bms_type;
     RUNTIME_SET_FLAG(runtime, HTTP_CONFIG_PENDING, false);
@@ -2222,6 +2339,7 @@ bool esp_bms_idf_runtime_apply_pending_http_config(esp_bms_idf_runtime_t *runtim
                          runtime->volume_percent != volume_percent ||
                          runtime->display_rotation != rotation ||
                          runtime->snapshot.speed_unit != speed_unit ||
+                         runtime->snapshot.speed_source != speed_source ||
                          RUNTIME_FLAG(runtime, LANGUAGE_ZH) != language_zh ||
                          runtime->bms_type != bms_type;
     if (!changed) {
@@ -2233,10 +2351,12 @@ bool esp_bms_idf_runtime_apply_pending_http_config(esp_bms_idf_runtime_t *runtim
     (void)runtime_set_volume_percent(runtime, volume_percent);
     runtime->display_rotation = rotation;
     runtime->snapshot.speed_unit = speed_unit;
+    runtime->snapshot.speed_source = speed_source;
+    runtime->controller_page_enabled = speed_source == ESP_BMS_SPEED_SOURCE_CONTROLLER;
     RUNTIME_SET_FLAG(runtime, LANGUAGE_ZH, language_zh);
     runtime->bms_type = bms_type;
     runtime->snapshot.bms_type = runtime->bms_type;
-    runtime_update_snapshot_speed(runtime);
+    runtime_project_controller_snapshot(runtime);
     runtime_set_error(runtime, "HTTP CFG");
 
     const esp_err_t save_ret = esp_bms_idf_runtime_save_display_settings(runtime);
@@ -2541,13 +2661,18 @@ static esp_err_t runtime_http_config_handler(httpd_req_t *req, esp_bms_idf_runti
     const int written = snprintf(json,
                                  sizeof(json),
                                  "{\"brightness\":%u,\"volume\":%u,\"display_rotation\":\"%s\","
-                                 "\"speed_unit\":\"%s\",\"language\":\"%s\","
+                                 "\"speed_unit\":\"%s\",\"speed_source\":\"%s\","
+                                 "\"active_speed_source\":\"%s\",\"controller_online\":%s,"
+                                 "\"language\":\"%s\","
                                  "\"setup_ap_ssid\":\"%s\",\"setup_ap_password_saved\":%s,"
                                  "\"setup_ap_state\":\"%s\",\"bms_mac\":%s,\"bms_type\":\"%s\"}",
                                  runtime->brightness_percent,
                                  runtime->volume_percent,
                                  runtime_rotation_config_text(runtime->display_rotation),
                                  runtime_speed_unit_config_text(runtime->snapshot.speed_unit),
+                                 runtime_speed_source_config_text(runtime->snapshot.speed_source),
+                                 runtime_speed_source_config_text(runtime->snapshot.active_speed_source),
+                                 RUNTIME_SNAPSHOT_FLAG(runtime, CONTROLLER_ONLINE) ? "true" : "false",
                                  RUNTIME_FLAG(runtime, LANGUAGE_ZH) ? "zh" : "en",
                                  runtime->setup_ap_ssid,
                                  runtime->setup_ap_password[0] == '\0' ? "false" : "true",
@@ -2637,6 +2762,7 @@ static esp_err_t runtime_http_post_config_handler(httpd_req_t *req, esp_bms_idf_
     uint8_t volume_percent = runtime->volume_percent;
     esp_bms_idf_display_rotation_t rotation = runtime->display_rotation;
     esp_bms_speed_unit_t speed_unit = runtime->snapshot.speed_unit;
+    esp_bms_speed_source_t speed_source = runtime->snapshot.speed_source;
     bool language_zh = RUNTIME_FLAG(runtime, LANGUAGE_ZH);
     esp_bms_idf_bms_type_t bms_type = (esp_bms_idf_bms_type_t)runtime->bms_type;
 
@@ -2679,6 +2805,14 @@ static esp_err_t runtime_http_post_config_handler(httpd_req_t *req, esp_bms_idf_
     }
 
     memset(parsed_text, 0, sizeof(parsed_text));
+    if (!runtime_json_get_string(body, "speed_source", parsed_text, sizeof(parsed_text), &found)) {
+        return runtime_http_send_text(req, "400 Bad Request", "invalid speed source");
+    }
+    if (found && !runtime_parse_speed_source_config_text(parsed_text, &speed_source)) {
+        return runtime_http_send_text(req, "400 Bad Request", "invalid speed source");
+    }
+
+    memset(parsed_text, 0, sizeof(parsed_text));
     if (!runtime_json_get_string(body, "language", parsed_text, sizeof(parsed_text), &found)) {
         return runtime_http_send_text(req, "400 Bad Request", "invalid language");
     }
@@ -2701,7 +2835,8 @@ static esp_err_t runtime_http_post_config_handler(httpd_req_t *req, esp_bms_idf_
     }
 
     if (!runtime_set_pending_http_config(runtime, brightness_percent, volume_percent,
-                                         rotation, speed_unit, language_zh, bms_type)) {
+                                         rotation, speed_unit, speed_source,
+                                         language_zh, bms_type)) {
         return runtime_http_send_text(req, "500 Internal Server Error", "config queue failed");
     }
     return runtime_http_send_no_content(req);
@@ -3904,8 +4039,7 @@ static int runtime_controller_gap_event(struct ble_gap_event *event, void *arg)
     switch (event->type) {
     case BLE_GAP_EVENT_CONNECT:
         if (event->connect.status == 0) {
-            if (!runtime->controller_page_enabled ||
-                !runtime->controller_connection_enabled) {
+            if (!runtime->controller_connection_enabled) {
                 (void)ble_gap_terminate(event->connect.conn_handle,
                                         BLE_ERR_REM_USER_CONN_TERM);
                 return 0;
@@ -4779,6 +4913,20 @@ static bool runtime_apply_gps_line(esp_bms_idf_runtime_t *runtime)
     runtime->gps_utc_minute = utc.minute;
     runtime->gps_utc_second = utc.second;
     runtime->gps_utc_valid = true;
+    const int64_t now_us = esp_timer_get_time();
+    const int64_t bms_age_us = now_us - runtime->bms_telemetry_last_us;
+    const bool bms_sample_valid = runtime->bms_telemetry_last_us > 0 && bms_age_us >= 0 &&
+                                  bms_age_us <= BMS_TELEMETRY_FRESHNESS_US &&
+                                  RUNTIME_SNAPSHOT_FLAG(runtime, BMS_ONLINE) &&
+                                  RUNTIME_SNAPSHOT_FLAG(runtime, PACK_VOLTAGE_VALID) &&
+                                  RUNTIME_SNAPSHOT_FLAG(runtime, CURRENT_VALID);
+    esp_bms_trip_efficiency_sample(&runtime->trip_efficiency,
+                                   now_us,
+                                   fix_valid,
+                                   speed_knots_milli,
+                                   bms_sample_valid,
+                                   runtime->snapshot.pack_voltage_mv,
+                                   runtime->snapshot.current_deci_amps);
     runtime_update_snapshot_speed(runtime);
     return true;
 }
@@ -4896,6 +5044,13 @@ static bool runtime_update_gps_diagnostics(esp_bms_idf_runtime_t *runtime)
         runtime->gps_rmc_timed_out = true;
         RUNTIME_SET_SNAPSHOT_FLAG(runtime, GPS_FIX_VALID, false);
         runtime->gps_speed_knots_milli = 0U;
+        esp_bms_trip_efficiency_sample(&runtime->trip_efficiency,
+                                       esp_timer_get_time(),
+                                       false,
+                                       0U,
+                                       false,
+                                       0U,
+                                       0);
         runtime_update_snapshot_speed(runtime);
         ESP_LOGW(TAG, "[gps] RMC timeout: uptime_s=%lu", (unsigned long)now);
         changed = true;
@@ -5144,7 +5299,7 @@ esp_err_t esp_bms_idf_runtime_start_controller_ble_if_enabled(esp_bms_idf_runtim
     if (!runtime) {
         return ESP_ERR_INVALID_ARG;
     }
-    if (!runtime->controller_page_enabled || !runtime->controller_connection_enabled ||
+    if (!runtime->controller_connection_enabled ||
         runtime->controller_bound_mac[0] == '\0' ||
         runtime->controller_conn_handle != 0xFFFFU) {
         runtime_project_controller_snapshot(runtime);
@@ -5183,9 +5338,10 @@ void esp_bms_idf_runtime_set_active_data_source(esp_bms_idf_runtime_t *runtime,
         return;
     }
     runtime->active_data_source = source;
-    runtime->bms_status_poll_elapsed_ms = source == ESP_BMS_LVGL_DATA_SOURCE_BMS
-                                              ? BMS_STATUS_POLL_PERIOD_MS
-                                              : 0U;
+    const bool bms_collection_active = source == ESP_BMS_LVGL_DATA_SOURCE_BMS ||
+                                       source == ESP_BMS_LVGL_DATA_SOURCE_SPEED_DASHBOARD ||
+                                       runtime->trip_efficiency.started;
+    runtime->bms_status_poll_elapsed_ms = bms_collection_active ? BMS_STATUS_POLL_PERIOD_MS : 0U;
 }
 
 bool esp_bms_idf_runtime_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_ms)
@@ -5231,7 +5387,11 @@ bool esp_bms_idf_runtime_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_m
         }
         changed = true;
     }
-    if (runtime->active_data_source == ESP_BMS_LVGL_DATA_SOURCE_BMS &&
+    const bool bms_collection_active =
+        runtime->active_data_source == ESP_BMS_LVGL_DATA_SOURCE_BMS ||
+        runtime->active_data_source == ESP_BMS_LVGL_DATA_SOURCE_SPEED_DASHBOARD ||
+        runtime->trip_efficiency.started;
+    if (bms_collection_active &&
         runtime->bms_ble_phase == (uint8_t)BMS_BLE_PHASE_ONLINE) {
         runtime->bms_status_poll_elapsed_ms += elapsed_ms;
         if (runtime->bms_status_poll_elapsed_ms >= BMS_STATUS_POLL_PERIOD_MS &&
@@ -5250,7 +5410,8 @@ bool esp_bms_idf_runtime_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_m
         changed = runtime_sample_battery(runtime) || changed;
     }
     changed = runtime_poll_gps_uart(runtime) || changed;
-    if (runtime->active_data_source == ESP_BMS_LVGL_DATA_SOURCE_CONTROLLER &&
+    if ((runtime->active_data_source == ESP_BMS_LVGL_DATA_SOURCE_CONTROLLER ||
+         runtime->active_data_source == ESP_BMS_LVGL_DATA_SOURCE_SPEED_DASHBOARD) &&
         RUNTIME_FLAG(runtime, CONTROLLER_SUBSCRIBED)) {
         runtime->controller_keepalive_elapsed_ms += elapsed_ms;
         if (runtime->controller_keepalive_elapsed_ms >= 2000U) {
@@ -5357,16 +5518,14 @@ bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,
         runtime_project_controller_snapshot(runtime);
         return true;
     case ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_PAGE:
-        runtime->controller_page_enabled = !runtime->controller_page_enabled;
-        runtime->controller_connection_enabled = runtime->controller_page_enabled;
-        if (!runtime->controller_page_enabled) {
-            RUNTIME_SET_FLAG(runtime, CONTROLLER_SCAN_REQUESTED, false);
-            RUNTIME_SET_FLAG(runtime, CONTROLLER_SCAN_ACTIVE, false);
-            if (runtime->controller_conn_handle != 0xFFFFU) {
-                (void)ble_gap_terminate(runtime->controller_conn_handle,
-                                        BLE_ERR_REM_USER_CONN_TERM);
-            }
-        } else {
+    case ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_SOURCE:
+        runtime->snapshot.speed_source =
+            runtime->snapshot.speed_source == ESP_BMS_SPEED_SOURCE_GPS
+                ? ESP_BMS_SPEED_SOURCE_CONTROLLER
+                : ESP_BMS_SPEED_SOURCE_GPS;
+        runtime->controller_page_enabled =
+            runtime->snapshot.speed_source == ESP_BMS_SPEED_SOURCE_CONTROLLER;
+        if (runtime->controller_page_enabled && runtime->controller_connection_enabled) {
             (void)esp_bms_idf_runtime_start_controller_ble_if_enabled(runtime);
         }
         runtime_project_controller_snapshot(runtime);
@@ -5565,6 +5724,8 @@ const char *esp_bms_idf_runtime_action_name(esp_bms_lvgl_action_t action)
         return "toggle-controller-connection";
     case ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_PAGE:
         return "toggle-controller-page";
+    case ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_SOURCE:
+        return "toggle-speed-source";
     case ESP_BMS_LVGL_ACTION_START_CONTROLLER_BIND:
         return "start-controller-bind";
     case ESP_BMS_LVGL_ACTION_ADJUST_CONTROLLER_WHEEL:

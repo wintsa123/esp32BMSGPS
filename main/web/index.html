@@ -48,6 +48,7 @@
     }
     .candidate strong, .candidate span { overflow-wrap: anywhere; }
     .candidate small { color: #53636b; }
+    .field-hint { color: #a05b00; min-height: 1.2em; }
     @media (prefers-color-scheme: dark) {
       body { background: #101719; color: #e8eff2; }
       p { color: #9facb2; }
@@ -56,6 +57,7 @@
       button.secondary { color: #8ed4ee; }
       .candidate { border-color: #42545d; }
       .candidate small { color: #9facb2; }
+      .field-hint { color: #f2b35f; }
     }
   </style>
 </head>
@@ -117,6 +119,7 @@
           <label><span data-i18n="brightness">亮度</span><input name="brightness" type="range" min="10" max="100" value="80"></label>
           <label><span data-i18n="screenRotation">屏幕方向</span><select name="display_rotation"><option value="portrait" data-i18n="portrait">竖屏</option><option value="landscape" selected data-i18n="landscape">横屏</option><option value="inverted_portrait" data-i18n="invertedPortrait">反向竖屏</option><option value="inverted_landscape" data-i18n="invertedLandscape">反向横屏</option></select></label>
           <label><span data-i18n="speedUnit">速度单位</span><select name="speed_unit"><option>km/h</option><option>mph</option></select></label>
+          <label><span data-i18n="speedSource">速度来源</span><select name="speed_source"><option value="gps" data-i18n="gpsSource">GPS</option><option value="controller" data-i18n="controllerSource">控制器</option></select><small class="field-hint" id="speed-source-hint"></small></label>
           <label><span data-i18n="language">语言</span><select name="language"><option value="zh" selected>中文</option><option value="en">English</option></select></label>
         </div>
         <button type="submit" data-i18n="saveDevice">保存设备设置</button>
@@ -138,6 +141,8 @@
         brightness: "亮度",
         connected: "已连接",
         connecting: "连接中",
+        controllerOfflineUsingGps: "控制器离线·当前 GPS",
+        controllerSource: "控制器",
         dalyBms: "达锂 Daly",
         device: "设备",
         failed: "失败",
@@ -166,7 +171,9 @@
         setupApPassword: "设置热点密码",
         setupApPurpose: "手机连接热点后访问",
         speed: "速度",
+        speedSource: "速度来源",
         speedUnit: "速度单位",
+        gpsSource: "GPS",
         warnings: "告警"
       },
       en: {
@@ -180,6 +187,8 @@
         brightness: "Brightness",
         connected: "connected",
         connecting: "connecting",
+        controllerOfflineUsingGps: "Controller offline · using GPS",
+        controllerSource: "Controller",
         dalyBms: "Daly",
         device: "Device",
         failed: "failed",
@@ -208,7 +217,9 @@
         setupApPassword: "Setup AP password",
         setupApPurpose: "Connect to the hotspot, then open",
         speed: "Speed",
+        speedSource: "Speed source",
         speedUnit: "Speed unit",
+        gpsSource: "GPS",
         warnings: "Warnings"
       }
     };
@@ -216,6 +227,7 @@
     let setupPassword = sessionStorage.getItem("setupPassword") || "";
     let bmsScanPollTimer = 0;
     let bmsScanPollDeadline = 0;
+    let lastConfig = {};
 
     function t(key) {
       return (I18N[uiLanguage] || I18N.zh)[key] || I18N.zh[key] || key;
@@ -227,6 +239,16 @@
       document.querySelectorAll("[data-i18n]").forEach((node) => {
         node.textContent = t(node.dataset.i18n);
       });
+      updateSpeedSourceHint(lastConfig);
+    }
+
+    function updateSpeedSourceHint(config = lastConfig) {
+      const source = $("device-form").elements.speed_source.value;
+      const fallbackActive = config.active_speed_source === "gps";
+      $("speed-source-hint").textContent =
+        source === "controller" && config.controller_online !== true && fallbackActive
+          ? t("controllerOfflineUsingGps")
+          : "";
     }
 
     function requirePassword(force = false) {
@@ -357,11 +379,14 @@
         const config = await api("/api/config");
         const device = $("device-form").elements;
         const bms = $("bms-form").elements;
+        lastConfig = config;
         applyLanguage(config.language ?? "zh");
         device.brightness.value = config.brightness ?? 80;
         device.display_rotation.value = config.display_rotation ?? "landscape";
         device.speed_unit.value = config.speed_unit ?? "km/h";
+        device.speed_source.value = config.speed_source === "controller" ? "controller" : "gps";
         device.language.value = config.language ?? "zh";
+        updateSpeedSourceHint(config);
         bms.bms_mac.value = config.bms_mac ?? "";
         const bmsType = config.bms_type ?? "ant";
         bms.bms_type.value = ["ant", "jk", "jbd", "daly"].includes(bmsType) ? bmsType : "ant";
@@ -415,6 +440,7 @@
     });
     $("bms-form").elements.bms_type.addEventListener("change", () => saveBmsType().then(refresh));
     $("device-form").elements.language.addEventListener("change", (event) => applyLanguage(event.target.value));
+    $("device-form").elements.speed_source.addEventListener("change", () => updateSpeedSourceHint());
     bindJsonForm("ap-form", "/api/ap-password");
     bindJsonForm("device-form", "/api/config");
     loadConfig().then(loadBmsCandidates).then(refresh);

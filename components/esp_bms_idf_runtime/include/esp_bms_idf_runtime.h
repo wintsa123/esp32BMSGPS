@@ -7,6 +7,7 @@
 #include "driver/uart.h"
 #include "esp_adc/adc_oneshot.h"
 #include "esp_bms_lvgl_ui.h"
+#include "esp_bms_speed_dashboard.h"
 #include "esp_fardriver_protocol.h"
 #include "esp_netif_types.h"
 #include "freertos/semphr.h"
@@ -95,6 +96,7 @@ typedef struct {
     uint32_t gps_pps_last_summary_tick;
     uint32_t gps_rmc_last_tick;
     uint32_t gps_rmc_last_log_tick;
+    int64_t bms_telemetry_last_us;
     uint32_t bms_status_poll_elapsed_ms;
     uint32_t controller_keepalive_elapsed_ms;
     uint32_t controller_scan_revision;
@@ -166,6 +168,7 @@ typedef struct {
     uint16_t controller_observed_tire_width_mm;
     uint16_t controller_observed_gear_ratio_centi;
     esp_bms_lvgl_data_source_t active_data_source;
+    esp_bms_trip_efficiency_t trip_efficiency;
     esp_fardriver_state_t controller_state;
     uint8_t http_pending_brightness_percent;
     uint8_t http_pending_volume_percent;
@@ -176,6 +179,7 @@ typedef struct {
     esp_bms_idf_display_rotation_t display_rotation;
     esp_bms_idf_display_rotation_t http_pending_display_rotation;
     esp_bms_speed_unit_t http_pending_speed_unit;
+    esp_bms_speed_source_t http_pending_speed_source;
 } esp_bms_idf_runtime_t;
 
 static inline bool esp_bms_idf_runtime_flag_get(const esp_bms_idf_runtime_t *runtime,

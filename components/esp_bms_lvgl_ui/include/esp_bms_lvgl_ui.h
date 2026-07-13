@@ -21,6 +21,7 @@ typedef enum {
     ESP_BMS_LVGL_DATA_SOURCE_BMS,
     ESP_BMS_LVGL_DATA_SOURCE_CONTROLLER,
     ESP_BMS_LVGL_DATA_SOURCE_GPS,
+    ESP_BMS_LVGL_DATA_SOURCE_SPEED_DASHBOARD,
 } esp_bms_lvgl_data_source_t;
 
 typedef enum {
@@ -53,6 +54,7 @@ typedef enum {
     ESP_BMS_LVGL_ACTION_ADJUST_CONTROLLER_RATIO = 26,
     ESP_BMS_LVGL_ACTION_SET_CONTROLLER_TIRE = 27,
     ESP_BMS_LVGL_ACTION_SET_CONTROLLER_RATIO = 28,
+    ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_SOURCE = 29,
 } esp_bms_lvgl_action_t;
 
 #define ESP_BMS_LVGL_ACTION_EVENT_FLAG_COMMITTED (UINT8_C(1) << 0)
@@ -109,6 +111,11 @@ typedef enum {
     ESP_BMS_SPEED_UNIT_KMH = 0,
     ESP_BMS_SPEED_UNIT_MPH = 1,
 } esp_bms_speed_unit_t;
+
+typedef enum {
+    ESP_BMS_SPEED_SOURCE_GPS = 0,
+    ESP_BMS_SPEED_SOURCE_CONTROLLER = 1,
+} esp_bms_speed_source_t;
 
 typedef enum {
     ESP_BMS_WIFI_SETUP_AP = 0,
@@ -183,8 +190,11 @@ typedef struct {
     uint32_t capacity_remaining_mah;
     uint32_t local_battery_mv;
     esp_bms_speed_unit_t speed_unit;
+    esp_bms_speed_source_t speed_source;
+    esp_bms_speed_source_t active_speed_source;
     esp_bms_wifi_state_t wifi;
     uint16_t speed_deci_units;
+    int32_t average_consumption_deci_wh_per_distance;
     int16_t current_deci_amps;
     uint16_t soc_percent;
     uint16_t min_cell_voltage_mv;
@@ -230,6 +240,10 @@ typedef struct {
     uint8_t controller_scan_candidate_count;
     esp_bms_bms_scan_candidate_t controller_scan_candidates[ESP_BMS_BMS_SCAN_MAX_CANDIDATES];
     char controller_bound_name[ESP_BMS_BMS_SCAN_NAME_LEN + 1U];
+    uint8_t gps_local_hour;
+    uint8_t gps_local_minute;
+    bool gps_local_time_valid;
+    bool average_consumption_valid;
     bool cast_active;
 } esp_bms_dashboard_snapshot_t;
 

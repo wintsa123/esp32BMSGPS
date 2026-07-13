@@ -1,19 +1,95 @@
 # 统一速度仪表 V4 与速度来源选择
 
-## Goal
+## 目标
 
-TBD.
+将现有控制器页和 GPS 页合并为一个统一速度仪表页，并允许用户在 GPS 与控制器之间选择首选速度来源。仪表以仓库 `preview/gps-speed-s1000rr-dashboard-v4-{landscape,portrait}.png` 为视觉基准，同时维持 GPS、BMS 与控制器的必要采集，提供本次开机平均电耗、本地时间和明确的离线降级状态。
 
-## Requirements
+## 已确认事实
 
-- TBD
+- 目标硬件为 ESP32-WROOM-32E、4 MB Flash、无 PSRAM；显示逻辑分辨率为横屏 320×240、竖屏 240×320，LVGL 9.5 已启用 Montserrat 14/24/28/48 字体。
+- GPS 336H 通过 UART 持续解析 RMC，PPS 使用 GPIO35；当前在所有轮播页都会读取 GPS，但速度 snapshot 只投影 GPS。
+- BMS snapshot 已提供包电压、原始有符号电流和 SOC；现有 TFT 显示电流通过取反规范化，因此平均电耗必须沿用“放电为正、回充为负”的显示电流约定。
+- 控制器 snapshot 已提供在线、速度、挡位、控制器温度、电机温度和参数来源；现有控制器页开关同时限制控制器连接和轮播页结构。
+- 现有页面枚举值为 Battery=0、Controller=1、GPS=2、Cast=3，必须保持数值兼容；现有 32 位 dashboard flags 已全部占用。
+- 当前 NVS 已有 `ctl_page` 与 `ctl_conn`，HTTP `/api/config` 已支持亮度、音量、旋转、速度单位、语言和 BMS 类型。
+- GitNexus 精确 UID 复查结果：`settings_show_controller_detail` 为 CRITICAL（19 个上游、5 个直接调用者、6 组流程）；`runtime_update_snapshot_speed` 为 CRITICAL（12 个上游、6 个直接调用者、5 组流程）。
+- 工作区已有 GPS/PPS、投屏、控制器和 Trellis 等未提交改动；本任务只做增量合并，不覆盖或回退用户改动。
 
-## Acceptance Criteria
+## 需求
 
-- [ ] TBD
+### R1. 轮播与兼容
 
-## Notes
+- 轮播固定为：电池页 → 统一速度仪表页 → 投屏页。
+- 控制器页和 GPS 页不再分别创建；`ESP_BMS_LVGL_PAGE_CONTROLLER` 与 `ESP_BMS_LVGL_PAGE_GPS` 均导航到同一个统一速度页。
+- 保留所有既有页面枚举数值和旧 `ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_PAGE`；旧 action 作为速度来源切换兼容入口，新 UI 不再使用它。
+- 新增组合采集模式 `ESP_BMS_LVGL_DATA_SOURCE_SPEED_DASHBOARD`，统一速度页同时维持 BMS 状态轮询与控制器 gather/keepalive。
 
-- Keep `prd.md` focused on requirements, constraints, and acceptance criteria.
-- Lightweight tasks can remain PRD-only.
-- For complex tasks, add `design.md` for technical design and `implement.md` for execution planning before `task.py start`.
+### R2. 速度来源状态机
+
+- 新增 `esp_bms_speed_source_t`，取值为 GPS 与控制器；新增 `ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_SOURCE`。
+- 新机默认首选 GPS。
+- 旧配置没有新速度来源键时：`ctl_page=1` 迁移为首选控制器，否则迁移为首选 GPS；迁移结果写回 NVS。保存新配置时同步保留兼容 `ctl_page` 值。
+- 首选控制器且控制器在线时，实际来源为控制器；控制器离线或连接关闭时，实际来源强制 GPS，但首选值保持不变，重连后自动恢复控制器。
+- 实际来源为控制器但控制器速度字段无效时，主速度显示 `-`，不得暗中改用 GPS。
+- 实际来源为 GPS 但 GPS 未定位或 RMC 超时时，主速度显示 `-`。
+- GPS 始终解析，来源切换只改变速度投影，不改变 GPS 接收和行程统计生命周期。
+
+### R3. 本地时间与本次开机平均电耗
+
+- 本地时间来自校验通过的 RMC UTC，固定转换为 UTC+8；RMC 超时后显示 `--:--`，并正确处理跨日/月/年。
+- 本次开机平均电耗在第一次有效 GPS 速度达到 5 km/h 后启动；页面切换和速度来源切换均不得重置。
+- 只有 GPS、包电压和电流在同一新鲜度窗口内均有效时才建立采样锚点；区间两端都对齐才累计，异常长间隔丢弃且不得补算。
+- 距离始终由 GPS 速度积分；能量由包电压和规范化显示电流积分，放电为正、回充为负并抵扣累计能耗。
+- 累计 GPS 距离不足 0.1 km 时平均电耗无效；达到阈值后随单位显示为 `Wh/km` 或 `Wh/mi`。
+- snapshot 使用显式字段保存首选/实际来源、本地时间及有效状态、平均电耗及有效状态，不新增 dashboard flag 位。
+
+### R4. V4 统一速度仪表
+
+- 横竖屏使用同一对象树，由一个集中布局函数切换 320×240 与 240×320 几何。
+- 使用一个轻量自定义绘制对象，不创建全屏 canvas：约 32 段三角形构成弯曲色带；当前速度之前为蓝色到浅蓝/白色渐变，之后为深灰，高速危险区为红色。
+- 不显示指针。色带、白色轮廓、大小刻度、卫星图标、绿/橙 GPS 状态点、竖向空心电池图标和倾斜白色电量段均由绘制回调完成。
+- 公制量程为 0–180 km/h，英制量程为 0–120 mph；超量程时色带封顶，主数字继续显示实际速度。
+- 顶部显示 SOC、平均电耗、卫星状态、控制器温度和电机温度；底部/右下显示挡位与 RMC 本地时间。
+- 控制器离线或对应字段无效时隐藏挡位、控制器温度和电机温度；SOC 无效时显示电池轮廓和 `--%`，不伪造电量段。
+- TFT 仪表只使用 ASCII；不引入中文点阵或新大字体。
+
+### R5. TFT 设置
+
+- 设置入口“控制器设置”更名为“速度仪表”。
+- 速度仪表设置始终显示速度来源、控制器连接、蓝牙绑定和速度单位。
+- 首选控制器但离线时，来源行显示“控制器 / 离线·当前 GPS”；在线时显示“控制器”，首选 GPS 时显示“GPS”。
+- 控制器离线时隐藏控制器类型、轮胎规格、传动比等专属参数；已保存参数不得清除。
+- 保留现有返回、滑动、BLE 扫描/绑定、轮胎编辑和传动比编辑流程。
+
+### R6. HTTP 与 Web 设备设置
+
+- `/api/config` GET 增加 `speed_source`、`active_speed_source` 与 `controller_online`。
+- `/api/config` POST 接受 `speed_source: "gps" | "controller"`；非法值返回 400；该值与 TFT 共用同一 NVS 持久化字段。
+- Web 设备设置页增加中文/英文速度来源选项，并在首选控制器但离线时显示“离线·当前 GPS”提示。
+- 语言切换入口仍只位于设备设置中，不新增登录页、首页提示或弹窗。
+
+### R7. 保持范围与安全约束
+
+- 不实现 TF 卡、历史骑行、Web 历史查询、轨迹存储或导出。
+- 不修改 Setup AP SSID/密码策略，不记录任何密码或 HTTP 原始请求体。
+- 不更改分区表、OTA 策略、GPS 引脚、PPS ISR 或显示驱动。
+
+## 验收标准
+
+- [ ] 轮播只有电池、统一速度、投屏三页；Controller/GPS 两个旧页面枚举均能导航到统一速度页。
+- [ ] 新机默认 GPS；旧 `ctl_page` 配置按规则迁移并持久化；TFT 与 Web 修改来源可双向往返并在重启后保留。
+- [ ] 来源矩阵通过：GPS 定位/未定位、控制器在线速度有效/无效、控制器离线、断连后 GPS 降级、重连后恢复控制器。
+- [ ] km/h↔mph 同时更新主速度、量程/刻度、平均电耗单位和控制器速度投影；超量程只封顶色带。
+- [ ] RMC UTC+8 在 16:00 UTC 之后正确跨日，RMC 超时显示 `--:--`。
+- [ ] 电耗在 GPS 速度首次达到 5 km/h 后启动；无效或过期 GPS/BMS 样本和长间隔不累计；回充能量抵扣；0.1 km 前显示 `-- Wh/km|mi`。
+- [ ] 横竖屏 V4 真实 LVGL 预览覆盖速度 0、88、中间值、满量程、无效速度、GPS 搜星/定位、控制器在线/离线、SOC 缺失，不出现裁切、重叠或滚动干扰。
+- [ ] 控制器离线时 TFT 专属参数/温度/挡位隐藏，偏好和保存参数保留；BLE 绑定和编辑流程仍可用。
+- [ ] 字形检查、host 侧速度/时间/电耗测试、FarDriver 自测、`git diff --check` 与 ESP-IDF 构建通过。
+- [ ] GitNexus `detect_changes()` 仅报告预期的设置导航、速度投影、主循环采集和 HTTP 配置流程；无意外跨模块影响。
+- [ ] 经 LAN RFC2217 刷写真机后，横竖屏旋转、轮播、GPS/控制器数据、离线降级、重连恢复和内存日志稳定；GPS/控制器最多等待 5 分钟。
+
+## 明确不包含
+
+- TF/FATFS、历史骑行、Web 历史查询、GPX/KML、地图或轨迹记录。
+- 从 GPS 设置系统时钟、时区配置 UI 或夏令时。
+- 新控制器协议、控制器参数写回协议或 BMS 协议变更。
