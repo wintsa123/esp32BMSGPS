@@ -742,13 +742,15 @@ bound device update the runtime snapshot.
 ### 1. Scope / Trigger
 
 - Trigger: changing FarDriver settings, BLE scan/bind/connection, notification
-  parsing, dashboard projection, or the controller page data-source gate.
+  parsing, unified speed-dashboard projection, or its combined data-source gate.
 
 ### 2. Signatures
 
 - BLE service/characteristic: `0xFFE0` / `0xFFEC`.
 - Stable source API: `esp_bms_lvgl_ui_stable_data_source()` and
   `esp_bms_idf_runtime_set_active_data_source()`.
+- Unified dashboard source: `ESP_BMS_LVGL_DATA_SOURCE_SPEED_DASHBOARD` keeps
+  BMS polling and FarDriver gather/keepalive active together.
 - Parser entry: `esp_fardriver_parse_frame()` for 16-byte compact or extended
   frames with FarDriver CRC.
 - Absolute setting actions: `ESP_BMS_LVGL_ACTION_SET_CONTROLLER_TIRE` carries
@@ -756,9 +758,9 @@ bound device update the runtime snapshot.
   `controller_tire_width_mm`; `ESP_BMS_LVGL_ACTION_SET_CONTROLLER_RATIO`
   carries `controller_gear_ratio_centi`. Both require
   `ESP_BMS_LVGL_ACTION_EVENT_FLAG_CONTROLLER_SETTING_VALID`.
-- Persistent keys: `ctl_conn`, `ctl_page`, legacy `ctl_wheel`, `ctl_ratio`,
-  `ctl_rim`, `ctl_aspect`, `ctl_width`, `ctl_mac`, and `ctl_name` in namespace
-  `esp_bms`.
+- Persistent keys: `speed_src`, `ctl_conn`, compatibility `ctl_page`, legacy
+  `ctl_wheel`, `ctl_ratio`, `ctl_rim`, `ctl_aspect`, `ctl_width`, `ctl_mac`,
+  and `ctl_name` in namespace `esp_bms`.
 - Snapshot source: `controller_param_source` is one of unset, legacy wheel,
   local specification, or controller-provided parameters. Snapshot fields keep
   effective values separate from `controller_fallback_*` values.
@@ -768,13 +770,20 @@ bound device update the runtime snapshot.
 - Missing controller keys do not invalidate older display settings. Tire
   specification defaults to unset and ratio defaults to `1.00`; restore
   defaults restores those values while preserving the bound MAC and name.
-- `controller_page_enabled` is the master lifecycle switch. When it is false,
-  force controller connection state off, hide connection/bind UI, stop scan
-  intent, and terminate current or late-arriving connections without clearing
-  the bound MAC/name. Enabling it turns connection on and reconnects the bound
-  device automatically.
-- Only a stable controller dashboard page enables the FFEC CCCD and high-rate
-  projection. Settings, quick panel, and page drag/settle use data source NONE.
+- `controller_page_enabled` is only a compatibility mirror for legacy
+  `ctl_page` and the old toggle action. It must not create/remove carousel
+  pages or control the FarDriver connection lifecycle.
+- `controller_connection_enabled` is the lifecycle switch. Disabling it stops
+  scan intent and terminates current or late-arriving connections without
+  clearing the bound MAC/name; enabling it reconnects a bound controller.
+- The unified speed dashboard is always present. A stable speed dashboard
+  enables the FFEC CCCD and high-rate projection through the combined data
+  source. Settings, quick panel, and page drag/settle use data source NONE;
+  once trip-efficiency sampling starts, BMS polling continues across pages.
+- `speed_src` stores the GPS/controller preference. A disconnected controller
+  forces only the active speed source to GPS; the preference remains
+  controller and resumes automatically after reconnect. An online controller
+  with an invalid speed field renders `-` and never borrows GPS speed.
 - A different bound MAC must terminate the current controller connection and
   defer scanning until the disconnect callback; never display a new binding
   while continuing to consume the old connection.
@@ -804,23 +813,27 @@ bound device update the runtime snapshot.
   leave fallback/NVS unchanged.
 - Disabled connection -> clear controller scan intent and terminate an active
   controller connection.
-- Connect callback arrives after the page or connection was disabled ->
+- Connect callback arrives after controller connection was disabled ->
   terminate that connection immediately and skip GATT discovery.
 - Disconnect during rebind -> clear telemetry, then start the deferred scan
   only when connection remains enabled.
-- Offline or field invalid -> keep the page present when enabled and render
-  that field as `-`.
+- Offline controller -> keep the unified page present, hide controller-only
+  gear/temperature fields, and preserve saved controller parameters.
+- Online controller with invalid speed -> keep controller as the active source
+  and render `-`; do not silently switch to GPS.
 
 ### 5. Good/Base/Bad Cases
 
-- Good: controller page settles, CCCD enables, validated FFEC frames update
-  fixed label buffers; `12-70-90` plus `RateRatio=60` projects about `1353 mm`
-  and ratio `1.00`, then schedules one persistence update.
-- Base: page is enabled without a controller; telemetry stays invalid, tire
-  and ratio rows stay disabled, and legacy `ctl_wheel` still loads safely.
+- Good: the unified speed page settles, CCCD enables, validated FFEC frames
+  update fixed label buffers; `12-70-90` plus `RateRatio=60` projects about
+  `1353 mm` and ratio `1.00`, then schedules one persistence update.
+- Base: the unified page remains available without a controller; telemetry
+  stays invalid, controller-only settings hide, and legacy `ctl_wheel` still
+  loads safely.
 - Bad: clamping a controller-provided `26-110-210` tuple into roller limits,
-  overwriting the user's fallback on every notification, or selecting a new
-  MAC while leaving the old GATT connection active.
+  overwriting the user's fallback on every notification, removing the speed
+  page when controller preference is off, or selecting a new MAC while leaving
+  the old GATT connection active.
 
 ### 6. Tests Required
 
@@ -829,8 +842,9 @@ bound device update the runtime snapshot.
   controller-priority speed, CRC, zero divisors, and overflow.
 - Run `git diff --check`, `./scripts/esp-idf-env.sh build`, GitNexus
   `detect-changes`, and one RFC2217 flash plus boot-log capture.
-- On hardware, verify two-page/three-page mapping, settings return, rotation,
-  rebind, and BMS/FarDriver/phone coexistence for at least 10 minutes.
+- On hardware, verify the fixed battery/speed/cast three-page mapping, settings
+  return, source fallback/recovery, rotation, rebind, and
+  BMS/FarDriver/phone coexistence for at least 10 minutes.
 
 ### 7. Wrong vs Correct
 

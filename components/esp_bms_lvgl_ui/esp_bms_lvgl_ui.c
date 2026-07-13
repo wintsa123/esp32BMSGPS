@@ -6341,8 +6341,8 @@ static void speed_dashboard_apply_layout(void)
         lv_obj_set_size(s_ui.speed, 104, 52);
         lv_obj_set_pos(s_ui.gps_speed_unit, 20, 105);
         lv_obj_set_size(s_ui.gps_speed_unit, 76, 26);
-        lv_obj_set_pos(s_ui.speed_soc, 84, 7);
-        lv_obj_set_size(s_ui.speed_soc, 34, 18);
+        lv_obj_set_pos(s_ui.speed_soc, 90, 7);
+        lv_obj_set_size(s_ui.speed_soc, 30, 18);
         lv_obj_set_pos(s_ui.speed_consumption, 121, 7);
         lv_obj_set_size(s_ui.speed_consumption, 112, 18);
         lv_obj_set_pos(s_ui.speed_controller_temp, 66, 29);
@@ -6351,7 +6351,7 @@ static void speed_dashboard_apply_layout(void)
         lv_obj_set_size(s_ui.speed_motor_temp, 90, 18);
         lv_obj_set_pos(s_ui.speed_gear, 157, 234);
         lv_obj_set_size(s_ui.speed_gear, 50, 54);
-        lv_obj_set_pos(s_ui.gps_detail, 150, 291);
+        lv_obj_set_pos(s_ui.gps_detail, 150, 286);
         lv_obj_set_size(s_ui.gps_detail, 82, 26);
         static const int16_t positions[SPEED_DASHBOARD_SCALE_LABEL_COUNT][2] = {
             { 16, 264 }, { 56, 218 }, { 101, 160 }, { 139, 111 }, { 178, 67 }, { 207, 51 },
@@ -6363,19 +6363,19 @@ static void speed_dashboard_apply_layout(void)
     } else {
         lv_obj_set_pos(s_ui.speed, 14, 66);
         lv_obj_set_size(s_ui.speed, 92, 52);
-        lv_obj_set_pos(s_ui.gps_speed_unit, 106, 88);
+        lv_obj_set_pos(s_ui.gps_speed_unit, 112, 88);
         lv_obj_set_size(s_ui.gps_speed_unit, 68, 26);
-        lv_obj_set_pos(s_ui.speed_soc, 84, 9);
-        lv_obj_set_size(s_ui.speed_soc, 34, 18);
+        lv_obj_set_pos(s_ui.speed_soc, 90, 9);
+        lv_obj_set_size(s_ui.speed_soc, 30, 18);
         lv_obj_set_pos(s_ui.speed_consumption, 120, 9);
         lv_obj_set_size(s_ui.speed_consumption, 68, 18);
-        lv_obj_set_pos(s_ui.speed_controller_temp, 214, 9);
-        lv_obj_set_size(s_ui.speed_controller_temp, 52, 18);
-        lv_obj_set_pos(s_ui.speed_motor_temp, 266, 9);
-        lv_obj_set_size(s_ui.speed_motor_temp, 54, 18);
+        lv_obj_set_pos(s_ui.speed_controller_temp, 160, 31);
+        lv_obj_set_size(s_ui.speed_controller_temp, 75, 18);
+        lv_obj_set_pos(s_ui.speed_motor_temp, 240, 31);
+        lv_obj_set_size(s_ui.speed_motor_temp, 80, 18);
         lv_obj_set_pos(s_ui.speed_gear, 259, 149);
         lv_obj_set_size(s_ui.speed_gear, 48, 50);
-        lv_obj_set_pos(s_ui.gps_detail, 244, 207);
+        lv_obj_set_pos(s_ui.gps_detail, 244, 202);
         lv_obj_set_size(s_ui.gps_detail, 72, 26);
         static const int16_t positions[SPEED_DASHBOARD_SCALE_LABEL_COUNT][2] = {
             { 8, 168 }, { 53, 148 }, { 111, 124 }, { 174, 102 }, { 244, 84 }, { 286, 80 },
@@ -6519,27 +6519,34 @@ static void create_gps_dashboard(void)
     s_ui.speed_soc = controller_dashboard_label(s_ui.gps_page,
                                                 s_ui.speed_soc_buf,
                                                 0, 0, 1,
-                                                lv_font_montserrat_14.line_height,
-                                                &lv_font_montserrat_14,
+                                                settings_zh_10.line_height,
+                                                &settings_zh_10,
                                                 COLOR_TEXT);
+    lv_obj_set_style_text_align(s_ui.speed_soc, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
     s_ui.speed_consumption = controller_dashboard_label(s_ui.gps_page,
                                                         s_ui.speed_consumption_buf,
                                                         0, 0, 1,
-                                                        lv_font_montserrat_14.line_height,
-                                                        &lv_font_montserrat_14,
+                                                        settings_zh_10.line_height,
+                                                        &settings_zh_10,
                                                         COLOR_TEXT);
+    lv_label_set_long_mode(s_ui.speed_consumption, LV_LABEL_LONG_MODE_CLIP);
+    lv_obj_set_style_text_align(s_ui.speed_consumption, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
     s_ui.speed_controller_temp = controller_dashboard_label(s_ui.gps_page,
                                                             s_ui.speed_controller_temp_buf,
                                                             0, 0, 1,
-                                                            lv_font_montserrat_14.line_height,
-                                                            &lv_font_montserrat_14,
+                                                            settings_zh_10.line_height,
+                                                            &settings_zh_10,
                                                             COLOR_TEXT);
+    lv_label_set_long_mode(s_ui.speed_controller_temp, LV_LABEL_LONG_MODE_CLIP);
+    lv_obj_set_style_text_align(s_ui.speed_controller_temp, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
     s_ui.speed_motor_temp = controller_dashboard_label(s_ui.gps_page,
                                                        s_ui.speed_motor_temp_buf,
                                                        0, 0, 1,
-                                                       lv_font_montserrat_14.line_height,
-                                                       &lv_font_montserrat_14,
+                                                       settings_zh_10.line_height,
+                                                       &settings_zh_10,
                                                        COLOR_TEXT);
+    lv_label_set_long_mode(s_ui.speed_motor_temp, LV_LABEL_LONG_MODE_CLIP);
+    lv_obj_set_style_text_align(s_ui.speed_motor_temp, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
     s_ui.speed_gear = controller_dashboard_label(s_ui.gps_page,
                                                  s_ui.speed_gear_buf,
                                                  0, 0, 1,
