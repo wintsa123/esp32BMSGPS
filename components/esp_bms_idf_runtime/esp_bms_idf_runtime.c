@@ -96,6 +96,7 @@ static const char *TAG = "bms_idf_runtime";
 #define DISPLAY_NVS_SPEED_STYLE_KEY "speed_style"
 #define DISPLAY_NVS_LANGUAGE_KEY "lang"
 #define DISPLAY_NVS_BMS_TYPE_KEY "bms_type"
+#define DISPLAY_NVS_PRESET_RANGE_KEY "preset_rng"
 #define CONTROLLER_NVS_CONNECTION_KEY "ctl_conn"
 #define CONTROLLER_NVS_PAGE_KEY "ctl_page"
 #define CONTROLLER_NVS_WHEEL_KEY "ctl_wheel"
@@ -1333,12 +1334,36 @@ static void runtime_update_snapshot_speed(esp_bms_idf_runtime_t *runtime)
         }
     }
 
+    int32_t metric_consumption_deci_wh_per_km = 0;
     snapshot->average_consumption_valid =
         esp_bms_trip_efficiency_consumption(&runtime->trip_efficiency,
-                                            snapshot->speed_unit == ESP_BMS_SPEED_UNIT_MPH,
-                                            &snapshot->average_consumption_deci_wh_per_distance);
+                                            false,
+                                            &metric_consumption_deci_wh_per_km);
     if (!snapshot->average_consumption_valid) {
         snapshot->average_consumption_deci_wh_per_distance = 0;
+    } else if (snapshot->speed_unit == ESP_BMS_SPEED_UNIT_MPH) {
+        (void)esp_bms_trip_efficiency_consumption(
+            &runtime->trip_efficiency,
+            true,
+            &snapshot->average_consumption_deci_wh_per_distance);
+    } else {
+        snapshot->average_consumption_deci_wh_per_distance =
+            metric_consumption_deci_wh_per_km;
+    }
+
+    snapshot->remaining_range_valid = esp_bms_remaining_range_km(
+        snapshot->preset_range_km,
+        RUNTIME_SNAPSHOT_FLAG(runtime, SOC_VALID),
+        snapshot->soc_percent,
+        snapshot->average_consumption_valid &&
+            RUNTIME_SNAPSHOT_FLAG(runtime, PACK_VOLTAGE_VALID) &&
+            RUNTIME_SNAPSHOT_FLAG(runtime, CAPACITY_REMAINING_VALID),
+        snapshot->pack_voltage_mv,
+        snapshot->capacity_remaining_mah,
+        metric_consumption_deci_wh_per_km,
+        &snapshot->remaining_range_km);
+    if (!snapshot->remaining_range_valid) {
+        snapshot->remaining_range_km = 0U;
     }
 }
 
@@ -1750,6 +1775,7 @@ static void runtime_reset_state(esp_bms_idf_runtime_t *runtime)
     runtime->snapshot.speed_unit = ESP_BMS_SPEED_UNIT_KMH;
     runtime->snapshot.speed_source = ESP_BMS_SPEED_SOURCE_GPS;
     runtime->snapshot.active_speed_source = ESP_BMS_SPEED_SOURCE_GPS;
+    runtime->snapshot.preset_range_km = ESP_BMS_PRESET_RANGE_DEFAULT_KM;
     runtime->snapshot.uptime_seconds = 0U;
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, SETUP_AP_ENABLED, false);
     runtime->snapshot.wifi = ESP_BMS_WIFI_OFFLINE;
@@ -1967,7 +1993,9 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
     uint16_t controller_tire_width_mm = 0;
     uint16_t controller_wheel_mm = 0;
     uint16_t controller_ratio_centi = 0;
+    uint16_t preset_range_km = ESP_BMS_PRESET_RANGE_DEFAULT_KM;
     bool speed_source_migration_needed = false;
+    bool preset_range_migration_needed = false;
 
     ret = nvs_get_u8(handle, DISPLAY_NVS_BRIGHTNESS_KEY, &brightness_percent);
     if (ret == ESP_OK) {
@@ -1991,6 +2019,16 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
         const esp_err_t bms_type_ret = nvs_get_u8(handle, DISPLAY_NVS_BMS_TYPE_KEY, &bms_type);
         if (bms_type_ret != ESP_ERR_NVS_NOT_FOUND) {
             ret = bms_type_ret;
+        }
+    }
+    if (ret == ESP_OK) {
+        const esp_err_t preset_range_ret = nvs_get_u16(handle,
+                                                       DISPLAY_NVS_PRESET_RANGE_KEY,
+                                                       &preset_range_km);
+        if (preset_range_ret == ESP_ERR_NVS_NOT_FOUND) {
+            preset_range_migration_needed = true;
+        } else {
+            ret = preset_range_ret;
         }
     }
     if (ret == ESP_OK) {
@@ -2061,6 +2099,7 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
         !runtime_speed_source_matches_policy(speed_source) ||
         !runtime_language_matches_policy(language) ||
         !runtime_bms_type_matches_policy(bms_type) ||
+        preset_range_km > ESP_BMS_REMAINING_RANGE_MAX_KM ||
         controller_connection_enabled > 1U || legacy_controller_page_enabled > 1U ||
         speed_dashboard_style > 1U) {
         return ESP_ERR_INVALID_STATE;
@@ -2109,6 +2148,7 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
     runtime->display_rotation = (esp_bms_idf_display_rotation_t)rotation;
     runtime->snapshot.speed_unit = (esp_bms_speed_unit_t)speed_unit;
     runtime->snapshot.speed_source = (esp_bms_speed_source_t)speed_source;
+    runtime->snapshot.preset_range_km = preset_range_km;
     RUNTIME_SET_FLAG(runtime, LANGUAGE_ZH, language != 0U);
     runtime->bms_type = bms_type;
     runtime->snapshot.bms_type = runtime->bms_type;
@@ -2122,10 +2162,10 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
     runtime_project_controller_snapshot(runtime);
     runtime_update_snapshot_speed(runtime);
     *loaded = true;
-    if (speed_source_migration_needed) {
+    if (speed_source_migration_needed || preset_range_migration_needed) {
         const esp_err_t migration_ret = esp_bms_idf_runtime_save_display_settings(runtime);
         if (migration_ret != ESP_OK) {
-            ESP_LOGW(TAG, "[settings] speed source migration save failed: %s",
+            ESP_LOGW(TAG, "[settings] migration save failed: %s",
                      esp_err_to_name(migration_ret));
         }
     }
@@ -2148,6 +2188,8 @@ esp_err_t esp_bms_idf_runtime_save_display_settings(esp_bms_idf_runtime_t *runti
                         ESP_ERR_INVALID_STATE, TAG, "invalid speed source");
     ESP_RETURN_ON_FALSE(runtime_bms_type_matches_policy(runtime->bms_type),
                         ESP_ERR_INVALID_STATE, TAG, "invalid BMS type");
+    ESP_RETURN_ON_FALSE(runtime->snapshot.preset_range_km <= ESP_BMS_REMAINING_RANGE_MAX_KM,
+                        ESP_ERR_INVALID_STATE, TAG, "invalid preset range");
     ESP_RETURN_ON_FALSE(runtime_controller_ratio_matches_policy(
                             runtime->controller_state.fallback_gear_ratio_centi),
                         ESP_ERR_INVALID_STATE, TAG, "invalid controller ratio");
@@ -2198,6 +2240,11 @@ esp_err_t esp_bms_idf_runtime_save_display_settings(esp_bms_idf_runtime_t *runti
     }
     if (ret == ESP_OK) {
         ret = nvs_set_u8(handle, DISPLAY_NVS_BMS_TYPE_KEY, runtime->bms_type);
+    }
+    if (ret == ESP_OK) {
+        ret = nvs_set_u16(handle,
+                          DISPLAY_NVS_PRESET_RANGE_KEY,
+                          runtime->snapshot.preset_range_km);
     }
     if (ret == ESP_OK) {
         ret = nvs_set_u8(handle, CONTROLLER_NVS_CONNECTION_KEY,
@@ -5519,6 +5566,19 @@ bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,
         }
         runtime_project_controller_snapshot(runtime);
         return true;
+    case ESP_BMS_LVGL_ACTION_SET_PRESET_RANGE:
+        if (!ACTION_EVENT_FLAG(event, NUMERIC_DELTA_VALID) ||
+            event->numeric_delta < 0 ||
+            event->numeric_delta > (int16_t)ESP_BMS_REMAINING_RANGE_MAX_KM) {
+            return false;
+        }
+        if (runtime->snapshot.preset_range_km == (uint16_t)event->numeric_delta) {
+            return false;
+        }
+        runtime->snapshot.preset_range_km = (uint16_t)event->numeric_delta;
+        runtime_update_snapshot_speed(runtime);
+        runtime_set_error(runtime, "RANGE SET");
+        return true;
     case ESP_BMS_LVGL_ACTION_START_CONTROLLER_BIND:
         if (ACTION_EVENT_FLAG(event, CONTROLLER_MAC_VALID)) {
             char normalized_mac[sizeof(runtime->controller_bound_mac)] = { 0 };
@@ -5725,6 +5785,8 @@ const char *esp_bms_idf_runtime_action_name(esp_bms_lvgl_action_t action)
         return "set-controller-tire";
     case ESP_BMS_LVGL_ACTION_SET_CONTROLLER_RATIO:
         return "set-controller-ratio";
+    case ESP_BMS_LVGL_ACTION_SET_PRESET_RANGE:
+        return "set-preset-range";
     case ESP_BMS_LVGL_ACTION_START_BMS_BIND:
         return "start-bms-bind";
     case ESP_BMS_LVGL_ACTION_ENABLE_BLUETOOTH_ADVERTISING:

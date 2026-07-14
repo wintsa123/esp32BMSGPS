@@ -55,6 +55,7 @@ typedef enum {
     ESP_BMS_LVGL_ACTION_SET_CONTROLLER_TIRE = 27,
     ESP_BMS_LVGL_ACTION_SET_CONTROLLER_RATIO = 28,
     ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_SOURCE = 29,
+    ESP_BMS_LVGL_ACTION_SET_PRESET_RANGE = 30,
 } esp_bms_lvgl_action_t;
 
 #define ESP_BMS_LVGL_ACTION_EVENT_FLAG_COMMITTED (UINT8_C(1) << 0)
@@ -195,6 +196,8 @@ typedef struct {
     esp_bms_wifi_state_t wifi;
     uint16_t speed_deci_units;
     int32_t average_consumption_deci_wh_per_distance;
+    uint16_t preset_range_km;
+    uint16_t remaining_range_km;
     int16_t current_deci_amps;
     uint16_t soc_percent;
     uint16_t min_cell_voltage_mv;
@@ -244,6 +247,7 @@ typedef struct {
     uint8_t gps_local_minute;
     bool gps_local_time_valid;
     bool average_consumption_valid;
+    bool remaining_range_valid;
     bool cast_active;
 } esp_bms_dashboard_snapshot_t;
 

@@ -57,6 +57,7 @@ static bool action_should_save_display_settings(esp_bms_lvgl_action_t action)
            action == ESP_BMS_LVGL_ACTION_ADJUST_CONTROLLER_RATIO ||
            action == ESP_BMS_LVGL_ACTION_SET_CONTROLLER_TIRE ||
            action == ESP_BMS_LVGL_ACTION_SET_CONTROLLER_RATIO ||
+           action == ESP_BMS_LVGL_ACTION_SET_PRESET_RANGE ||
            action == ESP_BMS_LVGL_ACTION_RESTORE_DEFAULTS;
 }
 

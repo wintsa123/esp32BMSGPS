@@ -56,7 +56,7 @@ LV_FONT_DECLARE(settings_zh_16);
 #define SETTINGS_NAV_SCROLL_THRESHOLD 12
 #define SETTINGS_NAV_ANIM_MS 160
 #define SETTINGS_LIST_ROW_H_PORTRAIT 52
-#define SETTINGS_LIST_ROW_H_LANDSCAPE 46
+#define SETTINGS_LIST_ROW_H_LANDSCAPE 52
 #define SETTINGS_DETAIL_ROW_H_PORTRAIT 64
 #define SETTINGS_DETAIL_ROW_H_LANDSCAPE 56
 #define SETTINGS_CHOICE_ROW_H_PORTRAIT 56
@@ -165,6 +165,7 @@ typedef enum {
 typedef enum {
     SETTINGS_CONTROLLER_VIEW_ROOT = 0,
     SETTINGS_CONTROLLER_VIEW_STYLE_LIST,
+    SETTINGS_CONTROLLER_VIEW_SPEED_UNIT_LIST,
     SETTINGS_CONTROLLER_VIEW_BLE_LIST,
     SETTINGS_CONTROLLER_VIEW_TIRE_EDIT,
     SETTINGS_CONTROLLER_VIEW_RATIO_EDIT,
@@ -224,7 +225,7 @@ _Static_assert(sizeof(esp_bms_speed_source_t) == 4 &&
                    ESP_BMS_SPEED_SOURCE_GPS == 0 &&
                    ESP_BMS_SPEED_SOURCE_CONTROLLER == 1,
                "esp_bms_speed_source_t ABI changed; update runtime and Web consumers too");
-_Static_assert(sizeof(esp_bms_dashboard_snapshot_t) == 1032,
+_Static_assert(sizeof(esp_bms_dashboard_snapshot_t) == 1036,
                "dashboard snapshot ABI size changed; update all C consumers too");
 _Static_assert(ESP_BMS_LVGL_ACTION_NONE == 0,
                "esp_bms_lvgl_action_t value changed; update C action consumers too");
@@ -276,6 +277,8 @@ _Static_assert(ESP_BMS_LVGL_ACTION_SET_CONTROLLER_RATIO == 28,
                "esp_bms_lvgl_action_t value changed; update C action consumers too");
 _Static_assert(ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_SOURCE == 29,
                "esp_bms_lvgl_action_t value changed; update C action consumers too");
+_Static_assert(ESP_BMS_LVGL_ACTION_SET_PRESET_RANGE == 30,
+               "esp_bms_lvgl_action_t value changed; update C action consumers too");
 
 typedef struct {
     lv_display_t *display;
@@ -296,6 +299,7 @@ typedef struct {
     lv_obj_t *settings_detail_edge_zone;
     lv_obj_t *settings_bms_popup;
     lv_obj_t *settings_bms_ble_status;
+    lv_obj_t *settings_preset_range_rollers[4];
     lv_obj_t *settings_controller_tire_rollers[3];
     lv_obj_t *settings_controller_ratio_roller;
     lv_obj_t *settings_restore_popup;
@@ -367,6 +371,11 @@ typedef struct {
     lv_obj_t *cell_stats;
     lv_obj_t *cell_stat_values[DASHBOARD_CELL_STAT_COUNT];
     lv_obj_t *bms_error;
+    lv_obj_t *bms_status_ok;
+    lv_obj_t *remaining_range_separator;
+    lv_obj_t *remaining_range_title;
+    lv_obj_t *remaining_range_value;
+    lv_obj_t *remaining_range_unit;
     lv_obj_t *temperature;
     lv_obj_t *temperature_values[ESP_BMS_BMS_TEMP_MAX_COUNT];
     lv_obj_t *local_battery;
@@ -673,14 +682,15 @@ static void dashboard_battery_icon(lv_obj_t *parent,
 
     s_ui.soc_battery_level = lv_obj_create(body);
     clear_style(s_ui.soc_battery_level);
-    lv_obj_set_pos(s_ui.soc_battery_level, 3, 3);
-    lv_obj_set_size(s_ui.soc_battery_level, 0, h - 6);
+    lv_obj_set_pos(s_ui.soc_battery_level, 2, 2);
+    lv_obj_set_size(s_ui.soc_battery_level, 0, h - 4);
     lv_obj_set_style_radius(s_ui.soc_battery_level, 1, LV_PART_MAIN);
     lv_obj_set_style_bg_color(s_ui.soc_battery_level, COLOR_WHITE, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_ui.soc_battery_level, LV_OPA_COVER, LV_PART_MAIN);
 
     for (int32_t index = 1; index < 5; ++index) {
-        lv_obj_set_height(dashboard_separator(body, (w * index) / 5, 3, 1), h - 6);
+        lv_obj_t *divider = dashboard_separator(body, (w * index) / 5, 2, 1);
+        lv_obj_set_height(divider, h - 4);
     }
 
     lv_obj_t *terminal = lv_obj_create(parent);
@@ -700,7 +710,7 @@ static void update_dashboard_battery_icon(uint8_t soc_percent, bool valid, bool 
     }
 
     lv_obj_t *body = lv_obj_get_parent(s_ui.soc_battery_level);
-    const int32_t inner_w = lv_obj_get_width(body) - 6;
+    const int32_t inner_w = lv_obj_get_width(body) - 4;
     const uint8_t soc = valid ? (soc_percent > 100U ? 100U : soc_percent) : 0U;
     lv_obj_set_width(s_ui.soc_battery_level, (inner_w * (int32_t)soc) / 100);
     lv_obj_set_style_bg_color(s_ui.soc_battery_level,
@@ -2106,6 +2116,7 @@ typedef enum {
     SETTINGS_BMS_VIEW_ROOT = 0,
     SETTINGS_BMS_VIEW_BLE_LIST,
     SETTINGS_BMS_VIEW_TYPE_LIST,
+    SETTINGS_BMS_VIEW_PRESET_RANGE_EDIT,
 } settings_bms_view_t;
 
 typedef enum {
@@ -2147,7 +2158,9 @@ static lv_obj_t *settings_detail_row(lv_obj_t *parent,
                                      const settings_detail_row_t *row);
 static void settings_show_bluetooth_detail(void);
 static void settings_show_bms_detail(void);
+static void settings_show_preset_range_edit(void);
 static void settings_show_controller_detail(void);
+static void settings_show_speed_unit_picker(void);
 static void settings_show_system_view(settings_system_view_t view);
 static void set_setup_ap(const esp_bms_dashboard_snapshot_t *snapshot);
 
@@ -2761,6 +2774,17 @@ static void settings_navigation_offset_anim_completed_cb(lv_anim_t *anim)
 static void settings_navigation_set_hidden(bool hidden, bool animated)
 {
     if (!s_ui.settings_detail_header) {
+        return;
+    }
+
+    const bool tertiary_view =
+        (s_ui.settings_detail_id == (uint8_t)SETTINGS_DETAIL_BMS &&
+         s_ui.settings_bms_view != (uint8_t)SETTINGS_BMS_VIEW_ROOT) ||
+        (s_ui.settings_detail_id == (uint8_t)SETTINGS_DETAIL_CONTROLLER &&
+         s_ui.settings_controller_view != (uint8_t)SETTINGS_CONTROLLER_VIEW_ROOT) ||
+        (s_ui.settings_detail_id == (uint8_t)SETTINGS_DETAIL_SYSTEM &&
+         s_ui.settings_system_view != (uint8_t)SETTINGS_SYSTEM_VIEW_ROOT);
+    if (hidden && tertiary_view) {
         return;
     }
 
@@ -3527,6 +3551,14 @@ static void settings_show_bluetooth_detail(void)
     }
 }
 
+static void settings_preset_range_button_event_cb(lv_event_t *event)
+{
+    if (lv_event_get_code(event) != LV_EVENT_CLICKED || UI_FLAG(SETTINGS_SWIPE_CONSUMED)) {
+        return;
+    }
+    settings_show_preset_range_edit();
+}
+
 static void settings_show_bms_detail(void)
 {
     const esp_bms_dashboard_snapshot_t *snapshot = settings_current_snapshot();
@@ -3535,6 +3567,7 @@ static void settings_show_bms_detail(void)
     const int32_t row_h = s_ui.width < s_ui.height ? SETTINGS_DETAIL_ROW_H_PORTRAIT :
                                                      SETTINGS_DETAIL_ROW_H_LANDSCAPE;
     char ble_status[ESP_BMS_BMS_SCAN_NAME_LEN + 1U] = { 0 };
+    char preset_range[16] = { 0 };
 
     s_ui.settings_bms_view = (uint8_t)SETTINGS_BMS_VIEW_ROOT;
     s_ui.settings_controller_view = (uint8_t)SETTINGS_CONTROLLER_VIEW_ROOT;
@@ -3542,6 +3575,9 @@ static void settings_show_bms_detail(void)
            0,
            sizeof(s_ui.settings_controller_tire_rollers));
     s_ui.settings_controller_ratio_roller = NULL;
+    memset(s_ui.settings_preset_range_rollers,
+           0,
+           sizeof(s_ui.settings_preset_range_rollers));
     s_ui.settings_bms_ble_status = NULL;
     lv_obj_clean(s_ui.settings_detail);
     label_set_text_if_changed(s_ui.settings_detail_title, "保护板设置");
@@ -3564,12 +3600,22 @@ static void settings_show_bms_detail(void)
         ESP_BMS_LVGL_ACTION_NONE,
         SETTINGS_SYSTEM_VIEW_ROOT,
     };
+    (void)snprintf(preset_range,
+                   sizeof(preset_range),
+                   "%04u km",
+                   snapshot->preset_range_km);
+    const settings_detail_row_t preset_range_row = {
+        "预设里程",
+        preset_range,
+        ESP_BMS_LVGL_ACTION_NONE,
+        SETTINGS_SYSTEM_VIEW_ROOT,
+    };
     lv_obj_t *list_card = settings_list_card(s_ui.settings_detail,
                                              card_x,
                                              12,
                                              card_w,
                                              row_h,
-                                             2);
+                                             3);
     settings_detail_row(list_card,
                         0,
                         0,
@@ -3585,6 +3631,22 @@ static void settings_show_bms_detail(void)
                                               &type_row);
     lv_obj_add_event_cb(type_box, settings_bms_type_button_event_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *arrow = label(type_box, card_w - 24, 0, 14, 15, &settings_zh_13);
+    lv_label_set_text(arrow, ">");
+    lv_obj_align(arrow, LV_ALIGN_RIGHT_MID, -10, 0);
+    lv_obj_set_style_text_align(arrow, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(arrow, COLOR_SETTINGS_ACCENT, LV_PART_MAIN);
+
+    lv_obj_t *preset_box = settings_detail_row(list_card,
+                                                0,
+                                                row_h * 2,
+                                                card_w,
+                                                row_h,
+                                                &preset_range_row);
+    lv_obj_add_event_cb(preset_box,
+                        settings_preset_range_button_event_cb,
+                        LV_EVENT_CLICKED,
+                        NULL);
+    arrow = label(preset_box, card_w - 24, 0, 14, 15, &settings_zh_13);
     lv_label_set_text(arrow, ">");
     lv_obj_align(arrow, LV_ALIGN_RIGHT_MID, -10, 0);
     lv_obj_set_style_text_align(arrow, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
@@ -3628,6 +3690,96 @@ static lv_obj_t *settings_controller_roller(lv_obj_t *parent,
     lv_obj_set_style_radius(roller, 6, LV_PART_SELECTED);
     /* Roller vertical drags select values; the persistent edge zone owns back navigation. */
     return roller;
+}
+
+static const char PRESET_RANGE_DIGIT_OPTIONS[] = "0\n1\n2\n3\n4\n5\n6\n7\n8\n9";
+
+static void settings_preset_range_confirm_event_cb(lv_event_t *event)
+{
+    if (lv_event_get_code(event) != LV_EVENT_CLICKED || UI_FLAG(SETTINGS_SWIPE_CONSUMED)) {
+        return;
+    }
+    uint16_t range_km = 0U;
+    for (size_t index = 0; index < ARRAY_SIZE(s_ui.settings_preset_range_rollers); ++index) {
+        if (!s_ui.settings_preset_range_rollers[index]) {
+            return;
+        }
+        range_km = (uint16_t)(range_km * 10U +
+                              lv_roller_get_selected(s_ui.settings_preset_range_rollers[index]));
+    }
+
+    memset(&s_ui.pending_event, 0, sizeof(s_ui.pending_event));
+    s_ui.pending_event.action = ESP_BMS_LVGL_ACTION_SET_PRESET_RANGE;
+    s_ui.pending_event.numeric_delta = (int16_t)range_km;
+    ACTION_EVENT_SET_FLAG(&s_ui.pending_event, NUMERIC_DELTA_VALID, true);
+    ACTION_EVENT_SET_FLAG(&s_ui.pending_event, COMMITTED, true);
+    settings_show_bms_detail();
+    lv_indev_wait_release(lv_indev_active());
+}
+
+static void settings_show_preset_range_edit(void)
+{
+    const bool portrait = s_ui.width < s_ui.height;
+    const uint16_t preset_range_km = settings_current_snapshot()->preset_range_km;
+    const uint16_t divisors[] = { 1000U, 100U, 10U, 1U };
+    const int32_t card_x = 12;
+    const int32_t card_w = s_ui.width - 24;
+    const int32_t card_h = portrait ? 168 : 104;
+    const int32_t gap = 6;
+    const int32_t roller_h = portrait ? 116 : 72;
+    const int32_t roller_w = (card_w - 24 - (gap * 3)) / 4;
+
+    lv_obj_clean(s_ui.settings_detail);
+    s_ui.settings_detail_id = (uint8_t)SETTINGS_DETAIL_BMS;
+    s_ui.settings_bms_view = (uint8_t)SETTINGS_BMS_VIEW_PRESET_RANGE_EDIT;
+    memset(s_ui.settings_preset_range_rollers,
+           0,
+           sizeof(s_ui.settings_preset_range_rollers));
+    label_set_text_if_changed(s_ui.settings_detail_title, "预设里程");
+    settings_navigation_set_hidden(false, false);
+    lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
+
+    lv_obj_t *card = panel(s_ui.settings_detail,
+                           card_x,
+                           12,
+                           card_w,
+                           card_h,
+                           COLOR_SETTINGS_CARD);
+    lv_obj_set_style_radius(card, 8, LV_PART_MAIN);
+    lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(card, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(card, 0, LV_PART_MAIN);
+    for (size_t index = 0; index < ARRAY_SIZE(s_ui.settings_preset_range_rollers); ++index) {
+        const uint32_t digit = (preset_range_km / divisors[index]) % 10U;
+        s_ui.settings_preset_range_rollers[index] = settings_controller_roller(
+            card,
+            12 + (int32_t)index * (roller_w + gap),
+            (card_h - roller_h) / 2,
+            roller_w,
+            roller_h,
+            PRESET_RANGE_DIGIT_OPTIONS,
+            digit);
+    }
+
+    const int32_t button_w = clamp_i32(s_ui.width - 64, 160, 240);
+    lv_obj_t *button = panel(s_ui.settings_detail,
+                             (s_ui.width - button_w) / 2,
+                             24 + card_h,
+                             button_w,
+                             42,
+                             COLOR_SWITCH_ACTIVE);
+    lv_obj_set_style_radius(button, 8, LV_PART_MAIN);
+    lv_obj_set_style_border_width(button, 0, LV_PART_MAIN);
+    lv_obj_add_flag(button, LV_OBJ_FLAG_CLICKABLE);
+    settings_add_swipe_handlers(button);
+    lv_obj_add_event_cb(button,
+                        settings_preset_range_confirm_event_cb,
+                        LV_EVENT_CLICKED,
+                        NULL);
+    lv_obj_t *text = label(button, 0, 10, button_w, 20, &settings_zh_16);
+    lv_label_set_text(text, "确认");
+    lv_obj_set_style_text_align(text, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(text, COLOR_WHITE, LV_PART_MAIN);
 }
 
 static char *settings_controller_ratio_options(void)
@@ -3971,6 +4123,127 @@ static void settings_show_controller_style_picker(void)
     }
 }
 
+static const char *const SETTINGS_SPEED_UNIT_LABELS[] = {
+    "km/h",
+    "mph",
+};
+
+static void settings_speed_unit_button_event_cb(lv_event_t *event)
+{
+    if (lv_event_get_code(event) != LV_EVENT_CLICKED || UI_FLAG(SETTINGS_SWIPE_CONSUMED)) {
+        return;
+    }
+    settings_show_speed_unit_picker();
+}
+
+static void settings_speed_unit_option_event_cb(lv_event_t *event)
+{
+    if (!settings_bms_popup_click_ready(event)) {
+        return;
+    }
+    const size_t selected = (size_t)(uintptr_t)lv_event_get_user_data(event);
+    if (selected >= ARRAY_SIZE(SETTINGS_SPEED_UNIT_LABELS)) {
+        return;
+    }
+    const size_t current = settings_current_snapshot()->speed_unit == ESP_BMS_SPEED_UNIT_MPH
+                               ? 1U
+                               : 0U;
+    if (selected != current) {
+        queue_action_with_commit(ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_UNIT, true);
+    }
+    lv_indev_wait_release(lv_indev_active());
+}
+
+static void settings_show_speed_unit_picker(void)
+{
+    const bool portrait = s_ui.width < s_ui.height;
+    const int32_t card_x = SETTINGS_LIST_MARGIN_X;
+    const int32_t card_w = s_ui.width - (SETTINGS_LIST_MARGIN_X * 2);
+    const int32_t row_h = portrait ? SETTINGS_CHOICE_ROW_H_PORTRAIT :
+                                     SETTINGS_CHOICE_ROW_H_LANDSCAPE;
+    const int32_t gap = portrait ? 8 : 6;
+    const size_t current = settings_current_snapshot()->speed_unit == ESP_BMS_SPEED_UNIT_MPH
+                               ? 1U
+                               : 0U;
+
+    s_ui.settings_controller_view = (uint8_t)SETTINGS_CONTROLLER_VIEW_SPEED_UNIT_LIST;
+    s_ui.settings_bms_ble_status = NULL;
+    lv_obj_clean(s_ui.settings_detail);
+    label_set_text_if_changed(s_ui.settings_detail_title, "速度单位");
+    settings_navigation_set_hidden(false, false);
+    lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
+
+    for (size_t index = 0; index < ARRAY_SIZE(SETTINGS_SPEED_UNIT_LABELS); ++index) {
+        const bool active = index == current;
+        lv_obj_t *row = panel(s_ui.settings_detail,
+                              card_x,
+                              12 + ((int32_t)index * (row_h + gap)),
+                              card_w,
+                              row_h,
+                              COLOR_SETTINGS_CARD);
+        lv_obj_set_style_radius(row, 8, LV_PART_MAIN);
+        lv_obj_set_style_border_width(row, active ? 2 : 1, LV_PART_MAIN);
+        lv_obj_set_style_border_color(row,
+                                      active ? COLOR_SWITCH_ACTIVE : COLOR_SETTINGS_BORDER,
+                                      LV_PART_MAIN);
+        lv_obj_set_style_pad_all(row, 0, LV_PART_MAIN);
+        lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
+        settings_add_swipe_handlers(row);
+        lv_obj_add_event_cb(row,
+                            settings_speed_unit_option_event_cb,
+                            LV_EVENT_CLICKED,
+                            (void *)(uintptr_t)index);
+
+        const int32_t text_h = (int32_t)settings_zh_16.line_height + 4;
+        lv_obj_t *text = label(row,
+                               12,
+                               (row_h - text_h) / 2,
+                               card_w - 52,
+                               text_h,
+                               &settings_zh_16);
+        lv_label_set_text(text, SETTINGS_SPEED_UNIT_LABELS[index]);
+        lv_obj_set_style_text_color(text,
+                                    active ? COLOR_SWITCH_ACTIVE : COLOR_SETTINGS_TEXT,
+                                    LV_PART_MAIN);
+        if (active) {
+            lv_obj_t *check = label(row,
+                                    card_w - 38,
+                                    (row_h - 20) / 2,
+                                    26,
+                                    20,
+                                    &lv_font_montserrat_14);
+            lv_label_set_text(check, LV_SYMBOL_OK);
+            lv_obj_set_style_text_align(check, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+            lv_obj_set_style_text_color(check, COLOR_SWITCH_ACTIVE, LV_PART_MAIN);
+        }
+    }
+}
+
+static lv_obj_t *settings_speed_unit_row(lv_obj_t *parent,
+                                         int32_t y,
+                                         int32_t w,
+                                         int32_t h,
+                                         const char *value)
+{
+    const settings_detail_row_t descriptor = {
+        "速度单位",
+        value,
+        ESP_BMS_LVGL_ACTION_NONE,
+        SETTINGS_SYSTEM_VIEW_ROOT,
+    };
+    lv_obj_t *box = settings_detail_row(parent, 0, y, w, h, &descriptor);
+    lv_obj_add_event_cb(box,
+                        settings_speed_unit_button_event_cb,
+                        LV_EVENT_CLICKED,
+                        NULL);
+    lv_obj_t *arrow = label(box, w - 26, 0, 16, 18, &settings_zh_16);
+    lv_label_set_text(arrow, ">");
+    lv_obj_align(arrow, LV_ALIGN_RIGHT_MID, -10, 0);
+    lv_obj_set_style_text_align(arrow, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(arrow, COLOR_SETTINGS_ACCENT, LV_PART_MAIN);
+    return box;
+}
+
 static void settings_controller_style_row(lv_obj_t *parent,
                                           int32_t y,
                                           int32_t w,
@@ -4007,7 +4280,7 @@ static void settings_show_controller_detail(void)
         snapshot->controller_param_source ==
         (uint8_t)ESP_BMS_CONTROLLER_PARAM_SOURCE_CONTROLLER;
     const bool values_editable = online && !controller_synced;
-    const size_t visible_row_count = online ? 7U : 4U;
+    const size_t main_row_count = online ? 6U : 4U;
     char ble_status[ESP_BMS_BMS_SCAN_NAME_LEN + 1U] = { 0 };
     char speed_source[40] = { 0 };
     char tire[48] = { 0 };
@@ -4037,11 +4310,11 @@ static void settings_show_controller_detail(void)
         ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_SOURCE, SETTINGS_SYSTEM_VIEW_ROOT,
     };
     const settings_detail_row_t rows[] = {
-        { "蓝牙绑定", ble_status,
+        { "控制器连接", ble_status,
           ESP_BMS_LVGL_ACTION_START_CONTROLLER_BIND, SETTINGS_SYSTEM_VIEW_ROOT },
-        { "速度单位", snapshot->speed_unit == ESP_BMS_SPEED_UNIT_MPH ? "mph" : "km/h",
-          ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_UNIT, SETTINGS_SYSTEM_VIEW_ROOT },
-        { "控制器类型", "远驱", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
+    };
+    const settings_detail_row_t type_row = {
+        "控制器类型", "远驱", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT,
     };
 
     lv_obj_t *card = settings_list_card(s_ui.settings_detail,
@@ -4049,7 +4322,7 @@ static void settings_show_controller_detail(void)
                                         12,
                                         card_w,
                                         row_h,
-                                        visible_row_count);
+                                        main_row_count);
     size_t visible_index = 0U;
     settings_detail_row(card,
                         0,
@@ -4064,9 +4337,6 @@ static void settings_show_controller_detail(void)
                                   SETTINGS_CONTROLLER_STYLE_LABELS[
                                       SNAPSHOT_FLAG(snapshot, CONTROLLER_PAGE_ENABLED) ? 1U : 0U]);
     for (size_t index = 0; index < ARRAY_SIZE(rows); ++index) {
-        if (!online && rows[index].action == ESP_BMS_LVGL_ACTION_NONE) {
-            continue;
-        }
         settings_detail_row(card,
                             0,
                             (int32_t)visible_index * row_h,
@@ -4075,6 +4345,11 @@ static void settings_show_controller_detail(void)
                             &rows[index]);
         visible_index++;
     }
+    settings_speed_unit_row(card,
+                            (int32_t)visible_index++ * row_h,
+                            card_w,
+                            row_h,
+                            snapshot->speed_unit == ESP_BMS_SPEED_UNIT_MPH ? "mph" : "km/h");
 
     if (online) {
         if (snapshot->controller_param_source ==
@@ -4118,6 +4393,13 @@ static void settings_show_controller_detail(void)
                                       SETTINGS_CONTROLLER_VIEW_RATIO_EDIT,
                                       values_editable);
     }
+    lv_obj_t *type_card = settings_list_card(s_ui.settings_detail,
+                                             card_x,
+                                             12 + ((int32_t)main_row_count * row_h) + 8,
+                                             card_w,
+                                             row_h,
+                                             1U);
+    settings_detail_row(type_card, 0, 0, card_w, row_h, &type_row);
     lv_obj_update_layout(s_ui.settings_detail);
     lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
 }
@@ -5796,7 +6078,7 @@ static void set_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
         } else {
             (void)snprintf(ah, sizeof(ah), "--/--Ah");
         }
-        label_set_text_fmt_if_changed(s_ui.soc, "%u%%", soc);
+        label_set_text_fmt_if_changed(s_ui.soc, "%u %%", soc);
     } else {
         (void)snprintf(ah, sizeof(ah), "--/--Ah");
         label_set_text_if_changed(s_ui.soc, "--");
@@ -5830,6 +6112,14 @@ static void set_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
     label_set_text_if_changed(s_ui.cell_stat_values[2], delta_cell);
     label_set_text_if_changed(s_ui.cell_stat_values[3], avg_cell);
 
+    const bool portrait = s_ui.width < s_ui.height;
+    const int32_t status_area_height = portrait ? 52 : 70;
+    const int32_t status_width = portrait ? 100 : 68;
+    const int32_t title_height = (int32_t)settings_zh_10.line_height + 1;
+    const int32_t ok_height = (int32_t)lv_font_montserrat_14.line_height + 1;
+    const bool bms_ok = snapshot->bms_protection_count == 0U &&
+                        snapshot->bms_warning_count == 0U &&
+                        SNAPSHOT_FLAG(snapshot, BMS_ONLINE);
     if (snapshot->bms_protection_count > 0U) {
         label_set_text_color_if_changed(s_ui.bms_error, COLOR_BAD);
         label_set_text_if_changed(s_ui.bms_error, "BMS WARN\nPROTECTION");
@@ -5838,7 +6128,7 @@ static void set_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
         label_set_text_if_changed(s_ui.bms_error, "BMS WARN\nWARNING");
     } else if (SNAPSHOT_FLAG(snapshot, BMS_ONLINE)) {
         label_set_text_color_if_changed(s_ui.bms_error, COLOR_ACCENT);
-        label_set_text_if_changed(s_ui.bms_error, "BMS INFO\nOK");
+        label_set_text_if_changed(s_ui.bms_error, "BMS INFO");
     } else if (strstr(snapshot->bms_info_text, "FAIL") != NULL ||
                strstr(snapshot->bms_info_text, "ERR") != NULL ||
                strstr(snapshot->bms_info_text, "NO ") != NULL) {
@@ -5851,6 +6141,32 @@ static void set_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
     } else {
         label_set_text_color_if_changed(s_ui.bms_error, COLOR_MUTED);
         label_set_text_if_changed(s_ui.bms_error, "BLE STATUS\nDISCONNECTED");
+    }
+    set_obj_hidden(s_ui.bms_status_ok, !bms_ok);
+    if (bms_ok) {
+        lv_obj_set_pos(s_ui.bms_error, 4, 4);
+        lv_obj_set_size(s_ui.bms_error, status_width, title_height);
+        lv_obj_set_pos(s_ui.bms_status_ok, 4, (status_area_height - ok_height) / 2);
+        lv_obj_set_size(s_ui.bms_status_ok, status_width, ok_height);
+        label_set_text_color_if_changed(s_ui.bms_status_ok, COLOR_ACCENT);
+    } else {
+        const int32_t status_height = ((int32_t)settings_zh_10.line_height * 2) + 1;
+        lv_obj_set_pos(s_ui.bms_error, 4, (status_area_height - status_height) / 2);
+        lv_obj_set_size(s_ui.bms_error, status_width, status_height);
+    }
+
+    const bool range_visible = SNAPSHOT_FLAG(snapshot, BMS_ONLINE) &&
+                               SNAPSHOT_FLAG(snapshot, GPS_FIX_VALID);
+    set_obj_hidden(s_ui.remaining_range_separator, !range_visible);
+    set_obj_hidden(s_ui.remaining_range_title, !range_visible);
+    set_obj_hidden(s_ui.remaining_range_value, !range_visible);
+    set_obj_hidden(s_ui.remaining_range_unit, !range_visible);
+    if (snapshot->remaining_range_valid) {
+        label_set_text_fmt_if_changed(s_ui.remaining_range_value,
+                                      "%u",
+                                      snapshot->remaining_range_km);
+    } else {
+        label_set_text_if_changed(s_ui.remaining_range_value, "--");
     }
 
     format_temp_c(t1, sizeof(t1), esp_bms_dashboard_snapshot_temperature_valid(snapshot, 0U), snapshot->bms_temperature_celsius[0]);
@@ -6493,6 +6809,19 @@ static void speed_dashboard_draw_battery(lv_layer_t *layer,
         return;
     }
     const int32_t x = coords->x1 + 8;
+#if defined(ESP_BMS_LVGL_SIMULATOR)
+    const int32_t y = coords->y1 + (portrait ? 6 : 8);
+    speed_dashboard_draw_rect(layer,
+                              (lv_area_t){ x, y + 1, x + 6, y + 15 },
+                              COLOR_WHITE,
+                              false,
+                              1);
+    speed_dashboard_draw_rect(layer,
+                              (lv_area_t){ x + 2, y, x + 4, y + 1 },
+                              COLOR_WHITE,
+                              true,
+                              0);
+#else
     const int32_t y = coords->y1 + (portrait ? 6 : 7);
     speed_dashboard_draw_rect(layer,
                               (lv_area_t){ x, y + 2, x + 7, y + 21 },
@@ -6504,11 +6833,25 @@ static void speed_dashboard_draw_battery(lv_layer_t *layer,
                               COLOR_WHITE,
                               true,
                               0);
+#endif
 
     if (!SNAPSHOT_FLAG(snapshot, SOC_VALID)) {
         return;
     }
     const uint32_t active = speed_dashboard_battery_active_segments(snapshot);
+#if defined(ESP_BMS_LVGL_SIMULATOR)
+    const int32_t start_x = x + 11;
+    const int32_t segment_y = y + 1;
+    for (uint32_t index = 0U; index < active; ++index) {
+        const int32_t left = start_x + (int32_t)(index * 4U);
+        const lv_point_t p0 = speed_dashboard_point(left + 1, segment_y);
+        const lv_point_t p1 = speed_dashboard_point(left + 4, segment_y);
+        const lv_point_t p2 = speed_dashboard_point(left + 3, segment_y + 14);
+        const lv_point_t p3 = speed_dashboard_point(left, segment_y + 14);
+        speed_dashboard_draw_triangle(layer, p0, p1, p2, COLOR_WHITE);
+        speed_dashboard_draw_triangle(layer, p0, p2, p3, COLOR_WHITE);
+    }
+#else
     const int32_t start_x = x + 12;
     const int32_t segment_y = y + 5;
     for (uint32_t index = 0U; index < active; ++index) {
@@ -6520,6 +6863,7 @@ static void speed_dashboard_draw_battery(lv_layer_t *layer,
         speed_dashboard_draw_triangle(layer, p0, p1, p2, COLOR_WHITE);
         speed_dashboard_draw_triangle(layer, p0, p2, p3, COLOR_WHITE);
     }
+#endif
 }
 
 static void speed_dashboard_draw_satellite(lv_layer_t *layer,
@@ -6656,6 +7000,14 @@ static void speed_dashboard_draw_event_cb(lv_event_t *event)
 static void speed_dashboard_apply_layout(void)
 {
     const bool portrait = s_ui.width < s_ui.height;
+#if defined(ESP_BMS_LVGL_SIMULATOR)
+    const int32_t status_y = portrait ? 6 : 8;
+    const int32_t status_height = 16;
+#else
+    const int32_t status_y = portrait ? 7 : 9;
+    const int32_t status_height = 18;
+#endif
+    const int32_t temperature_y = portrait ? 29 : status_y;
     lv_obj_set_pos(s_ui.speed_art, 0, 0);
     lv_obj_set_size(s_ui.speed_art, s_ui.width, s_ui.height);
     if (portrait) {
@@ -6663,14 +7015,21 @@ static void speed_dashboard_apply_layout(void)
         lv_obj_set_size(s_ui.speed, 104, 52);
         lv_obj_set_pos(s_ui.gps_speed_unit, 20, 105);
         lv_obj_set_size(s_ui.gps_speed_unit, 76, 26);
-        lv_obj_set_pos(s_ui.speed_soc, 90, 7);
-        lv_obj_set_size(s_ui.speed_soc, 30, 18);
-        lv_obj_set_pos(s_ui.speed_consumption, 74, 7);
-        lv_obj_set_size(s_ui.speed_consumption, 159, 18);
-        lv_obj_set_pos(s_ui.speed_controller_temp, 66, 29);
-        lv_obj_set_size(s_ui.speed_controller_temp, 55, 18);
-        lv_obj_set_pos(s_ui.speed_motor_temp, 124, 29);
-        lv_obj_set_size(s_ui.speed_motor_temp, 70, 18);
+        lv_obj_set_pos(s_ui.speed_soc, 90, status_y);
+        lv_obj_set_size(s_ui.speed_soc, 30, status_height);
+        lv_obj_set_pos(s_ui.speed_consumption, 74, status_y);
+        lv_obj_set_size(s_ui.speed_consumption, 159, status_height);
+#if defined(ESP_BMS_LVGL_SIMULATOR)
+        lv_obj_set_pos(s_ui.speed_controller_temp, 110, temperature_y);
+        lv_obj_set_size(s_ui.speed_controller_temp, 50, status_height);
+        lv_obj_set_pos(s_ui.speed_motor_temp, 164, temperature_y);
+        lv_obj_set_size(s_ui.speed_motor_temp, 68, status_height);
+#else
+        lv_obj_set_pos(s_ui.speed_controller_temp, 66, temperature_y);
+        lv_obj_set_size(s_ui.speed_controller_temp, 55, status_height);
+        lv_obj_set_pos(s_ui.speed_motor_temp, 124, temperature_y);
+        lv_obj_set_size(s_ui.speed_motor_temp, 70, status_height);
+#endif
         lv_obj_set_pos(s_ui.speed_gear, 167, 230);
         lv_obj_set_size(s_ui.speed_gear, 40, 44);
         lv_obj_set_pos(s_ui.gps_detail, 112, 278);
@@ -6687,14 +7046,21 @@ static void speed_dashboard_apply_layout(void)
         lv_obj_set_size(s_ui.speed, 94, 52);
         lv_obj_set_pos(s_ui.gps_speed_unit, 98, 78);
         lv_obj_set_size(s_ui.gps_speed_unit, 68, 26);
-        lv_obj_set_pos(s_ui.speed_soc, 90, 9);
-        lv_obj_set_size(s_ui.speed_soc, 30, 18);
-        lv_obj_set_pos(s_ui.speed_consumption, 74, 9);
-        lv_obj_set_size(s_ui.speed_consumption, 58, 18);
-        lv_obj_set_pos(s_ui.speed_controller_temp, 164, 9);
-        lv_obj_set_size(s_ui.speed_controller_temp, 36, 18);
-        lv_obj_set_pos(s_ui.speed_motor_temp, 206, 9);
-        lv_obj_set_size(s_ui.speed_motor_temp, 48, 18);
+        lv_obj_set_pos(s_ui.speed_soc, 90, status_y);
+        lv_obj_set_size(s_ui.speed_soc, 30, status_height);
+        lv_obj_set_pos(s_ui.speed_consumption, 74, status_y);
+        lv_obj_set_size(s_ui.speed_consumption, 58, status_height);
+#if defined(ESP_BMS_LVGL_SIMULATOR)
+        lv_obj_set_pos(s_ui.speed_controller_temp, 216, temperature_y);
+        lv_obj_set_size(s_ui.speed_controller_temp, 38, status_height);
+        lv_obj_set_pos(s_ui.speed_motor_temp, 260, temperature_y);
+        lv_obj_set_size(s_ui.speed_motor_temp, 52, status_height);
+#else
+        lv_obj_set_pos(s_ui.speed_controller_temp, 164, temperature_y);
+        lv_obj_set_size(s_ui.speed_controller_temp, 36, status_height);
+        lv_obj_set_pos(s_ui.speed_motor_temp, 206, temperature_y);
+        lv_obj_set_size(s_ui.speed_motor_temp, 48, status_height);
+#endif
         lv_obj_set_pos(s_ui.speed_gear, 269, 153);
         lv_obj_set_size(s_ui.speed_gear, 38, 40);
         lv_obj_set_pos(s_ui.gps_detail, 196, 195);
@@ -6707,6 +7073,10 @@ static void speed_dashboard_apply_layout(void)
             lv_obj_set_size(s_ui.speed_scale_labels[index], 34, 18);
         }
     }
+#if defined(ESP_BMS_LVGL_SIMULATOR)
+    lv_obj_set_style_text_align(s_ui.speed_controller_temp, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
+    lv_obj_set_style_text_align(s_ui.speed_motor_temp, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
+#endif
 }
 
 static void set_gps_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
@@ -6910,6 +7280,7 @@ static void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapsho
     const bool previous_controller_online =
         SNAPSHOT_FLAG(&s_ui.last_snapshot, CONTROLLER_ONLINE);
     const uint8_t previous_bms_type = s_ui.last_snapshot.bms_type;
+    const uint16_t previous_preset_range_km = s_ui.last_snapshot.preset_range_km;
     const bool previous_bluetooth_enabled = SNAPSHOT_FLAG(&s_ui.last_snapshot, BLUETOOTH_ENABLED);
     const bool previous_bluetooth_advertising = SNAPSHOT_FLAG(&s_ui.last_snapshot, BLUETOOTH_ADVERTISING);
     const bool previous_bluetooth_connected = SNAPSHOT_FLAG(&s_ui.last_snapshot, BLUETOOTH_CONNECTED);
@@ -6933,6 +7304,8 @@ static void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapsho
                                             previous_bms_scan_candidate_count,
                                             snapshot->bms_scan_candidates,
                                             snapshot->bms_scan_candidate_count);
+    const bool preset_range_changed = !had_last_snapshot ||
+                                      previous_preset_range_km != snapshot->preset_range_km;
     const bool controller_view_changed =
         settings_controller_view_changed(&s_ui.last_snapshot, snapshot, had_last_snapshot);
     const bool controller_ble_changed =
@@ -6990,7 +7363,8 @@ static void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapsho
                    bms_type_changed) {
             settings_show_bms_type_picker();
         } else if (s_ui.settings_bms_view == (uint8_t)SETTINGS_BMS_VIEW_ROOT &&
-                   (bms_scan_candidates_changed || bms_online_changed || bms_type_changed)) {
+                   (bms_scan_candidates_changed || bms_online_changed || bms_type_changed ||
+                    preset_range_changed)) {
             settings_show_bms_detail();
         }
     }
@@ -7001,6 +7375,9 @@ static void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapsho
         } else if (s_ui.settings_controller_view ==
                        (uint8_t)SETTINGS_CONTROLLER_VIEW_STYLE_LIST) {
             settings_show_controller_style_picker();
+        } else if (s_ui.settings_controller_view ==
+                       (uint8_t)SETTINGS_CONTROLLER_VIEW_SPEED_UNIT_LIST) {
+            settings_show_speed_unit_picker();
         } else if (s_ui.settings_controller_view ==
                        (uint8_t)SETTINGS_CONTROLLER_VIEW_BLE_LIST &&
                    controller_ble_changed) {
@@ -7697,7 +8074,15 @@ static void create_screen(lv_display_t *display)
                                               120,
                                               COLOR_DASHBOARD_PANEL,
                                               COLOR_DASHBOARD_BORDER);
-        s_ui.bms_error = label(bms_panel, 4, 4, 100, 112, &lv_font_montserrat_14);
+        s_ui.bms_error = label(bms_panel, 4, 4, 100, 12, &settings_zh_10);
+        s_ui.bms_status_ok = label(bms_panel, 4, 21, 100, 16, &lv_font_montserrat_14);
+        lv_label_set_text(s_ui.bms_status_ok, "OK");
+        s_ui.remaining_range_separator = dashboard_separator(bms_panel, 8, 52, 92);
+        s_ui.remaining_range_title = label(bms_panel, 4, 59, 100, 16, &settings_zh_13);
+        lv_label_set_text(s_ui.remaining_range_title, "剩余里程");
+        s_ui.remaining_range_value = label(bms_panel, 8, 77, 68, 30, &lv_font_montserrat_24);
+        s_ui.remaining_range_unit = label(bms_panel, 72, 87, 28, 16, &lv_font_montserrat_14);
+        lv_label_set_text(s_ui.remaining_range_unit, "km");
 
         lv_obj_t *cell_panel = dashboard_panel(s_ui.battery_page,
                                                124,
@@ -7771,7 +8156,16 @@ static void create_screen(lv_display_t *display)
                                               70,
                                               COLOR_DASHBOARD_PANEL,
                                               COLOR_DASHBOARD_BORDER);
-        s_ui.bms_error = label(bms_panel, 4, 4, 140, 62, &lv_font_montserrat_14);
+        s_ui.bms_error = label(bms_panel, 4, 4, 68, 12, &settings_zh_10);
+        s_ui.bms_status_ok = label(bms_panel, 4, 27, 68, 16, &lv_font_montserrat_14);
+        lv_label_set_text(s_ui.bms_status_ok, "OK");
+        s_ui.remaining_range_separator = dashboard_separator(bms_panel, 74, 8, 1);
+        lv_obj_set_size(s_ui.remaining_range_separator, 1, 54);
+        s_ui.remaining_range_title = label(bms_panel, 78, 6, 64, 16, &settings_zh_13);
+        lv_label_set_text(s_ui.remaining_range_title, "剩余里程");
+        s_ui.remaining_range_value = label(bms_panel, 78, 21, 64, 30, &lv_font_montserrat_24);
+        s_ui.remaining_range_unit = label(bms_panel, 78, 50, 64, 16, &lv_font_montserrat_14);
+        lv_label_set_text(s_ui.remaining_range_unit, "km");
 
         lv_obj_t *cell_panel = dashboard_panel(s_ui.battery_page,
                                                164,
@@ -7822,10 +8216,19 @@ static void create_screen(lv_display_t *display)
     lv_obj_set_style_text_align(s_ui.pack_voltage, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_align(s_ui.current, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_align(s_ui.bms_error, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_align(s_ui.bms_status_ok, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_align(s_ui.remaining_range_title, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_align(s_ui.remaining_range_value, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_align(s_ui.remaining_range_unit, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_line_space(s_ui.bms_error, 1, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_ui.soc, COLOR_WHITE, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_ui.capacity, COLOR_WHITE, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_ui.pack_voltage, COLOR_WHITE, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_ui.current, COLOR_WHITE, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.bms_status_ok, COLOR_ACCENT, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.remaining_range_title, COLOR_MUTED, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.remaining_range_value, COLOR_WHITE, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.remaining_range_unit, COLOR_ACCENT, LV_PART_MAIN);
 
     s_ui.settings_page = lv_obj_create(screen);
     clear_style(s_ui.settings_page);

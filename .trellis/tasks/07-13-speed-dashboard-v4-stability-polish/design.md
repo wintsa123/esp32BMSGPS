@@ -133,6 +133,25 @@ RMC 入站先得到规范化速度，再同时写入 `gps_speed_knots_milli` 和
 diagnostics 比较 draw elapsed；若切页体感或最大绘制耗时明显回退，则回到 32 段，
 改为仅对外轮廓加密采样。
 
+### 桌面 SDL 模拟器
+
+现有 `esp_bms_lvgl_ui` 已经是显示桥接层之外的独立组件，不再抽取第二套 UI 模块。
+新增根目录 `simulator/` 主机构建入口，直接编译：
+
+- `components/esp_bms_lvgl_ui/esp_bms_lvgl_ui.c` 和其六个固件字体源；
+- `components/esp_bms_lvgl_contract/include/` 的 LVGL 9.5 契约；
+- `managed_components/lvgl__lvgl/` 的桌面 CMake/SDL 软件渲染后端。
+
+主机 include 目录提供最小 `esp_err`、`esp_check`、`esp_log`、`esp_timer`、
+`esp_heap_caps` 和 `sdkconfig` 兼容层。兼容层仅满足 UI 已使用的函数/宏，不模拟
+Wi-Fi、BLE、NVS 或硬件桥接。模拟器主循环维护一个真实
+`esp_bms_dashboard_snapshot_t`，调用 `esp_bms_lvgl_ui_init()`、
+`esp_bms_lvgl_ui_update()` 和 `esp_bms_lvgl_ui_take_action_event()`；鼠标由 LVGL SDL
+input driver 处理，键盘只改变主机快照或选择页面。
+
+模拟器默认显示真实窗口；`--headless` 使用 SDL dummy driver 运行固定帧数，用于 CI
+冒烟测试。横竖屏用启动参数选择，避免为了主机工具修改固件旋转生命周期。
+
 ### 滚动整屏失效 A/B
 
 `CONFIG_ESP_BMS_LVGL_UI_DRAG_FULL_INVALIDATE` 最初用于避免页面分块刷新/残影，属于 HIGH 风险路径，采用门槛式决策：

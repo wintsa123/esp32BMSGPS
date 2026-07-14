@@ -11,6 +11,8 @@ extern "C" {
 #define ESP_BMS_TRIP_START_SPEED_DECI_KMH 50U
 #define ESP_BMS_TRIP_MIN_DISTANCE_MM UINT64_C(100000)
 #define ESP_BMS_TRIP_MAX_INTERVAL_US INT64_C(3000000)
+#define ESP_BMS_PRESET_RANGE_DEFAULT_KM 100U
+#define ESP_BMS_REMAINING_RANGE_MAX_KM 9999U
 
 typedef struct {
     bool moving;
@@ -61,6 +63,15 @@ void esp_bms_trip_efficiency_sample(esp_bms_trip_efficiency_t *trip,
 bool esp_bms_trip_efficiency_consumption(const esp_bms_trip_efficiency_t *trip,
                                          bool imperial,
                                          int32_t *out_deci_wh_per_distance);
+
+bool esp_bms_remaining_range_km(uint16_t preset_range_km,
+                                bool soc_valid,
+                                uint16_t soc_percent,
+                                bool measured_valid,
+                                uint32_t pack_voltage_mv,
+                                uint32_t capacity_remaining_mah,
+                                int32_t consumption_deci_wh_per_km,
+                                uint16_t *out_range_km);
 
 #ifdef __cplusplus
 }

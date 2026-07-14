@@ -98,6 +98,52 @@ Questions to answer:
 - Dense wide-line segments need explicit tangent overlap. The 48-segment band uses 4 px overlap; 1-2 px leaves black wedges at the lower edge, while round caps turn short, wide color segments into visible capsules.
 - Mirror the same segment count, ratios, and overlap in `preview/speed_dashboard_v4_preview.py`, render both 320x240 and 240x320 states, and inspect zero, intermediate, maximum, over-range, invalid, GPS-search, BMS-offline, controller-offline, and missing-SOC cases before firmware build and flash.
 
+### LVGL Desktop Simulator Contract
+
+#### 1. Scope / Trigger
+
+- Use the desktop simulator when changing LVGL layout, drawing, gestures, settings navigation, or snapshot-driven visibility. It is the primary repeatable host check; Python/Pillow previews remain supplemental references only.
+
+#### 2. Signatures
+
+```bash
+./scripts/run-lvgl-simulator.sh [--portrait] [--headless]
+```
+
+- The host entry must call the production API: `esp_bms_lvgl_ui_init()`, `esp_bms_lvgl_ui_update()`, `esp_bms_lvgl_ui_set_page()`, and `esp_bms_lvgl_ui_take_action_event()`.
+
+#### 3. Contracts
+
+- Compile `components/esp_bms_lvgl_ui/esp_bms_lvgl_ui.c`, its production font sources, the LVGL contract, repository LVGL 9.5.0, and system SDL2. Do not copy page, widget, drawing, or gesture logic into a host-only UI.
+- Host compatibility headers may implement only ESP-IDF APIs directly referenced by the UI component. The simulator must not enter the ESP-IDF component graph or change firmware configuration.
+- `--portrait` starts at 240x320; the default starts at 320x240. `--headless` sets SDL's dummy video driver before `lv_init()` and runs a fixed smoke sequence.
+
+#### 4. Validation & Error Matrix
+
+- SDL2 development files missing -> CMake configure fails with the missing `sdl2` package.
+- No desktop display and no `--headless` -> SDL display creation fails and the process exits non-zero.
+- UI init/update failure -> print an error and exit non-zero.
+- Headless success -> both orientations complete 120 frames after keyboard-driven speed, status, page, and rotation updates.
+
+#### 5. Good / Base / Bad Cases
+
+- Good: use the simulator window for mouse gestures and settings actions, then confirm color and touch behavior on the ST7789 hardware.
+- Base: run both headless orientations in CI or a TTY to catch build, initialization, snapshot, event, and rotation regressions.
+- Bad: accept a separately redrawn Python preview as proof that production LVGL geometry or gestures work.
+
+#### 6. Tests Required
+
+- Run `./scripts/run-lvgl-simulator.sh --headless` and `./scripts/run-lvgl-simulator.sh --headless --portrait`; assert exit code 0 and the `headless smoke passed` line.
+- Run the ESP-IDF build after simulator changes; assert the simulator directory is absent from the firmware component list and the firmware still links.
+- Before visual sign-off, operate the SDL window with a mouse in a desktop session and repeat color/touch-sensitive checks on the physical TFT.
+
+#### 7. Wrong vs Correct
+
+```text
+Wrong: maintain desktop-only copies of the dashboard curve and settings pages.
+Correct: compile the production UI source and replace only display/input and the small ESP-IDF API surface.
+```
+
 ### LVGL Settings Navigation
 
 - The settings root and all settings detail pages reuse one persistent top navigation object. The root title is `设置` and its back action returns to the dashboard; detail titles come from `SETTINGS_OPTIONS` and return to the settings root.

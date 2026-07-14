@@ -115,6 +115,44 @@ static void test_regeneration_offsets_discharge(void)
     assert(consumption_deci >= -1 && consumption_deci <= 1);
 }
 
+static void test_remaining_range(void)
+{
+    uint16_t range_km = UINT16_MAX;
+    uint16_t kmh_range_km = UINT16_MAX;
+    uint16_t mph_range_km = UINT16_MAX;
+
+    assert(esp_bms_remaining_range_km(ESP_BMS_PRESET_RANGE_DEFAULT_KM,
+                                      true, 76U, false, 0U, 0U, 0, &range_km));
+    assert(range_km == 76U);
+    assert(esp_bms_remaining_range_km(0U, true, 76U, false, 0U, 0U, 0, &range_km));
+    assert(range_km == 0U);
+    assert(esp_bms_remaining_range_km(101U, true, 75U, false, 0U, 0U, 0, &range_km));
+    assert(range_km == 76U);
+
+    assert(esp_bms_remaining_range_km(100U, true, 76U, true,
+                                      76000U, 76000U, 238, &range_km));
+    assert(range_km == 243U);
+    assert(esp_bms_remaining_range_km(100U, true, 76U, true,
+                                      76000U, 76000U, 238, &kmh_range_km));
+    assert(esp_bms_remaining_range_km(100U, true, 76U, true,
+                                      76000U, 76000U, 238, &mph_range_km));
+    assert(kmh_range_km == mph_range_km);
+    assert(esp_bms_remaining_range_km(100U, true, 76U, true,
+                                      76000U, 76000U, 0, &range_km));
+    assert(range_km == 76U);
+    assert(esp_bms_remaining_range_km(100U, true, 76U, true,
+                                      76000U, 76000U, -1, &range_km));
+    assert(range_km == 76U);
+    assert(!esp_bms_remaining_range_km(100U, false, 0U, true,
+                                       76000U, 76000U, 0, &range_km));
+
+    assert(esp_bms_remaining_range_km(9999U, true, 100U, true,
+                                      UINT32_MAX, UINT32_MAX, 1, &range_km));
+    assert(range_km == ESP_BMS_REMAINING_RANGE_MAX_KM);
+    assert(!esp_bms_remaining_range_km(10000U, true, 100U, false,
+                                       0U, 0U, 0, &range_km));
+}
+
 int main(void)
 {
     test_utc8_rollover();
@@ -122,6 +160,7 @@ int main(void)
     test_gps_motion_hysteresis();
     test_trip_threshold_alignment_and_units();
     test_regeneration_offsets_discharge();
+    test_remaining_range();
     puts("speed dashboard self-test passed");
     return 0;
 }

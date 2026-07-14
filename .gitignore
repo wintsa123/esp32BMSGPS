@@ -2,6 +2,7 @@
 /build/
 /build_dragdiag/
 /build_dragdiag_db/
+/build-simulator/
 /managed_components/
 /.embuild/
 /.espflash/

@@ -285,3 +285,45 @@ bool esp_bms_trip_efficiency_consumption(const esp_bms_trip_efficiency_t *trip,
     }
     return true;
 }
+
+static uint16_t rounded_range_km(uint64_t numerator, uint64_t denominator)
+{
+    uint64_t range_km = numerator / denominator;
+    if (range_km < ESP_BMS_REMAINING_RANGE_MAX_KM &&
+        numerator % denominator >= (denominator + 1U) / 2U) {
+        range_km++;
+    }
+    return range_km > ESP_BMS_REMAINING_RANGE_MAX_KM
+               ? ESP_BMS_REMAINING_RANGE_MAX_KM
+               : (uint16_t)range_km;
+}
+
+bool esp_bms_remaining_range_km(uint16_t preset_range_km,
+                                bool soc_valid,
+                                uint16_t soc_percent,
+                                bool measured_valid,
+                                uint32_t pack_voltage_mv,
+                                uint32_t capacity_remaining_mah,
+                                int32_t consumption_deci_wh_per_km,
+                                uint16_t *out_range_km)
+{
+    if (!out_range_km || preset_range_km > ESP_BMS_REMAINING_RANGE_MAX_KM) {
+        return false;
+    }
+
+    if (measured_valid && pack_voltage_mv > 0U && capacity_remaining_mah > 0U &&
+        consumption_deci_wh_per_km > 0) {
+        const uint64_t numerator = (uint64_t)pack_voltage_mv * capacity_remaining_mah;
+        const uint64_t denominator = UINT64_C(100000) *
+                                     (uint32_t)consumption_deci_wh_per_km;
+        *out_range_km = rounded_range_km(numerator, denominator);
+        return true;
+    }
+
+    if (!soc_valid) {
+        return false;
+    }
+    const uint16_t clamped_soc = soc_percent > 100U ? 100U : soc_percent;
+    *out_range_km = rounded_range_km((uint64_t)preset_range_km * clamped_soc, 100U);
+    return true;
+}

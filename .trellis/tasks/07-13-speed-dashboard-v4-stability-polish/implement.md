@@ -180,3 +180,37 @@ node .gitnexus/run.cjs detect-changes --repo esp32BMSGPS --scope all
 - RFC2217 刷写、哈希校验和启动监控通过；首屏后 free heap 约 109 KB、最大连续块
   约 106 KB，无 panic/WDT。远程串口无法目视 TFT，现场曲线观感与拖动耗时仍需
   用户在设备前确认。
+
+## 2026-07-14 真实 UI 桌面模拟器
+
+- [x] 新增 `simulator/` CMake 工程，复用仓库 LVGL 9.5.0、SDL2、真实
+  `esp_bms_lvgl_ui.c`、固件字体和 LVGL contract。
+- [x] 添加最小 ESP-IDF 主机兼容头/实现；不得复制页面、绘制或事件逻辑。
+- [x] 主机入口提供横竖屏启动、鼠标输入、快照快捷键、页面快捷键和 action 回写。
+- [x] 提供 `scripts/run-lvgl-simulator.sh`，支持交互运行、`--portrait` 和
+  `--headless` 冒烟测试。
+- [ ] 构建并运行横竖屏无头测试；在有桌面会话时启动 SDL 窗口完成鼠标交互检查。
+  当前环境只有 TTY，已完成前半项；桌面窗口鼠标目视仍需在图形会话中确认。
+- [x] 运行 `git diff --check`、ESP-IDF build 和 GitNexus `detect_changes()`；主机工具
+  不改变固件镜像时不重复刷写。
+
+### 2026-07-14 桌面模拟器结果
+
+- `simulator/` 直接编译真实 `esp_bms_lvgl_ui.c`、六个固件字体源、`wlanJZ.c`、
+  LVGL 9.5.0 和 SDL2 2.26.5；ESP-IDF 兼容层只实现 UI 已引用的错误、日志、定时器、
+  堆诊断和配置宏。
+- 桌面快照使用生产 `esp_bms_dashboard_snapshot_t`；鼠标进入 LVGL SDL pointer driver，
+  键盘支持速度、四页、GPS/BMS/控制器在线状态、单位和旋转，UI action 会回写主机快照。
+- 干净构建后，320x240 与 240x320 均通过 120 帧 SDL dummy 冒烟；测试通过 SDL
+  event queue 注入速度、GPS、页面和旋转快捷键，覆盖真实键盘入口及 UI 重建。
+- GPS stream、speed dashboard、FarDriver host selftest、脚本语法、`git diff --check`
+  和 ESP-IDF 5.5.4 build 通过；固件仍为 `0x15ef60`，最小 OTA 槽剩余 `0x810a0`
+  （27%），模拟器没有进入固件组件列表。
+- GitNexus 重建索引后 staged `detect-changes` 为 CRITICAL（16 个文件、85 个符号、
+  19 条流程），原因是新增主机 `main()` 下游调用真实 UI，并把兼容层同名 `ESP_*`
+  宏计为变化。逐符号 upstream impact 中 `main()`、`apply_command()` 和
+  `apply_action_event()` 均为 LOW，且 staged 范围没有固件 `components/`、`main/`、
+  根 CMake 或 `sdkconfig` 修改。
+- 当前 `DISPLAY`/`WAYLAND_DISPLAY` 均为空、`XDG_SESSION_TYPE=tty`，不能在本会话冒充
+  完成鼠标目视。图形桌面终端运行 `./scripts/run-lvgl-simulator.sh` 即可交互；物理面板
+  色序、触摸校准和刷新时序仍以真机为最终依据。
