@@ -10,9 +10,9 @@
 
 > 当前项目处于持续开发与实机联调阶段。核心固件和主要交互链路已经可用，OTA、轨迹存储及部分硬件兼容性仍未完成。
 
-## 🖼️ 本地界面预览
+## 🖼️ 界面预览
 
-> `preview/` 默认被 Git 忽略，下列图片用于本地 README 预览，不随仓库提交。
+下列 README 图片存放在可跟踪的 `img/` 目录；本地渲染过程文件仍保存在被 Git 忽略的 `preview/` 目录。
 
 <table>
   <tr>
@@ -21,11 +21,11 @@
   </tr>
   <tr>
     <td align="center">
-      <img src="./preview/readme-settings-home.png" alt="设备设置首页预览" width="220"><br>
+      <img src="./img/readme-settings-home.png" alt="设备设置首页预览" width="220"><br>
       <sub>系统设置、亮度、音量、调节条位置与屏幕校准</sub>
     </td>
     <td align="center">
-      <img src="./preview/readme-bms-dashboard.png" alt="BMS 数据页面预览" width="220"><br>
+      <img src="./img/readme-bms-dashboard.png" alt="BMS 数据页面预览" width="220"><br>
       <sub>74% SOC、81.8 V、0.0 A、单体电压与温度</sub>
     </td>
   </tr>
@@ -35,11 +35,11 @@
   </tr>
   <tr>
     <td align="center">
-      <img src="./preview/readme-s1000rr-dashboard.png" alt="BMW S1000RR 风格仪表预览" width="220"><br>
+      <img src="./img/readme-s1000rr-dashboard.png" alt="BMW S1000RR 风格仪表预览" width="220"><br>
       <sub>88 km/h、28 Wh/km、3 挡、控制器与电机温度</sub>
     </td>
     <td align="center">
-      <img src="./preview/readme-controller-dashboard.png" alt="控制器数据显示页面预览" width="220"><br>
+      <img src="./img/readme-controller-dashboard.png" alt="控制器数据显示页面预览" width="220"><br>
       <sub>72 km/h、3 挡、8.6 kW、3450 RPM 与温度</sub>
     </td>
   </tr>
@@ -134,7 +134,8 @@ vercel/                       独立的 Vercel 控制站前端
 scripts/                      构建、烧录、串口桥接与诊断脚本
 tests/                        可在主机运行的协议/逻辑自测
 .trellis/spec/                项目工程规范与可执行约定
-preview/                      UI 预览图片的唯一存放目录
+img/                          README 使用并随仓库提交的图片
+preview/                      本地 UI 渲染脚本与过程预览（Git 忽略）
 ```
 
 `main/idf_main.c` 只负责启动编排；硬件、协议、状态和 UI 逻辑应放在对应 ESP-IDF 组件中。
