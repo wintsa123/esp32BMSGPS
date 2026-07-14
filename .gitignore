@@ -17,6 +17,8 @@
 /release-images/
 /ota-images/
 /preview/
+/gpt_image2_call.py
+/.gpt_image2_api_key
 /vercel/
 *.bin
 *.elf

@@ -55,8 +55,13 @@ LV_FONT_DECLARE(settings_zh_16);
 #define SETTINGS_DETAIL_HEADER_H 38
 #define SETTINGS_NAV_SCROLL_THRESHOLD 12
 #define SETTINGS_NAV_ANIM_MS 160
-#define SETTINGS_LIST_ROW_H_PORTRAIT 44
-#define SETTINGS_LIST_ROW_H_LANDSCAPE 38
+#define SETTINGS_LIST_ROW_H_PORTRAIT 52
+#define SETTINGS_LIST_ROW_H_LANDSCAPE 46
+#define SETTINGS_DETAIL_ROW_H_PORTRAIT 64
+#define SETTINGS_DETAIL_ROW_H_LANDSCAPE 56
+#define SETTINGS_CHOICE_ROW_H_PORTRAIT 56
+#define SETTINGS_CHOICE_ROW_H_LANDSCAPE 48
+#define SETTINGS_LIST_MARGIN_X 8
 #define SETTINGS_LIST_PAD_Y 4
 #define QUICK_BRIGHTNESS_MIN 10
 #define QUICK_BRIGHTNESS_MAX 100
@@ -150,6 +155,7 @@ typedef enum {
 
 typedef enum {
     SETTINGS_CONTROLLER_VIEW_ROOT = 0,
+    SETTINGS_CONTROLLER_VIEW_STYLE_LIST,
     SETTINGS_CONTROLLER_VIEW_BLE_LIST,
     SETTINGS_CONTROLLER_VIEW_TIRE_EDIT,
     SETTINGS_CONTROLLER_VIEW_RATIO_EDIT,
@@ -3137,9 +3143,10 @@ static bool settings_bms_popup_click_ready(lv_event_t *event)
 static void settings_show_bms_type_picker(void)
 {
     const bool portrait = s_ui.width < s_ui.height;
-    const int32_t card_x = 8;
-    const int32_t card_w = s_ui.width - 16;
-    const int32_t row_h = portrait ? 48 : 38;
+    const int32_t card_x = SETTINGS_LIST_MARGIN_X;
+    const int32_t card_w = s_ui.width - (SETTINGS_LIST_MARGIN_X * 2);
+    const int32_t row_h = portrait ? SETTINGS_CHOICE_ROW_H_PORTRAIT :
+                                     SETTINGS_CHOICE_ROW_H_LANDSCAPE;
     const int32_t gap = portrait ? 7 : 5;
     const int32_t first_y = 12;
     const uint8_t current = settings_current_snapshot()->bms_type;
@@ -3172,7 +3179,7 @@ static void settings_show_bms_type_picker(void)
                             LV_EVENT_CLICKED,
                             (void *)(uintptr_t)index);
 
-        const lv_font_t *text_font = &settings_zh_13;
+        const lv_font_t *text_font = &settings_zh_16;
         const int32_t text_h = (int32_t)text_font->line_height + 4;
         lv_obj_t *text = label(row, 12, (row_h - text_h) / 2, card_w - 52, text_h,
                                text_font);
@@ -3251,15 +3258,17 @@ static void settings_bms_ble_start_scan(void)
 static void settings_show_bms_ble_popup(settings_ble_source_t source, bool start_scan)
 {
     const bool portrait = s_ui.width < s_ui.height;
-    const int32_t card_x = 8;
-    const int32_t card_w = s_ui.width - 16;
-    const int32_t status_h = portrait ? 48 : 38;
+    const int32_t card_x = SETTINGS_LIST_MARGIN_X;
+    const int32_t card_w = s_ui.width - (SETTINGS_LIST_MARGIN_X * 2);
+    const int32_t status_h = portrait ? SETTINGS_CHOICE_ROW_H_PORTRAIT :
+                                        SETTINGS_CHOICE_ROW_H_LANDSCAPE;
     const int32_t refresh_w = status_h;
     const int32_t gap = portrait ? 7 : 5;
     const int32_t status_w = card_w - refresh_w - gap;
     const int32_t first_y = 12;
     const int32_t list_y = first_y + status_h + gap;
-    const int32_t row_h = portrait ? 48 : 42;
+    const int32_t row_h = portrait ? SETTINGS_CHOICE_ROW_H_PORTRAIT :
+                                     SETTINGS_CHOICE_ROW_H_LANDSCAPE;
     const esp_bms_dashboard_snapshot_t *snapshot = settings_current_snapshot();
     char status_text[24] = { 0 };
 
@@ -3291,10 +3300,10 @@ static void settings_show_bms_ble_popup(settings_ble_source_t source, bool start
                                    start_scan);
     s_ui.settings_bms_ble_status = label(status,
                                          10,
-                                         (status_h - ((int32_t)settings_zh_13.line_height + 4)) / 2,
+                                         (status_h - ((int32_t)settings_zh_16.line_height + 4)) / 2,
                                          status_w - 20,
-                                         (int32_t)settings_zh_13.line_height + 4,
-                                         &settings_zh_13);
+                                         (int32_t)settings_zh_16.line_height + 4,
+                                         &settings_zh_16);
     lv_label_set_text(s_ui.settings_bms_ble_status, status_text);
     lv_obj_set_style_text_color(s_ui.settings_bms_ble_status, COLOR_SETTINGS_TEXT, LV_PART_MAIN);
 
@@ -3318,13 +3327,13 @@ static void settings_show_bms_ble_popup(settings_ble_source_t source, bool start
                               ? ESP_BMS_BMS_SCAN_MAX_CANDIDATES
                               : source_count;
     if (count == 0U || start_scan) {
-        const int32_t empty_h = (int32_t)settings_zh_13.line_height + 8;
+        const int32_t empty_h = (int32_t)settings_zh_16.line_height + 8;
         lv_obj_t *empty = label(s_ui.settings_detail,
                                 card_x,
                                 list_y + 18,
                                 card_w,
                                 empty_h,
-                                &settings_zh_13);
+                                &settings_zh_16);
         lv_label_set_text(empty,
                           start_scan
                               ? "扫描..."
@@ -3359,8 +3368,8 @@ static void settings_show_bms_ble_popup(settings_ble_source_t source, bool start
                 (void)snprintf(fallback_name, sizeof(fallback_name), "设备 %u", (unsigned)index + 1U);
             }
             const char *name = has_name ? candidate->name : fallback_name;
-            const lv_font_t *name_font = &settings_zh_13;
-            const lv_font_t *metadata_font = &settings_zh_10;
+            const lv_font_t *name_font = &settings_zh_16;
+            const lv_font_t *metadata_font = &settings_zh_13;
             const int32_t name_h = (int32_t)name_font->line_height + 2;
             const int32_t text_y = (row_h - name_h) / 2;
             lv_obj_t *name_label = label(row, 10, text_y, card_w - 88, name_h, name_font);
@@ -3393,9 +3402,11 @@ static void settings_show_hotspot_detail(void)
     const esp_bms_dashboard_snapshot_t *snapshot = settings_current_snapshot();
 
     const bool portrait = s_ui.width < s_ui.height;
-    const int32_t card_x = 12;
-    const int32_t card_w = portrait ? s_ui.width - 24 : (s_ui.width / 2) - 16;
-    const int32_t row_h = portrait ? 56 : 48;
+    const int32_t card_x = SETTINGS_LIST_MARGIN_X;
+    const int32_t card_w = portrait ? s_ui.width - (SETTINGS_LIST_MARGIN_X * 2) :
+                                      (s_ui.width / 2) - 12;
+    const int32_t row_h = portrait ? SETTINGS_DETAIL_ROW_H_PORTRAIT :
+                                     SETTINGS_DETAIL_ROW_H_LANDSCAPE;
     const int32_t gap = 8;
     const int32_t info_y = 12 + row_h + gap;
     const int32_t info_h = portrait ? 78 : 96;
@@ -3477,9 +3488,10 @@ static void settings_show_bluetooth_detail(void)
 {
     const esp_bms_dashboard_snapshot_t *snapshot = settings_current_snapshot();
 
-    const int32_t card_x = 12;
-    const int32_t card_w = s_ui.width - 24;
-    const int32_t row_h = s_ui.width < s_ui.height ? 56 : 48;
+    const int32_t card_x = SETTINGS_LIST_MARGIN_X;
+    const int32_t card_w = s_ui.width - (SETTINGS_LIST_MARGIN_X * 2);
+    const int32_t row_h = s_ui.width < s_ui.height ? SETTINGS_DETAIL_ROW_H_PORTRAIT :
+                                                     SETTINGS_DETAIL_ROW_H_LANDSCAPE;
     const int32_t first_y = 12;
 
     const settings_detail_row_t rows[] = {
@@ -3509,9 +3521,10 @@ static void settings_show_bluetooth_detail(void)
 static void settings_show_bms_detail(void)
 {
     const esp_bms_dashboard_snapshot_t *snapshot = settings_current_snapshot();
-    const int32_t card_x = 12;
-    const int32_t card_w = s_ui.width - 24;
-    const int32_t row_h = s_ui.width < s_ui.height ? 56 : 48;
+    const int32_t card_x = SETTINGS_LIST_MARGIN_X;
+    const int32_t card_w = s_ui.width - (SETTINGS_LIST_MARGIN_X * 2);
+    const int32_t row_h = s_ui.width < s_ui.height ? SETTINGS_DETAIL_ROW_H_PORTRAIT :
+                                                     SETTINGS_DETAIL_ROW_H_LANDSCAPE;
     char ble_status[ESP_BMS_BMS_SCAN_NAME_LEN + 1U] = { 0 };
 
     s_ui.settings_bms_view = (uint8_t)SETTINGS_BMS_VIEW_ROOT;
@@ -3837,7 +3850,136 @@ static void settings_controller_value_row(lv_obj_t *parent,
                         settings_controller_value_event_cb,
                         LV_EVENT_CLICKED,
                         (void *)(uintptr_t)view);
-    lv_obj_t *arrow = label(box, w - 24, 0, 14, 15, &settings_zh_13);
+    lv_obj_t *arrow = label(box, w - 26, 0, 16, 18, &settings_zh_16);
+    lv_label_set_text(arrow, ">");
+    lv_obj_align(arrow, LV_ALIGN_RIGHT_MID, -10, 0);
+    lv_obj_set_style_text_align(arrow, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(arrow, COLOR_SETTINGS_ACCENT, LV_PART_MAIN);
+}
+
+static const char *const SETTINGS_CONTROLLER_STYLE_LABELS[] = {
+    "宝马 S1000RR",
+    "控制器监控",
+};
+
+static void settings_show_controller_style_picker(void);
+
+static void settings_controller_style_button_event_cb(lv_event_t *event)
+{
+    if (lv_event_get_code(event) != LV_EVENT_CLICKED || UI_FLAG(SETTINGS_SWIPE_CONSUMED)) {
+        return;
+    }
+    ESP_LOGI(TAG, "[controller-ui] open speed dashboard style list");
+    settings_show_controller_style_picker();
+}
+
+static void settings_controller_style_option_event_cb(lv_event_t *event)
+{
+    if (!settings_bms_popup_click_ready(event)) {
+        return;
+    }
+
+    const size_t selected = (size_t)(uintptr_t)lv_event_get_user_data(event);
+    if (selected >= ARRAY_SIZE(SETTINGS_CONTROLLER_STYLE_LABELS)) {
+        return;
+    }
+
+    const bool controller_monitor_selected = selected == 1U;
+    const bool controller_monitor_active =
+        SNAPSHOT_FLAG(settings_current_snapshot(), CONTROLLER_PAGE_ENABLED);
+    if (controller_monitor_selected != controller_monitor_active) {
+        ESP_LOGI(TAG,
+                 "[controller-ui] speed dashboard style selected: %s",
+                 SETTINGS_CONTROLLER_STYLE_LABELS[selected]);
+        queue_action_with_commit(ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_PAGE, true);
+    }
+    lv_indev_wait_release(lv_indev_active());
+}
+
+static void settings_show_controller_style_picker(void)
+{
+    const bool portrait = s_ui.width < s_ui.height;
+    const int32_t card_x = SETTINGS_LIST_MARGIN_X;
+    const int32_t card_w = s_ui.width - (SETTINGS_LIST_MARGIN_X * 2);
+    const int32_t row_h = portrait ? SETTINGS_CHOICE_ROW_H_PORTRAIT :
+                                     SETTINGS_CHOICE_ROW_H_LANDSCAPE;
+    const int32_t gap = portrait ? 8 : 6;
+    const int32_t first_y = 12;
+    const size_t current = SNAPSHOT_FLAG(settings_current_snapshot(), CONTROLLER_PAGE_ENABLED)
+                               ? 1U
+                               : 0U;
+
+    s_ui.settings_controller_view = (uint8_t)SETTINGS_CONTROLLER_VIEW_STYLE_LIST;
+    s_ui.settings_bms_ble_status = NULL;
+    lv_obj_clean(s_ui.settings_detail);
+    label_set_text_if_changed(s_ui.settings_detail_title, "速度仪表风格");
+    lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
+
+    for (size_t index = 0; index < ARRAY_SIZE(SETTINGS_CONTROLLER_STYLE_LABELS); ++index) {
+        const bool active = index == current;
+        lv_obj_t *row = panel(s_ui.settings_detail,
+                              card_x,
+                              first_y + ((int32_t)index * (row_h + gap)),
+                              card_w,
+                              row_h,
+                              COLOR_SETTINGS_CARD);
+        lv_obj_set_style_radius(row, 8, LV_PART_MAIN);
+        lv_obj_set_style_border_width(row, active ? 2 : 1, LV_PART_MAIN);
+        lv_obj_set_style_border_color(row,
+                                      active ? COLOR_SWITCH_ACTIVE : COLOR_SETTINGS_BORDER,
+                                      LV_PART_MAIN);
+        lv_obj_set_style_border_opa(row, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_pad_all(row, 0, LV_PART_MAIN);
+        lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
+        settings_add_swipe_handlers(row);
+        lv_obj_add_event_cb(row,
+                            settings_controller_style_option_event_cb,
+                            LV_EVENT_CLICKED,
+                            (void *)(uintptr_t)index);
+
+        const int32_t text_h = (int32_t)settings_zh_16.line_height + 4;
+        lv_obj_t *text = label(row,
+                               12,
+                               (row_h - text_h) / 2,
+                               card_w - 52,
+                               text_h,
+                               &settings_zh_16);
+        lv_label_set_text(text, SETTINGS_CONTROLLER_STYLE_LABELS[index]);
+        lv_obj_set_style_text_color(text,
+                                    active ? COLOR_SWITCH_ACTIVE : COLOR_SETTINGS_TEXT,
+                                    LV_PART_MAIN);
+        if (active) {
+            lv_obj_t *check = label(row,
+                                    card_w - 38,
+                                    (row_h - 20) / 2,
+                                    26,
+                                    20,
+                                    &lv_font_montserrat_14);
+            lv_label_set_text(check, LV_SYMBOL_OK);
+            lv_obj_set_style_text_align(check, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+            lv_obj_set_style_text_color(check, COLOR_SWITCH_ACTIVE, LV_PART_MAIN);
+        }
+    }
+}
+
+static void settings_controller_style_row(lv_obj_t *parent,
+                                          int32_t y,
+                                          int32_t w,
+                                          int32_t h,
+                                          const char *value)
+{
+    const settings_detail_row_t descriptor = {
+        "速度仪表风格",
+        value,
+        ESP_BMS_LVGL_ACTION_NONE,
+        SETTINGS_SYSTEM_VIEW_ROOT,
+    };
+    lv_obj_t *box = settings_detail_row(parent, 0, y, w, h, &descriptor);
+    lv_obj_add_event_cb(box,
+                        settings_controller_style_button_event_cb,
+                        LV_EVENT_CLICKED,
+                        NULL);
+    lv_obj_t *arrow = label(box, w - 26, 0, 16, 18, &settings_zh_16);
     lv_label_set_text(arrow, ">");
     lv_obj_align(arrow, LV_ALIGN_RIGHT_MID, -10, 0);
     lv_obj_set_style_text_align(arrow, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
@@ -3846,9 +3988,10 @@ static void settings_controller_value_row(lv_obj_t *parent,
 
 static void settings_show_controller_detail(void)
 {
-    const int32_t card_x = 12;
-    const int32_t card_w = s_ui.width - 24;
-    const int32_t row_h = s_ui.width < s_ui.height ? 56 : 48;
+    const int32_t card_x = SETTINGS_LIST_MARGIN_X;
+    const int32_t card_w = s_ui.width - (SETTINGS_LIST_MARGIN_X * 2);
+    const int32_t row_h = s_ui.width < s_ui.height ? SETTINGS_DETAIL_ROW_H_PORTRAIT :
+                                                     SETTINGS_DETAIL_ROW_H_LANDSCAPE;
     const esp_bms_dashboard_snapshot_t *snapshot = settings_current_snapshot();
     const bool online = SNAPSHOT_FLAG(snapshot, CONTROLLER_ONLINE);
     const bool controller_synced =
@@ -3880,11 +4023,11 @@ static void settings_show_controller_detail(void)
     } else {
         (void)snprintf(speed_source, sizeof(speed_source), "GPS");
     }
+    const settings_detail_row_t speed_source_row = {
+        "速度来源", speed_source,
+        ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_SOURCE, SETTINGS_SYSTEM_VIEW_ROOT,
+    };
     const settings_detail_row_t rows[] = {
-        { "速度来源", speed_source,
-          ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_SOURCE, SETTINGS_SYSTEM_VIEW_ROOT },
-        { "控制器连接", "连接远驱控制器",
-          ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_CONNECTION, SETTINGS_SYSTEM_VIEW_ROOT },
         { "蓝牙绑定", ble_status,
           ESP_BMS_LVGL_ACTION_START_CONTROLLER_BIND, SETTINGS_SYSTEM_VIEW_ROOT },
         { "速度单位", snapshot->speed_unit == ESP_BMS_SPEED_UNIT_MPH ? "mph" : "km/h",
@@ -3899,6 +4042,18 @@ static void settings_show_controller_detail(void)
                                         row_h,
                                         visible_row_count);
     size_t visible_index = 0U;
+    settings_detail_row(card,
+                        0,
+                        (int32_t)visible_index++ * row_h,
+                        card_w,
+                        row_h,
+                        &speed_source_row);
+    settings_controller_style_row(card,
+                                  (int32_t)visible_index++ * row_h,
+                                  card_w,
+                                  row_h,
+                                  SETTINGS_CONTROLLER_STYLE_LABELS[
+                                      SNAPSHOT_FLAG(snapshot, CONTROLLER_PAGE_ENABLED) ? 1U : 0U]);
     for (size_t index = 0; index < ARRAY_SIZE(rows); ++index) {
         if (!online && rows[index].action == ESP_BMS_LVGL_ACTION_NONE) {
             continue;
@@ -4379,8 +4534,8 @@ static lv_obj_t *settings_detail_row(lv_obj_t *parent,
                                     row->system_view != SETTINGS_SYSTEM_VIEW_ROOT);
     const bool has_switch = has_action && settings_detail_action_uses_switch(row->action);
     const bool has_subtitle = row && row->subtitle && row->subtitle[0] != '\0';
-    const lv_font_t *title_font = &settings_zh_13;
-    const lv_font_t *subtitle_font = &settings_zh_10;
+    const lv_font_t *title_font = &settings_zh_16;
+    const lv_font_t *subtitle_font = &settings_zh_13;
     const int32_t title_h = (int32_t)title_font->line_height + 4;
     const int32_t subtitle_h = (int32_t)subtitle_font->line_height + 4;
     const int32_t text_gap = has_subtitle ? 1 : 0;
@@ -4417,7 +4572,7 @@ static lv_obj_t *settings_detail_row(lv_obj_t *parent,
                                (h - switch_h) / 2,
                                settings_detail_action_switch_on(row->action));
     } else if (has_action) {
-        lv_obj_t *arrow = label(box, w - 24, 0, 14, 15, &settings_zh_13);
+        lv_obj_t *arrow = label(box, w - 26, 0, 16, 18, &settings_zh_16);
         lv_label_set_text(arrow, ">");
         lv_obj_align(arrow, LV_ALIGN_RIGHT_MID, -10, 0);
         lv_obj_set_style_text_align(arrow, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
@@ -4788,9 +4943,10 @@ static void settings_show_detail(settings_detail_id_t detail_id)
         return;
     }
 
-    const int32_t card_x = 12;
-    const int32_t card_w = s_ui.width - 24;
-    const int32_t row_h = s_ui.width < s_ui.height ? 56 : 48;
+    const int32_t card_x = SETTINGS_LIST_MARGIN_X;
+    const int32_t card_w = s_ui.width - (SETTINGS_LIST_MARGIN_X * 2);
+    const int32_t row_h = s_ui.width < s_ui.height ? SETTINGS_DETAIL_ROW_H_PORTRAIT :
+                                                     SETTINGS_DETAIL_ROW_H_LANDSCAPE;
     const int32_t first_y = 12;
 
     size_t row_count = 0;
@@ -4844,10 +5000,10 @@ static lv_obj_t *settings_option_card(lv_obj_t *parent,
                         option ? (void *)(uintptr_t)option->detail_id : NULL);
 
     const int32_t text_x = 12;
-    const lv_font_t *title_font = &settings_zh_13;
-    const lv_font_t *subtitle_font = &settings_zh_10;
-    const int32_t title_h = (int32_t)title_font->line_height + 2;
-    const int32_t subtitle_h = (int32_t)subtitle_font->line_height + 6;
+    const lv_font_t *title_font = &settings_zh_16;
+    const lv_font_t *subtitle_font = &settings_zh_13;
+    const int32_t title_h = (int32_t)title_font->line_height + 4;
+    const int32_t subtitle_h = (int32_t)subtitle_font->line_height + 4;
     const char *subtitle_text = option ? option->subtitle : "";
     const bool show_subtitle = h >= 42 && subtitle_text[0] != '\0';
     const int32_t text_gap = show_subtitle ? 1 : 0;
@@ -5805,7 +5961,7 @@ static void controller_dashboard_vertical_separator(lv_obj_t *parent,
     lv_obj_set_style_bg_opa(line, LV_OPA_COVER, LV_PART_MAIN);
 }
 
-static void __attribute__((unused)) create_controller_dashboard(void)
+static void create_controller_dashboard(void)
 {
     const bool portrait = s_ui.width < s_ui.height;
     lv_obj_t *frame = controller_dashboard_panel(s_ui.controller_page,
@@ -6028,6 +6184,28 @@ static void __attribute__((unused)) create_controller_dashboard(void)
                                                                 COLOR_CONTROLLER_VALUE);
         (void)controller_dashboard_label(stats_panel, "C", col_w * 3 + 47, 34, 14,
                                          unit_font->line_height, unit_font, COLOR_CONTROLLER_VALUE);
+    }
+}
+
+static void speed_dashboard_style_apply(const esp_bms_dashboard_snapshot_t *snapshot)
+{
+    const bool controller_monitor = SNAPSHOT_FLAG(snapshot, CONTROLLER_PAGE_ENABLED);
+    if (controller_monitor && !s_ui.controller_page) {
+        s_ui.controller_page = lv_obj_create(s_ui.gps_page);
+        clear_style(s_ui.controller_page);
+        lv_obj_set_pos(s_ui.controller_page, 0, 0);
+        lv_obj_set_size(s_ui.controller_page, s_ui.width, s_ui.height);
+        lv_obj_set_style_bg_color(s_ui.controller_page, COLOR_DASHBOARD_BG, LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(s_ui.controller_page, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_clear_flag(s_ui.controller_page,
+                          LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+        create_controller_dashboard();
+    }
+
+    set_obj_hidden(s_ui.speed_art, controller_monitor);
+    set_obj_hidden(s_ui.controller_page, !controller_monitor);
+    if (controller_monitor && s_ui.controller_page) {
+        lv_obj_move_foreground(s_ui.controller_page);
     }
 }
 
@@ -6756,6 +6934,7 @@ static void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapsho
 
     set_header(snapshot);
     set_dashboard(snapshot);
+    speed_dashboard_style_apply(snapshot);
     set_controller_dashboard(snapshot);
     set_gps_dashboard(snapshot);
     set_cast_page(snapshot);
@@ -6804,6 +6983,9 @@ static void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapsho
         controller_view_changed) {
         if (s_ui.settings_controller_view == (uint8_t)SETTINGS_CONTROLLER_VIEW_ROOT) {
             settings_show_controller_detail();
+        } else if (s_ui.settings_controller_view ==
+                       (uint8_t)SETTINGS_CONTROLLER_VIEW_STYLE_LIST) {
+            settings_show_controller_style_picker();
         } else if (s_ui.settings_controller_view ==
                        (uint8_t)SETTINGS_CONTROLLER_VIEW_BLE_LIST &&
                    controller_ble_changed) {
@@ -7677,8 +7859,8 @@ static void create_screen(lv_display_t *display)
                         NULL);
 
     const int32_t row_h = portrait ? SETTINGS_LIST_ROW_H_PORTRAIT : SETTINGS_LIST_ROW_H_LANDSCAPE;
-    const int32_t list_x = 12;
-    const int32_t list_w = s_ui.width - (list_x * 2);
+    const int32_t list_x = SETTINGS_LIST_MARGIN_X;
+    const int32_t list_w = s_ui.width - (SETTINGS_LIST_MARGIN_X * 2);
     lv_obj_t *list_card = settings_list_card(s_ui.settings_carousel,
                                              list_x,
                                              SETTINGS_LIST_PAD_Y,

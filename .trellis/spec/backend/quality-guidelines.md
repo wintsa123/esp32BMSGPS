@@ -796,13 +796,16 @@ bound device update the runtime snapshot.
 ### 2. Signatures
 
 - Preference enum: `esp_bms_speed_source_t` with `GPS=0` and `CONTROLLER=1`.
-- Action: `ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_SOURCE`; legacy
-  `ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_PAGE` remains an alias for the same
-  preference transition.
+- Source action: `ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_SOURCE`.
+- Style action: `ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_PAGE` toggles between
+  the BMW S1000RR style and the controller-monitor style; it does not change
+  speed-source preference.
 - Stable collection source:
   `ESP_BMS_LVGL_DATA_SOURCE_SPEED_DASHBOARD`.
-- Persistent keys: `speed_src` is authoritative; `ctl_page` is a compatibility
-  mirror and migration source only; `ctl_conn` remains independent.
+- Persistent keys: `speed_src` is the authoritative source preference;
+  `speed_style` is the authoritative dashboard style (`0` BMW, `1` controller
+  monitor); `ctl_page` is a compatibility mirror and migration source for
+  `speed_src` only; `ctl_conn` remains the controller lifecycle state.
 - Snapshot fields: `speed_source`, `active_speed_source`,
   `gps_local_time_valid`, `gps_local_hour`, `gps_local_minute`,
   `average_consumption_valid`, and
@@ -818,6 +821,11 @@ bound device update the runtime snapshot.
 - A missing `speed_src` migrates `ctl_page=1` to controller preference and any
   other valid legacy value to GPS, then persists both keys. A new/default
   configuration prefers GPS.
+- A missing `speed_style` defaults to BMW S1000RR. The style is independent of
+  source preference: either style may display GPS or controller-derived speed.
+  Selecting controller monitor enables the controller connection lifecycle;
+  selecting BMW does not disconnect an already active controller because the
+  BMW layout still consumes controller gear and temperature when available.
 - Controller preference plus an online controller selects controller as the
   active source. A disconnected or disabled controller selects GPS without
   changing the preference; reconnect restores controller automatically.
@@ -834,6 +842,10 @@ bound device update the runtime snapshot.
 - The fixed carousel is Battery -> unified Speed -> Cast. The speed page keeps
   BMS polling and FarDriver gather/keepalive active together; after trip
   accumulation starts, BMS polling continues on other pages.
+- The unified physical speed page owns the BMW object tree and creates the
+  controller-monitor overlay only when that style is first selected. Switching
+  back hides the opaque overlay and restores the BMW draw object without adding
+  or removing carousel pages.
 - The V4 page uses a custom draw object rather than a full-screen canvas.
   Metric range is 0..180 km/h and imperial range is 0..120 mph; the color band
   clamps at the range while the numeric speed keeps the real value.
@@ -856,6 +868,8 @@ bound device update the runtime snapshot.
 
 - `speed_source` is neither `gps` nor `controller` -> HTTP 400; do not queue or
   persist a partial configuration.
+- Saved `speed_style` is greater than `1` -> reject the display settings as
+  invalid rather than guessing a style.
 - Controller preference is offline -> report preference=controller,
   active=GPS, keep bound identity/parameters, hide controller/motor
   temperature fields, and display gear `1`.
@@ -876,10 +890,14 @@ bound device update the runtime snapshot.
 - Good: controller preference reconnects after an offline GPS fallback,
   restores controller speed automatically, and Web/TFT both show the same
   persisted preference.
+- Good: controller-monitor style with GPS preference keeps the monitor layout
+  while the main speed remains GPS-derived; changing source does not change
+  style, and changing style does not change source.
 - Base: no GPS fix, no controller, and no BMS; the unified page remains visible
   with `-`, `--:--`, an orange GPS point, hidden battery/consumption/temperatures,
   and default gear `1`.
-- Bad: removing the speed page when controller mode is disabled, using speed
+- Bad: deriving style from `speed_source`, reusing `ctl_page` as the new style
+  key, removing the speed page when controller mode is disabled, using speed
   validity as online state, resetting trip totals on a page swipe, or adding a
   full-screen framebuffer on the 4 MB/no-PSRAM target.
 
@@ -894,6 +912,10 @@ bound device update the runtime snapshot.
   SOC states. Assert the landscape status bar is one row, numeric SOC is
   absent, missing controller gear renders `1`, and there is no clipping,
   overlap, scrollbar, or stale temperature field.
+- Exercise the TFT style list in both orientations. Assert BMW/controller
+  monitor selection survives reboot, preserves the source preference, keeps
+  the carousel at three pages, and returns one level with header-back or the
+  left-edge gesture.
 - Render explicit BMS-offline landscape and portrait states. Assert the entire
   battery graphic and consumption label are absent while GPS/controller/time
   content keeps its normal geometry.
@@ -940,9 +962,9 @@ speed_valid = active == CONTROLLER ? controller.speed_valid : gps_fix_valid;
   `controller_tire_width_mm`; `ESP_BMS_LVGL_ACTION_SET_CONTROLLER_RATIO`
   carries `controller_gear_ratio_centi`. Both require
   `ESP_BMS_LVGL_ACTION_EVENT_FLAG_CONTROLLER_SETTING_VALID`.
-- Persistent keys: `speed_src`, `ctl_conn`, compatibility `ctl_page`, legacy
-  `ctl_wheel`, `ctl_ratio`, `ctl_rim`, `ctl_aspect`, `ctl_width`, `ctl_mac`,
-  and `ctl_name` in namespace `esp_bms`.
+- Persistent keys: `speed_src`, `speed_style`, `ctl_conn`, compatibility
+  `ctl_page`, legacy `ctl_wheel`, `ctl_ratio`, `ctl_rim`, `ctl_aspect`,
+  `ctl_width`, `ctl_mac`, and `ctl_name` in namespace `esp_bms`.
 - Snapshot source: `controller_param_source` is one of unset, legacy wheel,
   local specification, or controller-provided parameters. Snapshot fields keep
   effective values separate from `controller_fallback_*` values.
@@ -952,9 +974,10 @@ speed_valid = active == CONTROLLER ? controller.speed_valid : gps_fix_valid;
 - Missing controller keys do not invalidate older display settings. Tire
   specification defaults to unset and ratio defaults to `1.00`; restore
   defaults restores those values while preserving the bound MAC and name.
-- `controller_page_enabled` is only a compatibility mirror for legacy
-  `ctl_page` and the old toggle action. It must not create/remove carousel
-  pages or control the FarDriver connection lifecycle.
+- `controller_page_enabled` / `CONTROLLER_PAGE_ENABLED` represent the selected
+  dashboard style: false is BMW S1000RR and true is controller monitor. They
+  may show/hide the monitor overlay but must not create/remove carousel pages
+  or replace `speed_source`. The old toggle action now changes this style.
 - `controller_connection_enabled` is the lifecycle switch. Disabling it stops
   scan intent and terminates current or late-arriving connections without
   clearing the bound MAC/name; enabling it reconnects a bound controller.

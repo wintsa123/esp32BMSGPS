@@ -93,6 +93,7 @@ static const char *TAG = "bms_idf_runtime";
 #define DISPLAY_NVS_ROTATION_KEY "disp_rot"
 #define DISPLAY_NVS_SPEED_UNIT_KEY "speed_unit"
 #define DISPLAY_NVS_SPEED_SOURCE_KEY "speed_src"
+#define DISPLAY_NVS_SPEED_STYLE_KEY "speed_style"
 #define DISPLAY_NVS_LANGUAGE_KEY "lang"
 #define DISPLAY_NVS_BMS_TYPE_KEY "bms_type"
 #define CONTROLLER_NVS_CONNECTION_KEY "ctl_conn"
@@ -265,7 +266,6 @@ static void runtime_project_controller_snapshot(esp_bms_idf_runtime_t *runtime)
 {
     esp_bms_dashboard_snapshot_t *snapshot = &runtime->snapshot;
     const esp_fardriver_state_t *state = &runtime->controller_state;
-    runtime->controller_page_enabled = snapshot->speed_source == ESP_BMS_SPEED_SOURCE_CONTROLLER;
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, CONTROLLER_CONNECTION_ENABLED, runtime->controller_connection_enabled);
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, CONTROLLER_PAGE_ENABLED, runtime->controller_page_enabled);
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, CONTROLLER_ONLINE, runtime->controller_conn_handle != 0xFFFFU);
@@ -1957,10 +1957,11 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
     uint8_t rotation = 0;
     uint8_t speed_unit = 0;
     uint8_t speed_source = (uint8_t)ESP_BMS_SPEED_SOURCE_GPS;
+    uint8_t speed_dashboard_style = 0;
     uint8_t language = 0;
     uint8_t bms_type = (uint8_t)ESP_BMS_IDF_BMS_TYPE_ANT;
     uint8_t controller_connection_enabled = 0;
-    uint8_t controller_page_enabled = 0;
+    uint8_t legacy_controller_page_enabled = 0;
     uint8_t controller_tire_rim_inch = 0;
     uint8_t controller_tire_aspect_percent = 0;
     uint16_t controller_tire_width_mm = 0;
@@ -1998,20 +1999,25 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
     }
     if (ret == ESP_OK) {
         ret = runtime_nvs_get_optional_u8(handle, CONTROLLER_NVS_PAGE_KEY,
-                                          &controller_page_enabled);
+                                          &legacy_controller_page_enabled);
     }
     if (ret == ESP_OK) {
         const esp_err_t source_ret = nvs_get_u8(handle,
                                                 DISPLAY_NVS_SPEED_SOURCE_KEY,
                                                 &speed_source);
         if (source_ret == ESP_ERR_NVS_NOT_FOUND) {
-            speed_source = controller_page_enabled != 0U
+            speed_source = legacy_controller_page_enabled != 0U
                                ? (uint8_t)ESP_BMS_SPEED_SOURCE_CONTROLLER
                                : (uint8_t)ESP_BMS_SPEED_SOURCE_GPS;
             speed_source_migration_needed = true;
         } else {
             ret = source_ret;
         }
+    }
+    if (ret == ESP_OK) {
+        ret = runtime_nvs_get_optional_u8(handle,
+                                          DISPLAY_NVS_SPEED_STYLE_KEY,
+                                          &speed_dashboard_style);
     }
     if (ret == ESP_OK) {
         ret = runtime_nvs_get_optional_u16(handle, CONTROLLER_NVS_WHEEL_KEY,
@@ -2055,7 +2061,8 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
         !runtime_speed_source_matches_policy(speed_source) ||
         !runtime_language_matches_policy(language) ||
         !runtime_bms_type_matches_policy(bms_type) ||
-        controller_connection_enabled > 1U || controller_page_enabled > 1U) {
+        controller_connection_enabled > 1U || legacy_controller_page_enabled > 1U ||
+        speed_dashboard_style > 1U) {
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -2105,8 +2112,7 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
     RUNTIME_SET_FLAG(runtime, LANGUAGE_ZH, language != 0U);
     runtime->bms_type = bms_type;
     runtime->snapshot.bms_type = runtime->bms_type;
-    runtime->controller_page_enabled =
-        runtime->snapshot.speed_source == ESP_BMS_SPEED_SOURCE_CONTROLLER;
+    runtime->controller_page_enabled = speed_dashboard_style != 0U;
     runtime->controller_connection_enabled = controller_connection_enabled != 0U;
     runtime->controller_fallback_tire_rim_inch = controller_tire_rim_inch;
     runtime->controller_fallback_tire_aspect_percent = controller_tire_aspect_percent;
@@ -2181,6 +2187,11 @@ esp_err_t esp_bms_idf_runtime_save_display_settings(esp_bms_idf_runtime_t *runti
         ret = nvs_set_u8(handle,
                          DISPLAY_NVS_SPEED_SOURCE_KEY,
                          (uint8_t)runtime->snapshot.speed_source);
+    }
+    if (ret == ESP_OK) {
+        ret = nvs_set_u8(handle,
+                         DISPLAY_NVS_SPEED_STYLE_KEY,
+                         runtime->controller_page_enabled ? 1U : 0U);
     }
     if (ret == ESP_OK) {
         ret = nvs_set_u8(handle, DISPLAY_NVS_LANGUAGE_KEY, RUNTIME_FLAG(runtime, LANGUAGE_ZH) ? 1U : 0U);
@@ -2301,7 +2312,6 @@ bool esp_bms_idf_runtime_apply_pending_http_config(esp_bms_idf_runtime_t *runtim
     runtime->display_rotation = rotation;
     runtime->snapshot.speed_unit = speed_unit;
     runtime->snapshot.speed_source = speed_source;
-    runtime->controller_page_enabled = speed_source == ESP_BMS_SPEED_SOURCE_CONTROLLER;
     RUNTIME_SET_FLAG(runtime, LANGUAGE_ZH, language_zh);
     runtime->bms_type = bms_type;
     runtime->snapshot.bms_type = runtime->bms_type;
@@ -5491,14 +5501,20 @@ bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,
         runtime_project_controller_snapshot(runtime);
         return true;
     case ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_PAGE:
+        runtime->controller_page_enabled = !runtime->controller_page_enabled;
+        if (runtime->controller_page_enabled) {
+            runtime->controller_connection_enabled = true;
+            (void)esp_bms_idf_runtime_start_controller_ble_if_enabled(runtime);
+        }
+        runtime_project_controller_snapshot(runtime);
+        return true;
     case ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_SOURCE:
         runtime->snapshot.speed_source =
             runtime->snapshot.speed_source == ESP_BMS_SPEED_SOURCE_GPS
                 ? ESP_BMS_SPEED_SOURCE_CONTROLLER
                 : ESP_BMS_SPEED_SOURCE_GPS;
-        runtime->controller_page_enabled =
-            runtime->snapshot.speed_source == ESP_BMS_SPEED_SOURCE_CONTROLLER;
-        if (runtime->controller_page_enabled && runtime->controller_connection_enabled) {
+        if (runtime->snapshot.speed_source == ESP_BMS_SPEED_SOURCE_CONTROLLER &&
+            runtime->controller_connection_enabled) {
             (void)esp_bms_idf_runtime_start_controller_ble_if_enabled(runtime);
         }
         runtime_project_controller_snapshot(runtime);

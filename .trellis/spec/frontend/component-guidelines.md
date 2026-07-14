@@ -40,8 +40,8 @@ Questions to answer:
 
 ### LVGL Settings Detail Rows
 
-- Settings root and secondary list pages use a black page background with one `COLOR_SETTINGS_LIST` card inset by 12px. Rows inside that card have no individual corner radius or gaps; use bottom borders as separators and let the parent card clip the outer corners.
-- Secondary settings rows use `settings_zh_13` for the title and `settings_zh_10` for `desc` / subtitle text; do not go below 10px for CJK subtitles because smaller bitmap fonts clip or lose strokes.
+- Settings root and secondary list pages use a black page background with one `COLOR_SETTINGS_LIST` card inset by 8px. Rows inside that card have no individual corner radius or gaps; use bottom borders as separators and let the parent card clip the outer corners.
+- Root and secondary settings rows use `settings_zh_16` for the title and `settings_zh_13` for `desc` / subtitle text. Root rows are 52px portrait / 46px landscape; detail rows are 64px portrait / 56px landscape; choice-list rows are 56px portrait / 48px landscape. Keep these minimum touch targets unless a full-screen editor has a stronger geometry requirement.
 - English and Chinese subtitles must render at the same visual size; preview fallback ASCII labels must be scaled down when the preview runtime lacks the exact font size.
 - Title + desc must be vertically centered as one text block inside the row; do not use fixed y offsets that only work for one row height.
 - Label boxes must be taller than the font line height so CJK and fallback ASCII glyphs do not clip at the bottom edge.
@@ -53,8 +53,9 @@ Questions to answer:
 - BLE candidate rows open a confirmation overlay before queuing a bind. Copy the candidate name and MAC into stable UI storage before opening it; never retain a pointer to a snapshot row across refreshes, and never show an anonymous candidate's MAC as its display name.
 - Repeated BLE advertisements may update cached RSSI without rebuilding the candidate list. Rebuild only for new candidates, identity/name changes, or scan-state changes; deleting a pressed row before `LV_EVENT_CLICKED` makes the first tap disappear.
 - BMS and controller BLE selection use one source-parameterized list and confirmation renderer. The source adapter owns candidate/count/bound-name selection plus scan/bind actions; do not add controller candidates beneath the controller root card or copy a second page implementation.
-- A controller settings subview is explicit (`ROOT`, `BLE_LIST`, `TIRE_EDIT`, `RATIO_EDIT`). Header-back and left-edge back pop one level; snapshot refreshes may update root/BLE views but must never rebuild an active roller editor and destroy its draft.
-- Controller tire/ratio rows remain visible when the controller page is enabled. Offline rows and controller-synchronized rows use `LV_STATE_DISABLED`; only online rows without controller parameters navigate to an editor.
+- A controller settings subview is explicit (`ROOT`, `STYLE_LIST`, `BLE_LIST`, `TIRE_EDIT`, `RATIO_EDIT`). Header-back and left-edge back pop one level; snapshot refreshes may update root/style/BLE views but must never rebuild an active roller editor and destroy its draft.
+- The speed-dashboard style row is navigational, not a switch. Its full detail list offers `宝马 S1000RR` and `控制器监控`, marks the active choice with `COLOR_SWITCH_ACTIVE`, and persists the choice independently from GPS/controller speed-source preference.
+- Controller tire/ratio rows are shown when the controller is online, independent of the selected dashboard style. Controller-synchronized rows use `LV_STATE_DISABLED`; only online rows without controller parameters navigate to an editor.
 - Bounded numeric roller editors hold a local draft and queue one absolute-value action only from the green confirmation button. Back/cancel queues no action, and refresh/scan actions must not be treated as settings changes that write NVS.
 - A confirmed bind uses the existing toast objects for a persistent rotating `LV_SYMBOL_LOOP` plus `连接...`. Stop the animation on terminal connection states and replace it with `绑定成功` only on the offline-to-online snapshot transition.
 - FarDriver controller telemetry subscription and notification parsing stay active after the controller GATT path reaches online, independent of the currently visible dashboard page. The stable page may gate the 2-second active gather request, but must not unsubscribe or discard notifications; otherwise the controller carousel opens with no cached telemetry.

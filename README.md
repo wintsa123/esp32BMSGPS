@@ -10,6 +10,41 @@
 
 > 当前项目处于持续开发与实机联调阶段。核心固件和主要交互链路已经可用，OTA、轨迹存储及部分硬件兼容性仍未完成。
 
+## 🖼️ 本地界面预览
+
+> `preview/` 默认被 Git 忽略，下列图片用于本地 README 预览，不随仓库提交。
+
+<table>
+  <tr>
+    <th>设备设置首页</th>
+    <th>BMS 数据</th>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="./preview/readme-settings-home.png" alt="设备设置首页预览" width="220"><br>
+      <sub>系统设置、亮度、音量、调节条位置与屏幕校准</sub>
+    </td>
+    <td align="center">
+      <img src="./preview/readme-bms-dashboard.png" alt="BMS 数据页面预览" width="220"><br>
+      <sub>74% SOC、81.8 V、0.0 A、单体电压与温度</sub>
+    </td>
+  </tr>
+  <tr>
+    <th>BMW S1000RR 风格仪表</th>
+    <th>控制器数据</th>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="./preview/readme-s1000rr-dashboard.png" alt="BMW S1000RR 风格仪表预览" width="220"><br>
+      <sub>88 km/h、28 Wh/km、3 挡、控制器与电机温度</sub>
+    </td>
+    <td align="center">
+      <img src="./preview/readme-controller-dashboard.png" alt="控制器数据显示页面预览" width="220"><br>
+      <sub>72 km/h、3 挡、8.6 kW、3450 RPM 与温度</sub>
+    </td>
+  </tr>
+</table>
+
 ## 🌐 在线控制网站
 
 <p align="center">
