@@ -12,7 +12,6 @@
 
 <h2 align="center">🖼️ 界面预览</h2>
 
-<p align="center">下列 README 图片存放在可跟踪的 <code>img/</code> 目录；本地渲染过程文件仍保存在被 Git 忽略的 <code>preview/</code> 目录。</p>
 
 <table align="center">
   <tr>
