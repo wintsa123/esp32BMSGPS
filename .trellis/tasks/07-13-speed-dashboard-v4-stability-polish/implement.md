@@ -152,3 +152,31 @@ node .gitnexus/run.cjs detect-changes --repo esp32BMSGPS --scope all
 - 实车移动跨过 4 km/h、再降到 2 km/h，确认 TFT 与行程距离同步退出/进入静止态。
 - 现场目视确认横竖屏色带、切页体感和橙/绿状态点；回归控制器断连/重连与
   GPS/Controller 来源切换。这些分支未从远端串口冒充为已通过。
+
+## 2026-07-14 横屏曲线平滑度跟进
+
+- [x] 用户确认“不平滑”指弧形轮廓折线感，而不是页面滑动或速度刷新卡顿。
+- [x] 将固件和 preview 的色带段数由 32 提高到 48；危险区、次刻度、主刻度改为
+  按总段数的 `7/8`、`1/16`、`1/4` 计算，并增加编译期断言确保活动段数仍适配
+  render signature 的低 6 位。
+- [x] 重渲染根目录 `preview/` 中横屏 0/88/180/超量程状态并逐张检查弧线、颜色
+  边界和刻度位置；横竖屏至少各检查一张。
+- [ ] 运行 drag diagnostics 对比 32/48 段 draw elapsed 和切页表现；若明显回退，
+  保留 32 段色带，只对外轮廓加密采样。
+- [x] 通过 `git diff --check`、ESP-IDF build、GitNexus `detect_changes()` 和 LAN
+  RFC2217 真机刷写监控后，再记录现场目视结论。
+
+### 2026-07-14 跟进结果
+
+- 48 段配 1-2 px 方端重叠仍有黑色尖缝，圆端会形成明显胶囊段；最终采用 4 px
+  切线重叠，横竖屏及 13 个状态预览无裂缝、裁切或颜色边界错位。
+- 未启用 `LV_USE_VECTOR_GRAPHIC`/ThorVG：`lv_bezier3()` 只生成坐标，软件
+  `cubic_to` 需要额外矢量引擎并把 LVGL draw-thread stack 提高到至少 32 KB。
+- GPS stream、speed dashboard、FarDriver host selftest 和 `git diff --check`
+  通过；ESP-IDF 5.5.4 build 通过，镜像 `0x15ef60`，最小 OTA 槽剩余
+  `0x810a0`（27%）。
+- GitNexus compare `origin/main` 为 MEDIUM，实际受影响只有两条
+  `speed_dashboard_draw_event_cb` 绘制流程；其余报告项为同文件相邻 hunk 误归属。
+- RFC2217 刷写、哈希校验和启动监控通过；首屏后 free heap 约 109 KB、最大连续块
+  约 106 KB，无 panic/WDT。远程串口无法目视 TFT，现场曲线观感与拖动耗时仍需
+  用户在设备前确认。

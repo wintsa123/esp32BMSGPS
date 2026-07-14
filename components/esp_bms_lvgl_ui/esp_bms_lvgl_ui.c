@@ -90,7 +90,12 @@ LV_FONT_DECLARE(settings_zh_16);
 #define QUICK_LOCK_ICON_W 24
 #define QUICK_LOCK_ICON_H 28
 #define DASHBOARD_CELL_STAT_COUNT 4U
-#define SPEED_DASHBOARD_SEGMENT_COUNT 32U
+#define SPEED_DASHBOARD_SEGMENT_COUNT 48U
+#define SPEED_DASHBOARD_DANGER_START \
+    ((SPEED_DASHBOARD_SEGMENT_COUNT * 7U) / 8U)
+#define SPEED_DASHBOARD_MINOR_TICK_STEP (SPEED_DASHBOARD_SEGMENT_COUNT / 16U)
+#define SPEED_DASHBOARD_MAJOR_TICK_STEP (SPEED_DASHBOARD_SEGMENT_COUNT / 4U)
+#define SPEED_DASHBOARD_BAND_OVERLAP 4
 #define SPEED_DASHBOARD_SCALE_LABEL_COUNT 6U
 #define DASHBOARD_CELL_KEY_BITMAP_W 28
 #define DASHBOARD_CELL_KEY_BITMAP_H 16
@@ -109,6 +114,10 @@ _Static_assert(QUICK_PANEL_BUTTON_COUNT <= 8,
                "quick panel item masks are stored in uint8_t");
 _Static_assert(DASHBOARD_CELL_STAT_COUNT <= 8,
                "dashboard cell draw buffer masks are stored in uint8_t");
+_Static_assert(SPEED_DASHBOARD_SEGMENT_COUNT < 64U,
+               "speed dashboard segments must fit the render signature");
+_Static_assert((SPEED_DASHBOARD_SEGMENT_COUNT % 16U) == 0U,
+               "speed dashboard tick spacing requires 16 subdivisions");
 _Static_assert((ESP_BMS_LVGL_ROTATE_SAVE_DELAY_MS % QUICK_ROTATE_TOAST_TICK_MS) == 0U,
                "rotate toast countdown expects whole-second ticks");
 
@@ -6386,7 +6395,7 @@ static lv_color_t speed_dashboard_segment_color(uint32_t index,
                                                 uint32_t active_segments,
                                                 bool speed_valid)
 {
-    if (index >= 28U) {
+    if (index >= SPEED_DASHBOARD_DANGER_START) {
         return COLOR_SPEED_BAND_DANGER;
     }
     if (!speed_valid || index >= active_segments) {
@@ -6466,12 +6475,12 @@ static void speed_dashboard_overlap_band_endpoints(uint32_t index,
         return;
     }
     if (index > 0U) {
-        start->x -= dx / span;
-        start->y -= dy / span;
+        start->x -= (dx * SPEED_DASHBOARD_BAND_OVERLAP) / span;
+        start->y -= (dy * SPEED_DASHBOARD_BAND_OVERLAP) / span;
     }
     if (index + 1U < SPEED_DASHBOARD_SEGMENT_COUNT) {
-        end->x += dx / span;
-        end->y += dy / span;
+        end->x += (dx * SPEED_DASHBOARD_BAND_OVERLAP) / span;
+        end->y += (dy * SPEED_DASHBOARD_BAND_OVERLAP) / span;
     }
 }
 
@@ -6594,13 +6603,17 @@ static void speed_dashboard_draw_event_cb(lv_event_t *event)
         speed_dashboard_draw_line(layer,
                                   outer[index],
                                   outer[index + 1U],
-                                  index >= 28U ? COLOR_SPEED_BAND_DANGER : COLOR_WHITE,
+                                  index >= SPEED_DASHBOARD_DANGER_START
+                                      ? COLOR_SPEED_BAND_DANGER
+                                      : COLOR_WHITE,
                                   2,
                                   false);
     }
 
-    for (uint32_t index = 0U; index <= SPEED_DASHBOARD_SEGMENT_COUNT; index += 2U) {
-        const bool major = index % 8U == 0U || index == SPEED_DASHBOARD_SEGMENT_COUNT;
+    for (uint32_t index = 0U; index <= SPEED_DASHBOARD_SEGMENT_COUNT;
+         index += SPEED_DASHBOARD_MINOR_TICK_STEP) {
+        const bool major = index % SPEED_DASHBOARD_MAJOR_TICK_STEP == 0U ||
+                           index == SPEED_DASHBOARD_SEGMENT_COUNT;
         const int32_t numerator = major ? 38 : 22;
         const lv_point_t tick_end = speed_dashboard_point(
             outer[index].x + ((inner[index].x - outer[index].x) * numerator / 100),
@@ -6608,7 +6621,9 @@ static void speed_dashboard_draw_event_cb(lv_event_t *event)
         speed_dashboard_draw_line(layer,
                                   outer[index],
                                   tick_end,
-                                  index >= 28U ? COLOR_SPEED_BAND_DANGER : COLOR_WHITE,
+                                  index >= SPEED_DASHBOARD_DANGER_START
+                                      ? COLOR_SPEED_BAND_DANGER
+                                      : COLOR_WHITE,
                                   major ? 2 : 1,
                                   false);
     }

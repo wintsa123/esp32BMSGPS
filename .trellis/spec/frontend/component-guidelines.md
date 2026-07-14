@@ -90,6 +90,14 @@ Questions to answer:
 - `LV_OBJ_FLAG_SCROLL_ONE` is not the complete carousel contract. Use the scroll container's direct `LV_EVENT_SCROLL_BEGIN` / `LV_EVENT_SCROLL` / `LV_EVENT_SCROLL_THROW_BEGIN` / `LV_EVENT_SCROLL_END` chain so a child widget becoming the original touch target cannot hide the gesture. Freeze the actual displacement at `LV_EVENT_SCROLL_THROW_BEGIN`; a displacement of one-fifth page width (64px landscape, 48px portrait) selects the adjacent page, while a shorter drag returns to the stable page. This threshold sits above the observed sub-40px touch-jitter cluster and covers about 82% of historical multi-sample horizontal swipes. Every gesture is limited to `-1/0/+1` page, while programmatic `move_to_page()` remains unrestricted because it has no throw-begin event.
 - Validate every fixed-width label against the native font's actual glyph width. In particular, Montserrat 24 `km/h` is about 65px wide; its label needs extra width and right-frame clearance in both orientations.
 
+### LVGL Speed Dashboard Curve
+
+- The S1000RR band path uses the fixed-point cubic smoothstep `3t^2-2t^3`, which is equivalent to a cubic Bezier with normalized control points `(0,0)`, `(1/3,0)`, `(2/3,1)`, `(1,1)`. Calling `lv_bezier3()` would produce the same sampled coordinates; it does not fill a variable-width band by itself.
+- Keep `CONFIG_LV_USE_VECTOR_GRAPHIC` and ThorVG disabled for this single curve on ESP32-WROOM-32E. The software vector path requires a vector engine and at least a 32 KB LVGL draw-thread stack, while this target has no PSRAM.
+- Use bounded fixed-point sampling for the colored band. When changing `SPEED_DASHBOARD_SEGMENT_COUNT`, preserve the danger start at `7/8`, minor ticks at `1/16`, major ticks at `1/4`, and keep the maximum active-segment value below the render signature's 6-bit field.
+- Dense wide-line segments need explicit tangent overlap. The 48-segment band uses 4 px overlap; 1-2 px leaves black wedges at the lower edge, while round caps turn short, wide color segments into visible capsules.
+- Mirror the same segment count, ratios, and overlap in `preview/speed_dashboard_v4_preview.py`, render both 320x240 and 240x320 states, and inspect zero, intermediate, maximum, over-range, invalid, GPS-search, BMS-offline, controller-offline, and missing-SOC cases before firmware build and flash.
+
 ### LVGL Settings Navigation
 
 - The settings root and all settings detail pages reuse one persistent top navigation object. The root title is `设置` and its back action returns to the dashboard; detail titles come from `SETTINGS_OPTIONS` and return to the settings root.
