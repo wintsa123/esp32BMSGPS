@@ -6,7 +6,9 @@
 #include <string.h>
 #include "esp_bms_lvgl_contract.h"
 #include "esp_check.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "sdkconfig.h"
 #include "widgets/canvas/lv_canvas.h"
 #include "widgets/line/lv_line.h"
@@ -385,6 +387,14 @@ typedef struct {
     char speed_motor_temp_buf[16];
     char speed_gear_buf[8];
     char speed_scale_buf[SPEED_DASHBOARD_SCALE_LABEL_COUNT][8];
+    uint32_t speed_art_signature;
+    bool speed_art_signature_valid;
+#if CONFIG_ESP_BMS_LVGL_UI_DRAG_DIAGNOSTICS
+    uint32_t speed_art_draw_count;
+    uint32_t speed_art_draw_max_us;
+    uint64_t speed_art_draw_elapsed_us;
+    int64_t drag_diagnostic_start_us;
+#endif
     lv_obj_t *setup_ap_control_row;
     lv_obj_t *setup_ap_info;
     lv_obj_t *setup_ap_qr_panel;
@@ -6109,7 +6119,8 @@ static void speed_dashboard_draw_line(lv_layer_t *layer,
                                       lv_point_t start,
                                       lv_point_t end,
                                       lv_color_t color,
-                                      int32_t width)
+                                      int32_t width,
+                                      bool rounded)
 {
     lv_draw_line_dsc_t line;
     lv_draw_line_dsc_init(&line);
@@ -6120,6 +6131,8 @@ static void speed_dashboard_draw_line(lv_layer_t *layer,
     line.color = color;
     line.width = width;
     line.opa = LV_OPA_COVER;
+    line.round_start = rounded;
+    line.round_end = rounded;
     lv_draw_line(layer, &line);
 }
 
@@ -6213,6 +6226,77 @@ static lv_color_t speed_dashboard_segment_color(uint32_t index,
                         (uint8_t)((progress - 176U) * 255U / 79U));
 }
 
+static uint32_t speed_dashboard_active_segments(const esp_bms_dashboard_snapshot_t *snapshot)
+{
+    if (!SNAPSHOT_FLAG(snapshot, SPEED_VALID)) {
+        return 0U;
+    }
+    const uint32_t maximum = snapshot->speed_unit == ESP_BMS_SPEED_UNIT_MPH ? 1200U : 1800U;
+    const uint32_t clamped_speed = snapshot->speed_deci_units > maximum
+                                       ? maximum
+                                       : snapshot->speed_deci_units;
+    return (clamped_speed * SPEED_DASHBOARD_SEGMENT_COUNT + maximum - 1U) / maximum;
+}
+
+static uint32_t speed_dashboard_battery_active_segments(
+    const esp_bms_dashboard_snapshot_t *snapshot)
+{
+    if (!SNAPSHOT_FLAG(snapshot, BMS_ONLINE) || !SNAPSHOT_FLAG(snapshot, SOC_VALID)) {
+        return 0U;
+    }
+    const uint32_t soc = snapshot->soc_percent > 100U ? 100U : snapshot->soc_percent;
+    return (soc * 8U + 99U) / 100U;
+}
+
+static uint32_t speed_dashboard_render_signature(
+    const esp_bms_dashboard_snapshot_t *snapshot)
+{
+    const bool bms_online = SNAPSHOT_FLAG(snapshot, BMS_ONLINE);
+    uint32_t signature = speed_dashboard_active_segments(snapshot);
+    signature |= SNAPSHOT_FLAG(snapshot, SPEED_VALID) ? UINT32_C(1) << 6 : 0U;
+    signature |= SNAPSHOT_FLAG(snapshot, GPS_FIX_VALID) ? UINT32_C(1) << 7 : 0U;
+    signature |= bms_online ? UINT32_C(1) << 8 : 0U;
+    signature |= bms_online && SNAPSHOT_FLAG(snapshot, SOC_VALID)
+                     ? UINT32_C(1) << 9
+                     : 0U;
+    signature |= speed_dashboard_battery_active_segments(snapshot) << 10;
+    return signature;
+}
+
+static int32_t speed_dashboard_band_width(bool portrait,
+                                          lv_point_t outer_start,
+                                          lv_point_t inner_start,
+                                          lv_point_t outer_end,
+                                          lv_point_t inner_end)
+{
+    const int32_t start_width = portrait ? abs(inner_start.x - outer_start.x)
+                                         : abs(inner_start.y - outer_start.y);
+    const int32_t end_width = portrait ? abs(inner_end.x - outer_end.x)
+                                       : abs(inner_end.y - outer_end.y);
+    const int32_t width = (start_width + end_width + 1) / 2;
+    return width > 2 ? width : 2;
+}
+
+static void speed_dashboard_overlap_band_endpoints(uint32_t index,
+                                                   lv_point_t *start,
+                                                   lv_point_t *end)
+{
+    const int32_t dx = end->x - start->x;
+    const int32_t dy = end->y - start->y;
+    const int32_t span = abs(dx) > abs(dy) ? abs(dx) : abs(dy);
+    if (span == 0) {
+        return;
+    }
+    if (index > 0U) {
+        start->x -= dx / span;
+        start->y -= dy / span;
+    }
+    if (index + 1U < SPEED_DASHBOARD_SEGMENT_COUNT) {
+        end->x += dx / span;
+        end->y += dy / span;
+    }
+}
+
 static void speed_dashboard_draw_battery(lv_layer_t *layer,
                                          const lv_area_t *coords,
                                          bool portrait,
@@ -6237,8 +6321,7 @@ static void speed_dashboard_draw_battery(lv_layer_t *layer,
     if (!SNAPSHOT_FLAG(snapshot, SOC_VALID)) {
         return;
     }
-    const uint32_t soc = snapshot->soc_percent > 100U ? 100U : snapshot->soc_percent;
-    const uint32_t active = (soc * 8U + 99U) / 100U;
+    const uint32_t active = speed_dashboard_battery_active_segments(snapshot);
     const int32_t start_x = x + 12;
     const int32_t segment_y = y + 5;
     for (uint32_t index = 0U; index < active; ++index) {
@@ -6269,17 +6352,20 @@ static void speed_dashboard_draw_satellite(lv_layer_t *layer,
                               speed_dashboard_point(x + 1, y + 1),
                               speed_dashboard_point(x + 5, y + 5),
                               COLOR_WHITE,
-                              3);
+                              3,
+                              false);
     speed_dashboard_draw_line(layer,
                               speed_dashboard_point(x + 9, y + 9),
                               speed_dashboard_point(x + 14, y + 14),
                               COLOR_WHITE,
-                              3);
+                              3,
+                              false);
     speed_dashboard_draw_line(layer,
                               speed_dashboard_point(x + 7, y + 12),
                               speed_dashboard_point(x + 3, y + 16),
                               COLOR_WHITE,
-                              1);
+                              1,
+                              false);
     speed_dashboard_draw_rect(layer,
                               (lv_area_t){ x + 15, y + 1, x + 20, y + 6 },
                               gps_fix_valid ? COLOR_SPEED_GPS_OK : COLOR_WARN,
@@ -6289,22 +6375,17 @@ static void speed_dashboard_draw_satellite(lv_layer_t *layer,
 
 static void speed_dashboard_draw_event_cb(lv_event_t *event)
 {
+#if CONFIG_ESP_BMS_LVGL_UI_DRAG_DIAGNOSTICS
+    const int64_t draw_started_us = esp_timer_get_time();
+#endif
     lv_obj_t *object = lv_event_get_target_obj(event);
     lv_layer_t *layer = lv_event_get_layer(event);
     lv_area_t coords;
     lv_obj_get_coords(object, &coords);
     const bool portrait = lv_area_get_width(&coords) < lv_area_get_height(&coords);
     const esp_bms_dashboard_snapshot_t *snapshot = &s_ui.last_snapshot;
-    const uint32_t maximum = snapshot->speed_unit == ESP_BMS_SPEED_UNIT_MPH ? 1200U : 1800U;
-    uint32_t active_segments = 0U;
     const bool speed_valid = SNAPSHOT_FLAG(snapshot, SPEED_VALID);
-    if (speed_valid) {
-        const uint32_t clamped_speed = snapshot->speed_deci_units > maximum
-                                           ? maximum
-                                           : snapshot->speed_deci_units;
-        active_segments = (clamped_speed * SPEED_DASHBOARD_SEGMENT_COUNT + maximum - 1U) /
-                          maximum;
-    }
+    const uint32_t active_segments = speed_dashboard_active_segments(snapshot);
 
     lv_point_t outer[SPEED_DASHBOARD_SEGMENT_COUNT + 1U];
     lv_point_t inner[SPEED_DASHBOARD_SEGMENT_COUNT + 1U];
@@ -6313,13 +6394,31 @@ static void speed_dashboard_draw_event_cb(lv_event_t *event)
         const lv_color_t color = speed_dashboard_segment_color(index,
                                                                 active_segments,
                                                                 speed_valid);
-        speed_dashboard_draw_triangle(layer, outer[index], inner[index], outer[index + 1U], color);
-        speed_dashboard_draw_triangle(layer, outer[index + 1U], inner[index], inner[index + 1U], color);
+        lv_point_t start = speed_dashboard_point(
+            (outer[index].x + inner[index].x) / 2,
+            (outer[index].y + inner[index].y) / 2);
+        lv_point_t end = speed_dashboard_point(
+            (outer[index + 1U].x + inner[index + 1U].x) / 2,
+            (outer[index + 1U].y + inner[index + 1U].y) / 2);
+        speed_dashboard_overlap_band_endpoints(index, &start, &end);
+        speed_dashboard_draw_line(layer,
+                                  start,
+                                  end,
+                                  color,
+                                  speed_dashboard_band_width(portrait,
+                                                             outer[index],
+                                                             inner[index],
+                                                             outer[index + 1U],
+                                                             inner[index + 1U]),
+                                  false);
+    }
+    for (uint32_t index = 0U; index < SPEED_DASHBOARD_SEGMENT_COUNT; ++index) {
         speed_dashboard_draw_line(layer,
                                   outer[index],
                                   outer[index + 1U],
                                   index >= 28U ? COLOR_SPEED_BAND_DANGER : COLOR_WHITE,
-                                  2);
+                                  2,
+                                  false);
     }
 
     for (uint32_t index = 0U; index <= SPEED_DASHBOARD_SEGMENT_COUNT; index += 2U) {
@@ -6332,7 +6431,8 @@ static void speed_dashboard_draw_event_cb(lv_event_t *event)
                                   outer[index],
                                   tick_end,
                                   index >= 28U ? COLOR_SPEED_BAND_DANGER : COLOR_WHITE,
-                                  major ? 2 : 1);
+                                  major ? 2 : 1,
+                                  false);
     }
 
     const int32_t divider_y = coords.y1 + (portrait ? 50 : 34);
@@ -6340,12 +6440,24 @@ static void speed_dashboard_draw_event_cb(lv_event_t *event)
                               speed_dashboard_point(coords.x1 + 8, divider_y),
                               speed_dashboard_point(coords.x2 - 8, divider_y),
                               COLOR_SPEED_DIVIDER,
-                              1);
+                              1,
+                              false);
     speed_dashboard_draw_battery(layer, &coords, portrait, snapshot);
     speed_dashboard_draw_satellite(layer,
                                    &coords,
                                    portrait,
                                    SNAPSHOT_FLAG(snapshot, GPS_FIX_VALID));
+#if CONFIG_ESP_BMS_LVGL_UI_DRAG_DIAGNOSTICS
+    const int64_t elapsed_us = esp_timer_get_time() - draw_started_us;
+    const uint32_t bounded_elapsed_us = elapsed_us > UINT32_MAX
+                                            ? UINT32_MAX
+                                            : (uint32_t)elapsed_us;
+    s_ui.speed_art_draw_count++;
+    s_ui.speed_art_draw_elapsed_us += bounded_elapsed_us;
+    if (bounded_elapsed_us > s_ui.speed_art_draw_max_us) {
+        s_ui.speed_art_draw_max_us = bounded_elapsed_us;
+    }
+#endif
 }
 
 static void speed_dashboard_apply_layout(void)
@@ -6494,7 +6606,11 @@ static void set_gps_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
                       sizeof(s_ui.speed_scale_buf[index]),
                       text);
     }
-    if (s_ui.speed_art) {
+    const uint32_t render_signature = speed_dashboard_render_signature(snapshot);
+    if (s_ui.speed_art &&
+        (!s_ui.speed_art_signature_valid || s_ui.speed_art_signature != render_signature)) {
+        s_ui.speed_art_signature = render_signature;
+        s_ui.speed_art_signature_valid = true;
         lv_obj_invalidate(s_ui.speed_art);
     }
 }
@@ -7131,6 +7247,10 @@ static void page_scroll_event_cb(lv_event_t *event)
         }
         s_ui.drag_last_sample_log_ms = lv_tick_get();
 #if CONFIG_ESP_BMS_LVGL_UI_DRAG_DIAGNOSTICS
+        s_ui.speed_art_draw_count = 0U;
+        s_ui.speed_art_draw_max_us = 0U;
+        s_ui.speed_art_draw_elapsed_us = 0U;
+        s_ui.drag_diagnostic_start_us = esp_timer_get_time();
         ESP_LOGI(TAG, "[drag] scroll_begin scroll_x=%ld page=%d",
                  (long)s_ui.drag_start_pages_x,
                  (int)s_ui.drag_start_page);
@@ -7193,6 +7313,12 @@ static void page_scroll_event_cb(lv_event_t *event)
         }
         const esp_bms_lvgl_page_t target = page_from_scroll_x(target_x);
 #if CONFIG_ESP_BMS_LVGL_UI_DRAG_DIAGNOSTICS
+        const int full_invalidate_enabled =
+#if CONFIG_ESP_BMS_LVGL_UI_DRAG_FULL_INVALIDATE
+            1;
+#else
+            0;
+#endif
         ESP_LOGI(TAG,
                  "[drag] scroll_end scroll_x=%ld release_dx=%ld gesture=%d raw_target=%d target=%d",
                  (long)scroll_x,
@@ -7200,6 +7326,19 @@ static void page_scroll_event_cb(lv_event_t *event)
                  pointer_gesture ? 1 : 0,
                  (int)raw_target,
                  (int)target);
+        const int64_t diagnostic_elapsed_us = esp_timer_get_time() -
+                                              s_ui.drag_diagnostic_start_us;
+        ESP_LOGI(TAG,
+                 "[drag] perf elapsed_ms=%lld speed_art_draws=%lu draw_us=%llu "
+                 "draw_max_us=%lu heap_free=%u heap_min=%u heap_largest=%u full_invalidate=%d",
+                 (long long)(diagnostic_elapsed_us / 1000),
+                 (unsigned long)s_ui.speed_art_draw_count,
+                 (unsigned long long)s_ui.speed_art_draw_elapsed_us,
+                 (unsigned long)s_ui.speed_art_draw_max_us,
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_DEFAULT),
+                 (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_DEFAULT),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT),
+                 full_invalidate_enabled);
 #endif
         s_ui.page_scroll_gesture_active = false;
         s_ui.page_scroll_throw_frozen = false;

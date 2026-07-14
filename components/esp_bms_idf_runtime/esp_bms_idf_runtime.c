@@ -48,7 +48,7 @@ static const char *TAG = "bms_idf_runtime";
 #define GPS_UART_RX_GPIO 27
 #define GPS_UART_BAUD 115200
 #define GPS_UART_RX_BUFFER_SIZE 1024
-#define GPS_RMC_MAX_LINE 96U
+#define GPS_RMC_MAX_LINE ESP_BMS_GPS_STREAM_CAPACITY
 #define GPS_PPS_GPIO GPIO_NUM_35
 #define GPS_PPS_TIMEOUT_SECONDS 3U
 #define GPS_DIAGNOSTIC_LOG_PERIOD_SECONDS 60U
@@ -1109,62 +1109,6 @@ static bool runtime_normalize_mac_text(const char *input, char *output, size_t o
     return true;
 }
 
-static bool runtime_parse_decimal_milli(const char *text, size_t len, uint32_t *out_milli)
-{
-    uint64_t whole = 0;
-    uint32_t fraction = 0;
-    uint32_t fraction_scale = 100;
-    bool seen_digit = false;
-    bool seen_decimal = false;
-
-    for (size_t index = 0; index < len; index++) {
-        const char value = text[index];
-        if (value >= '0' && value <= '9') {
-            seen_digit = true;
-            if (seen_decimal) {
-                if (fraction_scale > 0) {
-                    fraction += (uint32_t)(value - '0') * fraction_scale;
-                    fraction_scale /= 10;
-                }
-            } else {
-                whole = (whole * 10U) + (uint32_t)(value - '0');
-                if (whole > UINT32_MAX) {
-                    return false;
-                }
-            }
-        } else if (value == '.' && !seen_decimal) {
-            seen_decimal = true;
-        } else {
-            return false;
-        }
-    }
-
-    if (!seen_digit) {
-        return false;
-    }
-
-    const uint64_t milli = (whole * 1000U) + fraction;
-    if (milli > UINT32_MAX) {
-        return false;
-    }
-    *out_milli = (uint32_t)milli;
-    return true;
-}
-
-static bool runtime_field_equals(const char *field, size_t len, const char *expected)
-{
-    return strlen(expected) == len && memcmp(field, expected, len) == 0;
-}
-
-static bool runtime_is_rmc_kind(const char *field, size_t len)
-{
-    return runtime_field_equals(field, len, "GPRMC") ||
-           runtime_field_equals(field, len, "GNRMC") ||
-           runtime_field_equals(field, len, "GARMC") ||
-           runtime_field_equals(field, len, "GLRMC") ||
-           runtime_field_equals(field, len, "BDRMC");
-}
-
 static bool runtime_validate_nmea_checksum(const char *payload, size_t payload_len, const char *checksum)
 {
     const int high = hex_value(checksum[0]);
@@ -1239,6 +1183,9 @@ static gps_parse_result_t runtime_parse_rmc(const uint8_t *line,
     if (len == 0) {
         return GPS_PARSE_IGNORE;
     }
+    if (!esp_bms_gps_stream_line_is_rmc(line, len)) {
+        return GPS_PARSE_IGNORE;
+    }
 
     const char *payload = (const char *)line;
     size_t payload_len = len;
@@ -1258,7 +1205,6 @@ static gps_parse_result_t runtime_parse_rmc(const uint8_t *line,
         }
     }
 
-    bool is_rmc = false;
     bool status_seen = false;
     bool speed_seen = false;
     bool time_seen = false;
@@ -1277,10 +1223,6 @@ static gps_parse_result_t runtime_parse_rmc(const uint8_t *line,
         const size_t field_len = index - field_start;
         switch (field_index) {
         case 0:
-            is_rmc = runtime_is_rmc_kind(field, field_len);
-            if (!is_rmc) {
-                return GPS_PARSE_IGNORE;
-            }
             break;
         case 1:
             if (!runtime_parse_rmc_utc_time(field, field_len, utc)) {
@@ -1296,9 +1238,9 @@ static gps_parse_result_t runtime_parse_rmc(const uint8_t *line,
             status_seen = true;
             break;
         case 7:
-            if (field_len == 0U && status_seen && status != 'A') {
-                parsed_speed_milli = 0U;
-            } else if (!runtime_parse_decimal_milli(field, field_len, &parsed_speed_milli)) {
+            if (!esp_bms_gps_speed_knots_milli_parse(field,
+                                                      field_len,
+                                                      &parsed_speed_milli)) {
                 return GPS_PARSE_ERROR;
             }
             speed_seen = true;
@@ -1742,15 +1684,20 @@ static void runtime_reset_state(esp_bms_idf_runtime_t *runtime)
     runtime->battery_read_failures = 0;
     runtime->gps_bytes_seen = 0;
     runtime->gps_parse_errors = 0;
+    runtime->gps_overflow_lines = 0;
+    runtime->gps_rmc_valid_count = 0;
+    runtime->gps_rmc_invalid_count = 0;
     runtime->gps_speed_knots_milli = 0;
-    runtime->gps_line_len = 0;
+    esp_bms_gps_stream_reset(&runtime->gps_stream);
+    esp_bms_gps_motion_filter_reset(&runtime->gps_motion_filter);
     runtime->gps_debug_lines_logged = 0U;
     runtime->gps_raw_sample_len = 0U;
     runtime->gps_pps_processed_count = runtime->gps_pps_isr_count;
     runtime->gps_pps_last_tick = 0U;
-    runtime->gps_pps_last_summary_tick = 0U;
+    runtime->gps_summary_last_tick = 0U;
     runtime->gps_rmc_last_tick = 0U;
     runtime->gps_rmc_last_log_tick = 0U;
+    runtime->gps_fix_log_last_tick = 0U;
     runtime->bms_telemetry_last_us = 0;
     runtime->gps_pps_active = false;
     runtime->gps_pps_ever_seen = false;
@@ -1759,6 +1706,8 @@ static void runtime_reset_state(esp_bms_idf_runtime_t *runtime)
     runtime->gps_utc_valid = false;
     runtime->gps_utc_logged = false;
     runtime->gps_uart_diagnostic_logged = false;
+    runtime->gps_fix_log_valid = false;
+    runtime->gps_fix_logged_state = false;
     runtime->bms_status_poll_elapsed_ms = 0;
     runtime->bms_frame_len = 0;
     runtime->bms_conn_handle = 0xFFFFU;
@@ -4862,9 +4811,11 @@ static bool runtime_sample_battery(esp_bms_idf_runtime_t *runtime)
     return changed;
 }
 
-static bool runtime_apply_gps_line(esp_bms_idf_runtime_t *runtime)
+static bool runtime_apply_gps_line(esp_bms_idf_runtime_t *runtime,
+                                   const uint8_t *line,
+                                   size_t line_len)
 {
-    if (runtime->gps_line_len == 0) {
+    if (!line || line_len == 0U) {
         return false;
     }
 
@@ -4872,8 +4823,8 @@ static bool runtime_apply_gps_line(esp_bms_idf_runtime_t *runtime)
         ESP_LOGI(TAG,
                  "[gps] NMEA sample %u: %.*s",
                  (unsigned)(runtime->gps_debug_lines_logged + 1U),
-                 (int)runtime->gps_line_len,
-                 (const char *)runtime->gps_line);
+                 (int)line_len,
+                 (const char *)line);
         runtime->gps_debug_lines_logged++;
     }
 
@@ -4881,8 +4832,8 @@ static bool runtime_apply_gps_line(esp_bms_idf_runtime_t *runtime)
     uint32_t speed_knots_milli = 0;
     gps_utc_time_t utc = { 0 };
     const gps_parse_result_t result =
-        runtime_parse_rmc(runtime->gps_line,
-                          runtime->gps_line_len,
+        runtime_parse_rmc(line,
+                          line_len,
                           &fix_valid,
                           &speed_knots_milli,
                           &utc);
@@ -4893,15 +4844,35 @@ static bool runtime_apply_gps_line(esp_bms_idf_runtime_t *runtime)
         if (runtime->gps_parse_errors == 0U) {
             ESP_LOGW(TAG,
                      "[gps] invalid RMC: %.*s",
-                     (int)runtime->gps_line_len,
-                     (const char *)runtime->gps_line);
+                     (int)line_len,
+                     (const char *)line);
         }
         runtime->gps_parse_errors++;
         return false;
     }
 
+    if (fix_valid) {
+        runtime->gps_rmc_valid_count++;
+    } else {
+        runtime->gps_rmc_invalid_count++;
+    }
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, GPS_FIX_VALID, fix_valid);
-    runtime->gps_speed_knots_milli = speed_knots_milli;
+    runtime->gps_speed_knots_milli =
+        esp_bms_gps_motion_filter_apply(&runtime->gps_motion_filter,
+                                        fix_valid,
+                                        speed_knots_milli);
+    if ((!runtime->gps_fix_log_valid || runtime->gps_fix_logged_state != fix_valid) &&
+        (!runtime->gps_fix_log_valid ||
+         runtime->tick_count - runtime->gps_fix_log_last_tick >= 1U)) {
+        ESP_LOGI(TAG,
+                 "[gps] fix transition: valid=%d reason=%s uptime_s=%lu",
+                 fix_valid ? 1 : 0,
+                 fix_valid ? "rmc_a" : "rmc_v",
+                 (unsigned long)runtime->tick_count);
+        runtime->gps_fix_log_valid = true;
+        runtime->gps_fix_logged_state = fix_valid;
+        runtime->gps_fix_log_last_tick = runtime->tick_count;
+    }
     runtime->snapshot.gps_sentences_seen++;
     runtime->gps_rmc_seen = true;
     runtime->gps_rmc_timed_out = false;
@@ -4923,7 +4894,7 @@ static bool runtime_apply_gps_line(esp_bms_idf_runtime_t *runtime)
     esp_bms_trip_efficiency_sample(&runtime->trip_efficiency,
                                    now_us,
                                    fix_valid,
-                                   speed_knots_milli,
+                                   runtime->gps_speed_knots_milli,
                                    bms_sample_valid,
                                    runtime->snapshot.pack_voltage_mv,
                                    runtime->snapshot.current_deci_amps);
@@ -4933,26 +4904,15 @@ static bool runtime_apply_gps_line(esp_bms_idf_runtime_t *runtime)
 
 static bool runtime_feed_gps_byte(esp_bms_idf_runtime_t *runtime, uint8_t byte)
 {
-    if (byte == '\r') {
-        return false;
+    const esp_bms_gps_stream_event_t event =
+        esp_bms_gps_stream_feed(&runtime->gps_stream, byte);
+    if (event == ESP_BMS_GPS_STREAM_EVENT_OVERFLOW) {
+        runtime->gps_overflow_lines++;
+    } else if (event == ESP_BMS_GPS_STREAM_EVENT_LINE) {
+        return runtime_apply_gps_line(runtime,
+                                      runtime->gps_stream.line,
+                                      runtime->gps_stream.line_len);
     }
-    if (byte == '$') {
-        runtime->gps_line[0] = byte;
-        runtime->gps_line_len = 1;
-        return false;
-    }
-    if (byte == '\n') {
-        const bool changed = runtime_apply_gps_line(runtime);
-        runtime->gps_line_len = 0;
-        return changed;
-    }
-    if (runtime->gps_line_len >= GPS_RMC_MAX_LINE) {
-        runtime->gps_line_len = 0;
-        runtime->gps_parse_errors++;
-        return false;
-    }
-
-    runtime->gps_line[runtime->gps_line_len++] = byte;
     return false;
 }
 
@@ -5010,7 +4970,6 @@ static bool runtime_update_gps_diagnostics(esp_bms_idf_runtime_t *runtime)
             ESP_LOGI(TAG, "[gps] PPS first: count=%lu uptime_s=%lu",
                      (unsigned long)pps_count, (unsigned long)now);
             runtime->gps_pps_ever_seen = true;
-            runtime->gps_pps_last_summary_tick = now;
         } else if (!runtime->gps_pps_active) {
             ESP_LOGI(TAG, "[gps] PPS recovered: count=%lu uptime_s=%lu",
                      (unsigned long)pps_count, (unsigned long)now);
@@ -5031,18 +4990,11 @@ static bool runtime_update_gps_diagnostics(esp_bms_idf_runtime_t *runtime)
                  (unsigned long)now);
     }
 
-    if (runtime->gps_pps_active &&
-        now - runtime->gps_pps_last_summary_tick >= GPS_DIAGNOSTIC_LOG_PERIOD_SECONDS) {
-        runtime->gps_pps_last_summary_tick = now;
-        ESP_LOGI(TAG, "[gps] PPS stable: count=%lu uptime_s=%lu",
-                 (unsigned long)runtime->gps_pps_processed_count,
-                 (unsigned long)now);
-    }
-
     if (runtime->gps_rmc_seen && !runtime->gps_rmc_timed_out &&
         now - runtime->gps_rmc_last_tick >= GPS_RMC_TIMEOUT_SECONDS) {
         runtime->gps_rmc_timed_out = true;
         RUNTIME_SET_SNAPSHOT_FLAG(runtime, GPS_FIX_VALID, false);
+        esp_bms_gps_motion_filter_reset(&runtime->gps_motion_filter);
         runtime->gps_speed_knots_milli = 0U;
         esp_bms_trip_efficiency_sample(&runtime->trip_efficiency,
                                        esp_timer_get_time(),
@@ -5053,7 +5005,26 @@ static bool runtime_update_gps_diagnostics(esp_bms_idf_runtime_t *runtime)
                                        0);
         runtime_update_snapshot_speed(runtime);
         ESP_LOGW(TAG, "[gps] RMC timeout: uptime_s=%lu", (unsigned long)now);
+        runtime->gps_fix_log_valid = true;
+        runtime->gps_fix_logged_state = false;
+        runtime->gps_fix_log_last_tick = now;
         changed = true;
+    }
+
+    if (now - runtime->gps_summary_last_tick >= GPS_DIAGNOSTIC_LOG_PERIOD_SECONDS) {
+        runtime->gps_summary_last_tick = now;
+        ESP_LOGI(TAG,
+                 "[gps] summary: fix=%d pps=%d A=%lu V=%lu overflow=%lu "
+                 "parse_errors=%lu bytes=%lu rmc=%lu uptime_s=%lu",
+                 RUNTIME_SNAPSHOT_FLAG(runtime, GPS_FIX_VALID) ? 1 : 0,
+                 runtime->gps_pps_active ? 1 : 0,
+                 (unsigned long)runtime->gps_rmc_valid_count,
+                 (unsigned long)runtime->gps_rmc_invalid_count,
+                 (unsigned long)runtime->gps_overflow_lines,
+                 (unsigned long)runtime->gps_parse_errors,
+                 (unsigned long)runtime->gps_bytes_seen,
+                 (unsigned long)runtime->snapshot.gps_sentences_seen,
+                 (unsigned long)now);
     }
 
     if (runtime->gps_utc_valid &&
@@ -5086,8 +5057,10 @@ static bool runtime_update_gps_diagnostics(esp_bms_idf_runtime_t *runtime)
                      (unsigned long)now);
         } else if (runtime->snapshot.gps_sentences_seen == 0U) {
             ESP_LOGW(TAG,
-                     "[gps] NMEA received without valid RMC: bytes=%lu parse_errors=%lu uptime_s=%lu",
+                     "[gps] NMEA received without valid RMC: bytes=%lu overflow=%lu "
+                     "parse_errors=%lu uptime_s=%lu",
                      (unsigned long)runtime->gps_bytes_seen,
+                     (unsigned long)runtime->gps_overflow_lines,
                      (unsigned long)runtime->gps_parse_errors,
                      (unsigned long)now);
             ESP_LOG_BUFFER_HEX_LEVEL(TAG,

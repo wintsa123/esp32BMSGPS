@@ -1,7 +1,7 @@
 {
-  "id": "gps-function-track",
-  "name": "gps-function-track",
-  "title": "GPS 功能与轨迹记录",
+  "id": "speed-dashboard-v4-stability-polish",
+  "name": "speed-dashboard-v4-stability-polish",
+  "title": "速度仪表 V4 稳定性与绘制优化",
   "description": "",
   "status": "in_progress",
   "dev_type": null,
@@ -10,7 +10,7 @@
   "priority": "P2",
   "creator": "wintsa",
   "assignee": "wintsa",
-  "createdAt": "2026-07-12",
+  "createdAt": "2026-07-13",
   "completedAt": null,
   "branch": null,
   "base_branch": "main",
@@ -18,11 +18,8 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [
-    "07-13-speed-dashboard-v4-source-selection",
-    "07-13-speed-dashboard-v4-stability-polish"
-  ],
-  "parent": null,
+  "children": [],
+  "parent": "07-12-gps-function-track",
   "relatedFiles": [],
   "notes": "",
   "meta": {}

@@ -72,7 +72,7 @@ def dot(parent, cx, cy, radius, color):
                 color, radius * 2)
 
 
-def line(parent, x1, y1, x2, y2, color, width=1):
+def line(parent, x1, y1, x2, y2, color, width=1, rounded=False):
     obj = clean(lv.line(parent))
     points = [_POINT({"x": int(x1), "y": int(y1)}),
               _POINT({"x": int(x2), "y": int(y2)})]
@@ -80,7 +80,7 @@ def line(parent, x1, y1, x2, y2, color, width=1):
     obj.set_points(points, 2)
     obj.set_style_line_width(int(width), 0)
     obj.set_style_line_color(lv.color_hex(color), 0)
-    obj.set_style_line_rounded(False, 0)
+    obj.set_style_line_rounded(bool(rounded), 0)
     return obj
 
 
@@ -166,9 +166,23 @@ def draw_band(parent, portrait, speed, valid, unit):
                    (outer[index][1] + inner[index][1]) // 2)
         center1 = ((outer[index + 1][0] + inner[index + 1][0]) // 2,
                    (outer[index + 1][1] + inner[index + 1][1]) // 2)
-        width = max(2, abs(inner[index][0] - outer[index][0])
-                    if portrait else abs(inner[index][1] - outer[index][1]))
-        line(parent, *center0, *center1, segment_color(index, active, valid), width)
+        start_width = (abs(inner[index][0] - outer[index][0]) if portrait
+                       else abs(inner[index][1] - outer[index][1]))
+        end_width = (abs(inner[index + 1][0] - outer[index + 1][0]) if portrait
+                     else abs(inner[index + 1][1] - outer[index + 1][1]))
+        width = max(2, (start_width + end_width + 1) // 2)
+        dx = center1[0] - center0[0]
+        dy = center1[1] - center0[1]
+        span = max(abs(dx), abs(dy))
+        if span:
+            step_x = int(dx / span)
+            step_y = int(dy / span)
+            if index > 0:
+                center0 = (center0[0] - step_x, center0[1] - step_y)
+            if index + 1 < SEGMENTS:
+                center1 = (center1[0] + step_x, center1[1] + step_y)
+        line(parent, *center0, *center1,
+             segment_color(index, active, valid), width)
     for index in range(SEGMENTS):
         line(parent, *outer[index], *outer[index + 1],
              DANGER if index >= 28 else WHITE, 2)

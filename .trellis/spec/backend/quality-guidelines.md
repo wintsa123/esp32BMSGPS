@@ -149,6 +149,10 @@ idf.py -p /dev/ttyUSB0 flash
 - GPS: UART1 at 115200 baud, RX/GPIO27, TX/GPIO18; PPS input on GPIO35 rising
   edge with external bias.
 - Runtime diagnostic: `[gps] no NMEA bytes: uart=<n> rx=<gpio> level=<0|1> uptime_s=<n>`.
+- Stream boundary: `esp_bms_gps_stream_feed()` publishes only complete lines
+  that started with `$`; overflow is a separate event from RMC parse failure.
+- Speed-field boundary: `esp_bms_gps_speed_knots_milli_parse(field, len, out)`
+  accepts an empty field as zero and strictly parses non-empty decimal knots.
 
 ### 3. Contracts
 
@@ -158,25 +162,53 @@ idf.py -p /dev/ttyUSB0 flash
 - GPIO18 is also reserved as the future TF-card SCLK. Do not enable TF-card SPI
   until GPS TX ownership is moved or safely multiplexed.
 - GPS reading must run independently of the visible LVGL carousel page. ISR code only counts PPS edges; parsing and logging run in task context.
+- A checksum-valid RMC with status `A` may still contain an empty speed field
+  while the receiver is stationary. Keep the fix valid and project zero speed;
+  do not turn this module behavior into an `invalid RMC` or orange status.
+- After a long GSA/GSV sentence exceeds the fixed stream buffer, discard its
+  remainder until newline or the next `$`. Count it as `overflow`, never as an
+  RMC parse error and never parse the tail as a standalone sentence.
+- Classify the talker/sentence kind before RMC checksum and field validation.
+  A damaged GSA/GSV sentence is not a real RMC parse error and must not pollute
+  `parse_errors` or emit an `invalid RMC` log.
 
 ### 4. Validation & Error Matrix
 
 - UART/PPS initialization succeeds, NMEA bytes increase, valid RMC appears -> GPS path is operational.
 - UART initializes but bytes remain zero and RX level remains high -> inspect power, crossed TX/RX, GPIO27 ownership, and 115200 baud.
 - Bytes increase but valid RMC remains zero -> inspect NMEA checksum, talker type, baud, and sentence format.
+- RMC status is `A` and speed is empty -> accept the sentence, set speed to
+  zero, and keep UTC/fix projection valid; a non-empty malformed speed remains
+  a parse error.
+- Overflow rises while parse errors stay zero -> inspect GSA/GSV length and
+  buffer sizing; verify the following RMC is still published intact.
+- A non-RMC sentence has a bad checksum -> ignore it for RMC diagnostics; only
+  a line whose exact kind is GP/GN/GA/GL/BD `RMC` enters strict RMC validation.
 - PPS has no edges -> verify GPS fix/PPS configuration and GPIO35 voltage; NMEA speed must continue working.
 
 ### 5. Good/Base/Bad Cases
 
 - Good: GPS TX uses UART1 RX/GPIO27; UART0 remains dedicated to flash/logs; GPIO35 receives PPS.
 - Base: GPS is absent; UI shows invalid speed while boot uptime, BMS, touch, Wi-Fi, and logs remain operational.
+- Base: stationary GPS emits `A` with an empty speed field; UI remains green
+  with zero speed and the 60-second summary increments `A`, not `parse_errors`.
 - Bad: TF-card SCLK and GPS module RX both drive/use GPIO18 without an explicit ownership change, or GPS TX is tied to UART0 RX/GPIO3.
+- Bad: reset the line length on overflow and immediately collect the sentence
+  tail, or reject an otherwise valid `A` RMC solely because speed is empty.
 
 ### 6. Tests Required
 
 - Build with `./scripts/esp-idf-env.sh build` and flash through the recorded RFC2217 endpoint.
 - Assert boot logs show the selected GPS UART/RX and `PPS ready: gpio=35`.
 - Within 10 seconds, assert either NMEA/RMC diagnostics show activity or the one-shot no-byte diagnostic explains the missing input.
+- Run `tests/gps_stream_selftest.c` for noise, long-sentence overflow,
+  missing-newline recovery, CRLF, consecutive RMC framing, and rejection of a
+  corrupted non-RMC sentence before strict RMC parsing.
+- Run `tests/speed_dashboard_selftest.c` and assert empty RMC speed parses to
+  zero while malformed non-empty speed fails.
+- On hardware, require a 60-second summary with separate `A`, `V`, `overflow`,
+  and `parse_errors` counters; a stationary `A`/empty-speed stream must produce
+  `fix=1` and `parse_errors=0`.
 - Switch away from and back to the GPS page; assert the latest speed remains current and boot uptime never resets.
 
 ### 7. Wrong vs Correct
@@ -195,6 +227,22 @@ idf.py -p /dev/ttyUSB0 flash
 #define GPS_UART_RX_GPIO GPIO_NUM_27
 #define GPS_UART_TX_GPIO GPIO_NUM_18
 #define GPS_UART_BAUD 115200
+```
+
+#### Wrong
+
+```c
+if (speed_field_len == 0U && status == 'A') return GPS_PARSE_ERROR;
+```
+
+#### Correct
+
+```c
+if (!esp_bms_gps_speed_knots_milli_parse(speed_field,
+                                          speed_field_len,
+                                          &speed_knots_milli)) {
+    return GPS_PARSE_ERROR;
+}
 ```
 
 ## Scenario: NimBLE CCCD Discovery

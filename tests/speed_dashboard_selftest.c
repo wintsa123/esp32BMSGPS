@@ -25,6 +25,38 @@ static void test_utc8_rollover(void)
     assert(local.year == 2027U && local.month == 1U && local.day == 1U && local.hour == 7U);
 }
 
+static void test_gps_speed_field_parse(void)
+{
+    uint32_t speed_knots_milli = UINT32_MAX;
+    assert(esp_bms_gps_speed_knots_milli_parse("", 0U, &speed_knots_milli));
+    assert(speed_knots_milli == 0U);
+    assert(esp_bms_gps_speed_knots_milli_parse("1.234", 5U, &speed_knots_milli));
+    assert(speed_knots_milli == 1234U);
+    assert(esp_bms_gps_speed_knots_milli_parse("0.0019", 6U, &speed_knots_milli));
+    assert(speed_knots_milli == 1U);
+    assert(!esp_bms_gps_speed_knots_milli_parse("1.2x", 4U, &speed_knots_milli));
+    assert(!esp_bms_gps_speed_knots_milli_parse(".", 1U, &speed_knots_milli));
+}
+
+static void test_gps_motion_hysteresis(void)
+{
+    esp_bms_gps_motion_filter_t filter = { 0 };
+
+    assert(esp_bms_gps_motion_filter_apply(&filter, true, 2105U) == 0U);
+    assert(!filter.moving);
+    assert(esp_bms_gps_motion_filter_apply(&filter, true, 2160U) == 2160U);
+    assert(filter.moving);
+    assert(esp_bms_gps_motion_filter_apply(&filter, true, 1134U) == 1134U);
+    assert(filter.moving);
+    assert(esp_bms_gps_motion_filter_apply(&filter, true, 1079U) == 0U);
+    assert(!filter.moving);
+
+    assert(esp_bms_gps_motion_filter_apply(&filter, true, 2160U) == 2160U);
+    assert(esp_bms_gps_motion_filter_apply(&filter, false, 2160U) == 0U);
+    assert(!filter.moving);
+    assert(esp_bms_gps_motion_filter_apply(&filter, true, 2105U) == 0U);
+}
+
 static void test_trip_threshold_alignment_and_units(void)
 {
     esp_bms_trip_efficiency_t trip;
@@ -86,6 +118,8 @@ static void test_regeneration_offsets_discharge(void)
 int main(void)
 {
     test_utc8_rollover();
+    test_gps_speed_field_parse();
+    test_gps_motion_hysteresis();
     test_trip_threshold_alignment_and_units();
     test_regeneration_offsets_discharge();
     puts("speed dashboard self-test passed");

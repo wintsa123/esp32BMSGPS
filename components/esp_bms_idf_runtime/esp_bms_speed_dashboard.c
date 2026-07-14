@@ -4,6 +4,11 @@
 #include <stddef.h>
 #include <string.h>
 
+#define GPS_MOTION_ENTER_KMH 4U
+#define GPS_MOTION_EXIT_KMH 2U
+#define KNOT_MILLI_TO_KMH_NUMERATOR 1852U
+#define KNOT_MILLI_TO_KMH_DENOMINATOR 1000000U
+
 static bool is_leap_year(uint16_t year)
 {
     return (year % 4U == 0U && year % 100U != 0U) || year % 400U == 0U;
@@ -53,6 +58,86 @@ bool esp_bms_gps_utc_to_local_utc8(const esp_bms_gps_datetime_t *utc,
     }
     local->year++;
     return true;
+}
+
+bool esp_bms_gps_speed_knots_milli_parse(const char *field,
+                                          size_t field_len,
+                                          uint32_t *speed_knots_milli)
+{
+    if (!speed_knots_milli || (!field && field_len > 0U)) {
+        return false;
+    }
+    if (field_len == 0U) {
+        *speed_knots_milli = 0U;
+        return true;
+    }
+
+    uint64_t whole = 0U;
+    uint32_t fraction = 0U;
+    uint32_t fraction_scale = 100U;
+    bool seen_digit = false;
+    bool seen_decimal = false;
+    for (size_t index = 0U; index < field_len; ++index) {
+        const char value = field[index];
+        if (value >= '0' && value <= '9') {
+            seen_digit = true;
+            if (seen_decimal) {
+                if (fraction_scale > 0U) {
+                    fraction += (uint32_t)(value - '0') * fraction_scale;
+                    fraction_scale /= 10U;
+                }
+            } else {
+                whole = (whole * 10U) + (uint32_t)(value - '0');
+                if (whole > UINT32_MAX) {
+                    return false;
+                }
+            }
+        } else if (value == '.' && !seen_decimal) {
+            seen_decimal = true;
+        } else {
+            return false;
+        }
+    }
+
+    const uint64_t milli = (whole * 1000U) + fraction;
+    if (!seen_digit || milli > UINT32_MAX) {
+        return false;
+    }
+    *speed_knots_milli = (uint32_t)milli;
+    return true;
+}
+
+void esp_bms_gps_motion_filter_reset(esp_bms_gps_motion_filter_t *filter)
+{
+    if (filter) {
+        filter->moving = false;
+    }
+}
+
+uint32_t esp_bms_gps_motion_filter_apply(esp_bms_gps_motion_filter_t *filter,
+                                         bool gps_fix_valid,
+                                         uint32_t speed_knots_milli)
+{
+    if (!filter || !gps_fix_valid) {
+        esp_bms_gps_motion_filter_reset(filter);
+        return 0U;
+    }
+
+    const uint64_t speed_kmh_scaled =
+        (uint64_t)speed_knots_milli * KNOT_MILLI_TO_KMH_NUMERATOR;
+    if (!filter->moving) {
+        if (speed_kmh_scaled <
+            (uint64_t)GPS_MOTION_ENTER_KMH * KNOT_MILLI_TO_KMH_DENOMINATOR) {
+            return 0U;
+        }
+        filter->moving = true;
+    } else if (speed_kmh_scaled <=
+               (uint64_t)GPS_MOTION_EXIT_KMH * KNOT_MILLI_TO_KMH_DENOMINATOR) {
+        filter->moving = false;
+        return 0U;
+    }
+
+    return speed_knots_milli;
 }
 
 void esp_bms_trip_efficiency_reset(esp_bms_trip_efficiency_t *trip)

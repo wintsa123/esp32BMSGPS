@@ -6,6 +6,7 @@
 #include "esp_http_server.h"
 #include "driver/uart.h"
 #include "esp_adc/adc_oneshot.h"
+#include "esp_bms_gps_stream.h"
 #include "esp_bms_lvgl_ui.h"
 #include "esp_bms_speed_dashboard.h"
 #include "esp_fardriver_protocol.h"
@@ -80,7 +81,8 @@ typedef struct {
     adc_oneshot_unit_handle_t battery_adc;
     adc_channel_t battery_adc_channel;
     uart_port_t gps_uart;
-    uint8_t gps_line[96];
+    esp_bms_gps_stream_t gps_stream;
+    esp_bms_gps_motion_filter_t gps_motion_filter;
     uint8_t gps_raw_sample[32];
     uint32_t tick_count;
     uint32_t elapsed_ms;
@@ -89,18 +91,21 @@ typedef struct {
     uint32_t battery_read_failures;
     uint32_t gps_bytes_seen;
     uint32_t gps_parse_errors;
+    uint32_t gps_overflow_lines;
+    uint32_t gps_rmc_valid_count;
+    uint32_t gps_rmc_invalid_count;
     uint32_t gps_speed_knots_milli;
     volatile uint32_t gps_pps_isr_count;
     uint32_t gps_pps_processed_count;
     uint32_t gps_pps_last_tick;
-    uint32_t gps_pps_last_summary_tick;
+    uint32_t gps_summary_last_tick;
     uint32_t gps_rmc_last_tick;
     uint32_t gps_rmc_last_log_tick;
+    uint32_t gps_fix_log_last_tick;
     int64_t bms_telemetry_last_us;
     uint32_t bms_status_poll_elapsed_ms;
     uint32_t controller_keepalive_elapsed_ms;
     uint32_t controller_scan_revision;
-    uint16_t gps_line_len;
     uint16_t gps_utc_year;
     uint8_t gps_debug_lines_logged;
     uint8_t gps_raw_sample_len;
@@ -153,6 +158,8 @@ typedef struct {
     bool gps_utc_valid;
     bool gps_utc_logged;
     bool gps_uart_diagnostic_logged;
+    bool gps_fix_log_valid;
+    bool gps_fix_logged_state;
     bool cast_active;
     bool cast_frame_active;
     int cast_socket_fd;

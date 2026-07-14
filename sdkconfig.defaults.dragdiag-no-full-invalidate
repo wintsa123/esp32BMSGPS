@@ -1,0 +1,4 @@
+# Overlay for comparing LVGL native partial invalidation against the normal
+# full-dashboard invalidation path during drag diagnostics.
+
+# CONFIG_ESP_BMS_LVGL_UI_DRAG_FULL_INVALIDATE is not set
