@@ -28,6 +28,75 @@ Run GitNexus change detection before commit:
 node .gitnexus/run.cjs detect-changes -r esp32BMSGPS
 ```
 
+## Scenario: Preset And Remaining Range
+
+### 1. Scope / Trigger
+
+- Trigger: changing the preset full-charge range, trip-consumption projection,
+  BMS energy inputs, dashboard snapshot, or the BMS range UI.
+
+### 2. Signatures
+
+- Pure C helper: `esp_bms_remaining_range_km(...)` in
+  `esp_bms_speed_dashboard`.
+- Action: `ESP_BMS_LVGL_ACTION_SET_PRESET_RANGE`; `numeric_delta` is the
+  absolute `0..9999` km value and requires `NUMERIC_DELTA_VALID`.
+- Snapshot: `preset_range_km`, `remaining_range_km`, and
+  `remaining_range_valid`.
+- NVS: namespace `esp_bms`, `uint16_t` key `preset_rng`.
+
+### 3. Contracts
+
+- Default preset is `0100 km`; `0000` is valid and must remain distinguishable
+  from a missing key.
+- Prefer measured metric consumption:
+  `voltage_mv * remaining_mah / (100000 * deci_wh_per_km)`.
+- Measured inputs require positive consumption, voltage, and remaining
+  capacity. Otherwise fall back to rounded `preset_range_km * SOC / 100`.
+- Display-unit selection may change the visible consumption projection, but
+  range calculation always receives the metric value.
+- The BMS page shows the whole range group only while BMS is online and GPS has
+  a valid fix; an invalid calculation then renders `--`.
+- A missing NVS key migrates to `100` and is saved without erasing other
+  display settings. Restore-defaults also restores `100`.
+
+### 4. Validation & Error Matrix
+
+- Positive measured inputs -> measured result, rounded and capped at `9999`.
+- Zero/negative consumption or missing energy input + valid SOC -> preset/SOC
+  fallback.
+- Invalid SOC and invalid measured inputs -> `remaining_range_valid=false`.
+- Preset above `9999` or missing output pointer -> helper rejects the request.
+- BMS or GPS unavailable -> UI hides title, value, unit, and separator together.
+
+### 5. Good / Base / Bad Cases
+
+- Good: switching `km/h` to `mph` leaves remaining range unchanged.
+- Base: preset `0000` with valid SOC displays `0 km`.
+- Bad: pass the mph consumption projection into the range helper, treat zero as
+  a missing preset, or add a battery-chemistry correction curve.
+
+### 6. Tests Required
+
+- Run `tests/speed_dashboard_selftest.c` for default/zero presets, rounding,
+  measured calculation, invalid fallback, cap, and unit independence.
+- Run both simulator orientations and inspect BMS/GPS visibility plus the
+  four-digit roller editor; production UI and production fonts must be linked.
+- Compare every Han character in `esp_bms_lvgl_ui.c` with all three generated
+  settings font symbol lists and require zero missing glyphs.
+- Run `./scripts/esp-idf-env.sh build`, flash through RFC2217, and verify
+  `esp_bms:preset_rng` in a read-only NVS dump after migration.
+
+### 7. Wrong vs Correct
+
+```c
+/* Wrong: this field is mph-projected when the display unit is mph. */
+range(snapshot->average_consumption_deci_wh_per_distance);
+
+/* Correct: keep a metric value for the fixed-kilometre range formula. */
+range(metric_consumption_deci_wh_per_km);
+```
+
 ## Scenario: LAN RFC2217 Serial Flash Bridge
 
 ### 1. Scope / Trigger
