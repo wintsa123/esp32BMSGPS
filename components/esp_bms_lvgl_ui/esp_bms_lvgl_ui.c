@@ -6116,51 +6116,45 @@ static void set_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
     const int32_t status_area_height = portrait ? 52 : 70;
     const int32_t status_width = portrait ? 100 : 68;
     const int32_t title_height = (int32_t)settings_zh_10.line_height + 1;
-    const int32_t ok_height = (int32_t)lv_font_montserrat_14.line_height + 1;
-    const bool bms_ok = snapshot->bms_protection_count == 0U &&
-                        snapshot->bms_warning_count == 0U &&
-                        SNAPSHOT_FLAG(snapshot, BMS_ONLINE);
+    const char *status_title = "BLE STATUS";
+    const char *status_value = "未连接";
+    lv_color_t status_color = COLOR_MUTED;
+    const lv_font_t *status_value_font = &settings_zh_16;
     if (snapshot->bms_protection_count > 0U) {
-        label_set_text_color_if_changed(s_ui.bms_error, COLOR_BAD);
-        label_set_text_if_changed(s_ui.bms_error, "BMS WARN\nPROTECTION");
+        status_title = "BMS WARN";
+        status_value = "PROTECTION";
+        status_color = COLOR_BAD;
+        status_value_font = &settings_zh_10;
     } else if (snapshot->bms_warning_count > 0U) {
-        label_set_text_color_if_changed(s_ui.bms_error, COLOR_WARN);
-        label_set_text_if_changed(s_ui.bms_error, "BMS WARN\nWARNING");
+        status_title = "BMS WARN";
+        status_value = "WARNING";
+        status_color = COLOR_WARN;
+        status_value_font = &settings_zh_10;
     } else if (SNAPSHOT_FLAG(snapshot, BMS_ONLINE)) {
-        label_set_text_color_if_changed(s_ui.bms_error, COLOR_ACCENT);
-        label_set_text_if_changed(s_ui.bms_error, "BMS INFO");
+        status_value = "已连接";
+        status_color = COLOR_ACCENT;
     } else if (strstr(snapshot->bms_info_text, "FAIL") != NULL ||
                strstr(snapshot->bms_info_text, "ERR") != NULL ||
                strstr(snapshot->bms_info_text, "NO ") != NULL) {
-        label_set_text_color_if_changed(s_ui.bms_error, COLOR_BAD);
-        label_set_text_if_changed(s_ui.bms_error, "BLE STATUS\nFAILED");
+        status_value = "未连接";
+        status_color = COLOR_BAD;
     } else if (snapshot->bms_info_text[0] != '\0' &&
                strcmp(snapshot->bms_info_text, "BMS OFF") != 0) {
-        label_set_text_color_if_changed(s_ui.bms_error, COLOR_WARN);
-        label_set_text_if_changed(s_ui.bms_error, "BLE STATUS\nCONNECTING");
-    } else {
-        label_set_text_color_if_changed(s_ui.bms_error, COLOR_MUTED);
-        label_set_text_if_changed(s_ui.bms_error, "BLE STATUS\nDISCONNECTED");
+        status_value = "连接中";
+        status_color = COLOR_WARN;
     }
-    set_obj_hidden(s_ui.bms_status_ok, !bms_ok);
-    if (bms_ok) {
-        lv_obj_set_pos(s_ui.bms_error, 4, 4);
-        lv_obj_set_size(s_ui.bms_error, status_width, title_height);
-        lv_obj_set_pos(s_ui.bms_status_ok, 4, (status_area_height - ok_height) / 2);
-        lv_obj_set_size(s_ui.bms_status_ok, status_width, ok_height);
-        label_set_text_color_if_changed(s_ui.bms_status_ok, COLOR_ACCENT);
-    } else {
-        const int32_t status_height = ((int32_t)settings_zh_10.line_height * 2) + 1;
-        lv_obj_set_pos(s_ui.bms_error, 4, (status_area_height - status_height) / 2);
-        lv_obj_set_size(s_ui.bms_error, status_width, status_height);
-    }
-
-    const bool range_visible = SNAPSHOT_FLAG(snapshot, BMS_ONLINE) &&
-                               SNAPSHOT_FLAG(snapshot, GPS_FIX_VALID);
-    set_obj_hidden(s_ui.remaining_range_separator, !range_visible);
-    set_obj_hidden(s_ui.remaining_range_title, !range_visible);
-    set_obj_hidden(s_ui.remaining_range_value, !range_visible);
-    set_obj_hidden(s_ui.remaining_range_unit, !range_visible);
+    const int32_t status_value_height = (int32_t)status_value_font->line_height + 1;
+    label_set_text_if_changed(s_ui.bms_error, status_title);
+    label_set_text_color_if_changed(s_ui.bms_error, status_color);
+    lv_obj_set_pos(s_ui.bms_error, 4, 4);
+    lv_obj_set_size(s_ui.bms_error, status_width, title_height);
+    label_set_text_if_changed(s_ui.bms_status_ok, status_value);
+    label_set_text_color_if_changed(s_ui.bms_status_ok, status_color);
+    lv_obj_set_style_text_font(s_ui.bms_status_ok, status_value_font, LV_PART_MAIN);
+    lv_obj_set_pos(s_ui.bms_status_ok,
+                   4,
+                   (status_area_height - status_value_height) / 2);
+    lv_obj_set_size(s_ui.bms_status_ok, status_width, status_value_height);
     if (snapshot->remaining_range_valid) {
         label_set_text_fmt_if_changed(s_ui.remaining_range_value,
                                       "%u",
@@ -6763,7 +6757,6 @@ static uint32_t speed_dashboard_render_signature(
                      ? UINT32_C(1) << 9
                      : 0U;
     signature |= speed_dashboard_battery_active_segments(snapshot) << 10;
-#if defined(ESP_BMS_LVGL_SIMULATOR)
     const bool controller_online = SNAPSHOT_FLAG(snapshot, CONTROLLER_ONLINE);
     signature |= controller_online && SNAPSHOT_FLAG(snapshot, CONTROLLER_TEMP_VALID)
                      ? UINT32_C(1) << 14
@@ -6771,7 +6764,6 @@ static uint32_t speed_dashboard_render_signature(
     signature |= controller_online && SNAPSHOT_FLAG(snapshot, MOTOR_TEMP_VALID)
                      ? UINT32_C(1) << 15
                      : 0U;
-#endif
     return signature;
 }
 
@@ -6818,7 +6810,6 @@ static void speed_dashboard_draw_battery(lv_layer_t *layer,
         return;
     }
     const int32_t x = coords->x1 + 8;
-#if defined(ESP_BMS_LVGL_SIMULATOR)
     const int32_t y = coords->y1 + (portrait ? 6 : 8);
     speed_dashboard_draw_rect(layer,
                               (lv_area_t){ x, y + 1, x + 6, y + 16 },
@@ -6830,25 +6821,11 @@ static void speed_dashboard_draw_battery(lv_layer_t *layer,
                               COLOR_WHITE,
                               true,
                               0);
-#else
-    const int32_t y = coords->y1 + (portrait ? 6 : 7);
-    speed_dashboard_draw_rect(layer,
-                              (lv_area_t){ x, y + 2, x + 7, y + 21 },
-                              COLOR_WHITE,
-                              false,
-                              1);
-    speed_dashboard_draw_rect(layer,
-                              (lv_area_t){ x + 2, y, x + 5, y + 2 },
-                              COLOR_WHITE,
-                              true,
-                              0);
-#endif
 
     if (!SNAPSHOT_FLAG(snapshot, SOC_VALID)) {
         return;
     }
     const uint32_t active = speed_dashboard_battery_active_segments(snapshot);
-#if defined(ESP_BMS_LVGL_SIMULATOR)
     const int32_t start_x = x + 11;
     const int32_t segment_y = y + 1;
     for (uint32_t index = 0U; index < active; ++index) {
@@ -6860,19 +6837,6 @@ static void speed_dashboard_draw_battery(lv_layer_t *layer,
         speed_dashboard_draw_triangle(layer, p0, p1, p2, COLOR_WHITE);
         speed_dashboard_draw_triangle(layer, p0, p2, p3, COLOR_WHITE);
     }
-#else
-    const int32_t start_x = x + 12;
-    const int32_t segment_y = y + 5;
-    for (uint32_t index = 0U; index < active; ++index) {
-        const int32_t left = start_x + (int32_t)(index * 6U);
-        const lv_point_t p0 = speed_dashboard_point(left + 2, segment_y);
-        const lv_point_t p1 = speed_dashboard_point(left + 6, segment_y);
-        const lv_point_t p2 = speed_dashboard_point(left + 4, segment_y + 6);
-        const lv_point_t p3 = speed_dashboard_point(left, segment_y + 6);
-        speed_dashboard_draw_triangle(layer, p0, p1, p2, COLOR_WHITE);
-        speed_dashboard_draw_triangle(layer, p0, p2, p3, COLOR_WHITE);
-    }
-#endif
 }
 
 static void speed_dashboard_draw_satellite(lv_layer_t *layer,
@@ -6880,11 +6844,7 @@ static void speed_dashboard_draw_satellite(lv_layer_t *layer,
                                            bool portrait,
                                            bool gps_fix_valid)
 {
-#if defined(ESP_BMS_LVGL_SIMULATOR)
     const int32_t x = coords->x1 + (portrait ? 35 : 145);
-#else
-    const int32_t x = coords->x1 + (portrait ? 26 : 136);
-#endif
     const int32_t y = coords->y1 + (portrait ? 29 : 8);
     const lv_point_t top = speed_dashboard_point(x + 7, y + 2);
     const lv_point_t right = speed_dashboard_point(x + 12, y + 7);
@@ -6957,11 +6917,7 @@ static void speed_dashboard_draw_event_cb(lv_event_t *event)
                                   false);
     }
     for (uint32_t index = 0U; index < SPEED_DASHBOARD_SEGMENT_COUNT; ++index) {
-#if defined(ESP_BMS_LVGL_SIMULATOR)
         const int32_t border_width = index >= SPEED_DASHBOARD_DANGER_START ? 2 : 4;
-#else
-        const int32_t border_width = 2;
-#endif
         speed_dashboard_draw_line(layer,
                                   outer[index],
                                   outer[index + 1U],
@@ -6990,7 +6946,6 @@ static void speed_dashboard_draw_event_cb(lv_event_t *event)
                                   false);
     }
 
-#if defined(ESP_BMS_LVGL_SIMULATOR)
     if (!portrait) {
         const uint32_t last = SPEED_DASHBOARD_SEGMENT_COUNT;
         const lv_area_t terminal = {
@@ -7010,13 +6965,8 @@ static void speed_dashboard_draw_event_cb(lv_event_t *event)
                                   2,
                                   false);
     }
-#endif
 
-#if defined(ESP_BMS_LVGL_SIMULATOR)
     const int32_t divider_y = coords.y1 + (portrait ? 47 : 31);
-#else
-    const int32_t divider_y = coords.y1 + (portrait ? 50 : 34);
-#endif
     speed_dashboard_draw_line(layer,
                               speed_dashboard_point(coords.x1 + 8, divider_y),
                               speed_dashboard_point(coords.x2 - 8, divider_y),
@@ -7028,7 +6978,6 @@ static void speed_dashboard_draw_event_cb(lv_event_t *event)
                                    &coords,
                                    portrait,
                                    SNAPSHOT_FLAG(snapshot, GPS_FIX_VALID));
-#if defined(ESP_BMS_LVGL_SIMULATOR)
     const bool controller_online = SNAPSHOT_FLAG(snapshot, CONTROLLER_ONLINE);
     const bool controller_temp_visible = controller_online &&
                                          SNAPSHOT_FLAG(snapshot, CONTROLLER_TEMP_VALID);
@@ -7060,7 +7009,6 @@ static void speed_dashboard_draw_event_cb(lv_event_t *event)
         };
         lv_draw_label(layer, &prefix, &area);
     }
-#endif
 #if CONFIG_ESP_BMS_LVGL_UI_DRAG_DIAGNOSTICS
     const int64_t elapsed_us = esp_timer_get_time() - draw_started_us;
     const uint32_t bounded_elapsed_us = elapsed_us > UINT32_MAX
@@ -7077,17 +7025,10 @@ static void speed_dashboard_draw_event_cb(lv_event_t *event)
 static void speed_dashboard_apply_layout(void)
 {
     const bool portrait = s_ui.width < s_ui.height;
-#if defined(ESP_BMS_LVGL_SIMULATOR)
     const int32_t status_y = portrait ? 5 : 7;
     const int32_t status_height = 20;
     const int32_t consumption_y = status_y + 1;
     const int32_t temperature_y = portrait ? 30 : status_y + 2;
-#else
-    const int32_t status_y = portrait ? 7 : 9;
-    const int32_t status_height = 18;
-    const int32_t consumption_y = status_y;
-    const int32_t temperature_y = portrait ? 29 : status_y;
-#endif
     lv_obj_set_pos(s_ui.speed_art, 0, 0);
     lv_obj_set_size(s_ui.speed_art, s_ui.width, s_ui.height);
     if (portrait) {
@@ -7097,21 +7038,12 @@ static void speed_dashboard_apply_layout(void)
         lv_obj_set_size(s_ui.gps_speed_unit, 76, 26);
         lv_obj_set_pos(s_ui.speed_soc, 90, status_y);
         lv_obj_set_size(s_ui.speed_soc, 30, status_height);
-        lv_obj_set_pos(s_ui.speed_consumption, 74, consumption_y);
-        lv_obj_set_size(s_ui.speed_consumption, 159, status_height);
-#if defined(ESP_BMS_LVGL_SIMULATOR)
         lv_obj_set_pos(s_ui.speed_consumption, 58, consumption_y);
         lv_obj_set_size(s_ui.speed_consumption, 174, status_height);
         lv_obj_set_pos(s_ui.speed_controller_temp, 98, temperature_y);
         lv_obj_set_size(s_ui.speed_controller_temp, 44, status_height);
         lv_obj_set_pos(s_ui.speed_motor_temp, 184, temperature_y);
         lv_obj_set_size(s_ui.speed_motor_temp, 48, status_height);
-#else
-        lv_obj_set_pos(s_ui.speed_controller_temp, 66, temperature_y);
-        lv_obj_set_size(s_ui.speed_controller_temp, 55, status_height);
-        lv_obj_set_pos(s_ui.speed_motor_temp, 124, temperature_y);
-        lv_obj_set_size(s_ui.speed_motor_temp, 70, status_height);
-#endif
         lv_obj_set_pos(s_ui.speed_gear, 167, 230);
         lv_obj_set_size(s_ui.speed_gear, 40, 44);
         lv_obj_set_pos(s_ui.gps_detail, 112, 278);
@@ -7130,21 +7062,12 @@ static void speed_dashboard_apply_layout(void)
         lv_obj_set_size(s_ui.gps_speed_unit, 68, 26);
         lv_obj_set_pos(s_ui.speed_soc, 90, status_y);
         lv_obj_set_size(s_ui.speed_soc, 30, status_height);
-        lv_obj_set_pos(s_ui.speed_consumption, 74, consumption_y);
-        lv_obj_set_size(s_ui.speed_consumption, 58, status_height);
-#if defined(ESP_BMS_LVGL_SIMULATOR)
         lv_obj_set_pos(s_ui.speed_consumption, 54, consumption_y);
         lv_obj_set_size(s_ui.speed_consumption, 86, status_height);
         lv_obj_set_pos(s_ui.speed_controller_temp, 190, temperature_y);
         lv_obj_set_size(s_ui.speed_controller_temp, 44, status_height);
         lv_obj_set_pos(s_ui.speed_motor_temp, 270, temperature_y);
         lv_obj_set_size(s_ui.speed_motor_temp, 42, status_height);
-#else
-        lv_obj_set_pos(s_ui.speed_controller_temp, 164, temperature_y);
-        lv_obj_set_size(s_ui.speed_controller_temp, 36, status_height);
-        lv_obj_set_pos(s_ui.speed_motor_temp, 206, temperature_y);
-        lv_obj_set_size(s_ui.speed_motor_temp, 48, status_height);
-#endif
         lv_obj_set_pos(s_ui.speed_gear, 269, 153);
         lv_obj_set_size(s_ui.speed_gear, 38, 40);
         lv_obj_set_pos(s_ui.gps_detail, 196, 195);
@@ -7157,7 +7080,6 @@ static void speed_dashboard_apply_layout(void)
             lv_obj_set_size(s_ui.speed_scale_labels[index], 34, 18);
         }
     }
-#if defined(ESP_BMS_LVGL_SIMULATOR)
     lv_obj_set_style_text_font(s_ui.speed_soc, &settings_zh_16, LV_PART_MAIN);
     lv_obj_set_style_text_font(s_ui.speed_consumption, &settings_zh_16, LV_PART_MAIN);
     lv_obj_set_style_text_font(s_ui.speed_controller_temp, &settings_zh_16, LV_PART_MAIN);
@@ -7169,7 +7091,6 @@ static void speed_dashboard_apply_layout(void)
     lv_obj_set_style_text_align(s_ui.speed_gear, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_pad_top(s_ui.speed_gear, gear_padding, LV_PART_MAIN);
     lv_obj_set_style_pad_bottom(s_ui.speed_gear, gear_padding, LV_PART_MAIN);
-#endif
 }
 
 static void set_gps_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
@@ -7198,17 +7119,9 @@ static void set_gps_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
     if (snapshot->average_consumption_valid) {
         const int32_t deci = snapshot->average_consumption_deci_wh_per_distance;
         const int32_t rounded = deci >= 0 ? (deci + 5) / 10 : (deci - 5) / 10;
-#if defined(ESP_BMS_LVGL_SIMULATOR)
         snprintf(text, sizeof(text), "%ld%s", (long)rounded, consumption_unit);
-#else
-        snprintf(text, sizeof(text), "%ld %s", (long)rounded, consumption_unit);
-#endif
     } else {
-#if defined(ESP_BMS_LVGL_SIMULATOR)
         snprintf(text, sizeof(text), "--%s", consumption_unit);
-#else
-        snprintf(text, sizeof(text), "-- %s", consumption_unit);
-#endif
     }
     gps_label_set(s_ui.speed_consumption,
                   s_ui.speed_consumption_buf,
@@ -7223,22 +7136,14 @@ static void set_gps_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
                                     SNAPSHOT_FLAG(snapshot, MOTOR_TEMP_VALID);
     const bool gear_valid = controller_online && SNAPSHOT_FLAG(snapshot, CONTROLLER_GEAR_VALID);
     if (controller_temp_visible) {
-#if defined(ESP_BMS_LVGL_SIMULATOR)
         snprintf(text, sizeof(text), "%dC", snapshot->controller_temp_c);
-#else
-        snprintf(text, sizeof(text), "控 %dC", snapshot->controller_temp_c);
-#endif
         gps_label_set(s_ui.speed_controller_temp,
                       s_ui.speed_controller_temp_buf,
                       sizeof(s_ui.speed_controller_temp_buf),
                       text);
     }
     if (motor_temp_visible) {
-#if defined(ESP_BMS_LVGL_SIMULATOR)
         snprintf(text, sizeof(text), "%dC", snapshot->motor_temp_c);
-#else
-        snprintf(text, sizeof(text), "电机 %dC", snapshot->motor_temp_c);
-#endif
         gps_label_set(s_ui.speed_motor_temp,
                       s_ui.speed_motor_temp_buf,
                       sizeof(s_ui.speed_motor_temp_buf),

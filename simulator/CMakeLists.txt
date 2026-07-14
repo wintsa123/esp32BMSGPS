@@ -39,7 +39,6 @@ target_include_directories(esp_bms_lvgl_simulator PRIVATE
 target_compile_definitions(esp_bms_lvgl_simulator PRIVATE
     _POSIX_C_SOURCE=200809L
     SDL_MAIN_HANDLED
-    ESP_BMS_LVGL_SIMULATOR=1
 )
 target_compile_options(esp_bms_lvgl_simulator PRIVATE -Wall -Wextra)
 target_link_libraries(esp_bms_lvgl_simulator PRIVATE lvgl::lvgl PkgConfig::SDL2 m)

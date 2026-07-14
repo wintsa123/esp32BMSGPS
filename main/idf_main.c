@@ -143,6 +143,7 @@ void app_main(void)
     log_heap_state("display_settings");
 
     ESP_ERROR_CHECK_WITHOUT_ABORT(esp_bms_idf_runtime_start_controller_ble_if_enabled(&runtime));
+    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_bms_idf_runtime_start_bms_ble_if_bound(&runtime));
 
     bool delayed_display_settings_save_pending = false;
     uint32_t delayed_display_settings_save_ms = 0;

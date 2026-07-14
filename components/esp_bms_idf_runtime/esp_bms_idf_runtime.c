@@ -21,6 +21,8 @@
 #include "host/ble_hs.h"
 #include "host/ble_hs_adv.h"
 #include "host/ble_hs_id.h"
+#include "host/ble_sm.h"
+#include "host/ble_store.h"
 #include "host/ble_uuid.h"
 #include "host/util/util.h"
 #include "nimble/nimble_port.h"
@@ -74,6 +76,8 @@ static const char *TAG = "bms_idf_runtime";
 #define LOCAL_BLUETOOTH_ADV_INTERVAL_MS 500U
 #define BMS_CONNECT_TIMEOUT_MS 10000
 #define BMS_STATUS_POLL_PERIOD_MS 500U
+#define BMS_HEARTBEAT_TIMEOUT_MS 5000U
+#define BMS_RECONNECT_BACKOFF_MS 3000U
 #define BMS_FRAME_MIN_LEN 10U
 #define BMS_FRAME_START_1 0x7EU
 #define BMS_FRAME_START_2 0xA1U
@@ -176,6 +180,7 @@ static void runtime_log_heap_state(const char *stage)
 
 extern const char web_index_html_start[] asm("_binary_index_html_start");
 extern const char web_index_html_end[] asm("_binary_index_html_end");
+void ble_store_config_init(void);
 
 typedef enum {
     GPS_PARSE_IGNORE,
@@ -427,15 +432,16 @@ static bool runtime_project_bluetooth_snapshot(esp_bms_idf_runtime_t *runtime)
     }
 
     const bool enabled = true;
+    const bool discoverable = RUNTIME_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED) ||
+                              RUNTIME_FLAG(runtime, BLUETOOTH_ADVERTISING);
     const bool changed = RUNTIME_SNAPSHOT_FLAG(runtime, BLUETOOTH_ENABLED) != enabled ||
-                         RUNTIME_SNAPSHOT_FLAG(runtime, BLUETOOTH_ADVERTISING) !=
-                             RUNTIME_FLAG(runtime, BLUETOOTH_ADVERTISING) ||
+                         RUNTIME_SNAPSHOT_FLAG(runtime, BLUETOOTH_ADVERTISING) != discoverable ||
                          RUNTIME_SNAPSHOT_FLAG(runtime, BLUETOOTH_CONNECTED) !=
                              RUNTIME_FLAG(runtime, BLUETOOTH_CONNECTED) ||
                          strcmp(runtime->snapshot.bluetooth_name, runtime->bluetooth_name) != 0;
 
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, BLUETOOTH_ENABLED, enabled);
-    RUNTIME_SET_SNAPSHOT_FLAG(runtime, BLUETOOTH_ADVERTISING, RUNTIME_FLAG(runtime, BLUETOOTH_ADVERTISING));
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, BLUETOOTH_ADVERTISING, discoverable);
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, BLUETOOTH_CONNECTED, RUNTIME_FLAG(runtime, BLUETOOTH_CONNECTED));
     runtime_copy_snapshot_text(runtime->snapshot.bluetooth_name,
                                sizeof(runtime->snapshot.bluetooth_name),
@@ -3591,6 +3597,7 @@ static int runtime_bms_ble_write_cb(uint16_t conn_handle,
 
     if (runtime->bms_ble_phase == (uint8_t)BMS_BLE_PHASE_SUBSCRIBING) {
         runtime->bms_ble_phase = (uint8_t)BMS_BLE_PHASE_ONLINE;
+        runtime->bms_telemetry_last_us = esp_timer_get_time();
         runtime_set_bms_info(runtime, "BMS ON");
         ESP_LOGI(TAG, "[bms] notifications subscribed: conn=%u cccd=%u",
                  conn_handle, runtime->bms_cccd_handle);
@@ -4332,7 +4339,10 @@ static int runtime_bms_ble_gap_event(struct ble_gap_event *event, void *arg)
         RUNTIME_SET_FLAG(runtime, CONTROLLER_SCAN_ACTIVE, false);
         runtime_project_controller_snapshot(runtime);
         if (runtime->bms_ble_phase == (uint8_t)BMS_BLE_PHASE_SCANNING) {
-            runtime->bms_ble_phase = (uint8_t)BMS_BLE_PHASE_IDLE;
+            runtime->bms_ble_phase = RUNTIME_FLAG(runtime, BMS_BIND_ACTIVE)
+                                         ? (uint8_t)BMS_BLE_PHASE_BACKOFF
+                                         : (uint8_t)BMS_BLE_PHASE_IDLE;
+            runtime->bms_status_poll_elapsed_ms = 0U;
             RUNTIME_SET_FLAG(runtime, BMS_SCAN_ACTIVE, false);
             RUNTIME_SET_FLAG(runtime, BMS_SCAN_SNAPSHOT_DIRTY, true);
             runtime_set_bms_info(runtime, "BMS DONE");
@@ -4456,12 +4466,21 @@ static int runtime_bluetooth_gap_event(struct ble_gap_event *event, void *arg)
     case BLE_GAP_EVENT_CONNECT:
         if (event->connect.status == 0) {
             runtime->bluetooth_conn_handle = event->connect.conn_handle;
-            RUNTIME_SET_FLAG(runtime, BLUETOOTH_CONNECTED, true);
+            RUNTIME_SET_FLAG(runtime, BLUETOOTH_CONNECTED, false);
             RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISING, false);
-            RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, false);
             (void)runtime_project_bluetooth_snapshot(runtime);
-            runtime_set_error(runtime, "BT CONN");
-            ESP_LOGI(TAG, "[bt] local Bluetooth connected: conn=%u", event->connect.conn_handle);
+            runtime_set_error(runtime, "BT PAIR");
+            const int security_rc = ble_gap_security_initiate(event->connect.conn_handle);
+            if (security_rc != 0 && security_rc != BLE_HS_EALREADY) {
+                runtime_set_error(runtime, "BT PAIR FAIL");
+                ESP_LOGW(TAG, "[bt] pairing start failed: conn=%u rc=%d",
+                         event->connect.conn_handle, security_rc);
+                (void)ble_gap_terminate(event->connect.conn_handle,
+                                        BLE_ERR_REM_USER_CONN_TERM);
+            } else {
+                ESP_LOGI(TAG, "[bt] local Bluetooth connected; pairing started: conn=%u",
+                         event->connect.conn_handle);
+            }
         } else {
             runtime->bluetooth_conn_handle = 0xFFFFU;
             RUNTIME_SET_FLAG(runtime, BLUETOOTH_CONNECTED, false);
@@ -4474,10 +4493,12 @@ static int runtime_bluetooth_gap_event(struct ble_gap_event *event, void *arg)
     case BLE_GAP_EVENT_DISCONNECT:
         if (event->disconnect.conn.conn_handle == runtime->bluetooth_conn_handle) {
             const bool start_bms_scan = RUNTIME_FLAG(runtime, BMS_SCAN_REQUESTED);
+            const bool resume_advertising =
+                RUNTIME_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED) && !start_bms_scan;
             runtime->bluetooth_conn_handle = 0xFFFFU;
             RUNTIME_SET_FLAG(runtime, BLUETOOTH_CONNECTED, false);
             RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISING, false);
-            RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, !start_bms_scan);
+            RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, resume_advertising);
             (void)runtime_project_bluetooth_snapshot(runtime);
             runtime_set_error(runtime, "BT OFF");
             ESP_LOGI(TAG, "[bt] local Bluetooth disconnected: reason=%d", event->disconnect.reason);
@@ -4490,6 +4511,42 @@ static int runtime_bluetooth_gap_event(struct ble_gap_event *event, void *arg)
             }
         }
         return 0;
+    case BLE_GAP_EVENT_ENC_CHANGE:
+        if (event->enc_change.conn_handle == runtime->bluetooth_conn_handle) {
+            struct ble_gap_conn_desc desc = { 0 };
+            const int find_rc = ble_gap_conn_find(event->enc_change.conn_handle, &desc);
+            const bool paired = event->enc_change.status == 0 && find_rc == 0 &&
+                                desc.sec_state.encrypted;
+            RUNTIME_SET_FLAG(runtime, BLUETOOTH_CONNECTED, paired);
+            RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISING, false);
+            RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, !paired);
+            (void)runtime_project_bluetooth_snapshot(runtime);
+            if (paired) {
+                runtime_set_error(runtime, "BT CONN");
+                ESP_LOGI(TAG,
+                         "[bt] pairing complete: conn=%u encrypted=%u bonded=%u",
+                         event->enc_change.conn_handle,
+                         desc.sec_state.encrypted,
+                         desc.sec_state.bonded);
+            } else {
+                runtime_set_error(runtime, "BT PAIR FAIL");
+                ESP_LOGW(TAG, "[bt] pairing failed: conn=%u status=%d find_rc=%d",
+                         event->enc_change.conn_handle,
+                         event->enc_change.status,
+                         find_rc);
+                (void)ble_gap_terminate(event->enc_change.conn_handle,
+                                        BLE_ERR_REM_USER_CONN_TERM);
+            }
+        }
+        return 0;
+    case BLE_GAP_EVENT_REPEAT_PAIRING: {
+        struct ble_gap_conn_desc desc = { 0 };
+        if (ble_gap_conn_find(event->repeat_pairing.conn_handle, &desc) == 0) {
+            (void)ble_store_util_delete_peer(&desc.peer_id_addr);
+            return BLE_GAP_REPEAT_PAIRING_RETRY;
+        }
+        return BLE_GAP_REPEAT_PAIRING_IGNORE;
+    }
     case BLE_GAP_EVENT_ADV_COMPLETE:
     {
         const bool should_resume_advertising = RUNTIME_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED);
@@ -4603,6 +4660,10 @@ static void runtime_bms_ble_on_reset(int reason)
         RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISING, false);
         RUNTIME_SET_FLAG(runtime, BLUETOOTH_CONNECTED, false);
         runtime->bluetooth_conn_handle = 0xFFFFU;
+        if (RUNTIME_FLAG(runtime, BMS_BIND_ACTIVE)) {
+            runtime_bms_ble_reset_connection_state(runtime, BMS_BLE_PHASE_BACKOFF);
+            RUNTIME_SET_FLAG(runtime, BMS_SCAN_REQUESTED, true);
+        }
         (void)runtime_project_bluetooth_snapshot(runtime);
     }
     ESP_LOGW(TAG, "[bms] NimBLE reset: reason=%d", reason);
@@ -4671,6 +4732,14 @@ static esp_err_t runtime_init_bms_ble(esp_bms_idf_runtime_t *runtime)
 
     ble_hs_cfg.reset_cb = runtime_bms_ble_on_reset;
     ble_hs_cfg.sync_cb = runtime_bms_ble_on_sync;
+    ble_hs_cfg.store_status_cb = ble_store_util_status_rr;
+    ble_hs_cfg.sm_io_cap = BLE_SM_IO_CAP_NO_IO;
+    ble_hs_cfg.sm_bonding = 1;
+    ble_hs_cfg.sm_mitm = 0;
+    ble_hs_cfg.sm_sc = 1;
+    ble_hs_cfg.sm_our_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
+    ble_hs_cfg.sm_their_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
+    ble_store_config_init();
 
     BaseType_t task_ret = xTaskCreate(runtime_bms_ble_host_task,
                                       "bms-nimble",
@@ -5271,6 +5340,7 @@ esp_err_t esp_bms_idf_runtime_start_bms_ble_if_bound(esp_bms_idf_runtime_t *runt
     }
 
     ESP_LOGI(TAG, "[bms] bound MAC loaded: mac=%s", runtime->bms_bound_mac);
+    RUNTIME_SET_FLAG(runtime, BMS_BIND_ACTIVE, true);
     ESP_RETURN_ON_ERROR(runtime_init_bms_ble(runtime), TAG, "BMS BLE init failed");
     return runtime_bms_ble_start_scan_or_defer(runtime);
 }
@@ -5345,6 +5415,10 @@ static esp_err_t runtime_bluetooth_stop_advertising(esp_bms_idf_runtime_t *runti
     }
 
     RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, false);
+    if (runtime->bluetooth_conn_handle != 0xFFFFU) {
+        (void)ble_gap_terminate(runtime->bluetooth_conn_handle,
+                                BLE_ERR_REM_USER_CONN_TERM);
+    }
     if (RUNTIME_FLAG(runtime, BMS_BLE_READY) &&
         RUNTIME_FLAG(runtime, BMS_BLE_SYNCED) &&
         ble_gap_adv_active()) {
@@ -5409,6 +5483,7 @@ bool esp_bms_idf_runtime_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_m
     if (RUNTIME_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED) &&
         !RUNTIME_FLAG(runtime, BLUETOOTH_ADVERTISING) &&
         !RUNTIME_FLAG(runtime, BLUETOOTH_CONNECTED) &&
+        runtime->bluetooth_conn_handle == 0xFFFFU &&
         !RUNTIME_FLAG(runtime, BMS_SCAN_REQUESTED)) {
         const esp_err_t ret = esp_bms_idf_runtime_start_bluetooth_advertising(runtime);
         if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
@@ -5417,21 +5492,51 @@ bool esp_bms_idf_runtime_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_m
         }
         changed = true;
     }
-    const bool bms_collection_active =
-        runtime->active_data_source == ESP_BMS_LVGL_DATA_SOURCE_BMS ||
-        runtime->active_data_source == ESP_BMS_LVGL_DATA_SOURCE_SPEED_DASHBOARD ||
-        runtime->trip_efficiency.started;
-    if (bms_collection_active &&
-        runtime->bms_ble_phase == (uint8_t)BMS_BLE_PHASE_ONLINE) {
-        runtime->bms_status_poll_elapsed_ms += elapsed_ms;
-        if (runtime->bms_status_poll_elapsed_ms >= BMS_STATUS_POLL_PERIOD_MS &&
-            !RUNTIME_FLAG(runtime, BMS_WRITE_IN_FLIGHT)) {
-            const esp_err_t poll_ret = runtime_bms_ble_send_poll_request(runtime, true);
-            if (poll_ret != ESP_OK) {
-                runtime_set_bms_info(runtime, "BMS POLL");
-                ESP_LOGW(TAG, "[bms] poll request failed: %s", esp_err_to_name(poll_ret));
-                changed = true;
+    if (runtime->bms_ble_phase == (uint8_t)BMS_BLE_PHASE_ONLINE) {
+        const int64_t heartbeat_age_us = esp_timer_get_time() - runtime->bms_telemetry_last_us;
+        if (runtime->bms_telemetry_last_us > 0 && heartbeat_age_us >= 0 &&
+            heartbeat_age_us >= (int64_t)BMS_HEARTBEAT_TIMEOUT_MS * 1000) {
+            const uint16_t conn_handle = runtime->bms_conn_handle;
+            runtime->bms_ble_phase = (uint8_t)BMS_BLE_PHASE_BACKOFF;
+            runtime->bms_status_poll_elapsed_ms = 0U;
+            runtime_clear_bms_telemetry(runtime);
+            runtime_set_bms_info(runtime, "BMS TIMEOUT");
+            const int terminate_rc = ble_gap_terminate(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+            if (terminate_rc != 0) {
+                runtime_bms_ble_reset_connection_state(runtime, BMS_BLE_PHASE_BACKOFF);
             }
+            ESP_LOGW(TAG, "[bms] heartbeat timeout: conn=%u age_ms=%lld terminate_rc=%d",
+                     conn_handle, (long long)(heartbeat_age_us / 1000), terminate_rc);
+            changed = true;
+        } else {
+            runtime->bms_status_poll_elapsed_ms += elapsed_ms;
+            if (runtime->bms_status_poll_elapsed_ms >= BMS_STATUS_POLL_PERIOD_MS &&
+                !RUNTIME_FLAG(runtime, BMS_WRITE_IN_FLIGHT)) {
+                const esp_err_t poll_ret = runtime_bms_ble_send_poll_request(runtime, true);
+                if (poll_ret != ESP_OK) {
+                    runtime_set_bms_info(runtime, "BMS POLL");
+                    ESP_LOGW(TAG, "[bms] poll request failed: %s", esp_err_to_name(poll_ret));
+                    changed = true;
+                }
+            }
+        }
+    } else if (RUNTIME_FLAG(runtime, BMS_BIND_ACTIVE) &&
+               RUNTIME_FLAG(runtime, BMS_BLE_READY) &&
+               RUNTIME_FLAG(runtime, BMS_BLE_SYNCED) &&
+               (runtime->bms_ble_phase == (uint8_t)BMS_BLE_PHASE_IDLE ||
+                runtime->bms_ble_phase == (uint8_t)BMS_BLE_PHASE_BACKOFF)) {
+        runtime->bms_status_poll_elapsed_ms += elapsed_ms;
+        if (runtime->bms_status_poll_elapsed_ms >= BMS_RECONNECT_BACKOFF_MS) {
+            runtime->bms_status_poll_elapsed_ms = 0U;
+            const esp_err_t reconnect_ret = runtime_bms_ble_start_scan(runtime);
+            if (reconnect_ret != ESP_OK) {
+                ESP_LOGW(TAG, "[bms] reconnect scan failed: %s",
+                         esp_err_to_name(reconnect_ret));
+            } else {
+                ESP_LOGI(TAG, "[bms] reconnect scan started after %u ms backoff",
+                         (unsigned)BMS_RECONNECT_BACKOFF_MS);
+            }
+            changed = true;
         }
     }
     runtime->battery_sample_elapsed_ms += elapsed_ms;

@@ -537,8 +537,8 @@ touch_canonical_to_display(x, y, &display_x, &display_y);
 - `esp_bms_idf_runtime_start_setup_ap(runtime)` starts SoftAP only.
 - `esp_bms_idf_runtime_start_http_server(runtime)` starts HTTP only after
   Setup AP is active.
-- `esp_bms_idf_runtime_start_bms_ble_if_bound(runtime)` remains available for
-  explicit bound-device connection flows but is not called during boot.
+- `esp_bms_idf_runtime_start_bms_ble_if_bound(runtime)` restores a saved BMS
+  binding after the first UI draw and starts connection recovery.
 - `esp_bms_idf_runtime_start_bms_ble_for_bind(runtime)` starts NimBLE for a
   user-triggered bind or refresh scan.
 - `esp_bms_idf_runtime_start_wifi_scan(runtime)` starts Wi-Fi STA/APSTA for a
@@ -552,9 +552,16 @@ touch_canonical_to_display(x, y, &display_x, &display_y);
   initialization so the QR page has stable current values, but this must not
   start Wi-Fi.
 - Setup AP and HTTP are started from the hotspot/config entry action.
-- BMS BLE discovery is never started during boot, including when a bound MAC is
-  present. Opening the BMS candidate list or refreshing it starts NimBLE and
-  discovery through the user-triggered bind path.
+- A saved BMS binding starts NimBLE discovery after the first UI draw. A valid
+  status response is the connection heartbeat; five seconds without one
+  terminates the stale link, waits three seconds, and starts another scan.
+- Without a saved BMS binding, opening the candidate list or refreshing it
+  starts NimBLE discovery through the user-triggered bind path.
+- Local Bluetooth uses no-input/no-output bonding with persisted keys. An ACL
+  connection is only `BT PAIR`; publish `BLUETOOTH_CONNECTED` after a successful
+  encryption event, and resume advertising after a pairing failure.
+- The discoverable switch represents user intent while pairing. Turning it off
+  during pairing terminates the pending local Bluetooth connection.
 - Wi-Fi STA scan/connect is started from Wi-Fi settings actions only.
 
 ### 4. Validation & Error Matrix
@@ -566,11 +573,15 @@ touch_canonical_to_display(x, y, &display_x, &display_y);
   start STA, or APSTA when Setup AP is already active.
 - NimBLE scan requested before host sync -> mark scan requested and treat it as
   deferred, not a fatal startup failure.
+- Local Bluetooth ACL connected but encryption pending -> keep the discoverable
+  switch on and report `BT PAIR`, not `BT CONN`.
+- Encryption succeeds -> report connected and persist the bond; pairing fails
+  -> disconnect and resume advertising while discoverability remains requested.
 
 ### 5. Good/Base/Bad Cases
 
-- Good: boot logs show `first_ui` and display settings with no BMS scan, even
-  when a BMS MAC is already bound.
+- Good: boot logs show `first_ui` before a saved BMS MAC starts scanning and
+  reconnects; a silent link is terminated and rescanned after the backoff.
 - Base: tapping hotspot starts SoftAP and HTTP; tapping Wi-Fi scan starts Wi-Fi
   scan; tapping BMS bind starts NimBLE scan.
 - Bad: calling `esp_bms_idf_runtime_start_setup_ap()` from boot as a catch-all
@@ -579,8 +590,10 @@ touch_canonical_to_display(x, y, &display_x, &display_y);
 ### 6. Tests Required
 
 - Build with `./scripts/esp-idf-env.sh build`.
-- Flash and inspect boot logs for absence of automatic BMS discovery with and
-  without a bound BMS MAC; opening the candidate list must then start a scan.
+- Flash and inspect boot logs: a saved BMS MAC must reconnect after boot, while
+  a device without a binding stays idle until the candidate list is opened.
+- Stop BMS notifications without closing the ACL link; assert a heartbeat
+  timeout, disconnect, three-second backoff, and reconnect scan are logged.
 - Exercise hotspot, Wi-Fi scan/connect, and BMS bind paths on hardware.
 - Run `node .gitnexus/run.cjs detect-changes -r esp32BMSGPS` before commit.
 
