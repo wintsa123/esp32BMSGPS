@@ -306,3 +306,37 @@ Added a primitive-drawn quick-panel lock icon, full-screen interaction guard, fr
 ### Next Steps
 
 - None - task complete
+
+
+## Session 10: 正式 UI 与剩余里程
+
+**Date**: 2026-07-14
+**Task**: 正式 UI 与剩余里程
+**Branch**: `main`
+
+### Summary
+
+迁入正式 BMS/设置 UI，新增预设里程持久化与双阶段剩余里程算法；完成字体、模拟器、主机测试、ESP-IDF 构建、RFC2217 刷写和 NVS 验证。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e4f01f2` | (see git log) |
+| `e67b356` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
