@@ -123,7 +123,6 @@ static void init_snapshot(host_app_t *app)
                       ESP_BMS_DASHBOARD_FLAG_LOCAL_BATTERY_VALID |
                       ESP_BMS_DASHBOARD_FLAG_BLUETOOTH_ENABLED |
                       ESP_BMS_DASHBOARD_FLAG_CONTROLLER_CONNECTION_ENABLED |
-                      ESP_BMS_DASHBOARD_FLAG_CONTROLLER_PAGE_ENABLED |
                       ESP_BMS_DASHBOARD_FLAG_CONTROLLER_ONLINE |
                       ESP_BMS_DASHBOARD_FLAG_CONTROLLER_SPEED_VALID |
                       ESP_BMS_DASHBOARD_FLAG_CONTROLLER_RPM_VALID |

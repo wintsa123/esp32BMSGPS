@@ -6763,6 +6763,15 @@ static uint32_t speed_dashboard_render_signature(
                      ? UINT32_C(1) << 9
                      : 0U;
     signature |= speed_dashboard_battery_active_segments(snapshot) << 10;
+#if defined(ESP_BMS_LVGL_SIMULATOR)
+    const bool controller_online = SNAPSHOT_FLAG(snapshot, CONTROLLER_ONLINE);
+    signature |= controller_online && SNAPSHOT_FLAG(snapshot, CONTROLLER_TEMP_VALID)
+                     ? UINT32_C(1) << 14
+                     : 0U;
+    signature |= controller_online && SNAPSHOT_FLAG(snapshot, MOTOR_TEMP_VALID)
+                     ? UINT32_C(1) << 15
+                     : 0U;
+#endif
     return signature;
 }
 
@@ -6812,9 +6821,9 @@ static void speed_dashboard_draw_battery(lv_layer_t *layer,
 #if defined(ESP_BMS_LVGL_SIMULATOR)
     const int32_t y = coords->y1 + (portrait ? 6 : 8);
     speed_dashboard_draw_rect(layer,
-                              (lv_area_t){ x, y + 1, x + 6, y + 15 },
+                              (lv_area_t){ x, y + 1, x + 6, y + 16 },
                               COLOR_WHITE,
-                              false,
+                              true,
                               1);
     speed_dashboard_draw_rect(layer,
                               (lv_area_t){ x + 2, y, x + 4, y + 1 },
@@ -6846,8 +6855,8 @@ static void speed_dashboard_draw_battery(lv_layer_t *layer,
         const int32_t left = start_x + (int32_t)(index * 4U);
         const lv_point_t p0 = speed_dashboard_point(left + 1, segment_y);
         const lv_point_t p1 = speed_dashboard_point(left + 4, segment_y);
-        const lv_point_t p2 = speed_dashboard_point(left + 3, segment_y + 14);
-        const lv_point_t p3 = speed_dashboard_point(left, segment_y + 14);
+        const lv_point_t p2 = speed_dashboard_point(left + 3, segment_y + 15);
+        const lv_point_t p3 = speed_dashboard_point(left, segment_y + 15);
         speed_dashboard_draw_triangle(layer, p0, p1, p2, COLOR_WHITE);
         speed_dashboard_draw_triangle(layer, p0, p2, p3, COLOR_WHITE);
     }
@@ -6871,7 +6880,11 @@ static void speed_dashboard_draw_satellite(lv_layer_t *layer,
                                            bool portrait,
                                            bool gps_fix_valid)
 {
+#if defined(ESP_BMS_LVGL_SIMULATOR)
+    const int32_t x = coords->x1 + (portrait ? 35 : 145);
+#else
     const int32_t x = coords->x1 + (portrait ? 26 : 136);
+#endif
     const int32_t y = coords->y1 + (portrait ? 29 : 8);
     const lv_point_t top = speed_dashboard_point(x + 7, y + 2);
     const lv_point_t right = speed_dashboard_point(x + 12, y + 7);
@@ -6944,13 +6957,18 @@ static void speed_dashboard_draw_event_cb(lv_event_t *event)
                                   false);
     }
     for (uint32_t index = 0U; index < SPEED_DASHBOARD_SEGMENT_COUNT; ++index) {
+#if defined(ESP_BMS_LVGL_SIMULATOR)
+        const int32_t border_width = index >= SPEED_DASHBOARD_DANGER_START ? 2 : 4;
+#else
+        const int32_t border_width = 2;
+#endif
         speed_dashboard_draw_line(layer,
                                   outer[index],
                                   outer[index + 1U],
                                   index >= SPEED_DASHBOARD_DANGER_START
                                       ? COLOR_SPEED_BAND_DANGER
                                       : COLOR_WHITE,
-                                  2,
+                                  border_width,
                                   false);
     }
 
@@ -6972,7 +6990,33 @@ static void speed_dashboard_draw_event_cb(lv_event_t *event)
                                   false);
     }
 
+#if defined(ESP_BMS_LVGL_SIMULATOR)
+    if (!portrait) {
+        const uint32_t last = SPEED_DASHBOARD_SEGMENT_COUNT;
+        const lv_area_t terminal = {
+            .x1 = inner[last].x,
+            .y1 = outer[last].y,
+            .x2 = outer[last].x,
+            .y2 = inner[last].y,
+        };
+        speed_dashboard_draw_rect(layer, terminal, COLOR_SPEED_BAND_DANGER, true, 0);
+    }
+    if (!portrait) {
+        const uint32_t last = SPEED_DASHBOARD_SEGMENT_COUNT;
+        speed_dashboard_draw_line(layer,
+                                  speed_dashboard_point(outer[last].x, outer[last].y),
+                                  speed_dashboard_point(outer[last].x, inner[last].y),
+                                  COLOR_SPEED_BAND_DANGER,
+                                  2,
+                                  false);
+    }
+#endif
+
+#if defined(ESP_BMS_LVGL_SIMULATOR)
+    const int32_t divider_y = coords.y1 + (portrait ? 47 : 31);
+#else
     const int32_t divider_y = coords.y1 + (portrait ? 50 : 34);
+#endif
     speed_dashboard_draw_line(layer,
                               speed_dashboard_point(coords.x1 + 8, divider_y),
                               speed_dashboard_point(coords.x2 - 8, divider_y),
@@ -6984,6 +7028,39 @@ static void speed_dashboard_draw_event_cb(lv_event_t *event)
                                    &coords,
                                    portrait,
                                    SNAPSHOT_FLAG(snapshot, GPS_FIX_VALID));
+#if defined(ESP_BMS_LVGL_SIMULATOR)
+    const bool controller_online = SNAPSHOT_FLAG(snapshot, CONTROLLER_ONLINE);
+    const bool controller_temp_visible = controller_online &&
+                                         SNAPSHOT_FLAG(snapshot, CONTROLLER_TEMP_VALID);
+    const bool motor_temp_visible = controller_online &&
+                                    SNAPSHOT_FLAG(snapshot, MOTOR_TEMP_VALID);
+    lv_draw_label_dsc_t prefix;
+    lv_draw_label_dsc_init(&prefix);
+    prefix.font = &settings_zh_13;
+    prefix.color = COLOR_TEXT;
+    prefix.opa = LV_OPA_COVER;
+    prefix.text_static = 1;
+    if (controller_temp_visible) {
+        prefix.text = "控";
+        const lv_area_t area = {
+            .x1 = coords.x1 + (portrait ? 96 : 188),
+            .y1 = coords.y1 + (portrait ? 32 : 11),
+            .x2 = coords.x1 + (portrait ? 111 : 203),
+            .y2 = coords.y1 + (portrait ? 46 : 25),
+        };
+        lv_draw_label(layer, &prefix, &area);
+    }
+    if (motor_temp_visible) {
+        prefix.text = "电机";
+        const lv_area_t area = {
+            .x1 = coords.x1 + (portrait ? 170 : 250),
+            .y1 = coords.y1 + (portrait ? 32 : 11),
+            .x2 = coords.x1 + (portrait ? 201 : 281),
+            .y2 = coords.y1 + (portrait ? 46 : 25),
+        };
+        lv_draw_label(layer, &prefix, &area);
+    }
+#endif
 #if CONFIG_ESP_BMS_LVGL_UI_DRAG_DIAGNOSTICS
     const int64_t elapsed_us = esp_timer_get_time() - draw_started_us;
     const uint32_t bounded_elapsed_us = elapsed_us > UINT32_MAX
@@ -7001,13 +7078,16 @@ static void speed_dashboard_apply_layout(void)
 {
     const bool portrait = s_ui.width < s_ui.height;
 #if defined(ESP_BMS_LVGL_SIMULATOR)
-    const int32_t status_y = portrait ? 6 : 8;
-    const int32_t status_height = 16;
+    const int32_t status_y = portrait ? 5 : 7;
+    const int32_t status_height = 20;
+    const int32_t consumption_y = status_y + 1;
+    const int32_t temperature_y = portrait ? 30 : status_y + 2;
 #else
     const int32_t status_y = portrait ? 7 : 9;
     const int32_t status_height = 18;
-#endif
+    const int32_t consumption_y = status_y;
     const int32_t temperature_y = portrait ? 29 : status_y;
+#endif
     lv_obj_set_pos(s_ui.speed_art, 0, 0);
     lv_obj_set_size(s_ui.speed_art, s_ui.width, s_ui.height);
     if (portrait) {
@@ -7017,13 +7097,15 @@ static void speed_dashboard_apply_layout(void)
         lv_obj_set_size(s_ui.gps_speed_unit, 76, 26);
         lv_obj_set_pos(s_ui.speed_soc, 90, status_y);
         lv_obj_set_size(s_ui.speed_soc, 30, status_height);
-        lv_obj_set_pos(s_ui.speed_consumption, 74, status_y);
+        lv_obj_set_pos(s_ui.speed_consumption, 74, consumption_y);
         lv_obj_set_size(s_ui.speed_consumption, 159, status_height);
 #if defined(ESP_BMS_LVGL_SIMULATOR)
-        lv_obj_set_pos(s_ui.speed_controller_temp, 110, temperature_y);
-        lv_obj_set_size(s_ui.speed_controller_temp, 50, status_height);
-        lv_obj_set_pos(s_ui.speed_motor_temp, 164, temperature_y);
-        lv_obj_set_size(s_ui.speed_motor_temp, 68, status_height);
+        lv_obj_set_pos(s_ui.speed_consumption, 58, consumption_y);
+        lv_obj_set_size(s_ui.speed_consumption, 174, status_height);
+        lv_obj_set_pos(s_ui.speed_controller_temp, 98, temperature_y);
+        lv_obj_set_size(s_ui.speed_controller_temp, 44, status_height);
+        lv_obj_set_pos(s_ui.speed_motor_temp, 184, temperature_y);
+        lv_obj_set_size(s_ui.speed_motor_temp, 48, status_height);
 #else
         lv_obj_set_pos(s_ui.speed_controller_temp, 66, temperature_y);
         lv_obj_set_size(s_ui.speed_controller_temp, 55, status_height);
@@ -7048,13 +7130,15 @@ static void speed_dashboard_apply_layout(void)
         lv_obj_set_size(s_ui.gps_speed_unit, 68, 26);
         lv_obj_set_pos(s_ui.speed_soc, 90, status_y);
         lv_obj_set_size(s_ui.speed_soc, 30, status_height);
-        lv_obj_set_pos(s_ui.speed_consumption, 74, status_y);
+        lv_obj_set_pos(s_ui.speed_consumption, 74, consumption_y);
         lv_obj_set_size(s_ui.speed_consumption, 58, status_height);
 #if defined(ESP_BMS_LVGL_SIMULATOR)
-        lv_obj_set_pos(s_ui.speed_controller_temp, 216, temperature_y);
-        lv_obj_set_size(s_ui.speed_controller_temp, 38, status_height);
-        lv_obj_set_pos(s_ui.speed_motor_temp, 260, temperature_y);
-        lv_obj_set_size(s_ui.speed_motor_temp, 52, status_height);
+        lv_obj_set_pos(s_ui.speed_consumption, 54, consumption_y);
+        lv_obj_set_size(s_ui.speed_consumption, 86, status_height);
+        lv_obj_set_pos(s_ui.speed_controller_temp, 190, temperature_y);
+        lv_obj_set_size(s_ui.speed_controller_temp, 44, status_height);
+        lv_obj_set_pos(s_ui.speed_motor_temp, 270, temperature_y);
+        lv_obj_set_size(s_ui.speed_motor_temp, 42, status_height);
 #else
         lv_obj_set_pos(s_ui.speed_controller_temp, 164, temperature_y);
         lv_obj_set_size(s_ui.speed_controller_temp, 36, status_height);
@@ -7074,8 +7158,17 @@ static void speed_dashboard_apply_layout(void)
         }
     }
 #if defined(ESP_BMS_LVGL_SIMULATOR)
+    lv_obj_set_style_text_font(s_ui.speed_soc, &settings_zh_16, LV_PART_MAIN);
+    lv_obj_set_style_text_font(s_ui.speed_consumption, &settings_zh_16, LV_PART_MAIN);
+    lv_obj_set_style_text_font(s_ui.speed_controller_temp, &settings_zh_16, LV_PART_MAIN);
+    lv_obj_set_style_text_font(s_ui.speed_motor_temp, &settings_zh_16, LV_PART_MAIN);
     lv_obj_set_style_text_align(s_ui.speed_controller_temp, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
     lv_obj_set_style_text_align(s_ui.speed_motor_temp, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
+    const int32_t gear_height = portrait ? 44 : 40;
+    const int32_t gear_padding = (gear_height - (int32_t)lv_font_montserrat_28.line_height) / 2;
+    lv_obj_set_style_text_align(s_ui.speed_gear, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_pad_top(s_ui.speed_gear, gear_padding, LV_PART_MAIN);
+    lv_obj_set_style_pad_bottom(s_ui.speed_gear, gear_padding, LV_PART_MAIN);
 #endif
 }
 
@@ -7105,9 +7198,17 @@ static void set_gps_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
     if (snapshot->average_consumption_valid) {
         const int32_t deci = snapshot->average_consumption_deci_wh_per_distance;
         const int32_t rounded = deci >= 0 ? (deci + 5) / 10 : (deci - 5) / 10;
+#if defined(ESP_BMS_LVGL_SIMULATOR)
+        snprintf(text, sizeof(text), "%ld%s", (long)rounded, consumption_unit);
+#else
         snprintf(text, sizeof(text), "%ld %s", (long)rounded, consumption_unit);
+#endif
     } else {
+#if defined(ESP_BMS_LVGL_SIMULATOR)
+        snprintf(text, sizeof(text), "--%s", consumption_unit);
+#else
         snprintf(text, sizeof(text), "-- %s", consumption_unit);
+#endif
     }
     gps_label_set(s_ui.speed_consumption,
                   s_ui.speed_consumption_buf,
@@ -7122,14 +7223,22 @@ static void set_gps_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
                                     SNAPSHOT_FLAG(snapshot, MOTOR_TEMP_VALID);
     const bool gear_valid = controller_online && SNAPSHOT_FLAG(snapshot, CONTROLLER_GEAR_VALID);
     if (controller_temp_visible) {
+#if defined(ESP_BMS_LVGL_SIMULATOR)
+        snprintf(text, sizeof(text), "%dC", snapshot->controller_temp_c);
+#else
         snprintf(text, sizeof(text), "控 %dC", snapshot->controller_temp_c);
+#endif
         gps_label_set(s_ui.speed_controller_temp,
                       s_ui.speed_controller_temp_buf,
                       sizeof(s_ui.speed_controller_temp_buf),
                       text);
     }
     if (motor_temp_visible) {
+#if defined(ESP_BMS_LVGL_SIMULATOR)
+        snprintf(text, sizeof(text), "%dC", snapshot->motor_temp_c);
+#else
         snprintf(text, sizeof(text), "电机 %dC", snapshot->motor_temp_c);
+#endif
         gps_label_set(s_ui.speed_motor_temp,
                       s_ui.speed_motor_temp_buf,
                       sizeof(s_ui.speed_motor_temp_buf),
