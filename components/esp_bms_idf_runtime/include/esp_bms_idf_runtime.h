@@ -82,6 +82,7 @@ typedef struct {
     adc_channel_t battery_adc_channel;
     uart_port_t gps_uart;
     esp_bms_gps_stream_t gps_stream;
+    esp_bms_gps_casbin_stream_t gps_casbin_stream;
     esp_bms_gps_motion_filter_t gps_motion_filter;
     uint8_t gps_raw_sample[32];
     uint32_t tick_count;
@@ -91,6 +92,7 @@ typedef struct {
     uint32_t battery_read_failures;
     uint32_t gps_bytes_seen;
     uint32_t gps_parse_errors;
+    uint32_t gps_casbin_errors;
     uint32_t gps_overflow_lines;
     uint32_t gps_rmc_valid_count;
     uint32_t gps_rmc_invalid_count;
@@ -102,6 +104,8 @@ typedef struct {
     uint32_t gps_rmc_last_tick;
     uint32_t gps_rmc_last_log_tick;
     uint32_t gps_fix_log_last_tick;
+    uint32_t gps_security_last_query_tick;
+    uint32_t gps_security_verify_tick;
     int64_t bms_telemetry_last_us;
     uint32_t bms_status_poll_elapsed_ms;
     uint32_t controller_keepalive_elapsed_ms;
@@ -151,6 +155,9 @@ typedef struct {
     uint8_t gps_utc_hour;
     uint8_t gps_utc_minute;
     uint8_t gps_utc_second;
+    uint8_t gps_spoof_state;
+    uint8_t gps_jam_level;
+    uint8_t gps_security_config_attempts;
     bool gps_pps_active;
     bool gps_pps_ever_seen;
     bool gps_rmc_seen;
@@ -160,6 +167,10 @@ typedef struct {
     bool gps_uart_diagnostic_logged;
     bool gps_fix_log_valid;
     bool gps_fix_logged_state;
+    bool gps_security_state_valid;
+    bool gps_security_configured;
+    bool gps_security_verify_pending;
+    bool gps_agnss_injection_active;
     bool cast_active;
     bool cast_frame_active;
     int cast_socket_fd;

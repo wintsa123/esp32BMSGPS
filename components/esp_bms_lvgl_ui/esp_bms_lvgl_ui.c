@@ -18,6 +18,10 @@ static const char *TAG = "bms_lvgl_ui";
 LV_FONT_DECLARE(bluetoothon);
 LV_FONT_DECLARE(wlanJZ);
 LV_FONT_DECLARE(controller_digits_72);
+LV_FONT_DECLARE(fireblade_digits_64);
+LV_FONT_DECLARE(fireblade_info_digits_12);
+LV_FONT_DECLARE(fireblade_info_units_8);
+LV_FONT_DECLARE(fireblade_scale_digits_14);
 LV_FONT_DECLARE(settings_zh_10);
 LV_FONT_DECLARE(settings_zh_13);
 LV_FONT_DECLARE(settings_zh_16);
@@ -97,6 +101,9 @@ LV_FONT_DECLARE(settings_zh_16);
 #define SPEED_DASHBOARD_MAJOR_TICK_STEP (SPEED_DASHBOARD_SEGMENT_COUNT / 4U)
 #define SPEED_DASHBOARD_BAND_OVERLAP 4
 #define SPEED_DASHBOARD_SCALE_LABEL_COUNT 6U
+#define FIREBLADE_ARC_START_ANGLE 120
+#define FIREBLADE_ARC_SWEEP_ANGLE 234
+#define FIREBLADE_SPEED_TICK_COUNT 18U
 #define DASHBOARD_CELL_KEY_BITMAP_W 28
 #define DASHBOARD_CELL_KEY_BITMAP_H 16
 #define DASHBOARD_CELL_KEY_BITMAP_BYTES \
@@ -225,7 +232,12 @@ _Static_assert(sizeof(esp_bms_speed_source_t) == 4 &&
                    ESP_BMS_SPEED_SOURCE_GPS == 0 &&
                    ESP_BMS_SPEED_SOURCE_CONTROLLER == 1,
                "esp_bms_speed_source_t ABI changed; update runtime and Web consumers too");
-_Static_assert(sizeof(esp_bms_dashboard_snapshot_t) == 1036,
+_Static_assert(sizeof(esp_bms_speed_dashboard_style_t) == 4 &&
+                   ESP_BMS_SPEED_DASHBOARD_STYLE_S1000RR == 0 &&
+                   ESP_BMS_SPEED_DASHBOARD_STYLE_CONTROLLER == 1 &&
+                   ESP_BMS_SPEED_DASHBOARD_STYLE_HONDA_FIREBLADE == 2,
+               "esp_bms_speed_dashboard_style_t ABI changed; update runtime consumers too");
+_Static_assert(sizeof(esp_bms_dashboard_snapshot_t) == 1048,
                "dashboard snapshot ABI size changed; update all C consumers too");
 _Static_assert(ESP_BMS_LVGL_ACTION_NONE == 0,
                "esp_bms_lvgl_action_t value changed; update C action consumers too");
@@ -278,6 +290,8 @@ _Static_assert(ESP_BMS_LVGL_ACTION_SET_CONTROLLER_RATIO == 28,
 _Static_assert(ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_SOURCE == 29,
                "esp_bms_lvgl_action_t value changed; update C action consumers too");
 _Static_assert(ESP_BMS_LVGL_ACTION_SET_PRESET_RANGE == 30,
+               "esp_bms_lvgl_action_t value changed; update C action consumers too");
+_Static_assert(ESP_BMS_LVGL_ACTION_SET_SPEED_DASHBOARD_STYLE == 31,
                "esp_bms_lvgl_action_t value changed; update C action consumers too");
 
 typedef struct {
@@ -382,6 +396,7 @@ typedef struct {
     lv_obj_t *gps_detail;
     lv_obj_t *gps_speed_unit;
     lv_obj_t *speed_art;
+    lv_obj_t *fireblade_page;
     lv_obj_t *speed_soc;
     lv_obj_t *speed_consumption;
     lv_obj_t *speed_controller_temp;
@@ -530,6 +545,7 @@ static void screen_lock_enter(void);
 static void screen_lock_reapply(void);
 static void screen_lock_create(lv_obj_t *screen);
 static void screen_unlock_timer_cancel(void);
+static void create_fireblade_dashboard(void);
 
 static const lv_color_t COLOR_BG = LV_COLOR_MAKE(0x08, 0x0a, 0x0e);
 static const lv_color_t COLOR_PANEL_ALT = LV_COLOR_MAKE(0x16, 0x20, 0x29);
@@ -553,6 +569,15 @@ static const lv_color_t COLOR_SPEED_BAND_IDLE = LV_COLOR_MAKE(0x27, 0x29, 0x2d);
 static const lv_color_t COLOR_SPEED_BAND_DANGER = LV_COLOR_MAKE(0xc8, 0x24, 0x2f);
 static const lv_color_t COLOR_SPEED_DIVIDER = LV_COLOR_MAKE(0x00, 0xc8, 0xf2);
 static const lv_color_t COLOR_SPEED_GPS_OK = LV_COLOR_MAKE(0x43, 0xe3, 0x36);
+static const lv_color_t COLOR_FIREBLADE_BLACK = LV_COLOR_MAKE(0x05, 0x05, 0x05);
+static const lv_color_t COLOR_FIREBLADE_BRIDGE = LV_COLOR_MAKE(0x33, 0x33, 0x33);
+static const lv_color_t COLOR_FIREBLADE_MODE = LV_COLOR_MAKE(0x7f, 0x7f, 0x7e);
+static const lv_color_t COLOR_FIREBLADE_GRAY = LV_COLOR_MAKE(0xdf, 0xe0, 0xe2);
+static const lv_color_t COLOR_FIREBLADE_RED = LV_COLOR_MAKE(0xf4, 0x18, 0x25);
+static const lv_color_t COLOR_FIREBLADE_DANGER_BG = LV_COLOR_MAKE(0xff, 0xcf, 0xcf);
+static const lv_color_t COLOR_FIREBLADE_GREEN = LV_COLOR_MAKE(0x08, 0xa8, 0x13);
+static const lv_color_t COLOR_FIREBLADE_GEAR_BORDER = LV_COLOR_MAKE(0xc8, 0xc8, 0xc8);
+static const lv_color_t COLOR_FIREBLADE_GEAR_SHADOW = LV_COLOR_MAKE(0x80, 0x80, 0x80);
 static const lv_color_t COLOR_DASHBOARD_BATTERY_LEVEL = LV_COLOR_MAKE(0x66, 0xbf, 0xf2);
 static const lv_color_t COLOR_SETTINGS_BG = LV_COLOR_MAKE(0x00, 0x00, 0x00);
 static const lv_color_t COLOR_SETTINGS_CARD = LV_COLOR_MAKE(0x00, 0x00, 0x00);
@@ -4018,9 +4043,28 @@ static void settings_controller_value_row(lv_obj_t *parent,
     lv_obj_set_style_text_color(arrow, COLOR_SETTINGS_ACCENT, LV_PART_MAIN);
 }
 
+static esp_bms_speed_dashboard_style_t speed_dashboard_style_from_snapshot(
+    const esp_bms_dashboard_snapshot_t *snapshot)
+{
+    if (!snapshot) {
+        return ESP_BMS_SPEED_DASHBOARD_STYLE_S1000RR;
+    }
+    if (snapshot->speed_dashboard_style == ESP_BMS_SPEED_DASHBOARD_STYLE_S1000RR &&
+        SNAPSHOT_FLAG(snapshot, CONTROLLER_PAGE_ENABLED)) {
+        return ESP_BMS_SPEED_DASHBOARD_STYLE_CONTROLLER;
+    }
+    if (snapshot->speed_dashboard_style > ESP_BMS_SPEED_DASHBOARD_STYLE_HONDA_FIREBLADE) {
+        return SNAPSHOT_FLAG(snapshot, CONTROLLER_PAGE_ENABLED)
+                   ? ESP_BMS_SPEED_DASHBOARD_STYLE_CONTROLLER
+                   : ESP_BMS_SPEED_DASHBOARD_STYLE_S1000RR;
+    }
+    return snapshot->speed_dashboard_style;
+}
+
 static const char *const SETTINGS_CONTROLLER_STYLE_LABELS[] = {
     "宝马 S1000RR",
     "控制器监控",
+    "本田火刃",
 };
 
 static void settings_show_controller_style_picker(void);
@@ -4045,14 +4089,15 @@ static void settings_controller_style_option_event_cb(lv_event_t *event)
         return;
     }
 
-    const bool controller_monitor_selected = selected == 1U;
-    const bool controller_monitor_active =
-        SNAPSHOT_FLAG(settings_current_snapshot(), CONTROLLER_PAGE_ENABLED);
-    if (controller_monitor_selected != controller_monitor_active) {
+    const size_t current = (size_t)speed_dashboard_style_from_snapshot(
+        settings_current_snapshot());
+    if (selected != current) {
         ESP_LOGI(TAG,
                  "[controller-ui] speed dashboard style selected: %s",
                  SETTINGS_CONTROLLER_STYLE_LABELS[selected]);
-        queue_action_with_commit(ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_PAGE, true);
+        queue_action_with_commit(ESP_BMS_LVGL_ACTION_SET_SPEED_DASHBOARD_STYLE, true);
+        s_ui.pending_event.numeric_delta = (int16_t)selected;
+        ACTION_EVENT_SET_FLAG(&s_ui.pending_event, NUMERIC_DELTA_VALID, true);
     }
     lv_indev_wait_release(lv_indev_active());
 }
@@ -4066,9 +4111,8 @@ static void settings_show_controller_style_picker(void)
                                      SETTINGS_CHOICE_ROW_H_LANDSCAPE;
     const int32_t gap = portrait ? 8 : 6;
     const int32_t first_y = 12;
-    const size_t current = SNAPSHOT_FLAG(settings_current_snapshot(), CONTROLLER_PAGE_ENABLED)
-                               ? 1U
-                               : 0U;
+    const size_t current = (size_t)speed_dashboard_style_from_snapshot(
+        settings_current_snapshot());
 
     s_ui.settings_controller_view = (uint8_t)SETTINGS_CONTROLLER_VIEW_STYLE_LIST;
     s_ui.settings_bms_ble_status = NULL;
@@ -4335,7 +4379,7 @@ static void settings_show_controller_detail(void)
                                   card_w,
                                   row_h,
                                   SETTINGS_CONTROLLER_STYLE_LABELS[
-                                      SNAPSHOT_FLAG(snapshot, CONTROLLER_PAGE_ENABLED) ? 1U : 0U]);
+                                      speed_dashboard_style_from_snapshot(snapshot)]);
     for (size_t index = 0; index < ARRAY_SIZE(rows); ++index) {
         settings_detail_row(card,
                             0,
@@ -6508,7 +6552,10 @@ static void create_controller_dashboard(void)
 
 static void speed_dashboard_style_apply(const esp_bms_dashboard_snapshot_t *snapshot)
 {
-    const bool controller_monitor = SNAPSHOT_FLAG(snapshot, CONTROLLER_PAGE_ENABLED);
+    const esp_bms_speed_dashboard_style_t style =
+        speed_dashboard_style_from_snapshot(snapshot);
+    const bool controller_monitor = style == ESP_BMS_SPEED_DASHBOARD_STYLE_CONTROLLER;
+    const bool honda_fireblade = style == ESP_BMS_SPEED_DASHBOARD_STYLE_HONDA_FIREBLADE;
     if (controller_monitor && !s_ui.controller_page) {
         s_ui.controller_page = lv_obj_create(s_ui.gps_page);
         clear_style(s_ui.controller_page);
@@ -6520,11 +6567,18 @@ static void speed_dashboard_style_apply(const esp_bms_dashboard_snapshot_t *snap
                           LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
         create_controller_dashboard();
     }
+    if (honda_fireblade && !s_ui.fireblade_page) {
+        create_fireblade_dashboard();
+    }
 
-    set_obj_hidden(s_ui.speed_art, controller_monitor);
+    set_obj_hidden(s_ui.speed_art, controller_monitor || honda_fireblade);
     set_obj_hidden(s_ui.controller_page, !controller_monitor);
+    set_obj_hidden(s_ui.fireblade_page, !honda_fireblade);
     if (controller_monitor && s_ui.controller_page) {
         lv_obj_move_foreground(s_ui.controller_page);
+    } else if (honda_fireblade && s_ui.fireblade_page) {
+        lv_obj_move_foreground(s_ui.fireblade_page);
+        lv_obj_invalidate(s_ui.fireblade_page);
     }
 }
 
@@ -6567,6 +6621,7 @@ static bool settings_controller_view_changed(const esp_bms_dashboard_snapshot_t 
            previous->speed_unit != current->speed_unit ||
            previous->speed_source != current->speed_source ||
            previous->active_speed_source != current->active_speed_source ||
+           previous->speed_dashboard_style != current->speed_dashboard_style ||
            SNAPSHOT_FLAG(previous, CONTROLLER_PAGE_ENABLED) !=
                SNAPSHOT_FLAG(current, CONTROLLER_PAGE_ENABLED) ||
            SNAPSHOT_FLAG(previous, CONTROLLER_CONNECTION_ENABLED) !=
@@ -6667,6 +6722,552 @@ static void speed_dashboard_draw_rect(lv_layer_t *layer,
     rectangle.border_opa = LV_OPA_COVER;
     rectangle.border_width = filled ? 0 : 1;
     lv_draw_rect(layer, &rectangle, &area);
+}
+
+static lv_area_t fireblade_area(const lv_area_t *coords,
+                                int32_t x,
+                                int32_t y,
+                                int32_t width,
+                                int32_t height)
+{
+    return (lv_area_t){
+        .x1 = coords->x1 + x,
+        .y1 = coords->y1 + y,
+        .x2 = coords->x1 + x + width - 1,
+        .y2 = coords->y1 + y + height - 1,
+    };
+}
+
+static void fireblade_draw_text(lv_layer_t *layer,
+                                lv_area_t area,
+                                const lv_font_t *font,
+                                lv_color_t color,
+                                lv_text_align_t align,
+                                const char *text)
+{
+    lv_draw_label_dsc_t label_dsc;
+    lv_draw_label_dsc_init(&label_dsc);
+    label_dsc.text = text;
+    label_dsc.font = font;
+    label_dsc.color = color;
+    label_dsc.align = align;
+    label_dsc.opa = LV_OPA_COVER;
+    label_dsc.text_local = 1;
+    lv_draw_label(layer, &label_dsc, &area);
+}
+
+static void fireblade_draw_arc(lv_layer_t *layer,
+                               lv_point_t center,
+                               uint16_t radius,
+                               int32_t start_angle,
+                               int32_t end_angle,
+                               lv_color_t color,
+                               int32_t width)
+{
+    lv_draw_arc_dsc_t arc;
+    lv_draw_arc_dsc_init(&arc);
+    arc.center = center;
+    arc.radius = radius;
+    arc.start_angle = start_angle;
+    arc.end_angle = end_angle;
+    arc.color = color;
+    arc.width = width;
+    arc.opa = LV_OPA_COVER;
+    lv_draw_arc(layer, &arc);
+}
+
+static lv_point_t fireblade_circle_point(lv_point_t center, int32_t radius, int32_t angle)
+{
+    return speed_dashboard_point(
+        center.x + ((radius * lv_trigo_sin((int16_t)(angle + 90))) >> LV_TRIGO_SHIFT),
+        center.y + ((radius * lv_trigo_sin((int16_t)angle)) >> LV_TRIGO_SHIFT));
+}
+
+static void fireblade_draw_circle(lv_layer_t *layer,
+                                  lv_point_t center,
+                                  int32_t radius,
+                                  lv_color_t color)
+{
+    speed_dashboard_draw_rect(layer,
+                              (lv_area_t){ center.x - radius,
+                                           center.y - radius,
+                                           center.x + radius,
+                                           center.y + radius },
+                              color,
+                              true,
+                              LV_RADIUS_CIRCLE);
+}
+
+static void fireblade_draw_info_title(lv_layer_t *layer,
+                                      const lv_area_t *coords,
+                                      int32_t x,
+                                      int32_t y,
+                                      int32_t width,
+                                      const char *title,
+                                      int32_t top_extension,
+                                      int32_t bottom_extension)
+{
+    speed_dashboard_draw_rect(layer,
+                              fireblade_area(coords, x, y, width, 15),
+                              COLOR_FIREBLADE_GRAY,
+                              true,
+                              0);
+    const int32_t base_x = coords->x1 + x + width - 1;
+    const lv_point_t top_base = speed_dashboard_point(base_x, coords->y1 + y);
+    const lv_point_t bottom_base = speed_dashboard_point(base_x, coords->y1 + y + 14);
+    const lv_point_t top_outer = speed_dashboard_point(base_x + top_extension,
+                                                       coords->y1 + y);
+    const lv_point_t bottom_outer = speed_dashboard_point(base_x + bottom_extension,
+                                                          coords->y1 + y + 14);
+    if (top_extension != 0) {
+        speed_dashboard_draw_triangle(layer,
+                                      top_base,
+                                      top_outer,
+                                      bottom_outer,
+                                      COLOR_FIREBLADE_GRAY);
+    }
+    if (bottom_extension != 0) {
+        speed_dashboard_draw_triangle(layer,
+                                      top_base,
+                                      bottom_outer,
+                                      bottom_base,
+                                      COLOR_FIREBLADE_GRAY);
+    }
+    fireblade_draw_text(layer,
+                        fireblade_area(coords, x + 5, y + 2, width - 7, 12),
+                        &settings_zh_10,
+                        COLOR_FIREBLADE_BLACK,
+                        LV_TEXT_ALIGN_LEFT,
+                        title);
+}
+
+static void fireblade_format_date(char *buffer,
+                                  size_t buffer_len,
+                                  const esp_bms_dashboard_snapshot_t *snapshot)
+{
+    static const char *const weekdays[] = {
+        "SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT",
+    };
+    static const char *const months[] = {
+        "", "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+        "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
+    };
+    if (!snapshot->gps_local_date_valid || snapshot->gps_local_weekday >= ARRAY_SIZE(weekdays) ||
+        snapshot->gps_local_month == 0U || snapshot->gps_local_month >= ARRAY_SIZE(months)) {
+        snprintf(buffer, buffer_len, "--- -- --- ----");
+        return;
+    }
+    snprintf(buffer,
+             buffer_len,
+             "%s %02u %s %04u",
+             weekdays[snapshot->gps_local_weekday],
+             snapshot->gps_local_day,
+             months[snapshot->gps_local_month],
+             snapshot->gps_local_year);
+}
+
+static void fireblade_draw_scale(lv_layer_t *layer,
+                                 const lv_area_t *coords,
+                                 lv_point_t center,
+                                 int32_t radius,
+                                 const esp_bms_dashboard_snapshot_t *snapshot)
+{
+    const int32_t danger_start_angle =
+        FIREBLADE_ARC_START_ANGLE +
+        (int32_t)(16U * FIREBLADE_ARC_SWEEP_ANGLE / FIREBLADE_SPEED_TICK_COUNT);
+    fireblade_draw_arc(layer,
+                       center,
+                       (uint16_t)(radius - 10),
+                       FIREBLADE_ARC_START_ANGLE,
+                       FIREBLADE_ARC_START_ANGLE + FIREBLADE_ARC_SWEEP_ANGLE,
+                       COLOR_FIREBLADE_GRAY,
+                       28);
+    fireblade_draw_arc(layer,
+                       center,
+                       (uint16_t)(radius - 10),
+                       danger_start_angle,
+                       FIREBLADE_ARC_START_ANGLE + FIREBLADE_ARC_SWEEP_ANGLE,
+                       COLOR_FIREBLADE_DANGER_BG,
+                       28);
+    fireblade_draw_arc(layer,
+                       center,
+                       (uint16_t)(radius + 1),
+                       FIREBLADE_ARC_START_ANGLE,
+                       FIREBLADE_ARC_START_ANGLE + FIREBLADE_ARC_SWEEP_ANGLE,
+                       COLOR_FIREBLADE_MODE,
+                       2);
+
+    for (uint32_t index = 0U; index <= FIREBLADE_SPEED_TICK_COUNT; index += 2U) {
+        const int32_t angle = FIREBLADE_ARC_START_ANGLE +
+                              (int32_t)(index * FIREBLADE_ARC_SWEEP_ANGLE /
+                                        FIREBLADE_SPEED_TICK_COUNT);
+        const bool danger = index >= 16U;
+        const lv_color_t tick_color = danger ? COLOR_FIREBLADE_RED : COLOR_FIREBLADE_MODE;
+        const lv_color_t text_color = danger ? COLOR_FIREBLADE_RED : COLOR_FIREBLADE_BLACK;
+        speed_dashboard_draw_line(layer,
+                                  fireblade_circle_point(center, radius + 2, angle),
+                                  fireblade_circle_point(center, radius - 12, angle),
+                                  tick_color,
+                                  2,
+                                  false);
+        char value[8];
+        snprintf(value, sizeof(value), "%u", (unsigned)(index * 10U));
+        const lv_point_t text_center = fireblade_circle_point(center, radius - 27, angle);
+        fireblade_draw_text(layer,
+                            (lv_area_t){ text_center.x - 17,
+                                         text_center.y - 8,
+                                         text_center.x + 17,
+                                         text_center.y + 9 },
+                            &fireblade_scale_digits_14,
+                            text_color,
+                            LV_TEXT_ALIGN_CENTER,
+                            value);
+    }
+    fireblade_draw_arc(layer,
+                       center,
+                       (uint16_t)(radius + 1),
+                       danger_start_angle,
+                       FIREBLADE_ARC_START_ANGLE + FIREBLADE_ARC_SWEEP_ANGLE,
+                       COLOR_FIREBLADE_RED,
+                       3);
+
+    const uint32_t maximum_speed = snapshot->speed_unit == ESP_BMS_SPEED_UNIT_MPH
+                                       ? 1200U
+                                       : 1800U;
+    const uint32_t speed = SNAPSHOT_FLAG(snapshot, SPEED_VALID)
+                               ? LV_MIN(snapshot->speed_deci_units, maximum_speed)
+                               : 0U;
+    const int32_t needle_angle = FIREBLADE_ARC_START_ANGLE +
+                                 (int32_t)(speed * FIREBLADE_ARC_SWEEP_ANGLE /
+                                           maximum_speed);
+    const int32_t needle_length = radius + 1;
+    const lv_point_t needle = fireblade_circle_point(center, needle_length, needle_angle);
+    const int32_t needle_dx = needle.x - center.x;
+    const int32_t needle_dy = needle.y - center.y;
+    const lv_point_t black_left = speed_dashboard_point(
+        center.x - (needle_dy * 8 / needle_length),
+        center.y + (needle_dx * 8 / needle_length));
+    const lv_point_t black_right = speed_dashboard_point(
+        center.x + (needle_dy * 8 / needle_length),
+        center.y - (needle_dx * 8 / needle_length));
+    const lv_point_t red_left = speed_dashboard_point(
+        center.x - (needle_dy * 4 / needle_length),
+        center.y + (needle_dx * 4 / needle_length));
+    const lv_point_t red_right = speed_dashboard_point(
+        center.x + (needle_dy * 4 / needle_length),
+        center.y - (needle_dx * 4 / needle_length));
+    speed_dashboard_draw_triangle(layer,
+                                  black_left,
+                                  black_right,
+                                  needle,
+                                  COLOR_FIREBLADE_BLACK);
+    speed_dashboard_draw_triangle(layer,
+                                  red_left,
+                                  red_right,
+                                  needle,
+                                  COLOR_FIREBLADE_RED);
+    (void)coords;
+}
+
+static void fireblade_draw_gear(lv_layer_t *layer,
+                                const lv_area_t *coords,
+                                lv_point_t center,
+                                const esp_bms_dashboard_snapshot_t *snapshot)
+{
+    char gear[4];
+    const bool gear_valid = SNAPSHOT_FLAG(snapshot, CONTROLLER_ONLINE) &&
+                            SNAPSHOT_FLAG(snapshot, CONTROLLER_GEAR_VALID);
+    snprintf(gear, sizeof(gear), gear_valid ? "%u" : "-", snapshot->controller_gear);
+
+    lv_draw_rect_dsc_t gear_circle;
+    lv_draw_rect_dsc_init(&gear_circle);
+    gear_circle.radius = LV_RADIUS_CIRCLE;
+    gear_circle.bg_color = COLOR_WHITE;
+    gear_circle.bg_opa = LV_OPA_COVER;
+    gear_circle.border_color = COLOR_FIREBLADE_GEAR_BORDER;
+    gear_circle.border_width = 1;
+    gear_circle.border_opa = LV_OPA_COVER;
+    gear_circle.border_side = LV_BORDER_SIDE_FULL;
+    gear_circle.shadow_color = COLOR_FIREBLADE_GEAR_SHADOW;
+    gear_circle.shadow_width = 28;
+    gear_circle.shadow_spread = 4;
+    gear_circle.shadow_opa = LV_OPA_50;
+    lv_draw_rect(layer,
+                 &gear_circle,
+                 &(lv_area_t){ center.x - 29,
+                               center.y - 29,
+                               center.x + 29,
+                               center.y + 29 });
+    fireblade_draw_text(layer,
+                        (lv_area_t){ center.x - 28,
+                                     center.y - 25,
+                                     center.x + 28,
+                                     center.y + 28 },
+                        &lv_font_montserrat_48,
+                        COLOR_FIREBLADE_GREEN,
+                        LV_TEXT_ALIGN_CENTER,
+                        gear);
+    fireblade_draw_text(layer,
+                        fireblade_area(coords, center.x - coords->x1 - 32,
+                                       center.y - coords->y1 - 55, 64, 16),
+                        &settings_zh_10,
+                        COLOR_FIREBLADE_BLACK,
+                        LV_TEXT_ALIGN_CENTER,
+                        snapshot->speed_unit == ESP_BMS_SPEED_UNIT_MPH ? "mph" : "km/h");
+}
+
+static void fireblade_draw_landscape(lv_layer_t *layer,
+                                     const lv_area_t *coords,
+                                     const esp_bms_dashboard_snapshot_t *snapshot)
+{
+    char time[8];
+    char controller_temp[8];
+    char motor_temp[8];
+    char soc[8];
+    char speed[8];
+    char consumption[12];
+    char range[8];
+    char average_speed[8];
+    char date[24];
+    snprintf(time, sizeof(time), snapshot->gps_local_time_valid ? "%02u:%02u" : "--:--",
+             snapshot->gps_local_hour, snapshot->gps_local_minute);
+    snprintf(controller_temp,
+             sizeof(controller_temp),
+             SNAPSHOT_FLAG(snapshot, CONTROLLER_ONLINE) && SNAPSHOT_FLAG(snapshot, CONTROLLER_TEMP_VALID)
+                 ? "%dC"
+                 : "--C",
+             snapshot->controller_temp_c);
+    snprintf(motor_temp,
+             sizeof(motor_temp),
+             SNAPSHOT_FLAG(snapshot, CONTROLLER_ONLINE) && SNAPSHOT_FLAG(snapshot, MOTOR_TEMP_VALID)
+                 ? "%dC"
+                 : "--C",
+             snapshot->motor_temp_c);
+    snprintf(soc,
+             sizeof(soc),
+             SNAPSHOT_FLAG(snapshot, BMS_ONLINE) && SNAPSHOT_FLAG(snapshot, SOC_VALID)
+                 ? "%u%%"
+                 : "--%%",
+             snapshot->soc_percent > 100U ? 100U : snapshot->soc_percent);
+    snprintf(speed,
+             sizeof(speed),
+             SNAPSHOT_FLAG(snapshot, SPEED_VALID) ? "%u" : "--",
+             (snapshot->speed_deci_units + 5U) / 10U);
+    snprintf(consumption,
+             sizeof(consumption),
+             snapshot->average_consumption_valid ? "%ld.%01ld" : "--.-",
+             (long)(snapshot->average_consumption_deci_wh_per_distance / 10),
+             labs((long)snapshot->average_consumption_deci_wh_per_distance % 10L));
+    snprintf(range,
+             sizeof(range),
+             snapshot->remaining_range_valid ? "%u" : "--",
+             snapshot->remaining_range_km);
+    snprintf(average_speed,
+             sizeof(average_speed),
+             snapshot->average_speed_valid ? "%u" : "--",
+             (snapshot->average_speed_deci_units + 5U) / 10U);
+    fireblade_format_date(date, sizeof(date), snapshot);
+
+    speed_dashboard_draw_rect(layer,
+                              fireblade_area(coords, 0, 0, 320, 64),
+                              COLOR_FIREBLADE_BRIDGE,
+                              true,
+                              0);
+    speed_dashboard_draw_rect(layer,
+                              fireblade_area(coords, 260, 66, 60, 30),
+                              COLOR_FIREBLADE_MODE,
+                              true,
+                              0);
+    const lv_point_t center = speed_dashboard_point(coords->x1 + 166, coords->y1 + 120);
+    fireblade_draw_circle(layer, center, 122, COLOR_WHITE);
+    fireblade_draw_info_title(layer, coords, 0, 66, 65, "电耗", 11, 0);
+    fireblade_draw_info_title(layer, coords, 0, 113, 60, "剩余", 0, 0);
+    fireblade_draw_info_title(layer, coords, 0, 161, 68, "均速", 0, 8);
+    fireblade_draw_info_title(layer, coords, 0, 202, 100, "日期", 0, 24);
+    fireblade_draw_scale(layer, coords, center, 102, snapshot);
+
+    fireblade_draw_text(layer, fireblade_area(coords, 6, 4, 70, 20),
+                        &settings_zh_16, COLOR_WHITE, LV_TEXT_ALIGN_LEFT, time);
+    fireblade_draw_text(layer, fireblade_area(coords, 6, 27, 12, 12),
+                        &settings_zh_10, COLOR_WHITE, LV_TEXT_ALIGN_LEFT, "控");
+    fireblade_draw_text(layer, fireblade_area(coords, 28, 27, 32, 12),
+                        &settings_zh_10, COLOR_WHITE, LV_TEXT_ALIGN_RIGHT, controller_temp);
+    fireblade_draw_text(layer, fireblade_area(coords, 6, 43, 22, 12),
+                        &settings_zh_10, COLOR_WHITE, LV_TEXT_ALIGN_LEFT, "电机");
+    fireblade_draw_text(layer, fireblade_area(coords, 28, 43, 32, 12),
+                        &settings_zh_10, COLOR_WHITE, LV_TEXT_ALIGN_RIGHT, motor_temp);
+
+    fireblade_draw_text(layer, fireblade_area(coords, 264, 5, 51, 27),
+                        &lv_font_montserrat_24, COLOR_WHITE, LV_TEXT_ALIGN_RIGHT, soc);
+    fireblade_draw_text(layer, fireblade_area(coords, 284, 68, 32, 12),
+                        &settings_zh_10, COLOR_WHITE, LV_TEXT_ALIGN_LEFT, "MODE");
+    fireblade_draw_text(layer, fireblade_area(coords, 295, 80, 14, 14),
+                        &fireblade_info_digits_12, COLOR_WHITE, LV_TEXT_ALIGN_CENTER, "1");
+
+    fireblade_draw_text(layer, fireblade_area(coords, 3, 84, 62, 14),
+                        &fireblade_info_digits_12, COLOR_FIREBLADE_BLACK, LV_TEXT_ALIGN_CENTER, consumption);
+    fireblade_draw_text(layer, fireblade_area(coords, 3, 101, 62, 8),
+                        &fireblade_info_units_8, COLOR_FIREBLADE_BLACK, LV_TEXT_ALIGN_CENTER,
+                        snapshot->speed_unit == ESP_BMS_SPEED_UNIT_MPH ? "Wh/mi" : "Wh/km");
+    fireblade_draw_text(layer, fireblade_area(coords, 3, 136, 37, 14),
+                        &fireblade_info_digits_12, COLOR_FIREBLADE_BLACK, LV_TEXT_ALIGN_RIGHT, range);
+    fireblade_draw_text(layer, fireblade_area(coords, 42, 140, 22, 8),
+                        &fireblade_info_units_8, COLOR_FIREBLADE_BLACK, LV_TEXT_ALIGN_LEFT, "km");
+    fireblade_draw_text(layer, fireblade_area(coords, 3, 184, 37, 14),
+                        &fireblade_info_digits_12, COLOR_FIREBLADE_BLACK, LV_TEXT_ALIGN_RIGHT, average_speed);
+    fireblade_draw_text(layer, fireblade_area(coords, 42, 188, 28, 8),
+                        &fireblade_info_units_8, COLOR_FIREBLADE_BLACK, LV_TEXT_ALIGN_LEFT,
+                        snapshot->speed_unit == ESP_BMS_SPEED_UNIT_MPH ? "mph" : "km/h");
+    fireblade_draw_text(layer, fireblade_area(coords, 5, 219, 112, 12),
+                        &settings_zh_10, COLOR_FIREBLADE_BLACK, LV_TEXT_ALIGN_LEFT, date);
+
+    fireblade_draw_gear(layer,
+                        coords,
+                        speed_dashboard_point(center.x, center.y - 5),
+                        snapshot);
+    fireblade_draw_text(layer, fireblade_area(coords, 204, 153, 112, 60),
+                        &fireblade_digits_64, COLOR_FIREBLADE_BLACK, LV_TEXT_ALIGN_RIGHT, speed);
+    fireblade_draw_text(layer, fireblade_area(coords, 242, 211, 72, 20),
+                        &lv_font_montserrat_14, COLOR_FIREBLADE_BLACK, LV_TEXT_ALIGN_CENTER,
+                        snapshot->speed_unit == ESP_BMS_SPEED_UNIT_MPH ? "mph" : "km/h");
+}
+
+static void fireblade_draw_portrait_info(lv_layer_t *layer,
+                                         const lv_area_t *coords,
+                                         int32_t x,
+                                         int32_t y,
+                                         const char *title,
+                                         const char *value,
+                                         const char *unit)
+{
+    fireblade_draw_info_title(layer, coords, x, y, 107, title, 0, 0);
+    fireblade_draw_text(layer, fireblade_area(coords, x + 3, y + 16, 64, 25),
+                        &lv_font_montserrat_24, COLOR_FIREBLADE_BLACK, LV_TEXT_ALIGN_RIGHT, value);
+    fireblade_draw_text(layer, fireblade_area(coords, x + 72, y + 28, 35, 11),
+                        &settings_zh_10, COLOR_FIREBLADE_BLACK, LV_TEXT_ALIGN_LEFT, unit);
+}
+
+static void fireblade_draw_portrait(lv_layer_t *layer,
+                                    const lv_area_t *coords,
+                                    const esp_bms_dashboard_snapshot_t *snapshot)
+{
+    char time[8];
+    char controller_temp[8];
+    char motor_temp[8];
+    char soc[8];
+    char speed[8];
+    char consumption[12];
+    char range[8];
+    char average_speed[8];
+    char date[24];
+    snprintf(time, sizeof(time), snapshot->gps_local_time_valid ? "%02u:%02u" : "--:--",
+             snapshot->gps_local_hour, snapshot->gps_local_minute);
+    snprintf(controller_temp,
+             sizeof(controller_temp),
+             SNAPSHOT_FLAG(snapshot, CONTROLLER_ONLINE) && SNAPSHOT_FLAG(snapshot, CONTROLLER_TEMP_VALID)
+                 ? "%dC"
+                 : "--C",
+             snapshot->controller_temp_c);
+    snprintf(motor_temp,
+             sizeof(motor_temp),
+             SNAPSHOT_FLAG(snapshot, CONTROLLER_ONLINE) && SNAPSHOT_FLAG(snapshot, MOTOR_TEMP_VALID)
+                 ? "%dC"
+                 : "--C",
+             snapshot->motor_temp_c);
+    snprintf(soc,
+             sizeof(soc),
+             SNAPSHOT_FLAG(snapshot, BMS_ONLINE) && SNAPSHOT_FLAG(snapshot, SOC_VALID)
+                 ? "%u%%"
+                 : "--%%",
+             snapshot->soc_percent > 100U ? 100U : snapshot->soc_percent);
+    snprintf(speed,
+             sizeof(speed),
+             SNAPSHOT_FLAG(snapshot, SPEED_VALID) ? "%u" : "--",
+             (snapshot->speed_deci_units + 5U) / 10U);
+    snprintf(consumption,
+             sizeof(consumption),
+             snapshot->average_consumption_valid ? "%ld.%01ld" : "--.-",
+             (long)(snapshot->average_consumption_deci_wh_per_distance / 10),
+             labs((long)snapshot->average_consumption_deci_wh_per_distance % 10L));
+    snprintf(range, sizeof(range), snapshot->remaining_range_valid ? "%u" : "--",
+             snapshot->remaining_range_km);
+    snprintf(average_speed,
+             sizeof(average_speed),
+             snapshot->average_speed_valid ? "%u" : "--",
+             (snapshot->average_speed_deci_units + 5U) / 10U);
+    fireblade_format_date(date, sizeof(date), snapshot);
+
+    speed_dashboard_draw_rect(layer,
+                              fireblade_area(coords, 0, 0, 240, 35),
+                              COLOR_FIREBLADE_BLACK,
+                              true,
+                              0);
+    fireblade_draw_text(layer, fireblade_area(coords, 5, 4, 73, 27),
+                        &lv_font_montserrat_24, COLOR_WHITE, LV_TEXT_ALIGN_LEFT, time);
+    fireblade_draw_text(layer, fireblade_area(coords, 88, 5, 12, 12),
+                        &settings_zh_10, COLOR_WHITE, LV_TEXT_ALIGN_LEFT, "控");
+    fireblade_draw_text(layer, fireblade_area(coords, 102, 5, 30, 12),
+                        &settings_zh_10, COLOR_WHITE, LV_TEXT_ALIGN_LEFT, controller_temp);
+    fireblade_draw_text(layer, fireblade_area(coords, 88, 19, 22, 12),
+                        &settings_zh_10, COLOR_WHITE, LV_TEXT_ALIGN_LEFT, "电机");
+    fireblade_draw_text(layer, fireblade_area(coords, 112, 19, 30, 12),
+                        &settings_zh_10, COLOR_WHITE, LV_TEXT_ALIGN_LEFT, motor_temp);
+    fireblade_draw_text(layer, fireblade_area(coords, 183, 6, 53, 25),
+                        &lv_font_montserrat_24, COLOR_WHITE, LV_TEXT_ALIGN_RIGHT, soc);
+
+    const lv_point_t center = speed_dashboard_point(coords->x1 + 124, coords->y1 + 145);
+    fireblade_draw_scale(layer, coords, center, 102, snapshot);
+    fireblade_draw_gear(layer, coords, center, snapshot);
+    fireblade_draw_text(layer, fireblade_area(coords, 124, 174, 112, 60),
+                        &fireblade_digits_64, COLOR_FIREBLADE_BLACK, LV_TEXT_ALIGN_RIGHT, speed);
+    fireblade_draw_text(layer, fireblade_area(coords, 166, 220, 68, 12),
+                        &settings_zh_10, COLOR_FIREBLADE_BLACK, LV_TEXT_ALIGN_CENTER,
+                        snapshot->speed_unit == ESP_BMS_SPEED_UNIT_MPH ? "mph" : "km/h");
+
+    fireblade_draw_portrait_info(layer,
+                                 coords,
+                                 10,
+                                 233,
+                                 "电耗",
+                                 consumption,
+                                 snapshot->speed_unit == ESP_BMS_SPEED_UNIT_MPH ? "Wh/mi" : "Wh/km");
+    fireblade_draw_portrait_info(layer, coords, 123, 233, "剩余", range, "km");
+    fireblade_draw_portrait_info(layer,
+                                 coords,
+                                 10,
+                                 273,
+                                 "均速",
+                                 average_speed,
+                                 snapshot->speed_unit == ESP_BMS_SPEED_UNIT_MPH ? "mph" : "km/h");
+    fireblade_draw_info_title(layer, coords, 123, 273, 107, "日期", 0, 0);
+    fireblade_draw_text(layer, fireblade_area(coords, 126, 294, 101, 14),
+                        &settings_zh_10, COLOR_FIREBLADE_BLACK, LV_TEXT_ALIGN_CENTER, date);
+}
+
+static void fireblade_draw_event_cb(lv_event_t *event)
+{
+    lv_obj_t *object = lv_event_get_target_obj(event);
+    lv_layer_t *layer = lv_event_get_layer(event);
+    lv_area_t coords;
+    lv_obj_get_coords(object, &coords);
+    if (lv_area_get_width(&coords) < lv_area_get_height(&coords)) {
+        fireblade_draw_portrait(layer, &coords, &s_ui.last_snapshot);
+    } else {
+        fireblade_draw_landscape(layer, &coords, &s_ui.last_snapshot);
+    }
+    speed_dashboard_draw_rect(layer, coords, COLOR_FIREBLADE_BLACK, false, 0);
+}
+
+static void create_fireblade_dashboard(void)
+{
+    s_ui.fireblade_page = lv_obj_create(s_ui.gps_page);
+    clear_style(s_ui.fireblade_page);
+    lv_obj_set_pos(s_ui.fireblade_page, 0, 0);
+    lv_obj_set_size(s_ui.fireblade_page, s_ui.width, s_ui.height);
+    lv_obj_set_style_bg_color(s_ui.fireblade_page, COLOR_WHITE, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_ui.fireblade_page, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_clear_flag(s_ui.fireblade_page, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(s_ui.fireblade_page, fireblade_draw_event_cb, LV_EVENT_DRAW_MAIN, NULL);
 }
 
 static uint32_t speed_dashboard_smooth_step(uint32_t index)

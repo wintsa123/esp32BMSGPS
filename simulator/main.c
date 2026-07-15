@@ -78,6 +78,7 @@ static void refresh_speed_snapshot(host_app_t *app)
                                      ? display_speed_deci(active_speed_kmh_deci,
                                                           snapshot->speed_unit)
                                      : 0U;
+    snapshot->average_speed_deci_units = display_speed_deci(720U, snapshot->speed_unit);
     app->snapshot.controller_speed_deci_units =
         display_speed_deci(app->controller_speed_kmh_deci, app->snapshot.speed_unit);
     snapshot->average_consumption_deci_wh_per_distance = 0;
@@ -141,12 +142,14 @@ static void init_snapshot(host_app_t *app)
     snapshot->gps_sentences_seen = 1234U;
     snapshot->uptime_seconds = 3661U;
     snapshot->pack_voltage_mv = 72800U;
-    snapshot->total_capacity_mah = 100000U;
-    snapshot->capacity_remaining_mah = 76000U;
+    snapshot->total_capacity_mah = 140000U;
+    snapshot->capacity_remaining_mah = 104600U;
     snapshot->local_battery_mv = 3920U;
     snapshot->speed_unit = ESP_BMS_SPEED_UNIT_KMH;
     snapshot->speed_source = ESP_BMS_SPEED_SOURCE_GPS;
     snapshot->active_speed_source = ESP_BMS_SPEED_SOURCE_GPS;
+    snapshot->speed_dashboard_style = ESP_BMS_SPEED_DASHBOARD_STYLE_HONDA_FIREBLADE;
+    snapshot->average_speed_valid = true;
     snapshot->average_consumption_valid = true;
     snapshot->preset_range_km = ESP_BMS_PRESET_RANGE_DEFAULT_KM;
     snapshot->current_deci_amps = 126;
@@ -172,7 +175,12 @@ static void init_snapshot(host_app_t *app)
     snapshot->controller_gear = 3U;
     snapshot->gps_local_hour = 14U;
     snapshot->gps_local_minute = 32U;
+    snapshot->gps_local_year = 2026U;
+    snapshot->gps_local_month = 7U;
+    snapshot->gps_local_day = 15U;
+    snapshot->gps_local_weekday = 3U;
     snapshot->gps_local_time_valid = true;
+    snapshot->gps_local_date_valid = true;
     snapshot->wifi = ESP_BMS_WIFI_OFFLINE;
     snprintf(snapshot->bluetooth_name, sizeof(snapshot->bluetooth_name), "ESP32 BMS GPS");
     snprintf(snapshot->bms_info_text, sizeof(snapshot->bms_info_text), "BMS ONLINE");
@@ -376,6 +384,25 @@ static bool apply_action_event(host_app_t *app, const esp_bms_lvgl_action_event_
         snapshot_flag_set(snapshot,
                           ESP_BMS_DASHBOARD_FLAG_CONTROLLER_PAGE_ENABLED,
                           !snapshot_flag_get(snapshot, ESP_BMS_DASHBOARD_FLAG_CONTROLLER_PAGE_ENABLED));
+        snapshot->speed_dashboard_style =
+            snapshot_flag_get(snapshot, ESP_BMS_DASHBOARD_FLAG_CONTROLLER_PAGE_ENABLED)
+                ? ESP_BMS_SPEED_DASHBOARD_STYLE_CONTROLLER
+                : ESP_BMS_SPEED_DASHBOARD_STYLE_S1000RR;
+        return true;
+    case ESP_BMS_LVGL_ACTION_SET_SPEED_DASHBOARD_STYLE:
+        if (esp_bms_lvgl_action_event_flag_get(
+                event, ESP_BMS_LVGL_ACTION_EVENT_FLAG_NUMERIC_DELTA_VALID) &&
+            event->numeric_delta >= ESP_BMS_SPEED_DASHBOARD_STYLE_S1000RR &&
+            event->numeric_delta <= ESP_BMS_SPEED_DASHBOARD_STYLE_HONDA_FIREBLADE) {
+            snapshot->speed_dashboard_style =
+                (esp_bms_speed_dashboard_style_t)event->numeric_delta;
+            snapshot_flag_set(
+                snapshot,
+                ESP_BMS_DASHBOARD_FLAG_CONTROLLER_PAGE_ENABLED,
+                snapshot->speed_dashboard_style == ESP_BMS_SPEED_DASHBOARD_STYLE_CONTROLLER);
+            return true;
+        }
+        return false;
         return true;
     case ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_SOURCE:
         snapshot->speed_source = snapshot->speed_source == ESP_BMS_SPEED_SOURCE_GPS
@@ -535,7 +562,7 @@ int main(int argc, char **argv)
 
     if (esp_bms_lvgl_ui_init(app.display) != ESP_OK ||
         esp_bms_lvgl_ui_update(&app.snapshot) != ESP_OK ||
-        esp_bms_lvgl_ui_set_page(ESP_BMS_LVGL_PAGE_BATTERY, false) != ESP_OK) {
+        esp_bms_lvgl_ui_set_page(ESP_BMS_LVGL_PAGE_GPS, false) != ESP_OK) {
         fputs("真实 UI 初始化失败\n", stderr);
         SDL_DelEventWatch(sdl_event_watch, &app);
         lv_deinit();
@@ -555,7 +582,7 @@ int main(int argc, char **argv)
         bool snapshot_changed = apply_command(&app, command);
         snapshot_changed = process_ui_action(&app) || snapshot_changed;
 
-        if (headless) {
+        if (headless && !screenshot_path) {
             if (frame == 10U) {
                 push_key(SDLK_UP);
             } else if (frame == 20U || frame == 35U) {

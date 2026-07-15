@@ -59,6 +59,16 @@ static const char *TAG = "bms_idf_runtime";
 #define GPS_DIAGNOSTIC_LOG_PERIOD_SECONDS 60U
 #define GPS_RMC_TIMEOUT_SECONDS 3U
 #define GPS_UART_STARTUP_DIAGNOSTIC_SECONDS 10U
+#define GPS_SECURITY_QUERY_PERIOD_SECONDS 1U
+#define GPS_SECURITY_JAM_CHANNEL_MASK 0x07U
+#define GPS_AGNSS_MAX_BYTES (32U * 1024U)
+#define GPS_CASBIN_CLASS_ACK 0x05U
+#define GPS_CASBIN_CLASS_CFG 0x06U
+#define GPS_CASBIN_CLASS_MSG 0x08U
+#define GPS_CASBIN_CLASS_MON 0x0AU
+#define GPS_CASBIN_CLASS_AID 0x0BU
+#define GPS_CASBIN_ID_CFG_JSM 0x10U
+#define GPS_CASBIN_ID_MON_SEC 0x0BU
 #define BMS_TELEMETRY_FRESHNESS_US INT64_C(2000000)
 #define SETUP_AP_SSID_PREFIX "fuckingBms_"
 #define SETUP_AP_SSID_SUFFIX_LEN 6U
@@ -1592,6 +1602,12 @@ static bool runtime_speed_source_matches_policy(uint8_t speed_source)
            speed_source == (uint8_t)ESP_BMS_SPEED_SOURCE_CONTROLLER;
 }
 
+static bool runtime_speed_dashboard_style_matches_policy(int32_t style)
+{
+    return style >= (int32_t)ESP_BMS_SPEED_DASHBOARD_STYLE_S1000RR &&
+           style <= (int32_t)ESP_BMS_SPEED_DASHBOARD_STYLE_HONDA_FIREBLADE;
+}
+
 static bool runtime_language_matches_policy(uint8_t language)
 {
     return language <= 1U;
@@ -1721,11 +1737,13 @@ static void runtime_reset_state(esp_bms_idf_runtime_t *runtime)
     runtime->battery_read_failures = 0;
     runtime->gps_bytes_seen = 0;
     runtime->gps_parse_errors = 0;
+    runtime->gps_casbin_errors = 0;
     runtime->gps_overflow_lines = 0;
     runtime->gps_rmc_valid_count = 0;
     runtime->gps_rmc_invalid_count = 0;
     runtime->gps_speed_knots_milli = 0;
     esp_bms_gps_stream_reset(&runtime->gps_stream);
+    esp_bms_gps_casbin_stream_reset(&runtime->gps_casbin_stream);
     esp_bms_gps_motion_filter_reset(&runtime->gps_motion_filter);
     runtime->gps_debug_lines_logged = 0U;
     runtime->gps_raw_sample_len = 0U;
@@ -1735,6 +1753,8 @@ static void runtime_reset_state(esp_bms_idf_runtime_t *runtime)
     runtime->gps_rmc_last_tick = 0U;
     runtime->gps_rmc_last_log_tick = 0U;
     runtime->gps_fix_log_last_tick = 0U;
+    runtime->gps_security_last_query_tick = 0U;
+    runtime->gps_security_verify_tick = 0U;
     runtime->bms_telemetry_last_us = 0;
     runtime->gps_pps_active = false;
     runtime->gps_pps_ever_seen = false;
@@ -1745,6 +1765,13 @@ static void runtime_reset_state(esp_bms_idf_runtime_t *runtime)
     runtime->gps_uart_diagnostic_logged = false;
     runtime->gps_fix_log_valid = false;
     runtime->gps_fix_logged_state = false;
+    runtime->gps_spoof_state = 0U;
+    runtime->gps_jam_level = 0U;
+    runtime->gps_security_config_attempts = 0U;
+    runtime->gps_security_state_valid = false;
+    runtime->gps_security_configured = false;
+    runtime->gps_security_verify_pending = false;
+    __atomic_store_n(&runtime->gps_agnss_injection_active, false, __ATOMIC_RELAXED);
     runtime->bms_status_poll_elapsed_ms = 0;
     runtime->bms_frame_len = 0;
     runtime->bms_conn_handle = 0xFFFFU;
@@ -1896,6 +1923,82 @@ static void runtime_init_gps_pps(esp_bms_idf_runtime_t *runtime)
     ESP_LOGI(TAG, "[gps] PPS ready: gpio=%d edge=rising pull=external", GPS_PPS_GPIO);
 }
 
+static bool runtime_gps_uart_write(esp_bms_idf_runtime_t *runtime,
+                                   const uint8_t *data,
+                                   size_t data_len)
+{
+    if (!runtime || !data || data_len == 0U ||
+        !RUNTIME_FLAG(runtime, GPS_UART_READY)) {
+        return false;
+    }
+    const int written = uart_write_bytes(runtime->gps_uart, data, data_len);
+    if (written != (int)data_len) {
+        ESP_LOGW(TAG,
+                 "[gps] UART write failed: requested=%u written=%d",
+                 (unsigned)data_len,
+                 written);
+        return false;
+    }
+    return true;
+}
+
+static bool runtime_gps_send_text_command(esp_bms_idf_runtime_t *runtime,
+                                          const char *payload)
+{
+    if (!payload) {
+        return false;
+    }
+    uint8_t checksum = 0U;
+    for (const char *cursor = payload; *cursor != '\0'; ++cursor) {
+        checksum ^= (uint8_t)*cursor;
+    }
+
+    char command[96] = { 0 };
+    const int written = snprintf(command,
+                                 sizeof(command),
+                                 "$%s*%02X\r\n",
+                                 payload,
+                                 checksum);
+    return written > 0 && (size_t)written < sizeof(command) &&
+           runtime_gps_uart_write(runtime, (const uint8_t *)command, (size_t)written);
+}
+
+static bool runtime_gps_send_casbin(esp_bms_idf_runtime_t *runtime,
+                                    uint8_t message_class,
+                                    uint8_t message_id,
+                                    const uint8_t *payload,
+                                    size_t payload_len)
+{
+    uint8_t frame[ESP_BMS_GPS_CASBIN_MAX_FRAME] = { 0 };
+    const size_t frame_len = esp_bms_gps_casbin_build(message_class,
+                                                       message_id,
+                                                       payload,
+                                                       payload_len,
+                                                       frame,
+                                                       sizeof(frame));
+    return frame_len > 0U && runtime_gps_uart_write(runtime, frame, frame_len);
+}
+
+static void runtime_configure_gps_receiver(esp_bms_idf_runtime_t *runtime)
+{
+    const bool rate_ok = runtime_gps_send_text_command(runtime, "PCAS02,100");
+    const bool output_ok = runtime_gps_send_text_command(
+        runtime,
+        "PCAS03,9,0,9,9,1,0,0,0,0,0,,,0,0");
+    (void)runtime_gps_send_text_command(runtime, "PCAS06,2");
+    (void)runtime_gps_send_text_command(runtime, "PCAS06,4");
+    const bool security_query_ok =
+        runtime_gps_send_casbin(runtime,
+                                GPS_CASBIN_CLASS_CFG,
+                                GPS_CASBIN_ID_CFG_JSM,
+                                NULL,
+                                0U);
+    ESP_LOGI(TAG,
+             "[gps] receiver config requested: rate=10Hz output=%s security_query=%s",
+             rate_ok && output_ok ? "rmc10_diag1" : "failed",
+             security_query_ok ? "sent" : "failed");
+}
+
 static void runtime_init_gps_uart(esp_bms_idf_runtime_t *runtime)
 {
     uart_config_t config = {
@@ -1932,6 +2035,7 @@ static void runtime_init_gps_uart(esp_bms_idf_runtime_t *runtime)
     RUNTIME_SET_FLAG(runtime, GPS_UART_READY, true);
     ESP_LOGI(TAG, "GPS UART ready: uart=%d rx=%d tx=%d baud=%d",
              runtime->gps_uart, GPS_UART_RX_GPIO, GPS_UART_TX_GPIO, GPS_UART_BAUD);
+    runtime_configure_gps_receiver(runtime);
 }
 
 static esp_err_t runtime_init_nvs(esp_bms_idf_runtime_t *runtime)
@@ -2113,7 +2217,7 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
         !runtime_bms_type_matches_policy(bms_type) ||
         preset_range_km > ESP_BMS_REMAINING_RANGE_MAX_KM ||
         controller_connection_enabled > 1U || legacy_controller_page_enabled > 1U ||
-        speed_dashboard_style > 1U) {
+        !runtime_speed_dashboard_style_matches_policy(speed_dashboard_style)) {
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -2160,11 +2264,14 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
     runtime->display_rotation = (esp_bms_idf_display_rotation_t)rotation;
     runtime->snapshot.speed_unit = (esp_bms_speed_unit_t)speed_unit;
     runtime->snapshot.speed_source = (esp_bms_speed_source_t)speed_source;
+    runtime->snapshot.speed_dashboard_style =
+        (esp_bms_speed_dashboard_style_t)speed_dashboard_style;
     runtime->snapshot.preset_range_km = preset_range_km;
     RUNTIME_SET_FLAG(runtime, LANGUAGE_ZH, language != 0U);
     runtime->bms_type = bms_type;
     runtime->snapshot.bms_type = runtime->bms_type;
-    runtime->controller_page_enabled = speed_dashboard_style != 0U;
+    runtime->controller_page_enabled =
+        runtime->snapshot.speed_dashboard_style == ESP_BMS_SPEED_DASHBOARD_STYLE_CONTROLLER;
     runtime->controller_connection_enabled = controller_connection_enabled != 0U;
     runtime->controller_fallback_tire_rim_inch = controller_tire_rim_inch;
     runtime->controller_fallback_tire_aspect_percent = controller_tire_aspect_percent;
@@ -2198,6 +2305,9 @@ esp_err_t esp_bms_idf_runtime_save_display_settings(esp_bms_idf_runtime_t *runti
     ESP_RETURN_ON_FALSE(runtime_speed_source_matches_policy(
                             (uint8_t)runtime->snapshot.speed_source),
                         ESP_ERR_INVALID_STATE, TAG, "invalid speed source");
+    ESP_RETURN_ON_FALSE(runtime_speed_dashboard_style_matches_policy(
+                            runtime->snapshot.speed_dashboard_style),
+                        ESP_ERR_INVALID_STATE, TAG, "invalid speed dashboard style");
     ESP_RETURN_ON_FALSE(runtime_bms_type_matches_policy(runtime->bms_type),
                         ESP_ERR_INVALID_STATE, TAG, "invalid BMS type");
     ESP_RETURN_ON_FALSE(runtime->snapshot.preset_range_km <= ESP_BMS_REMAINING_RANGE_MAX_KM,
@@ -2245,7 +2355,7 @@ esp_err_t esp_bms_idf_runtime_save_display_settings(esp_bms_idf_runtime_t *runti
     if (ret == ESP_OK) {
         ret = nvs_set_u8(handle,
                          DISPLAY_NVS_SPEED_STYLE_KEY,
-                         runtime->controller_page_enabled ? 1U : 0U);
+                         (uint8_t)runtime->snapshot.speed_dashboard_style);
     }
     if (ret == ESP_OK) {
         ret = nvs_set_u8(handle, DISPLAY_NVS_LANGUAGE_KEY, RUNTIME_FLAG(runtime, LANGUAGE_ZH) ? 1U : 0U);
@@ -3044,6 +3154,130 @@ static esp_err_t runtime_http_post_ota_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+static bool runtime_gps_agnss_message_allowed(uint8_t message_class,
+                                              uint8_t message_id)
+{
+    if (message_class == GPS_CASBIN_CLASS_AID) {
+        return message_id == 0x01U;
+    }
+    if (message_class != GPS_CASBIN_CLASS_MSG) {
+        return false;
+    }
+    switch (message_id) {
+    case 0x00U:
+    case 0x01U:
+    case 0x02U:
+    case 0x03U:
+    case 0x04U:
+    case 0x05U:
+    case 0x06U:
+    case 0x07U:
+    case 0x08U:
+    case 0x09U:
+    case 0x0BU:
+    case 0x0CU:
+    case 0x0DU:
+    case 0x0EU:
+    case 0x11U:
+    case 0x17U:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static esp_err_t runtime_http_post_gps_agnss_handler(httpd_req_t *req,
+                                                     esp_bms_idf_runtime_t *runtime)
+{
+    if (!RUNTIME_FLAG(runtime, GPS_UART_READY)) {
+        return runtime_http_send_text(req, "503 Service Unavailable", "GPS UART unavailable");
+    }
+    if (req->content_len == 0U) {
+        return runtime_http_send_text(req, "400 Bad Request", "A-GNSS payload is empty");
+    }
+    if (req->content_len > GPS_AGNSS_MAX_BYTES) {
+        return runtime_http_send_text(req, "413 Payload Too Large", "A-GNSS payload is too large");
+    }
+
+    esp_bms_gps_casbin_stream_t stream;
+    esp_bms_gps_casbin_stream_reset(&stream);
+    uint8_t buffer[256] = { 0 };
+    size_t remaining = req->content_len;
+    size_t forwarded = 0U;
+    uint32_t packet_count = 0U;
+    esp_err_t result = ESP_OK;
+    __atomic_store_n(&runtime->gps_agnss_injection_active, true, __ATOMIC_RELEASE);
+
+    while (remaining > 0U && result == ESP_OK) {
+        const size_t requested = remaining < sizeof(buffer) ? remaining : sizeof(buffer);
+        const int received = httpd_req_recv(req, (char *)buffer, requested);
+        if (received <= 0) {
+            result = received == HTTPD_SOCK_ERR_TIMEOUT ? ESP_ERR_TIMEOUT : ESP_FAIL;
+            break;
+        }
+        remaining -= (size_t)received;
+
+        for (int index = 0; index < received; ++index) {
+            const bool was_active = esp_bms_gps_casbin_stream_active(&stream);
+            const esp_bms_gps_casbin_event_t event =
+                esp_bms_gps_casbin_stream_feed(&stream, buffer[index]);
+            if ((!was_active && buffer[index] != 0xBAU &&
+                 event == ESP_BMS_GPS_CASBIN_EVENT_NONE) ||
+                event == ESP_BMS_GPS_CASBIN_EVENT_ERROR) {
+                result = ESP_ERR_INVALID_CRC;
+                break;
+            }
+            if (event != ESP_BMS_GPS_CASBIN_EVENT_FRAME) {
+                continue;
+            }
+            if (!runtime_gps_agnss_message_allowed(stream.message_class,
+                                                    stream.message_id)) {
+                result = ESP_ERR_NOT_SUPPORTED;
+                break;
+            }
+            if (!runtime_gps_uart_write(runtime, stream.frame, stream.frame_len)) {
+                result = ESP_FAIL;
+                break;
+            }
+            forwarded += stream.frame_len;
+            packet_count++;
+        }
+    }
+
+    if (result == ESP_OK &&
+        (remaining != 0U || esp_bms_gps_casbin_stream_active(&stream) ||
+         packet_count == 0U)) {
+        result = ESP_ERR_INVALID_SIZE;
+    }
+    __atomic_store_n(&runtime->gps_agnss_injection_active, false, __ATOMIC_RELEASE);
+
+    if (result != ESP_OK) {
+        ESP_LOGW(TAG,
+                 "[gps] A-GNSS injection rejected: packets=%lu bytes=%u error=%s",
+                 (unsigned long)packet_count,
+                 (unsigned)forwarded,
+                 esp_err_to_name(result));
+        const char *status = result == ESP_ERR_TIMEOUT
+                                 ? "408 Request Timeout"
+                                 : result == ESP_FAIL
+                                       ? "500 Internal Server Error"
+                                       : "400 Bad Request";
+        return runtime_http_send_text(req, status, "invalid A-GNSS CASBIN payload");
+    }
+
+    ESP_LOGI(TAG,
+             "[gps] A-GNSS injected: packets=%lu bytes=%u",
+             (unsigned long)packet_count,
+             (unsigned)forwarded);
+    char json[96] = { 0 };
+    (void)snprintf(json,
+                   sizeof(json),
+                   "{\"status\":\"injected\",\"packets\":%lu,\"bytes\":%u}",
+                   (unsigned long)packet_count,
+                   (unsigned)forwarded);
+    return runtime_http_send_json(req, json);
+}
+
 static esp_err_t runtime_http_cast_info_handler(httpd_req_t *req, esp_bms_idf_runtime_t *runtime)
 {
     char json[192] = { 0 };
@@ -3202,6 +3436,9 @@ static esp_err_t runtime_http_api_handler(httpd_req_t *req)
     }
     if (req->method == HTTP_POST && strcmp(req->uri, "/api/ota") == 0) {
         return runtime_http_post_ota_handler(req);
+    }
+    if (req->method == HTTP_POST && strcmp(req->uri, "/api/gps/agnss") == 0) {
+        return runtime_http_post_gps_agnss_handler(req, runtime);
     }
     ESP_LOGI(TAG, "[http] route not implemented: method=%d uri=%s", req->method, req->uri);
     return runtime_http_send_text(req, "501 Not Implemented", "not implemented");
@@ -5158,8 +5395,132 @@ static bool runtime_apply_gps_line(esp_bms_idf_runtime_t *runtime,
     return true;
 }
 
+static void runtime_apply_gps_security_config(esp_bms_idf_runtime_t *runtime,
+                                              const uint8_t *payload)
+{
+    const bool configured = (payload[0] & 0x01U) != 0U &&
+                            (payload[1] & GPS_SECURITY_JAM_CHANNEL_MASK) ==
+                                GPS_SECURITY_JAM_CHANNEL_MASK;
+    if (configured) {
+        if (!runtime->gps_security_configured) {
+            ESP_LOGI(TAG,
+                     "[gps] spoof/jam detection enabled: spoof_cfg=0x%02X jam_mask=0x%02X threshold=%u",
+                     payload[0],
+                     payload[1],
+                     payload[2]);
+        }
+        runtime->gps_security_configured = true;
+        runtime->gps_security_verify_pending = false;
+        return;
+    }
+
+    if (runtime->gps_security_config_attempts >= 2U) {
+        ESP_LOGW(TAG,
+                 "[gps] spoof/jam detection remains disabled: spoof_cfg=0x%02X jam_mask=0x%02X",
+                 payload[0],
+                 payload[1]);
+        return;
+    }
+
+    uint8_t desired[4] = { payload[0], payload[1], payload[2], payload[3] };
+    desired[0] |= 0x01U;
+    desired[1] |= GPS_SECURITY_JAM_CHANNEL_MASK;
+    if (runtime_gps_send_casbin(runtime,
+                                GPS_CASBIN_CLASS_CFG,
+                                GPS_CASBIN_ID_CFG_JSM,
+                                desired,
+                                sizeof(desired))) {
+        runtime->gps_security_config_attempts++;
+        runtime->gps_security_verify_pending = true;
+        runtime->gps_security_verify_tick = runtime->tick_count + 1U;
+        ESP_LOGI(TAG,
+                 "[gps] enabling spoof/jam detection: spoof_cfg=0x%02X jam_mask=0x%02X threshold=%u",
+                 desired[0],
+                 desired[1],
+                 desired[2]);
+    }
+}
+
+static bool runtime_apply_gps_casbin(esp_bms_idf_runtime_t *runtime,
+                                     const esp_bms_gps_casbin_stream_t *stream)
+{
+    const uint8_t *payload = &stream->frame[6];
+    if (stream->message_class == GPS_CASBIN_CLASS_CFG &&
+        stream->message_id == GPS_CASBIN_ID_CFG_JSM &&
+        stream->payload_len == 4U) {
+        runtime_apply_gps_security_config(runtime, payload);
+        return false;
+    }
+
+    if (stream->message_class == GPS_CASBIN_CLASS_ACK &&
+        stream->payload_len == 4U && payload[0] == GPS_CASBIN_CLASS_CFG &&
+        payload[1] == GPS_CASBIN_ID_CFG_JSM) {
+        if (stream->message_id == 0x00U) {
+            runtime->gps_security_verify_pending = false;
+            ESP_LOGW(TAG, "[gps] spoof/jam configuration rejected by receiver");
+        }
+        return false;
+    }
+
+    if (stream->message_class != GPS_CASBIN_CLASS_MON ||
+        stream->message_id != GPS_CASBIN_ID_MON_SEC ||
+        stream->payload_len != 4U) {
+        return false;
+    }
+
+    const uint8_t spoof_state = payload[1];
+    const uint8_t jam_level = payload[3];
+    if (!runtime->gps_security_state_valid ||
+        runtime->gps_spoof_state != spoof_state ||
+        runtime->gps_jam_level != jam_level) {
+        if (spoof_state >= 2U || jam_level >= 2U) {
+            ESP_LOGW(TAG,
+                     "[gps] RF security alert: spoof=%u jam=%u spoof_on=%u jam_mask=0x%02X",
+                     spoof_state,
+                     jam_level,
+                     payload[0] & 0x01U,
+                     payload[2] & 0x0FU);
+        } else {
+            ESP_LOGI(TAG,
+                     "[gps] RF security clear: spoof=%u jam=%u spoof_on=%u jam_mask=0x%02X",
+                     spoof_state,
+                     jam_level,
+                     payload[0] & 0x01U,
+                     payload[2] & 0x0FU);
+        }
+    }
+    runtime->gps_spoof_state = spoof_state;
+    runtime->gps_jam_level = jam_level;
+    runtime->gps_security_configured =
+        (payload[0] & 0x01U) != 0U &&
+        (payload[2] & GPS_SECURITY_JAM_CHANNEL_MASK) ==
+            GPS_SECURITY_JAM_CHANNEL_MASK;
+    runtime->gps_security_state_valid = true;
+    return false;
+}
+
 static bool runtime_feed_gps_byte(esp_bms_idf_runtime_t *runtime, uint8_t byte)
 {
+    const bool casbin_was_active =
+        esp_bms_gps_casbin_stream_active(&runtime->gps_casbin_stream);
+    const esp_bms_gps_casbin_event_t casbin_event =
+        esp_bms_gps_casbin_stream_feed(&runtime->gps_casbin_stream, byte);
+    const bool casbin_is_active =
+        esp_bms_gps_casbin_stream_active(&runtime->gps_casbin_stream);
+    if (casbin_was_active || casbin_is_active ||
+        casbin_event != ESP_BMS_GPS_CASBIN_EVENT_NONE) {
+        if (!casbin_was_active && casbin_is_active) {
+            esp_bms_gps_stream_reset(&runtime->gps_stream);
+        }
+        if (casbin_event == ESP_BMS_GPS_CASBIN_EVENT_FRAME) {
+            return runtime_apply_gps_casbin(runtime, &runtime->gps_casbin_stream);
+        }
+        if (casbin_event == ESP_BMS_GPS_CASBIN_EVENT_ERROR) {
+            runtime->gps_casbin_errors++;
+        }
+        return false;
+    }
+
     const esp_bms_gps_stream_event_t event =
         esp_bms_gps_stream_feed(&runtime->gps_stream, byte);
     if (event == ESP_BMS_GPS_STREAM_EVENT_OVERFLOW) {
@@ -5218,6 +5579,27 @@ static bool runtime_update_gps_diagnostics(esp_bms_idf_runtime_t *runtime)
     const uint32_t now = runtime->tick_count;
     const uint32_t pps_count = runtime->gps_pps_isr_count;
 
+    if (!__atomic_load_n(&runtime->gps_agnss_injection_active, __ATOMIC_ACQUIRE)) {
+        if (runtime->gps_security_verify_pending &&
+            now >= runtime->gps_security_verify_tick) {
+            runtime->gps_security_verify_pending = false;
+            (void)runtime_gps_send_casbin(runtime,
+                                          GPS_CASBIN_CLASS_CFG,
+                                          GPS_CASBIN_ID_CFG_JSM,
+                                          NULL,
+                                          0U);
+        }
+        if (now - runtime->gps_security_last_query_tick >=
+            GPS_SECURITY_QUERY_PERIOD_SECONDS) {
+            runtime->gps_security_last_query_tick = now;
+            (void)runtime_gps_send_casbin(runtime,
+                                          GPS_CASBIN_CLASS_MON,
+                                          GPS_CASBIN_ID_MON_SEC,
+                                          NULL,
+                                          0U);
+        }
+    }
+
     if (pps_count != runtime->gps_pps_processed_count) {
         const uint32_t edges = pps_count - runtime->gps_pps_processed_count;
         runtime->gps_pps_processed_count = pps_count;
@@ -5271,13 +5653,18 @@ static bool runtime_update_gps_diagnostics(esp_bms_idf_runtime_t *runtime)
         runtime->gps_summary_last_tick = now;
         ESP_LOGI(TAG,
                  "[gps] summary: fix=%d pps=%d A=%lu V=%lu overflow=%lu "
-                 "parse_errors=%lu bytes=%lu rmc=%lu uptime_s=%lu",
+                 "parse_errors=%lu casbin_errors=%lu sec=%d spoof=%u jam=%u "
+                 "bytes=%lu rmc=%lu uptime_s=%lu",
                  RUNTIME_SNAPSHOT_FLAG(runtime, GPS_FIX_VALID) ? 1 : 0,
                  runtime->gps_pps_active ? 1 : 0,
                  (unsigned long)runtime->gps_rmc_valid_count,
                  (unsigned long)runtime->gps_rmc_invalid_count,
                  (unsigned long)runtime->gps_overflow_lines,
                  (unsigned long)runtime->gps_parse_errors,
+                 (unsigned long)runtime->gps_casbin_errors,
+                 runtime->gps_security_configured ? 1 : 0,
+                 runtime->gps_spoof_state,
+                 runtime->gps_jam_level,
                  (unsigned long)runtime->gps_bytes_seen,
                  (unsigned long)runtime->snapshot.gps_sentences_seen,
                  (unsigned long)now);
@@ -5784,9 +6171,34 @@ bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,
         return true;
     case ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_PAGE:
         runtime->controller_page_enabled = !runtime->controller_page_enabled;
+        runtime->snapshot.speed_dashboard_style =
+            runtime->controller_page_enabled
+                ? ESP_BMS_SPEED_DASHBOARD_STYLE_CONTROLLER
+                : ESP_BMS_SPEED_DASHBOARD_STYLE_S1000RR;
         if (runtime->controller_page_enabled) {
             runtime->controller_connection_enabled = true;
             (void)esp_bms_idf_runtime_start_controller_ble_if_enabled(runtime);
+        }
+        runtime_project_controller_snapshot(runtime);
+        return true;
+    case ESP_BMS_LVGL_ACTION_SET_SPEED_DASHBOARD_STYLE:
+        if (!ACTION_EVENT_FLAG(event, NUMERIC_DELTA_VALID) ||
+            !runtime_speed_dashboard_style_matches_policy(event->numeric_delta)) {
+            return false;
+        }
+        {
+            const esp_bms_speed_dashboard_style_t style =
+                (esp_bms_speed_dashboard_style_t)event->numeric_delta;
+            if (runtime->snapshot.speed_dashboard_style == style) {
+                return false;
+            }
+            runtime->snapshot.speed_dashboard_style = style;
+            runtime->controller_page_enabled =
+                style == ESP_BMS_SPEED_DASHBOARD_STYLE_CONTROLLER;
+            if (style != ESP_BMS_SPEED_DASHBOARD_STYLE_S1000RR) {
+                runtime->controller_connection_enabled = true;
+                (void)esp_bms_idf_runtime_start_controller_ble_if_enabled(runtime);
+            }
         }
         runtime_project_controller_snapshot(runtime);
         return true;
@@ -6008,6 +6420,8 @@ const char *esp_bms_idf_runtime_action_name(esp_bms_lvgl_action_t action)
         return "toggle-controller-connection";
     case ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_PAGE:
         return "toggle-controller-page";
+    case ESP_BMS_LVGL_ACTION_SET_SPEED_DASHBOARD_STYLE:
+        return "set-speed-dashboard-style";
     case ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_SOURCE:
         return "toggle-speed-source";
     case ESP_BMS_LVGL_ACTION_START_CONTROLLER_BIND:

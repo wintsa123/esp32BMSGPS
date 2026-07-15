@@ -52,6 +52,7 @@ static bool action_should_save_display_settings(esp_bms_lvgl_action_t action)
            action == ESP_BMS_LVGL_ACTION_SELECT_BMS_DALY ||
            action == ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_CONNECTION ||
            action == ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_PAGE ||
+           action == ESP_BMS_LVGL_ACTION_SET_SPEED_DASHBOARD_STYLE ||
            action == ESP_BMS_LVGL_ACTION_START_CONTROLLER_BIND ||
            action == ESP_BMS_LVGL_ACTION_ADJUST_CONTROLLER_WHEEL ||
            action == ESP_BMS_LVGL_ACTION_ADJUST_CONTROLLER_RATIO ||

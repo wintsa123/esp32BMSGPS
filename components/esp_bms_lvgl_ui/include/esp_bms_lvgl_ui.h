@@ -56,6 +56,7 @@ typedef enum {
     ESP_BMS_LVGL_ACTION_SET_CONTROLLER_RATIO = 28,
     ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_SOURCE = 29,
     ESP_BMS_LVGL_ACTION_SET_PRESET_RANGE = 30,
+    ESP_BMS_LVGL_ACTION_SET_SPEED_DASHBOARD_STYLE = 31,
 } esp_bms_lvgl_action_t;
 
 #define ESP_BMS_LVGL_ACTION_EVENT_FLAG_COMMITTED (UINT8_C(1) << 0)
@@ -117,6 +118,12 @@ typedef enum {
     ESP_BMS_SPEED_SOURCE_GPS = 0,
     ESP_BMS_SPEED_SOURCE_CONTROLLER = 1,
 } esp_bms_speed_source_t;
+
+typedef enum {
+    ESP_BMS_SPEED_DASHBOARD_STYLE_S1000RR = 0,
+    ESP_BMS_SPEED_DASHBOARD_STYLE_CONTROLLER = 1,
+    ESP_BMS_SPEED_DASHBOARD_STYLE_HONDA_FIREBLADE = 2,
+} esp_bms_speed_dashboard_style_t;
 
 typedef enum {
     ESP_BMS_WIFI_SETUP_AP = 0,
@@ -193,8 +200,10 @@ typedef struct {
     esp_bms_speed_unit_t speed_unit;
     esp_bms_speed_source_t speed_source;
     esp_bms_speed_source_t active_speed_source;
+    esp_bms_speed_dashboard_style_t speed_dashboard_style;
     esp_bms_wifi_state_t wifi;
     uint16_t speed_deci_units;
+    uint16_t average_speed_deci_units;
     int32_t average_consumption_deci_wh_per_distance;
     uint16_t preset_range_km;
     uint16_t remaining_range_km;
@@ -245,7 +254,13 @@ typedef struct {
     char controller_bound_name[ESP_BMS_BMS_SCAN_NAME_LEN + 1U];
     uint8_t gps_local_hour;
     uint8_t gps_local_minute;
+    uint16_t gps_local_year;
+    uint8_t gps_local_month;
+    uint8_t gps_local_day;
+    uint8_t gps_local_weekday;
     bool gps_local_time_valid;
+    bool gps_local_date_valid;
+    bool average_speed_valid;
     bool average_consumption_valid;
     bool remaining_range_valid;
     bool cast_active;

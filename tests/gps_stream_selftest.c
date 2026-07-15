@@ -94,12 +94,58 @@ static void test_new_dollar_recovers_without_newline(void)
                   "$GNRMC,145030.00,V,,,,,,,130726,,,N*57") == 0);
 }
 
+static void test_casbin_build_and_parse(void)
+{
+    static const uint8_t payload[] = { 0x09U, 0x07U, 0x03U, 0x00U };
+    uint8_t frame[ESP_BMS_GPS_CASBIN_MAX_FRAME] = { 0 };
+    const size_t frame_len = esp_bms_gps_casbin_build(0x06U,
+                                                       0x10U,
+                                                       payload,
+                                                       sizeof(payload),
+                                                       frame,
+                                                       sizeof(frame));
+    assert(frame_len == 14U);
+    assert(frame[0] == 0xBAU && frame[1] == 0xCEU);
+
+    esp_bms_gps_casbin_stream_t stream;
+    esp_bms_gps_casbin_stream_reset(&stream);
+    esp_bms_gps_casbin_event_t event = ESP_BMS_GPS_CASBIN_EVENT_NONE;
+    for (size_t index = 0U; index < frame_len; ++index) {
+        event = esp_bms_gps_casbin_stream_feed(&stream, frame[index]);
+    }
+    assert(event == ESP_BMS_GPS_CASBIN_EVENT_FRAME);
+    assert(stream.message_class == 0x06U && stream.message_id == 0x10U);
+    assert(stream.payload_len == sizeof(payload));
+    assert(memcmp(&stream.frame[6], payload, sizeof(payload)) == 0);
+
+    frame[frame_len - 1U] ^= 0x01U;
+    esp_bms_gps_casbin_stream_reset(&stream);
+    for (size_t index = 0U; index < frame_len; ++index) {
+        event = esp_bms_gps_casbin_stream_feed(&stream, frame[index]);
+    }
+    assert(event == ESP_BMS_GPS_CASBIN_EVENT_ERROR);
+}
+
+static void test_casbin_zero_payload_query(void)
+{
+    uint8_t frame[ESP_BMS_GPS_CASBIN_MAX_FRAME] = { 0 };
+    const size_t frame_len =
+        esp_bms_gps_casbin_build(0x0AU, 0x0BU, NULL, 0U, frame, sizeof(frame));
+    static const uint8_t expected[] = {
+        0xBAU, 0xCEU, 0x00U, 0x00U, 0x0AU, 0x0BU, 0x00U, 0x00U, 0x0AU, 0x0BU,
+    };
+    assert(frame_len == sizeof(expected));
+    assert(memcmp(frame, expected, sizeof(expected)) == 0);
+}
+
 int main(void)
 {
     test_noise_and_consecutive_rmc();
     test_rmc_sentence_classification();
     test_overflow_discards_whole_sentence();
     test_new_dollar_recovers_without_newline();
+    test_casbin_build_and_parse();
+    test_casbin_zero_payload_query();
     puts("GPS stream self-test passed");
     return 0;
 }
