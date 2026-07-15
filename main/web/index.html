@@ -113,6 +113,17 @@
     </section>
 
     <section>
+      <h2 data-i18n="firmwareUpdate">固件更新</h2>
+      <p class="section-note" data-i18n="otaPurpose">选择应用固件并输入随固件生成的四位验证码。</p>
+      <form id="ota-form">
+        <label><span data-i18n="firmwareFile">固件文件</span><input name="firmware" type="file" accept=".bin,application/octet-stream" required></label>
+        <label><span data-i18n="firmwareCode">固件验证码</span><input name="code" type="text" inputmode="numeric" autocomplete="one-time-code" minlength="4" maxlength="4" pattern="[0-9]{4}" required></label>
+        <button type="submit" data-i18n="uploadFirmware">上传并更新</button>
+      </form>
+      <p class="section-note" id="ota-status"></p>
+    </section>
+
+    <section>
       <h2 data-i18n="device">设备</h2>
       <form id="device-form">
         <div class="grid">
@@ -147,6 +158,9 @@
         device: "设备",
         failed: "失败",
         firmware: "固件",
+        firmwareCode: "固件验证码",
+        firmwareFile: "固件文件",
+        firmwareUpdate: "固件更新",
         jbdBms: "嘉佰达 JBD",
         jkBms: "极空 JK",
         invertedLandscape: "反向横屏",
@@ -155,9 +169,15 @@
         language: "语言",
         offline: "离线",
         online: "在线",
-        passwordCanceled: "已取消密码输入",
-        passwordPrompt: "输入 ESP32 设置密码",
-        passwordWrong: "密码错误",
+        otaCodeMismatch: "固件验证码不匹配",
+        otaFailed: "固件更新失败",
+        otaInvalidCode: "请输入四位数字验证码",
+        otaInvalidImage: "固件格式无效",
+        otaPurpose: "选择应用固件并输入随固件生成的四位验证码。",
+        otaRebooting: "校验通过，设备正在重启",
+        otaSelectFile: "请选择固件文件",
+        otaTooLarge: "固件超过 OTA 分区容量",
+        otaUploading: "固件上传中，请勿断开连接",
         portrait: "竖屏",
         protections: "保护",
         protocolRefs: "协议参考",
@@ -173,6 +193,7 @@
         speed: "速度",
         speedSource: "速度来源",
         speedUnit: "速度单位",
+        uploadFirmware: "上传并更新",
         gpsSource: "GPS",
         warnings: "告警"
       },
@@ -193,6 +214,9 @@
         device: "Device",
         failed: "failed",
         firmware: "Firmware",
+        firmwareCode: "Firmware code",
+        firmwareFile: "Firmware file",
+        firmwareUpdate: "Firmware update",
         jbdBms: "JBD",
         jkBms: "JK",
         invertedLandscape: "Inverted landscape",
@@ -201,9 +225,15 @@
         language: "Language",
         offline: "offline",
         online: "online",
-        passwordCanceled: "Password entry canceled",
-        passwordPrompt: "Enter ESP32 setup password",
-        passwordWrong: "Wrong password",
+        otaCodeMismatch: "Firmware code does not match",
+        otaFailed: "Firmware update failed",
+        otaInvalidCode: "Enter the four-digit firmware code",
+        otaInvalidImage: "Invalid firmware image",
+        otaPurpose: "Select an app image and enter its generated four-digit code.",
+        otaRebooting: "Verified; the device is restarting",
+        otaSelectFile: "Select a firmware file",
+        otaTooLarge: "Firmware exceeds the OTA partition size",
+        otaUploading: "Uploading firmware; keep the connection open",
         portrait: "Portrait",
         protections: "Protections",
         protocolRefs: "Protocol refs",
@@ -219,12 +249,12 @@
         speed: "Speed",
         speedSource: "Speed source",
         speedUnit: "Speed unit",
+        uploadFirmware: "Upload and update",
         gpsSource: "GPS",
         warnings: "Warnings"
       }
     };
     let uiLanguage = "zh";
-    let setupPassword = sessionStorage.getItem("setupPassword") || "";
     let bmsScanPollTimer = 0;
     let bmsScanPollDeadline = 0;
     let lastConfig = {};
@@ -251,40 +281,56 @@
           : "";
     }
 
-    function requirePassword(force = false) {
-      if (force || !setupPassword) {
-        setupPassword = prompt(t("passwordPrompt"), setupPassword) || "";
-      }
-      if (!setupPassword) throw new Error(t("passwordCanceled"));
-      sessionStorage.setItem("setupPassword", setupPassword);
-      return setupPassword;
-    }
-
-    function forgetPassword() {
-      sessionStorage.removeItem("setupPassword");
-      setupPassword = "";
-    }
-
-    function addAuthHeaders(headers) {
-      const password = requirePassword();
-      headers.set("X-Setup-Password", password);
-      headers.set("Authorization", `Basic ${btoa(`esp32:${password}`)}`);
-    }
-
-    async function api(path, options = {}, retryAuth = true) {
+    async function api(path, options = {}) {
       const headers = new Headers(options.headers || {});
-      addAuthHeaders(headers);
       const res = await fetch(path, { ...options, headers });
-      if (res.status === 401) {
-        forgetPassword();
-        if (retryAuth) {
-          requirePassword(true);
-          return api(path, options, false);
-        }
-        throw new Error(t("passwordWrong"));
+      if (!res.ok) {
+        const detail = await res.text();
+        throw new Error(detail || `${res.status} ${res.statusText}`);
       }
-      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       return res.headers.get("content-type")?.includes("application/json") ? res.json() : res.text();
+    }
+
+    function otaError(status) {
+      if (status === 403) return t("otaCodeMismatch");
+      if (status === 413) return t("otaTooLarge");
+      if (status === 422) return t("otaInvalidImage");
+      return t("otaFailed");
+    }
+
+    async function uploadFirmware(event) {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const file = form.elements.firmware.files[0];
+      const code = form.elements.code.value.trim();
+      if (!file) {
+        $("ota-status").textContent = t("otaSelectFile");
+        return;
+      }
+      if (!/^[0-9]{4}$/.test(code)) {
+        $("ota-status").textContent = t("otaInvalidCode");
+        return;
+      }
+
+      const button = form.querySelector("button");
+      button.disabled = true;
+      $("ota-status").textContent = t("otaUploading");
+      try {
+        const response = await fetch("/api/ota", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/octet-stream",
+            "X-Firmware-Code": code
+          },
+          body: file
+        });
+        if (!response.ok) throw new Error(otaError(response.status));
+        $("ota-status").textContent = t("otaRebooting");
+      } catch (error) {
+        $("ota-status").textContent = error instanceof Error ? error.message : t("otaFailed");
+      } finally {
+        button.disabled = false;
+      }
     }
 
     async function refresh() {
@@ -422,10 +468,6 @@
         event.preventDefault();
         const body = Object.fromEntries(new FormData(event.currentTarget));
         await api(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-        if (path === "/api/ap-password") {
-          setupPassword = body.password || "";
-          sessionStorage.setItem("setupPassword", setupPassword);
-        }
         await loadConfig();
         await refresh();
       });
@@ -441,6 +483,11 @@
     $("bms-form").elements.bms_type.addEventListener("change", () => saveBmsType().then(refresh));
     $("device-form").elements.language.addEventListener("change", (event) => applyLanguage(event.target.value));
     $("device-form").elements.speed_source.addEventListener("change", () => updateSpeedSourceHint());
+    $("ota-form").addEventListener("submit", uploadFirmware);
+    $("ota-form").elements.firmware.addEventListener("change", () => {
+      $("ota-form").elements.code.value = "";
+      $("ota-status").textContent = "";
+    });
     bindJsonForm("ap-form", "/api/ap-password");
     bindJsonForm("device-form", "/api/config");
     loadConfig().then(loadBmsCandidates).then(refresh);

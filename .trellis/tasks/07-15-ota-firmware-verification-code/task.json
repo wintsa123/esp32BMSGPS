@@ -3,7 +3,7 @@
   "name": "ota-firmware-verification-code",
   "title": "Local Web OTA with 4-digit firmware code",
   "description": "Add OTA upload to 192.168.4.1 with a deterministic four-digit firmware code and remove the redundant Web API password prompt while retaining WPA2 hotspot security.",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

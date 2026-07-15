@@ -795,12 +795,78 @@ The embedded Web UI currently calls these routes:
 - `POST /api/ap-password`
 - `POST /api/bms/scan`
 - `POST /api/bms/bind`
-- `POST /api/ota/check`
-- `POST /api/ota/start`
+- `POST /api/ota`
 
 Every route must either be implemented or intentionally return a clear error
 while the remaining ESP-IDF subsystem is being built. Do not return fake BMS
 candidates or fake OTA success.
+
+## Scenario: Local Web OTA Firmware Confirmation
+
+### 1. Scope / Trigger
+
+- Trigger: changing the device-hosted or Vercel OTA form, firmware build
+  output, OTA HTTP transport, image validation, or boot-slot selection.
+
+### 2. Signatures
+
+- API: `POST /api/ota`.
+- Body: raw ESP32 application `.bin` bytes with
+  `Content-Type: application/octet-stream`.
+- Header: `X-Firmware-Code`, exactly four ASCII decimal digits.
+- Build helper: `python3 scripts/build-firmware.py` writes
+  `build/esp32_bms_gps_idf.code.txt` beside the app image.
+
+### 3. Contracts
+
+- The code is `CRC32(complete app .bin) % 10000`, formatted as `%04u`; ESP-IDF
+  `esp_crc32_le(0, ...)` and Python `zlib.crc32` must produce the same value.
+- Both Web pages collect and forward the operator-entered code, but the ESP32
+  recalculates it from the received bytes and makes the final decision.
+- Stream into the inactive OTA partition with bounded RAM. Do not select the
+  partition until the code matches and `esp_ota_end()` validates the image.
+- Send the success response before restarting. The four-digit value prevents
+  accidental image selection; it is not authentication or a signature.
+- CORS must allow `X-Firmware-Code` for the Vercel page's direct request to the
+  device. OTA over BLE and cloud-proxied firmware uploads are not supported.
+
+### 4. Validation & Error Matrix
+
+- Missing, non-numeric, or non-four-digit code -> `400` and no OTA write.
+- Empty body -> `400`; image larger than the inactive slot -> `413`.
+- Receive timeout or flash write failure -> abort the OTA handle and keep the
+  current boot partition.
+- CRC-derived code mismatch -> `403`, abort, and keep the current boot slot.
+- Malformed or wrong-target app image -> `422` from ESP-IDF image validation.
+- Valid image and matching code -> set the inactive slot, return success, then
+  restart.
+
+### 5. Good / Base / Bad Cases
+
+- Good: upload the generated app `.bin` with the same-stem `.code.txt`; the
+  response succeeds and the next boot uses the previously inactive OTA slot.
+- Base: upload with a different four-digit code; the full body may be received,
+  but the current boot partition remains selected.
+- Bad: trust a browser-calculated result, buffer the complete image in RAM, or
+  call `esp_ota_set_boot_partition()` before CRC and image validation pass.
+
+### 6. Tests Required
+
+- Run `python3 scripts/build-firmware.py --self-test`; assert the standard
+  `123456789` vector is `0xCBF43926` and leading zeroes are preserved.
+- Run `python3 scripts/build-firmware.py`; independently recompute the `.bin`
+  CRC and assert the `.code.txt` contains exactly four digits plus newline.
+- Run Vercel type-check/build and the normal ESP-IDF build.
+- On hardware, assert malformed, mismatched, oversized, and invalid images do
+  not change the boot slot; assert a valid matching image reboots into the
+  inactive slot.
+
+### 7. Wrong vs Correct
+
+```text
+Wrong: browser says the code matches -> activate the uploaded partition.
+Correct: ESP32 hashes received bytes -> compare code -> validate image -> set boot partition.
+```
 
 ## Scenario: ANT BMS BLE Telemetry
 

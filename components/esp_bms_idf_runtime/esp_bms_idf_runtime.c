@@ -3,6 +3,7 @@
 #include "esp_bms_lvgl_bridge.h"
 
 #include "driver/gpio.h"
+#include "esp_crc.h"
 #include "esp_event.h"
 #include "esp_err.h"
 #include "esp_check.h"
@@ -11,7 +12,9 @@
 #include "esp_mac.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "esp_ota_ops.h"
 #include "esp_random.h"
+#include "esp_system.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include "freertos/semphr.h"
@@ -123,6 +126,9 @@ static const char *TAG = "bms_idf_runtime";
 #define CONTROLLER_RATIO_CENTI_DEFAULT ESP_BMS_CONTROLLER_RATIO_CENTI_DEFAULT
 #define HTTP_BODY_MAX_LEN 384U
 #define HTTP_JSON_MAX_LEN 1024U
+#define HTTP_OTA_BUFFER_SIZE 1024U
+#define HTTP_OTA_CODE_LEN 4U
+#define HTTP_OTA_RESTART_DELAY_MS 750U
 #define HTTP_SERVER_TASK_PRIORITY 3U
 #define CAST_PROTOCOL_VERSION 1U
 #define CAST_BLOCK_MAX_SIDE 16U
@@ -2387,7 +2393,7 @@ static esp_err_t runtime_http_set_common_headers(httpd_req_t *req)
     if (ret == ESP_OK) {
         ret = httpd_resp_set_hdr(req,
                                  "Access-Control-Allow-Headers",
-                                 "Content-Type");
+                                 "Content-Type, X-Firmware-Code");
     }
     if (ret == ESP_OK) {
         ret = httpd_resp_set_hdr(req, "Access-Control-Max-Age", "600");
@@ -2917,6 +2923,127 @@ static esp_err_t runtime_http_post_bms_scan_handler(httpd_req_t *req, esp_bms_id
     return runtime_http_send_no_content(req);
 }
 
+static bool runtime_http_read_ota_code(httpd_req_t *req, char code[HTTP_OTA_CODE_LEN + 1U])
+{
+    if (httpd_req_get_hdr_value_len(req, "X-Firmware-Code") != HTTP_OTA_CODE_LEN ||
+        httpd_req_get_hdr_value_str(req,
+                                    "X-Firmware-Code",
+                                    code,
+                                    HTTP_OTA_CODE_LEN + 1U) != ESP_OK) {
+        return false;
+    }
+    for (size_t index = 0; index < HTTP_OTA_CODE_LEN; ++index) {
+        if (!isdigit((unsigned char)code[index])) {
+            return false;
+        }
+    }
+    return code[HTTP_OTA_CODE_LEN] == '\0';
+}
+
+static esp_err_t runtime_http_post_ota_handler(httpd_req_t *req)
+{
+    char expected_code[HTTP_OTA_CODE_LEN + 1U] = { 0 };
+    if (!runtime_http_read_ota_code(req, expected_code)) {
+        return runtime_http_send_text(req, "400 Bad Request", "invalid firmware code");
+    }
+
+    const esp_partition_t *update_partition = esp_ota_get_next_update_partition(NULL);
+    if (!update_partition) {
+        return runtime_http_send_text(req, "500 Internal Server Error", "OTA partition missing");
+    }
+    if (req->content_len == 0U) {
+        return runtime_http_send_text(req, "400 Bad Request", "firmware image is empty");
+    }
+    if (req->content_len > update_partition->size) {
+        return runtime_http_send_text(req, "413 Payload Too Large", "firmware image is too large");
+    }
+
+    uint8_t *buffer = heap_caps_malloc(HTTP_OTA_BUFFER_SIZE,
+                                       MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (!buffer) {
+        return runtime_http_send_text(req, "500 Internal Server Error", "OTA buffer allocation failed");
+    }
+
+    esp_ota_handle_t ota_handle = 0;
+    esp_err_t ret = esp_ota_begin(update_partition, req->content_len, &ota_handle);
+    if (ret != ESP_OK) {
+        heap_caps_free(buffer);
+        ESP_LOGE(TAG, "[ota] begin failed: %s", esp_err_to_name(ret));
+        return runtime_http_send_text(req, "500 Internal Server Error", "OTA begin failed");
+    }
+
+    size_t remaining = req->content_len;
+    size_t received_total = 0U;
+    uint32_t crc = 0U;
+    while (remaining > 0U) {
+        const size_t requested = remaining < HTTP_OTA_BUFFER_SIZE
+                                     ? remaining
+                                     : HTTP_OTA_BUFFER_SIZE;
+        const int received = httpd_req_recv(req, (char *)buffer, requested);
+        if (received <= 0) {
+            ret = received == HTTPD_SOCK_ERR_TIMEOUT ? ESP_ERR_TIMEOUT : ESP_FAIL;
+            break;
+        }
+
+        ret = esp_ota_write(ota_handle, buffer, (size_t)received);
+        if (ret != ESP_OK) {
+            break;
+        }
+        crc = esp_crc32_le(crc, buffer, (uint32_t)received);
+        received_total += (size_t)received;
+        remaining -= (size_t)received;
+    }
+    heap_caps_free(buffer);
+
+    if (ret != ESP_OK || remaining != 0U) {
+        ESP_ERROR_CHECK_WITHOUT_ABORT(esp_ota_abort(ota_handle));
+        ESP_LOGE(TAG,
+                 "[ota] receive/write failed after %u bytes: %s",
+                 (unsigned)received_total,
+                 esp_err_to_name(ret));
+        const char *status = ret == ESP_ERR_TIMEOUT ? "408 Request Timeout" : "500 Internal Server Error";
+        return runtime_http_send_text(req, status, "OTA receive failed");
+    }
+
+    char actual_code[HTTP_OTA_CODE_LEN + 1U] = { 0 };
+    (void)snprintf(actual_code, sizeof(actual_code), "%04u", (unsigned)(crc % 10000U));
+    if (strcmp(actual_code, expected_code) != 0) {
+        ESP_ERROR_CHECK_WITHOUT_ABORT(esp_ota_abort(ota_handle));
+        ESP_LOGW(TAG, "[ota] firmware code mismatch: bytes=%u", (unsigned)received_total);
+        return runtime_http_send_text(req, "403 Forbidden", "firmware code mismatch");
+    }
+
+    ret = esp_ota_end(ota_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "[ota] image validation failed: %s", esp_err_to_name(ret));
+        return runtime_http_send_text(req, "422 Unprocessable Content", "firmware image is invalid");
+    }
+
+    const esp_partition_t *running_partition = esp_ota_get_running_partition();
+    ret = esp_ota_set_boot_partition(update_partition);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "[ota] boot partition update failed: %s", esp_err_to_name(ret));
+        return runtime_http_send_text(req, "500 Internal Server Error", "OTA activation failed");
+    }
+
+    ESP_LOGI(TAG,
+             "[ota] image accepted: bytes=%u partition=%s",
+             (unsigned)received_total,
+             update_partition->label);
+    ret = runtime_http_send_json(req, "{\"status\":\"ready_to_reboot\"}");
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "[ota] success response failed: %s", esp_err_to_name(ret));
+        if (running_partition) {
+            ESP_ERROR_CHECK_WITHOUT_ABORT(esp_ota_set_boot_partition(running_partition));
+        }
+        return ret;
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(HTTP_OTA_RESTART_DELAY_MS));
+    esp_restart();
+    return ESP_OK;
+}
+
 static esp_err_t runtime_http_cast_info_handler(httpd_req_t *req, esp_bms_idf_runtime_t *runtime)
 {
     char json[192] = { 0 };
@@ -3072,6 +3199,9 @@ static esp_err_t runtime_http_api_handler(httpd_req_t *req)
     }
     if (req->method == HTTP_POST && strcmp(req->uri, "/api/bms/bind") == 0) {
         return runtime_http_post_bms_bind_handler(req, runtime);
+    }
+    if (req->method == HTTP_POST && strcmp(req->uri, "/api/ota") == 0) {
+        return runtime_http_post_ota_handler(req);
     }
     ESP_LOGI(TAG, "[http] route not implemented: method=%d uri=%s", req->method, req->uri);
     return runtime_http_send_text(req, "501 Not Implemented", "not implemented");
