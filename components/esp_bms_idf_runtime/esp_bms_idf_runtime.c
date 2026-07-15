@@ -61,12 +61,9 @@ static const char *TAG = "bms_idf_runtime";
 #define GPS_UART_STARTUP_DIAGNOSTIC_SECONDS 10U
 #define GPS_SECURITY_QUERY_PERIOD_SECONDS 1U
 #define GPS_SECURITY_JAM_CHANNEL_MASK 0x07U
-#define GPS_AGNSS_MAX_BYTES (32U * 1024U)
 #define GPS_CASBIN_CLASS_ACK 0x05U
 #define GPS_CASBIN_CLASS_CFG 0x06U
-#define GPS_CASBIN_CLASS_MSG 0x08U
 #define GPS_CASBIN_CLASS_MON 0x0AU
-#define GPS_CASBIN_CLASS_AID 0x0BU
 #define GPS_CASBIN_ID_CFG_JSM 0x10U
 #define GPS_CASBIN_ID_MON_SEC 0x0BU
 #define BMS_TELEMETRY_FRESHNESS_US INT64_C(2000000)
@@ -1132,23 +1129,6 @@ static bool runtime_normalize_mac_text(const char *input, char *output, size_t o
     return true;
 }
 
-static bool runtime_validate_nmea_checksum(const char *payload, size_t payload_len, const char *checksum)
-{
-    const int high = hex_value(checksum[0]);
-    const int low = hex_value(checksum[1]);
-    if (high < 0 || low < 0) {
-        return false;
-    }
-
-    uint8_t actual = 0;
-    const char *cursor = payload;
-    const char *const end = payload + payload_len;
-    while (cursor < end) {
-        actual ^= (uint8_t)*cursor++;
-    }
-    return actual == (uint8_t)((high << 4) | low);
-}
-
 static bool runtime_parse_two_digits(const char *field, uint8_t *value)
 {
     if (!isdigit((unsigned char)field[0]) || !isdigit((unsigned char)field[1])) {
@@ -1210,23 +1190,11 @@ static gps_parse_result_t runtime_parse_rmc(const uint8_t *line,
         return GPS_PARSE_IGNORE;
     }
 
-    const char *payload = (const char *)line;
-    size_t payload_len = len;
-    if (payload_len > 0 && payload[0] == '$') {
-        payload++;
-        payload_len--;
+    if (!esp_bms_gps_stream_nmea_checksum_valid(line, len)) {
+        return GPS_PARSE_ERROR;
     }
-
-    for (size_t index = 0; index < payload_len; index++) {
-        if (payload[index] == '*') {
-            if ((payload_len - index) < 3U ||
-                !runtime_validate_nmea_checksum(payload, index, &payload[index + 1])) {
-                return GPS_PARSE_ERROR;
-            }
-            payload_len = index;
-            break;
-        }
-    }
+    const char *payload = (const char *)&line[1];
+    const size_t payload_len = len - 4U;
 
     bool status_seen = false;
     bool speed_seen = false;
@@ -1969,7 +1937,7 @@ static bool runtime_gps_send_casbin(esp_bms_idf_runtime_t *runtime,
                                     const uint8_t *payload,
                                     size_t payload_len)
 {
-    uint8_t frame[ESP_BMS_GPS_CASBIN_MAX_FRAME] = { 0 };
+    uint8_t frame[ESP_BMS_GPS_CASBIN_OVERHEAD + 4U] = { 0 };
     const size_t frame_len = esp_bms_gps_casbin_build(message_class,
                                                        message_id,
                                                        payload,
@@ -3154,48 +3122,16 @@ static esp_err_t runtime_http_post_ota_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
-static bool runtime_gps_agnss_message_allowed(uint8_t message_class,
-                                              uint8_t message_id)
-{
-    if (message_class == GPS_CASBIN_CLASS_AID) {
-        return message_id == 0x01U;
-    }
-    if (message_class != GPS_CASBIN_CLASS_MSG) {
-        return false;
-    }
-    switch (message_id) {
-    case 0x00U:
-    case 0x01U:
-    case 0x02U:
-    case 0x03U:
-    case 0x04U:
-    case 0x05U:
-    case 0x06U:
-    case 0x07U:
-    case 0x08U:
-    case 0x09U:
-    case 0x0BU:
-    case 0x0CU:
-    case 0x0DU:
-    case 0x0EU:
-    case 0x11U:
-    case 0x17U:
-        return true;
-    default:
-        return false;
-    }
-}
-
 static esp_err_t runtime_http_post_gps_agnss_handler(httpd_req_t *req,
                                                      esp_bms_idf_runtime_t *runtime)
 {
     if (!RUNTIME_FLAG(runtime, GPS_UART_READY)) {
         return runtime_http_send_text(req, "503 Service Unavailable", "GPS UART unavailable");
     }
-    if (req->content_len == 0U) {
+    if (req->content_len < ESP_BMS_GPS_CASBIN_OVERHEAD) {
         return runtime_http_send_text(req, "400 Bad Request", "A-GNSS payload is empty");
     }
-    if (req->content_len > GPS_AGNSS_MAX_BYTES) {
+    if (req->content_len > ESP_BMS_GPS_CASBIN_MAX_FRAME) {
         return runtime_http_send_text(req, "413 Payload Too Large", "A-GNSS payload is too large");
     }
 
@@ -3203,7 +3139,6 @@ static esp_err_t runtime_http_post_gps_agnss_handler(httpd_req_t *req,
     esp_bms_gps_casbin_stream_reset(&stream);
     uint8_t buffer[256] = { 0 };
     size_t remaining = req->content_len;
-    size_t forwarded = 0U;
     uint32_t packet_count = 0U;
     esp_err_t result = ESP_OK;
     __atomic_store_n(&runtime->gps_agnss_injection_active, true, __ATOMIC_RELEASE);
@@ -3230,24 +3165,25 @@ static esp_err_t runtime_http_post_gps_agnss_handler(httpd_req_t *req,
             if (event != ESP_BMS_GPS_CASBIN_EVENT_FRAME) {
                 continue;
             }
-            if (!runtime_gps_agnss_message_allowed(stream.message_class,
-                                                    stream.message_id)) {
-                result = ESP_ERR_NOT_SUPPORTED;
-                break;
-            }
-            if (!runtime_gps_uart_write(runtime, stream.frame, stream.frame_len)) {
-                result = ESP_FAIL;
-                break;
-            }
-            forwarded += stream.frame_len;
             packet_count++;
         }
     }
 
     if (result == ESP_OK &&
         (remaining != 0U || esp_bms_gps_casbin_stream_active(&stream) ||
-         packet_count == 0U)) {
+         packet_count != 1U || stream.frame_len != req->content_len)) {
         result = ESP_ERR_INVALID_SIZE;
+    }
+    if (result == ESP_OK &&
+        !esp_bms_gps_casbin_agnss_payload_valid(stream.message_class,
+                                                stream.message_id,
+                                                &stream.frame[6],
+                                                stream.payload_len)) {
+        result = ESP_ERR_NOT_SUPPORTED;
+    }
+    if (result == ESP_OK &&
+        !runtime_gps_uart_write(runtime, stream.frame, stream.frame_len)) {
+        result = ESP_FAIL;
     }
     __atomic_store_n(&runtime->gps_agnss_injection_active, false, __ATOMIC_RELEASE);
 
@@ -3255,7 +3191,7 @@ static esp_err_t runtime_http_post_gps_agnss_handler(httpd_req_t *req,
         ESP_LOGW(TAG,
                  "[gps] A-GNSS injection rejected: packets=%lu bytes=%u error=%s",
                  (unsigned long)packet_count,
-                 (unsigned)forwarded,
+                 (unsigned)(req->content_len - remaining),
                  esp_err_to_name(result));
         const char *status = result == ESP_ERR_TIMEOUT
                                  ? "408 Request Timeout"
@@ -3268,13 +3204,13 @@ static esp_err_t runtime_http_post_gps_agnss_handler(httpd_req_t *req,
     ESP_LOGI(TAG,
              "[gps] A-GNSS injected: packets=%lu bytes=%u",
              (unsigned long)packet_count,
-             (unsigned)forwarded);
+             (unsigned)stream.frame_len);
     char json[96] = { 0 };
     (void)snprintf(json,
                    sizeof(json),
                    "{\"status\":\"injected\",\"packets\":%lu,\"bytes\":%u}",
                    (unsigned long)packet_count,
-                   (unsigned)forwarded);
+                   (unsigned)stream.frame_len);
     return runtime_http_send_json(req, json);
 }
 
@@ -5480,9 +5416,16 @@ static bool runtime_apply_gps_casbin(esp_bms_idf_runtime_t *runtime,
                      jam_level,
                      payload[0] & 0x01U,
                      payload[2] & 0x0FU);
-        } else {
+        } else if (spoof_state == 1U && jam_level == 1U) {
             ESP_LOGI(TAG,
                      "[gps] RF security clear: spoof=%u jam=%u spoof_on=%u jam_mask=0x%02X",
+                     spoof_state,
+                     jam_level,
+                     payload[0] & 0x01U,
+                     payload[2] & 0x0FU);
+        } else {
+            ESP_LOGI(TAG,
+                     "[gps] RF security unknown: spoof=%u jam=%u spoof_on=%u jam_mask=0x%02X",
                      spoof_state,
                      jam_level,
                      payload[0] & 0x01U,

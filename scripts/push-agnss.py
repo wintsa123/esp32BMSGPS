@@ -10,24 +10,23 @@ from pathlib import Path
 
 
 MAX_BODY_BYTES = 32 * 1024
-MAX_PAYLOAD_BYTES = 128
-ALLOWED_MSG_IDS = {
-    0x00,
-    0x01,
-    0x02,
-    0x03,
-    0x04,
-    0x05,
-    0x06,
-    0x07,
-    0x08,
-    0x09,
-    0x0B,
-    0x0C,
-    0x0D,
-    0x0E,
-    0x11,
-    0x17,
+MAX_PAYLOAD_BYTES = 524
+FIXED_MSG_PAYLOAD_BYTES = {
+    0x00: 20,
+    0x01: 16,
+    0x02: 92,
+    0x03: 16,
+    0x04: 92,
+    0x05: 20,
+    0x06: 16,
+    0x07: 72,
+    0x08: 68,
+    0x09: 20,
+    0x0B: 76,
+    0x0C: 20,
+    0x0D: 16,
+    0x0E: 72,
+    0x11: 88,
 }
 
 
@@ -49,11 +48,22 @@ def build_casbin(message_class: int, message_id: int, payload: bytes) -> bytes:
     )
 
 
-def validate_casbin_stream(data: bytes) -> int:
+def casbin_payload_valid(message_class: int, message_id: int, payload: bytes) -> bool:
+    if len(payload) > MAX_PAYLOAD_BYTES or len(payload) % 4:
+        return False
+    if message_class == 0x0B:
+        return message_id == 0x01 and len(payload) == 56
+    if message_class != 0x08:
+        return False
+    if message_id == 0x17:
+        return len(payload) >= 16 and len(payload) == 16 + payload[14] * 2
+    return len(payload) == FIXED_MSG_PAYLOAD_BYTES.get(message_id)
+
+
+def iter_casbin_frames(data: bytes):
     if not data or len(data) > MAX_BODY_BYTES:
         raise ValueError("A-GNSS data is empty or too large")
     offset = 0
-    packets = 0
     while offset < len(data):
         if data[offset : offset + 2] != b"\xBA\xCE" or offset + 10 > len(data):
             raise ValueError(f"invalid CASBIN header at byte {offset}")
@@ -65,16 +75,17 @@ def validate_casbin_stream(data: bytes) -> int:
         expected = struct.unpack_from("<I", data, offset + 6 + payload_len)[0]
         if expected != casbin_checksum(message_class, message_id, payload):
             raise ValueError(f"invalid CASBIN checksum at byte {offset}")
-        if not (
-            (message_class == 0x0B and message_id == 0x01)
-            or (message_class == 0x08 and message_id in ALLOWED_MSG_IDS)
-        ):
+        if not casbin_payload_valid(message_class, message_id, payload):
             raise ValueError(
-                f"unsupported A-GNSS CASBIN message class=0x{message_class:02X} id=0x{message_id:02X}"
+                f"invalid A-GNSS CASBIN message class=0x{message_class:02X} "
+                f"id=0x{message_id:02X} length={payload_len}"
             )
+        yield data[offset : offset + frame_len]
         offset += frame_len
-        packets += 1
-    return packets
+
+
+def validate_casbin_stream(data: bytes) -> int:
+    return sum(1 for _ in iter_casbin_frames(data))
 
 
 def extract_server_data(reply: bytes) -> bytes:
@@ -135,11 +146,11 @@ def build_position_aid(args: argparse.Namespace) -> bytes:
     return build_casbin(0x0B, 0x01, payload)
 
 
-def post_to_device(device: str, data: bytes, timeout: float) -> str:
+def post_to_device(device: str, frame: bytes, timeout: float) -> str:
     url = device.rstrip("/") + "/api/gps/agnss"
     request = urllib.request.Request(
         url,
-        data=data,
+        data=frame,
         method="POST",
         headers={"Content-Type": "application/octet-stream"},
     )
@@ -153,6 +164,28 @@ def self_test() -> None:
     assert len(data) == 66
     assert validate_casbin_stream(data) == 1
     assert extract_server_data(b"AGNSS data from CASIC.\nDataLength: 66.\n" + data) == data
+
+    igp_payload = bytearray(132)
+    igp_payload[14] = 58
+    igp_payload[15] = 58
+    igp = build_casbin(0x08, 0x17, bytes(igp_payload))
+    assert len(igp_payload) > 128
+    assert list(iter_casbin_frames(data + igp)) == [data, igp]
+
+    invalid = build_casbin(0x08, 0x07, b"\0" * 4)
+    try:
+        validate_casbin_stream(invalid)
+        raise AssertionError("short GPSEPH payload accepted")
+    except ValueError:
+        pass
+
+    igp_payload[14] = 60
+    invalid = build_casbin(0x08, 0x17, bytes(igp_payload))
+    try:
+        validate_casbin_stream(invalid)
+        raise AssertionError("mismatched IGP payload accepted")
+    except ValueError:
+        pass
     print("A-GNSS helper self-test passed")
 
 
@@ -200,11 +233,13 @@ def main() -> int:
             data = build_position_aid(args)
         else:
             data = fetch_server_data(args)
-        packets = validate_casbin_stream(data)
+        frames = list(iter_casbin_frames(data))
         if args.dry_run:
-            print(f"validated {packets} A-GNSS packet(s), {len(data)} bytes")
+            print(f"validated {len(frames)} A-GNSS packet(s), {len(data)} bytes")
             return 0
-        print(post_to_device(args.device, data, args.timeout))
+        for frame in frames:
+            post_to_device(args.device, frame, args.timeout)
+        print(f"injected {len(frames)} A-GNSS packet(s), {len(data)} bytes")
         return 0
     except (OSError, RuntimeError, ValueError) as error:
         print(f"A-GNSS injection failed: {error}", file=sys.stderr)

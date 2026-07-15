@@ -2,6 +2,20 @@
 
 #include <string.h>
 
+static int hex_value(uint8_t value)
+{
+    if (value >= '0' && value <= '9') {
+        return value - '0';
+    }
+    if (value >= 'A' && value <= 'F') {
+        return 10 + value - 'A';
+    }
+    if (value >= 'a' && value <= 'f') {
+        return 10 + value - 'a';
+    }
+    return -1;
+}
+
 static uint32_t casbin_read_le32(const uint8_t *bytes)
 {
     return (uint32_t)bytes[0] | ((uint32_t)bytes[1] << 8U) |
@@ -49,6 +63,29 @@ bool esp_bms_gps_stream_line_is_rmc(const uint8_t *line, size_t line_len)
         }
     }
     return false;
+}
+
+bool esp_bms_gps_stream_nmea_checksum_valid(const uint8_t *line, size_t line_len)
+{
+    if (!line || line_len < 4U || line[0] != '$') {
+        return false;
+    }
+
+    const size_t checksum_offset = line_len - 3U;
+    const int high = hex_value(line[checksum_offset + 1U]);
+    const int low = hex_value(line[checksum_offset + 2U]);
+    if (line[checksum_offset] != '*' || high < 0 || low < 0) {
+        return false;
+    }
+
+    uint8_t actual = 0U;
+    for (size_t offset = 1U; offset < checksum_offset; ++offset) {
+        if (line[offset] == '*') {
+            return false;
+        }
+        actual ^= line[offset];
+    }
+    return actual == (uint8_t)((high << 4) | low);
 }
 
 esp_bms_gps_stream_event_t esp_bms_gps_stream_feed(esp_bms_gps_stream_t *stream,
@@ -169,6 +206,62 @@ esp_bms_gps_casbin_stream_feed(esp_bms_gps_casbin_stream_t *stream, uint8_t byte
                         stream->payload_len);
     return expected_checksum == actual_checksum ? ESP_BMS_GPS_CASBIN_EVENT_FRAME
                                                 : ESP_BMS_GPS_CASBIN_EVENT_ERROR;
+}
+
+bool esp_bms_gps_casbin_agnss_payload_valid(uint8_t message_class,
+                                            uint8_t message_id,
+                                            const uint8_t *payload,
+                                            size_t payload_len)
+{
+    if (payload_len > ESP_BMS_GPS_CASBIN_MAX_PAYLOAD ||
+        (payload_len & 3U) != 0U || (payload_len > 0U && !payload)) {
+        return false;
+    }
+    if (message_class == 0x0BU) {
+        return message_id == 0x01U && payload_len == 56U;
+    }
+    if (message_class != 0x08U) {
+        return false;
+    }
+
+    size_t expected_len = 0U;
+    switch (message_id) {
+    case 0x00U:
+    case 0x05U:
+    case 0x09U:
+    case 0x0CU:
+        expected_len = 20U;
+        break;
+    case 0x01U:
+    case 0x03U:
+    case 0x06U:
+    case 0x0DU:
+        expected_len = 16U;
+        break;
+    case 0x02U:
+    case 0x04U:
+        expected_len = 92U;
+        break;
+    case 0x07U:
+    case 0x0EU:
+        expected_len = 72U;
+        break;
+    case 0x08U:
+        expected_len = 68U;
+        break;
+    case 0x0BU:
+        expected_len = 76U;
+        break;
+    case 0x11U:
+        expected_len = 88U;
+        break;
+    case 0x17U:
+        return payload_len >= 16U &&
+               payload_len == 16U + (size_t)payload[14] * 2U;
+    default:
+        return false;
+    }
+    return payload_len == expected_len;
 }
 
 size_t esp_bms_gps_casbin_build(uint8_t message_class,

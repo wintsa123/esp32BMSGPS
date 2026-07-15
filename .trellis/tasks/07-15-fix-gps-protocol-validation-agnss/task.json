@@ -3,7 +3,7 @@
   "name": "fix-gps-protocol-validation-agnss",
   "title": "修复 GPS 协议校验与 A-GNSS 注入",
   "description": "基于 ATGM336H-6N-74 审查结果，修复 RMC/CASBIN 校验、A-GNSS 注入原子性与射频安全状态诊断。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

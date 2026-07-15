@@ -62,6 +62,23 @@ static void test_rmc_sentence_classification(void)
     assert(!esp_bms_gps_stream_line_is_rmc(tail, sizeof(tail) - 1U));
 }
 
+static void test_nmea_checksum_validation(void)
+{
+    static const uint8_t valid[] =
+        "$GPRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W*6A";
+    static const uint8_t missing[] =
+        "$GPRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W";
+    static const uint8_t trailing[] =
+        "$GPRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W*6AX";
+    static const uint8_t bad[] =
+        "$GPRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W*00";
+
+    assert(esp_bms_gps_stream_nmea_checksum_valid(valid, sizeof(valid) - 1U));
+    assert(!esp_bms_gps_stream_nmea_checksum_valid(missing, sizeof(missing) - 1U));
+    assert(!esp_bms_gps_stream_nmea_checksum_valid(trailing, sizeof(trailing) - 1U));
+    assert(!esp_bms_gps_stream_nmea_checksum_valid(bad, sizeof(bad) - 1U));
+}
+
 static void test_overflow_discards_whole_sentence(void)
 {
     esp_bms_gps_stream_t stream;
@@ -138,14 +155,59 @@ static void test_casbin_zero_payload_query(void)
     assert(memcmp(frame, expected, sizeof(expected)) == 0);
 }
 
+static void test_casbin_agnss_payload_validation(void)
+{
+    static uint8_t igp_payload[ESP_BMS_GPS_CASBIN_MAX_PAYLOAD];
+    static uint8_t frame[ESP_BMS_GPS_CASBIN_MAX_FRAME];
+    static const uint8_t short_payload[4] = { 0 };
+    igp_payload[14] = 254U;
+    igp_payload[15] = 254U;
+
+    assert(esp_bms_gps_casbin_agnss_payload_valid(0x08U,
+                                                   0x17U,
+                                                   igp_payload,
+                                                   sizeof(igp_payload)));
+    assert(!esp_bms_gps_casbin_agnss_payload_valid(0x08U,
+                                                    0x07U,
+                                                    short_payload,
+                                                    sizeof(short_payload)));
+    assert(esp_bms_gps_casbin_build(0x08U,
+                                    0x17U,
+                                    igp_payload,
+                                    sizeof(igp_payload),
+                                    frame,
+                                    sizeof(frame)) == sizeof(frame));
+
+    esp_bms_gps_casbin_stream_t stream;
+    esp_bms_gps_casbin_stream_reset(&stream);
+    uint32_t frames = 0U;
+    for (size_t repeat = 0U; repeat < 2U; ++repeat) {
+        for (size_t index = 0U; index < sizeof(frame); ++index) {
+            if (esp_bms_gps_casbin_stream_feed(&stream, frame[index]) ==
+                ESP_BMS_GPS_CASBIN_EVENT_FRAME) {
+                frames++;
+            }
+        }
+    }
+    assert(frames == 2U);
+
+    igp_payload[14] = 252U;
+    assert(!esp_bms_gps_casbin_agnss_payload_valid(0x08U,
+                                                    0x17U,
+                                                    igp_payload,
+                                                    sizeof(igp_payload)));
+}
+
 int main(void)
 {
     test_noise_and_consecutive_rmc();
     test_rmc_sentence_classification();
+    test_nmea_checksum_validation();
     test_overflow_discards_whole_sentence();
     test_new_dollar_recovers_without_newline();
     test_casbin_build_and_parse();
     test_casbin_zero_payload_query();
+    test_casbin_agnss_payload_validation();
     puts("GPS stream self-test passed");
     return 0;
 }

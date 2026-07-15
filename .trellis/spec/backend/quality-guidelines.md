@@ -205,23 +205,30 @@ idf.py -p /dev/ttyUSB0 flash
 ./scripts/esp-idf-env.sh -p "rfc2217://192.168.2.10:4000?ign_set_control" -b 115200 flash
 ```
 
-## Scenario: GPS NMEA And UART Ownership
+## Scenario: GPS NMEA, CASBIN, A-GNSS, And UART Ownership
 
 ### 1. Scope / Trigger
 
-- Trigger: receiving 336H GPS NMEA on its dedicated UART1 wiring while keeping
-  UART0 logs and RFC2217 flashing available.
+- Trigger: receiving ATGM336H-6N-74 NMEA/CASBIN, injecting A-GNSS, or changing
+  its dedicated UART1 path while keeping UART0 logs and RFC2217 flashing available.
 
 ### 2. Signatures
 
 - Console: UART0, TX/GPIO1, RX/GPIO3, 115200 baud.
 - GPS: UART1 at 115200 baud, RX/GPIO27, TX/GPIO18; PPS input on GPIO35 rising
   edge with external bias.
+- Receiver: ATGM336H-6N-74 on AT6668; GPS/QZSS/BDS2/BDS3/Galileo/GLONASS,
+  10 Hz, A-GNSS, and RF channels 1575/1561/1602 MHz are supported.
 - Runtime diagnostic: `[gps] no NMEA bytes: uart=<n> rx=<gpio> level=<0|1> uptime_s=<n>`.
 - Stream boundary: `esp_bms_gps_stream_feed()` publishes only complete lines
   that started with `$`; overflow is a separate event from RMC parse failure.
 - Speed-field boundary: `esp_bms_gps_speed_knots_milli_parse(field, len, out)`
   accepts an empty field as zero and strictly parses non-empty decimal knots.
+- CASBIN boundary: `esp_bms_gps_casbin_agnss_payload_valid(class, id, payload, len)`
+  owns the firmware-side A-GNSS class/id/length contract.
+- HTTP boundary: `POST /api/gps/agnss` accepts exactly one complete CASBIN frame.
+- Supported maximum: payload `524` bytes, frame `534` bytes; this covers the
+  largest aligned `MSG-IGP` supported by the A-GNSS whitelist.
 
 ### 3. Contracts
 
@@ -240,6 +247,19 @@ idf.py -p /dev/ttyUSB0 flash
 - Classify the talker/sentence kind before RMC checksum and field validation.
   A damaged GSA/GSV sentence is not a real RMC parse error and must not pollute
   `parse_errors` or emit an `invalid RMC` log.
+- Every RMC must end with exactly one `*HH`; missing, truncated, non-hex, or
+  trailing checksum data is a parse error.
+- CASBIN payloads are four-byte aligned. Fixed A-GNSS message IDs require their
+  exact R6 payload length; `AID-INI` is 56 bytes and `MSG-IGP` is
+  `16 + 2 * payload[14]` bytes.
+- The device validates the complete single frame before one UART write. The
+  host helper validates the complete downloaded stream, then POSTs frames one
+  at a time. Do not report a rejected request after forwarding part of its body.
+- The single-frame API is the compatibility baseline for ESP32 variants with
+  or without PSRAM. Protocol parsing stays pure C and must not depend on target
+  macros, Xtensa, or PSRAM allocation APIs.
+- MON-SEC values mean `0=unknown`, `1=clear`, and `2/3=alert`; never log value
+  zero as RF security clear.
 
 ### 4. Validation & Error Matrix
 
@@ -253,17 +273,29 @@ idf.py -p /dev/ttyUSB0 flash
   buffer sizing; verify the following RMC is still published intact.
 - A non-RMC sentence has a bad checksum -> ignore it for RMC diagnostics; only
   a line whose exact kind is GP/GN/GA/GL/BD `RMC` enters strict RMC validation.
+- RMC has no exact terminal `*HH` -> reject it without updating fix, speed, or UTC.
+- A fixed-length A-GNSS message has the wrong payload length -> HTTP 400 and no UART write.
+- HTTP body contains zero or multiple CASBIN frames -> HTTP 400 and no UART write.
+- `MSG-IGP` exceeds 128 bytes but satisfies its internal length and the 524-byte
+  supported maximum -> accept it.
+- MON-SEC spoof or jam is zero -> log unknown; both are one -> log clear; either
+  is two or three -> log alert.
 - PPS has no edges -> verify GPS fix/PPS configuration and GPIO35 voltage; NMEA speed must continue working.
 
 ### 5. Good/Base/Bad Cases
 
 - Good: GPS TX uses UART1 RX/GPIO27; UART0 remains dedicated to flash/logs; GPIO35 receives PPS.
+- Good: the helper prevalidates a multi-frame A-GNSS file and sends each valid
+  frame through one atomic HTTP request.
 - Base: GPS is absent; UI shows invalid speed while boot uptime, BMS, touch, Wi-Fi, and logs remain operational.
 - Base: stationary GPS emits `A` with an empty speed field; UI remains green
   with zero speed and the 60-second summary increments `A`, not `parse_errors`.
 - Bad: TF-card SCLK and GPS module RX both drive/use GPIO18 without an explicit ownership change, or GPS TX is tied to UART0 RX/GPIO3.
 - Bad: reset the line length on overflow and immediately collect the sentence
   tail, or reject an otherwise valid `A` RMC solely because speed is empty.
+- Bad: cap all CASBIN payloads at 128 bytes, accept a four-byte `MSG-GPSEPH`,
+  buffer 32 KiB solely because a future ESP32 may have PSRAM, or stream frames
+  to UART before validating the full HTTP request.
 
 ### 6. Tests Required
 
@@ -272,7 +304,11 @@ idf.py -p /dev/ttyUSB0 flash
 - Within 10 seconds, assert either NMEA/RMC diagnostics show activity or the one-shot no-byte diagnostic explains the missing input.
 - Run `tests/gps_stream_selftest.c` for noise, long-sentence overflow,
   missing-newline recovery, CRLF, consecutive RMC framing, and rejection of a
-  corrupted non-RMC sentence before strict RMC parsing.
+  corrupted non-RMC sentence before strict RMC parsing. Also require exact
+  NMEA checksum boundaries, maximum aligned `MSG-IGP`, wrong fixed lengths,
+  internal IGP length mismatch, and consecutive maximum CASBIN frames.
+- Run `python3 scripts/push-agnss.py --self-test`; require whole-stream
+  validation and deterministic frame splitting before any HTTP request.
 - Run `tests/speed_dashboard_selftest.c` and assert empty RMC speed parses to
   zero while malformed non-empty speed fails.
 - On hardware, require a 60-second summary with separate `A`, `V`, `overflow`,
@@ -311,6 +347,25 @@ if (!esp_bms_gps_speed_knots_milli_parse(speed_field,
                                           speed_field_len,
                                           &speed_knots_milli)) {
     return GPS_PARSE_ERROR;
+}
+```
+
+#### Wrong
+
+```c
+/* A later invalid frame can make the request fail after earlier UART writes. */
+runtime_gps_uart_write(runtime, stream.frame, stream.frame_len);
+packet_count++;
+```
+
+#### Correct
+
+```c
+/* One request owns one complete frame; validate first, then commit once. */
+if (packet_count == 1U &&
+    esp_bms_gps_casbin_agnss_payload_valid(message_class, message_id,
+                                           payload, payload_len)) {
+    runtime_gps_uart_write(runtime, stream.frame, stream.frame_len);
 }
 ```
 
