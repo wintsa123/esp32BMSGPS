@@ -570,7 +570,8 @@ int main(int argc, char **argv)
     }
     print_help(argv[0]);
     unsigned frame = 0U;
-    const unsigned frame_limit = headless ? 120U : UINT32_MAX;
+    unsigned stress_updates = 0U;
+    const unsigned frame_limit = headless ? (screenshot_path ? 120U : 360U) : UINT32_MAX;
     while (app.running && frame < frame_limit) {
         lv_timer_handler();
         if (!app.running) {
@@ -583,15 +584,24 @@ int main(int argc, char **argv)
         snapshot_changed = process_ui_action(&app) || snapshot_changed;
 
         if (headless && !screenshot_path) {
-            if (frame == 10U) {
-                push_key(SDLK_UP);
-            } else if (frame == 20U || frame == 35U) {
-                push_key(SDLK_e);
-            } else if (frame == 50U || frame == 60U) {
-                push_key(SDLK_f);
-            } else if (frame == 70U || frame == 80U) {
-                push_key(SDLK_b);
-            } else if (frame == 100U && !screenshot_path) {
+            if (stress_updates < 300U) {
+                app.speed_kmh_deci = (uint16_t)((stress_updates * 37U) % 1801U);
+                app.snapshot.controller_temp_c = 35 + (int16_t)(stress_updates % 40U);
+                app.snapshot.motor_temp_c = 45 + (int16_t)(stress_updates % 45U);
+                app.snapshot.controller_gear = (uint8_t)((stress_updates % 6U) + 1U);
+                app.snapshot.gps_local_minute = (uint8_t)(stress_updates % 60U);
+                refresh_speed_snapshot(&app);
+                if (esp_bms_lvgl_ui_set_page(
+                        (stress_updates & 1U) == 0U ? ESP_BMS_LVGL_PAGE_BATTERY
+                                                   : ESP_BMS_LVGL_PAGE_GPS,
+                        false) != ESP_OK) {
+                    fputs("页面压力切换失败\n", stderr);
+                    run_ok = false;
+                    app.running = false;
+                }
+                snapshot_changed = true;
+                ++stress_updates;
+            } else if (frame == 310U) {
                 push_key(SDLK_r);
             }
         }
@@ -618,6 +628,12 @@ int main(int argc, char **argv)
         printf("headless smoke passed: %s, %u frames\n",
                portrait ? "240x320" : "320x240",
                frame);
+        if (!screenshot_path) {
+            printf("fireblade stress updates: %u\n", stress_updates);
+            if (stress_updates != 300U) {
+                run_ok = false;
+            }
+        }
         printf("remaining range: %u km (%s)\n",
                app.snapshot.remaining_range_km,
                app.snapshot.remaining_range_valid ? "valid" : "invalid");
