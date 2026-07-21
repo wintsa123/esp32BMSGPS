@@ -377,6 +377,11 @@ scripts/build-profile.sh [--lang zh|en] --config firmware.env
 - Keep commands, options, exit codes, `KEY=VALUE` fields, paths, module IDs,
   and generated CMake ASCII. Localize human-facing help, prompts, status, and
   diagnostics only.
+- `start.ps1` contains Chinese UI text and must be UTF-8 **with BOM** so the
+  built-in Windows PowerShell 5.1 decodes it correctly. `start.cmd` launches
+  `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe` explicitly
+  and, for a no-argument launch, pauses after a failure so double-click users
+  can read the error.
 - Interactive selection derives `PROFILE` from the selected board ID. A future
   `custom-*` board may fall back to its selected MCU ID, but it must still have
   catalog wiring before it can pass validation. `--profile` remains a
@@ -400,6 +405,7 @@ scripts/build-profile.sh [--lang zh|en] --config firmware.env
 | Interactive language answer is invalid | Re-prompt before any configuration prompt |
 | Interactive board choice changes bus | Replace stale display/input defaults with compatible choices before prompting |
 | User cancels the displayed build plan | Exit successfully without creating a configuration directory |
+| `start.cmd` cannot invoke PowerShell | Print the resolved executable path; on a no-argument launch, pause instead of closing the error window |
 | `ota` is selected | Resolve `network` and set both corresponding features |
 | OTA is off | Omit `esp_bms_ota`; prove no BMS OTA handler or `esp_ota_{begin,write,end,set_boot_partition}` symbol is linked |
 | Network is off | Omit `esp_bms_network` and its embedded `index.html` symbols |
@@ -436,6 +442,8 @@ node .gitnexus/run.cjs detect-changes --repo esp32BMSGPS
 - Test the title, numbered board/module options, automatic board-derived
   `PROFILE`, no visible `Profile` prompt, compatible S3 display/input defaults,
   and cancellation without generated files.
+- Assert the first three bytes of `start.ps1` are `EF BB BF` and that
+  `start.cmd` uses the explicit built-in Windows PowerShell path.
 - Build network+OTA, network-only, and neither profile. Assert component
   closure and final symbols, not just presence of an ESP-IDF archive.
 

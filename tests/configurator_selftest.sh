@@ -122,4 +122,7 @@ else
     echo 'PowerShell comparison skipped: pwsh is unavailable'
 fi
 
+[[ "$(od -An -tx1 -N3 "${repo_root}/start.ps1" | tr -d '[:space:]')" == 'efbbbf' ]]
+rg -Fx 'set "PS_EXE=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"' "${repo_root}/start.cmd"
+
 echo 'firmware configurator self-test passed'
