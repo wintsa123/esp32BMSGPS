@@ -340,3 +340,96 @@ save/reopen -> getDsnFile() contains boundary(path ...)
 import/create allowlisted copper -> read back Top/Bottom by layer
 -> delete only new copper-layer line IDs and via IDs on failure
 ```
+
+## Scenario: Modular Firmware Profiles And Localized Configurator
+
+### 1. Scope / Trigger
+
+- Apply this contract when changing a firmware module catalog, generated
+  profile, component `REQUIRES`, the `start.*` configurators, or the local
+  build wrapper.
+- These changes cross the catalog -> profile -> CMake closure -> generated
+  registry -> firmware image boundary. A successful configuration command alone
+  is not evidence that a feature was removed from the image.
+
+### 2. Signatures
+
+```text
+./start.sh [--lang zh|en] <command> [options]
+.\start.ps1 <command> [--lang zh|en] [options]
+scripts/build-profile.sh [--lang zh|en] --config firmware.env
+```
+
+- No-argument `start.sh`, `start.ps1`, and `start.cmd` executions must first
+  offer `1`/`zh` for Simplified Chinese and `2`/`en` for English.
+- Profiles set `ESP_BMS_FEATURE_{AUDIO,BMS,CONTROLLER,GPS,NETWORK,OTA}` and
+  `ESP_BMS_PROFILE_MAIN_REQUIRES`; these are the component-closure contract.
+
+### 3. Contracts
+
+- Language defaults to `zh` for non-interactive commands and remains in the
+  current process only. `FIRMWARE_LANG` may carry it from the configurator to
+  the build wrapper, but it must never be written to `firmware.env`,
+  `normalized.env`, `profile.cmake`, or a preference file.
+- Keep commands, options, exit codes, `KEY=VALUE` fields, paths, module IDs,
+  and generated CMake ASCII. Localize human-facing help, prompts, status, and
+  diagnostics only.
+- `ota` implies `network`. When OTA is disabled, the generated closure must not
+  name `esp_bms_ota`, runtime must return `501 Not Implemented` for `/api/ota`,
+  and no `esp_ota_*` update symbol may appear in the final ELF.
+- ESP-IDF 5.5.4 currently builds `app_update` through the private dependencies
+  of `esp_partition`, `spi_flash`, and `espressif__esp_mmap_assets`. Its build
+  directory or archive alone is not OTA feature evidence; verify the selected
+  BMS component and final ELF symbols instead.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required response |
+| --- | --- |
+| `--lang` is missing or not `zh`/`en` | Exit 2 with a localized diagnostic; do not write a profile |
+| Interactive language answer is invalid | Re-prompt before any configuration prompt |
+| `ota` is selected | Resolve `network` and set both corresponding features |
+| OTA is off | Omit `esp_bms_ota`; prove no BMS OTA handler or `esp_ota_{begin,write,end,set_boot_partition}` symbol is linked |
+| Network is off | Omit `esp_bms_network` and its embedded `index.html` symbols |
+| RFC2217 server rejects parameter change | Treat the flash as not written; record the exact error and check bridge ownership/configuration before a new attempt |
+
+### 5. Good / Base / Bad Cases
+
+- Good: use `--lang en` for an automation assertion, then compare generated
+  `firmware.env`/`normalized.env` bytes independently of displayed language.
+- Good: validate network/OTA on-off profiles through component descriptions,
+  archives, map files, and final ELF symbols.
+- Base: observe `app_update` in an OTA-off ESP-IDF build, then attribute it to
+  its SDK dependency path and still prove no application OTA code is linked.
+- Bad: persist a UI language choice in a profile or declare OTA removed merely
+  because `esp_bms_ota` is absent while final `esp_ota_*` symbols remain.
+
+### 6. Tests Required
+
+```bash
+bash -n start.sh scripts/build-profile.sh tests/configurator_selftest.sh
+./tests/configurator_selftest.sh
+cmake --build firmware-builds/<profile>/idf-build
+node .gitnexus/run.cjs detect-changes --repo esp32BMSGPS
+```
+
+- Test both language positions accepted by `start.sh`, the default Chinese
+  output, English override, invalid language, no persistence, and an invalid
+  interactive answer followed by a valid selection.
+- Build network+OTA, network-only, and neither profile. Assert component
+  closure and final symbols, not just presence of an ESP-IDF archive.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+OTA off -> app_update archive exists -> report OTA trimming failed
+```
+
+#### Correct
+
+```text
+OTA off -> no esp_bms_ota component/archive -> no esp_bms_ota or esp_ota_* ELF
+symbols -> app_update explained by ESP-IDF esp_partition dependency
+```

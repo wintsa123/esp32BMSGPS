@@ -8,38 +8,150 @@ readonly SCHEMA_VERSION=1
 
 declare -A CFG RECORD MODULE_STATE GPIO_VALUES GPIO_KINDS BOARD_GPIO
 declare -a SELECTED_MODULES
+declare -a FILTERED_ARGS
+
+# The UI language is deliberately process-local.  Catalogs and generated
+# KEY=VALUE/CMake files remain ASCII machine interfaces.
+LANGUAGE="${FIRMWARE_LANG:-zh}"
+
+message_text() {
+    local text="$1"
+    [[ "$LANGUAGE" == en ]] && {
+        printf '%s' "$text"
+        return
+    }
+
+    text="${text//error: /错误：}"
+    text="${text//ok: /正常：}"
+    text="${text//missing: /缺少：}"
+    text="${text//valid: /校验通过：}"
+    text="${text//profile: /配置档：}"
+    text="${text//config: /配置：}"
+    text="${text//normalized: /标准化配置：}"
+    text="${text//disk-kb-available: /可用磁盘空间(KB)：}"
+    text="${text//previous profile preserved at /已保留先前配置档：}"
+    text="${text//cloud build request prepared; workflow dispatch belongs to /云构建请求已准备；工作流分派属于 }"
+    text="${text//missing /缺少 }"
+    text="${text//unknown /未知 }"
+    text="${text//invalid /无效的 }"
+    text="${text//unsupported /不支持的 }"
+    text="${text//duplicate /重复的 }"
+    text="${text//malformed /格式错误的 }"
+    text="${text//configuration /配置}"
+    text="${text//catalog /目录}"
+    text="${text//schema /模式}"
+    text="${text//record /记录}"
+    text="${text//file /文件}"
+    text="${text//key /键}"
+    text="${text//value /值}"
+    text="${text//module /模块}"
+    text="${text//capability /能力}"
+    text="${text//board /开发板}"
+    text="${text//display /显示屏}"
+    text="${text//input /输入}"
+    text="${text//profile /配置档}"
+    text="${text//option /选项}"
+    text="${text//command /命令}"
+    text="${text//partition /分区}"
+    text="${text//path /路径}"
+    text="${text//requires /需要}"
+    text="${text//conflicts with /与 }"
+    text="${text//assigned to both /同时分配给 }"
+    text="${text//is unavailable on /在以下芯片不可用：}"
+    text="${text//is input-only and cannot drive /仅可输入，不能驱动 }"
+    text="${text//is dangerous; pass /是危险引脚；请传入 }"
+    text="${text//does not accept options /不接受选项}"
+    text="${text//is not build-ready yet /尚未具备本地构建条件}"
+    text="${text//Profile /配置名称}"
+    text="${text//Board /开发板}"
+    text="${text//Display /显示屏}"
+    text="${text//Input /输入设备}"
+    text="${text//Modules /模块}"
+    text="${text//profile=/配置档=}"
+    text="${text//modules=/模块=}"
+    printf '%s' "$text"
+}
 
 die() {
-    echo "error: $*" >&2
+    printf '%s\n' "$(message_text "error: $*")" >&2
     exit 2
 }
 
 usage() {
-    cat <<'USAGE'
+    if [[ "$LANGUAGE" == en ]]; then
+        cat <<'USAGE'
 Usage: ./start.sh <command> [options]
 
 Commands:
   doctor       Check the local ESP-IDF build prerequisites.
-  configure    Validate a configuration and generate a profile.
+  configure    Validate a configuration and write one firmware.env file.
   validate     Validate a configuration without writing a profile.
-  build-local  Generate a profile, then build it in an isolated directory.
+  build-local  Write firmware.env, then compile it in an isolated directory.
   build-cloud  Validate and prepare a cloud-build request; it never pushes.
 
-Options for configure, validate, build-local and build-cloud:
-  --config FILE                 KEY=VALUE configuration file
-  --profile ID                  Profile name (default: legacy)
-  --mcu ID                      esp32 or esp32s3
-  --board ID                    Catalog board identifier
-  --display ID                  Catalog display identifier
-  --input ID                    Catalog input identifier
-  --modules ID[,ID...]          Optional modules
-  --gpio ROLE=PIN               Override a declared board GPIO role
-  --confirm-dangerous-gpio      Allow a dangerous overridden GPIO
-  -h, --help                    Show this help
+Options:
+  --lang zh|en                 Language for this invocation (default: zh)
+  --config FILE                KEY=VALUE configuration file
+  --profile ID                 Profile name (default: legacy)
+  --mcu ID                     esp32 or esp32s3
+  --board ID                   Catalog board identifier
+  --display ID                 Catalog display identifier
+  --input ID                   Catalog input identifier
+  --modules ID[,ID...]         Optional modules
+  --gpio ROLE=PIN              Override a declared board GPIO role
+  --confirm-dangerous-gpio     Allow a dangerous overridden GPIO
+  -h, --help                   Show this help
 
-No command opens the generated files as executable input. Run without arguments
-for a small interactive configure menu.
+Run without arguments to choose a language, then configure interactively.
 USAGE
+        return
+    fi
+    cat <<'USAGE'
+用法：./start.sh <命令> [选项]
+
+命令：
+  doctor       检查本地 ESP-IDF 构建前置条件。
+  configure    校验配置并写入一个 firmware.env 文件。
+  validate     只校验配置，不写入配置档。
+  build-local  写入 firmware.env，并在隔离目录中编译。
+  build-cloud  校验并准备云构建请求；不会推送。
+
+选项：
+  --lang zh|en                 本次调用的语言（默认：zh）
+  --config FILE                KEY=VALUE 配置文件
+  --profile ID                 配置档名称（默认：legacy）
+  --mcu ID                     esp32 或 esp32s3
+  --board ID                   catalog 开发板标识
+  --display ID                 catalog 显示屏标识
+  --input ID                   catalog 输入设备标识
+  --modules ID[,ID...]         可选模块
+  --gpio ROLE=PIN              覆盖已声明的开发板 GPIO 角色
+  --confirm-dangerous-gpio     允许危险 GPIO 覆盖
+  -h, --help                   显示此帮助
+
+无参数运行时会先选择语言，再进入交互式配置。
+USAGE
+}
+
+set_language() {
+    case "$1" in
+        zh|en) LANGUAGE="$1" ;;
+        *) die "invalid language: $1 (use zh or en)" ;;
+    esac
+}
+
+filter_language_options() {
+    FILTERED_ARGS=()
+    while [[ $# -gt 0 ]]; do
+        if [[ "$1" == --lang ]]; then
+            [[ $# -ge 2 ]] || die "--lang requires zh or en"
+            set_language "$2"
+            shift 2
+        else
+            FILTERED_ARGS+=("$1")
+            shift
+        fi
+    done
 }
 
 is_id() {
@@ -361,29 +473,19 @@ validate_config() {
 write_profile() {
     local profile="${CFG[PROFILE]}"
     local profile_dir="$BUILD_ROOT/$profile"
-    local temporary backup partition_source role module main_requires audio_feature bms_feature controller_feature gps_feature trimming
+    local temporary backup partition_source role module main_requires audio_feature bms_feature controller_feature gps_feature network_feature ota_feature trimming
 
     mkdir -p "$BUILD_ROOT"
     temporary="$(mktemp -d "$BUILD_ROOT/.${profile}.tmp.XXXXXX")"
     mkdir -p "$temporary/generated"
-    {
-        printf 'SCHEMA_VERSION=%s\n' "$SCHEMA_VERSION"
-        printf 'PROFILE=%s\n' "$profile"
-        printf 'MCU=%s\n' "${CFG[MCU]}"
-        printf 'BOARD=%s\n' "${CFG[BOARD]}"
-        printf 'DISPLAY=%s\n' "${CFG[DISPLAY]}"
-        printf 'INPUT=%s\n' "${CFG[INPUT]}"
-        printf 'MODULES=%s\n' "${CFG[MODULES]}"
-        printf 'CONFIRM_DANGEROUS_GPIO=%s\n' "${CFG[CONFIRM_DANGEROUS_GPIO]}"
-        for role in $(printf '%s\n' "${!GPIO_VALUES[@]}" | LC_ALL=C sort); do
-            printf 'GPIO_%s=%s\n' "$role" "${GPIO_VALUES[$role]}"
-        done
-    } > "$temporary/normalized.env"
+    write_firmware_env "$temporary/firmware.env"
     main_requires="esp_bms_idf_runtime;esp_bms_lvgl_bridge;esp_bms_lvgl_ui;lvgl;esp_lvgl_adapter"
     audio_feature=0
     bms_feature=0
     controller_feature=0
     gps_feature=0
+    network_feature=0
+    ota_feature=0
     trimming="audio-component-excluded;legacy-runtime-untrimmed"
     if csv_has "${CFG[MODULES]}" gps; then
         main_requires="esp_bms_gps;${main_requires}"
@@ -405,6 +507,16 @@ write_profile() {
         controller_feature=1
         trimming="controller-component-enabled;legacy-runtime-partially-untrimmed"
     fi
+    if csv_has "${CFG[MODULES]}" network; then
+        main_requires="esp_bms_network;${main_requires}"
+        network_feature=1
+        trimming="network-component-enabled;legacy-runtime-partially-untrimmed"
+    fi
+    if csv_has "${CFG[MODULES]}" ota; then
+        main_requires="esp_bms_ota;${main_requires}"
+        ota_feature=1
+        trimming="ota-component-enabled;legacy-runtime-partially-untrimmed"
+    fi
     {
         printf 'set(ESP_BMS_PROFILE_ID "%s")\n' "$profile"
         printf 'set(ESP_BMS_SELECTED_MODULES "%s")\n' "${CFG[MODULES]}"
@@ -413,6 +525,8 @@ write_profile() {
         printf 'set(ESP_BMS_FEATURE_BMS %s CACHE BOOL "Firmware profile BMS feature" FORCE)\n' "$bms_feature"
         printf 'set(ESP_BMS_FEATURE_CONTROLLER %s CACHE BOOL "Firmware profile controller feature" FORCE)\n' "$controller_feature"
         printf 'set(ESP_BMS_FEATURE_GPS %s CACHE BOOL "Firmware profile GPS feature" FORCE)\n' "$gps_feature"
+        printf 'set(ESP_BMS_FEATURE_NETWORK %s CACHE BOOL "Firmware profile network feature" FORCE)\n' "$network_feature"
+        printf 'set(ESP_BMS_FEATURE_OTA %s CACHE BOOL "Firmware profile OTA feature" FORCE)\n' "$ota_feature"
         printf 'set(ESP_BMS_PROFILE_MAIN_REQUIRES "%s" CACHE STRING "Firmware profile component closure" FORCE)\n' "$main_requires"
     } > "$temporary/generated/profile.cmake"
     {
@@ -437,20 +551,52 @@ write_profile() {
     if [[ -e "$profile_dir" ]]; then
         backup="$BUILD_ROOT/.${profile}.previous.$(date +%s)"
         mv "$profile_dir" "$backup"
-        echo "previous profile preserved at ${backup#$ROOT/}" >&2
+        printf '%s\n' "$(message_text "previous profile preserved at ${backup#$ROOT/}")" >&2
     fi
     mv "$temporary" "$profile_dir"
-    echo "profile: ${profile_dir#$ROOT/}"
-    echo "normalized: ${profile_dir#$ROOT/}/normalized.env"
+    printf '%s\n' "$(message_text "profile: ${profile_dir#$ROOT/}")"
+}
+
+write_firmware_env() {
+    local output_file="$1"
+    {
+        printf 'SCHEMA_VERSION=%s\n' "$SCHEMA_VERSION"
+        printf 'PROFILE=%s\n' "$profile"
+        printf 'MCU=%s\n' "${CFG[MCU]}"
+        printf 'BOARD=%s\n' "${CFG[BOARD]}"
+        printf 'DISPLAY=%s\n' "${CFG[DISPLAY]}"
+        printf 'INPUT=%s\n' "${CFG[INPUT]}"
+        printf 'MODULES=%s\n' "${CFG[MODULES]}"
+        printf 'CONFIRM_DANGEROUS_GPIO=%s\n' "${CFG[CONFIRM_DANGEROUS_GPIO]}"
+        for role in $(printf '%s\n' "${!GPIO_VALUES[@]}" | LC_ALL=C sort); do
+            printf 'GPIO_%s=%s\n' "$role" "${GPIO_VALUES[$role]}"
+        done
+    } > "$output_file"
+}
+
+write_config() {
+    local profile="${CFG[PROFILE]}"
+    local profile_dir="$BUILD_ROOT/$profile"
+    local temporary backup
+    mkdir -p "$BUILD_ROOT"
+    temporary="$(mktemp -d "$BUILD_ROOT/.${profile}.tmp.XXXXXX")"
+    write_firmware_env "$temporary/firmware.env"
+    if [[ -e "$profile_dir" ]]; then
+        backup="$BUILD_ROOT/.${profile}.previous.$(date +%s)"
+        mv "$profile_dir" "$backup"
+        printf '%s\n' "$(message_text "previous profile preserved at ${backup#$ROOT/}")" >&2
+    fi
+    mv "$temporary" "$profile_dir"
+    printf '%s\n' "$(message_text "config: ${profile_dir#$ROOT/}/firmware.env")"
 }
 
 run_doctor() {
     local missing=0 command ninja_path
     for command in git cmake python3; do
         if command -v "$command" >/dev/null 2>&1; then
-            printf 'ok: %s=%s\n' "$command" "$(command -v "$command")"
+            printf '%s\n' "$(message_text "ok: $command=$(command -v "$command")")"
         else
-            printf 'missing: %s\n' "$command" >&2
+            printf '%s\n' "$(message_text "missing: $command")" >&2
             missing=1
         fi
     done
@@ -459,29 +605,47 @@ run_doctor() {
         ninja_path="$(find "$HOME/.espressif/tools/ninja" -type f -name ninja -perm -u+x -print -quit 2>/dev/null || true)"
     fi
     if [[ -n "$ninja_path" ]]; then
-        printf 'ok: ninja=%s\n' "$ninja_path"
+        printf '%s\n' "$(message_text "ok: ninja=$ninja_path")"
     else
-        echo 'missing: ninja' >&2
+        printf '%s\n' "$(message_text 'missing: ninja')" >&2
         missing=1
     fi
     if [[ -f "${IDF_PATH:-}/export.sh" || -f "$HOME/esp/esp-idf-v5.5.4/export.sh" ]]; then
-        echo "ok: ESP-IDF export script"
+        printf '%s\n' "$(message_text 'ok: ESP-IDF export script')"
     else
-        echo "missing: ESP-IDF 5.5.4 export.sh" >&2
+        printf '%s\n' "$(message_text 'missing: ESP-IDF 5.5.4 export.sh')" >&2
         missing=1
     fi
-    df -Pk "$ROOT" | awk 'NR == 2 { printf "disk-kb-available: %s\n", $4 }'
+    df -Pk "$ROOT" | awk 'NR == 2 { printf "%s\n", $4 }' | while IFS= read -r available; do
+        printf '%s\n' "$(message_text "disk-kb-available: $available")"
+    done
     (( missing == 0 ))
+}
+
+choose_interactive_language() {
+    local answer
+    while true; do
+        printf '%s\n' '请选择语言 / Select language'
+        printf '%s\n' '  1) 简体中文'
+        printf '%s\n' '  2) English'
+        read -r -p '输入 1 或 2 / Enter 1 or 2: ' answer
+        case "$answer" in
+            1|zh|ZH) LANGUAGE=zh; return ;;
+            2|en|EN) LANGUAGE=en; return ;;
+            *) printf '%s\n' '请输入 1、2、zh 或 en。 / Enter 1, 2, zh, or en.' >&2 ;;
+        esac
+    done
 }
 
 run_interactive() {
     local profile mcu board display input modules
-    read -r -p 'Profile [legacy]: ' profile
-    read -r -p 'MCU [esp32]: ' mcu
-    read -r -p 'Board [esp32-wroom-32e-legacy]: ' board
-    read -r -p 'Display [st7789-spi]: ' display
-    read -r -p 'Input [xpt2046-spi]: ' input
-    read -r -p 'Modules [bms,gps,controller,audio,network,ota,cast]: ' modules
+    choose_interactive_language
+    read -r -p "$(message_text 'Profile [legacy]: ')" profile
+    read -r -p "$(message_text 'MCU [esp32]: ')" mcu
+    read -r -p "$(message_text 'Board [esp32-wroom-32e-legacy]: ')" board
+    read -r -p "$(message_text 'Display [st7789-spi]: ')" display
+    read -r -p "$(message_text 'Input [xpt2046-spi]: ')" input
+    read -r -p "$(message_text 'Modules [bms,gps,controller,audio,network,ota,cast]: ')" modules
     set_defaults
     [[ -z "$profile" ]] || CFG[PROFILE]="$profile"
     [[ -z "$mcu" ]] || CFG[MCU]="$mcu"
@@ -490,10 +654,12 @@ run_interactive() {
     [[ -z "$input" ]] || CFG[INPUT]="$input"
     [[ -z "$modules" ]] || CFG[MODULES]="$modules"
     validate_config
-    write_profile
+    write_config
 }
 
 main() {
+    filter_language_options "$@"
+    set -- "${FILTERED_ARGS[@]}"
     local command="${1:-}"
     [[ -n "$command" ]] || { run_interactive; return; }
     shift
@@ -502,16 +668,21 @@ main() {
             [[ $# -eq 0 ]] || die "doctor does not accept options"
             run_doctor
             ;;
-        configure|validate|build-local|build-cloud)
+        configure|validate|build-local|build-cloud|compile-local)
             set_defaults
             parse_options "$@"
             validate_config
             if [[ "$command" == validate ]]; then
-                printf 'valid: profile=%s modules=%s\n' "${CFG[PROFILE]}" "${CFG[MODULES]}"
+                printf '%s\n' "$(message_text "valid: profile=${CFG[PROFILE]} modules=${CFG[MODULES]}")"
                 return
             fi
-            write_profile
-            if [[ "$command" == build-local ]]; then
+            if [[ "$command" == configure ]]; then
+                write_config
+            elif [[ "$command" == build-local ]]; then
+                write_config
+                exec env FIRMWARE_LANG="$LANGUAGE" "$ROOT/scripts/build-profile.sh" --config "$BUILD_ROOT/${CFG[PROFILE]}/firmware.env"
+            elif [[ "$command" == compile-local ]]; then
+                write_profile
                 [[ "$BOARD_BUILD_READY" == YES ]] || die "board ${CFG[BOARD]} is not build-ready yet"
                 ESP_BMS_PROFILE_FILE="$BUILD_ROOT/${CFG[PROFILE]}/generated/profile.cmake" \
                     "$ROOT/scripts/esp-idf-env.sh" -B "$BUILD_ROOT/${CFG[PROFILE]}/idf-build" \
@@ -519,7 +690,8 @@ main() {
                     -DSDKCONFIG_DEFAULTS="$BUILD_ROOT/${CFG[PROFILE]}/sdkconfig.defaults" \
                     -DESP_BMS_PROFILE_FILE="$BUILD_ROOT/${CFG[PROFILE]}/generated/profile.cmake" build
             elif [[ "$command" == build-cloud ]]; then
-                echo "cloud build request prepared; workflow dispatch belongs to 07-21-build-cloud-verification" >&2
+                write_config
+                printf '%s\n' "$(message_text 'cloud build request prepared; workflow dispatch belongs to 07-21-build-cloud-verification')" >&2
                 return 3
             fi
             ;;

@@ -21,36 +21,36 @@ expect_fail() {
     }
 }
 
-"${repo_root}/start.sh" validate --modules ota --profile module-auto >"${work_dir}/modules.out"
+"${repo_root}/start.sh" validate --lang en --modules ota --profile module-auto >"${work_dir}/modules.out"
 grep -qx 'valid: profile=module-auto modules=network,ota' "${work_dir}/modules.out"
 
-expect_fail 'dangerous' "${repo_root}/start.sh" validate --gpio TFT_DC=5
-"${repo_root}/start.sh" validate --gpio TFT_DC=5 --confirm-dangerous-gpio >/dev/null
-expect_fail 'assigned to both' "${repo_root}/start.sh" validate --gpio TFT_DC=4
+expect_fail 'dangerous' "${repo_root}/start.sh" validate --lang en --gpio TFT_DC=5
+"${repo_root}/start.sh" validate --lang en --gpio TFT_DC=5 --confirm-dangerous-gpio >/dev/null
+expect_fail 'assigned to both' "${repo_root}/start.sh" validate --lang en --gpio TFT_DC=4
 
 cat >"${work_dir}/malicious.env" <<'EOF'
 SCHEMA_VERSION=1
 PROFILE=$(touch-payload)
 EOF
-expect_fail 'invalid value' "${repo_root}/start.sh" validate --config "${work_dir}/malicious.env"
+expect_fail 'invalid value' "${repo_root}/start.sh" validate --lang en --config "${work_dir}/malicious.env"
 
 cat >"${work_dir}/unknown.env" <<'EOF'
 SCHEMA_VERSION=1
 UNKNOWN=1
 EOF
-expect_fail 'unknown configuration key' "${repo_root}/start.sh" validate --config "${work_dir}/unknown.env"
+expect_fail 'unknown configuration key' "${repo_root}/start.sh" validate --lang en --config "${work_dir}/unknown.env"
 
 cat >"${work_dir}/duplicate.env" <<'EOF'
 SCHEMA_VERSION=1
 PROFILE=one
 PROFILE=two
 EOF
-expect_fail 'duplicate key PROFILE' "${repo_root}/start.sh" validate --config "${work_dir}/duplicate.env"
+expect_fail 'duplicate key PROFILE' "${repo_root}/start.sh" validate --lang en --config "${work_dir}/duplicate.env"
 
 cp -a "${repo_root}/firmware/catalog" "${work_dir}/catalog"
 sed -i 's/^REQUIRES_MODULES=$/REQUIRES_MODULES=gps/' "${work_dir}/catalog/module/bms.env"
 sed -i 's/^REQUIRES_MODULES=$/REQUIRES_MODULES=bms/' "${work_dir}/catalog/module/gps.env"
-expect_fail 'dependency cycle' env FIRMWARE_CATALOG_DIR="${work_dir}/catalog" "${repo_root}/start.sh" validate --modules bms
+expect_fail 'dependency cycle' env FIRMWARE_CATALOG_DIR="${work_dir}/catalog" "${repo_root}/start.sh" validate --lang en --modules bms
 
 cat >"${work_dir}/golden.env" <<'EOF'
 SCHEMA_VERSION=1
@@ -63,8 +63,27 @@ MODULES=ota
 EOF
 FIRMWARE_BUILD_ROOT="${work_dir}/bash-build" "${repo_root}/start.sh" configure --config "${work_dir}/golden.env" >/dev/null
 FIRMWARE_BUILD_ROOT="${work_dir}/no-audio-build" "${repo_root}/start.sh" configure --profile no-audio --modules gps >/dev/null
-! rg -q 'esp_bms_audio_feedback' "${work_dir}/no-audio-build/no-audio/generated/profile.cmake"
-rg -qx 'TRIMMING=audio-component-excluded;legacy-runtime-untrimmed' "${work_dir}/no-audio-build/no-audio/report.txt"
+rg -qx 'PROFILE=golden' "${work_dir}/bash-build/golden/firmware.env"
+rg -qx 'MODULES=network,ota' "${work_dir}/bash-build/golden/firmware.env"
+rg -qx 'MODULES=gps' "${work_dir}/no-audio-build/no-audio/firmware.env"
+[[ "$(find "${work_dir}/bash-build/golden" -maxdepth 1 -type f | wc -l)" == 1 ]]
+
+expect_fail 'missing configuration file' "${repo_root}/scripts/build-profile.sh" --lang en --config "${work_dir}/missing.env"
+
+"${repo_root}/start.sh" validate --modules ota --profile chinese-default >"${work_dir}/chinese.out"
+grep -qx '校验通过：配置档=chinese-default 模块=network,ota' "${work_dir}/chinese.out"
+"${repo_root}/start.sh" --lang zh help >"${work_dir}/chinese-help.out"
+rg -q '^用法：' "${work_dir}/chinese-help.out"
+expect_fail 'invalid language' "${repo_root}/start.sh" validate --lang en --lang ja
+
+printf '2\n\n\n\n\n\n\n' | FIRMWARE_BUILD_ROOT="${work_dir}/interactive-build" "${repo_root}/start.sh" >"${work_dir}/interactive.out"
+rg -q '^请选择语言 / Select language$' "${work_dir}/interactive.out"
+rg -q '^config: .*/interactive-build/legacy/firmware.env$' "${work_dir}/interactive.out"
+! rg -q '^LANGUAGE=' "${work_dir}/interactive-build/legacy/firmware.env"
+
+printf 'invalid\n2\n\n\n\n\n\n\n' | FIRMWARE_BUILD_ROOT="${work_dir}/interactive-retry-build" "${repo_root}/start.sh" >"${work_dir}/interactive-retry.out" 2>"${work_dir}/interactive-retry.err"
+rg -q '^请输入 1、2、zh 或 en。 / Enter 1, 2, zh, or en\.$' "${work_dir}/interactive-retry.err"
+rg -q '^config: .*/interactive-retry-build/legacy/firmware.env$' "${work_dir}/interactive-retry.out"
 
 cat >"${profile_dir}/profile.cmake" <<'EOF'
 set(ESP_BMS_FEATURE_AUDIO 0)
@@ -85,8 +104,8 @@ ESP_BMS_PROFILE_FILE="${profile_dir}/profile.cmake" cmake -DOUTPUT_FILE="${work_
 ! rg -q 'esp_bms_audio_feedback' "${work_dir}/early-requires.out"
 
 if command -v pwsh >/dev/null 2>&1; then
-    FIRMWARE_BUILD_ROOT="${work_dir}/powershell-build" pwsh -NoProfile -File "${repo_root}/start.ps1" configure --config "${work_dir}/golden.env" >/dev/null
-    cmp "${work_dir}/bash-build/golden/normalized.env" "${work_dir}/powershell-build/golden/normalized.env"
+    FIRMWARE_BUILD_ROOT="${work_dir}/powershell-build" pwsh -NoProfile -File "${repo_root}/start.ps1" configure --lang en --config "${work_dir}/golden.env" >/dev/null
+    cmp "${work_dir}/bash-build/golden/firmware.env" "${work_dir}/powershell-build/golden/normalized.env"
 else
     echo 'PowerShell comparison skipped: pwsh is unavailable'
 fi
