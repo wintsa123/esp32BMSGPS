@@ -115,14 +115,28 @@ EOF
 ESP_BMS_PROFILE_FILE="${profile_dir}/profile.cmake" cmake -DOUTPUT_FILE="${work_dir}/early-requires.out" -P "${work_dir}/early-requires.cmake"
 ! rg -q 'esp_bms_audio_feedback' "${work_dir}/early-requires.out"
 
+power_shell=''
 if command -v pwsh >/dev/null 2>&1; then
-    FIRMWARE_BUILD_ROOT="${work_dir}/powershell-build" pwsh -NoProfile -File "${repo_root}/start.ps1" configure --lang en --config "${work_dir}/golden.env" >/dev/null
+    power_shell='pwsh'
+elif command -v powershell >/dev/null 2>&1; then
+    power_shell='powershell'
+elif command -v powershell.exe >/dev/null 2>&1; then
+    power_shell='powershell.exe'
+fi
+
+if [[ -n "${power_shell}" ]]; then
+    FIRMWARE_BUILD_ROOT="${work_dir}/powershell-build" "${power_shell}" -NoProfile -NonInteractive -File "${repo_root}/start.ps1" configure --lang en --config "${work_dir}/golden.env" >/dev/null
     cmp "${work_dir}/bash-build/golden/firmware.env" "${work_dir}/powershell-build/golden/normalized.env"
 else
-    echo 'PowerShell comparison skipped: pwsh is unavailable'
+    echo 'PowerShell comparison skipped: no PowerShell runtime is available'
 fi
 
 [[ "$(od -An -tx1 -N3 "${repo_root}/start.ps1" | tr -d '[:space:]')" == 'efbbbf' ]]
 rg -Fx 'set "PS_EXE=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"' "${repo_root}/start.cmd"
+rg -Fq '$Translations = @(' "${repo_root}/start.ps1"
+! rg -Fq "'Profile' =" "${repo_root}/start.ps1"
+! rg -Fq "'Board' =" "${repo_root}/start.ps1"
+! rg -Fq "'Display' =" "${repo_root}/start.ps1"
+! rg -Fq "'Input' =" "${repo_root}/start.ps1"
 
 echo 'firmware configurator self-test passed'

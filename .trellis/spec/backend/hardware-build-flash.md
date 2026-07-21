@@ -382,6 +382,10 @@ scripts/build-profile.sh [--lang zh|en] --config firmware.env
   `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe` explicitly
   and, for a no-argument launch, pauses after a failure so double-click users
   can read the error.
+- PowerShell localized-text mappings that can differ only by letter case (for
+  example, `profile` and `Profile`) must be an ordered array of source/target
+  pairs, not a hash literal: PowerShell hash keys are case-insensitive and
+  reject those entries during parsing before the configurator can start.
 - Interactive selection derives `PROFILE` from the selected board ID. A future
   `custom-*` board may fall back to its selected MCU ID, but it must still have
   catalog wiring before it can pass validation. `--profile` remains a
@@ -406,6 +410,7 @@ scripts/build-profile.sh [--lang zh|en] --config firmware.env
 | Interactive board choice changes bus | Replace stale display/input defaults with compatible choices before prompting |
 | User cancels the displayed build plan | Exit successfully without creating a configuration directory |
 | `start.cmd` cannot invoke PowerShell | Print the resolved executable path; on a no-argument launch, pause instead of closing the error window |
+| Localized text map contains case-only duplicate keys in a hash literal | Do not start; replace the literal with ordered source/target pairs and run the script under an available PowerShell runtime |
 | `ota` is selected | Resolve `network` and set both corresponding features |
 | OTA is off | Omit `esp_bms_ota`; prove no BMS OTA handler or `esp_ota_{begin,write,end,set_boot_partition}` symbol is linked |
 | Network is off | Omit `esp_bms_network` and its embedded `index.html` symbols |
@@ -443,7 +448,10 @@ node .gitnexus/run.cjs detect-changes --repo esp32BMSGPS
   `PROFILE`, no visible `Profile` prompt, compatible S3 display/input defaults,
   and cancellation without generated files.
 - Assert the first three bytes of `start.ps1` are `EF BB BF` and that
-  `start.cmd` uses the explicit built-in Windows PowerShell path.
+  `start.cmd` uses the explicit built-in Windows PowerShell path. When a
+  PowerShell runtime is available, execute `start.ps1` through `pwsh`,
+  `powershell`, or `powershell.exe` and compare its normalized output with the
+  Bash result.
 - Build network+OTA, network-only, and neither profile. Assert component
   closure and final symbols, not just presence of an ESP-IDF archive.
 

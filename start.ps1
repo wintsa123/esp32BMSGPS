@@ -16,23 +16,26 @@ $script:Language = if ($env:FIRMWARE_LANG -in @('zh', 'en')) { $env:FIRMWARE_LAN
 
 function Convert-LocalizedText([string]$Text) {
     if ($script:Language -eq 'en') { return $Text }
-    $Translations = [ordered]@{
-        'error: ' = '错误：'; 'ok: ' = '正常：'; 'missing: ' = '缺少：'; 'valid: ' = '校验通过：'
-        'profile: ' = '配置档：'; 'config: ' = '配置：'; 'normalized: ' = '标准化配置：'
-        'previous profile preserved at ' = '已保留先前配置档：'
-        'cloud build request prepared; workflow dispatch belongs to ' = '云构建请求已准备；工作流分派属于 '
-        'missing ' = '缺少 '; 'unknown ' = '未知 '; 'invalid ' = '无效的 '; 'unsupported ' = '不支持的 '
-        'duplicate ' = '重复的 '; 'malformed ' = '格式错误的 '; 'configuration' = '配置'; 'catalog' = '目录'
-        'schema' = '模式'; 'record' = '记录'; 'file' = '文件'; 'key' = '键'; 'value' = '值'
-        'module' = '模块'; 'capability' = '能力'; 'board' = '开发板'; 'display' = '显示屏'; 'input' = '输入'
-        'profile' = '配置档'; 'option' = '选项'; 'command' = '命令'; 'partition' = '分区'; 'path' = '路径'
-        'requires' = '需要'; 'conflicts with' = '与 '; 'assigned to both' = '同时分配给 '
-        'is unavailable on' = '在以下芯片不可用：'; 'is input-only and cannot drive' = '仅可输入，不能驱动 '
-        'is dangerous; pass' = '是危险引脚；请传入 '; 'does not accept options' = '不接受选项'
-        'is not build-ready yet' = '尚未具备本地构建条件'; 'Profile' = '配置名称'; 'Board' = '开发板'
-        'Display' = '显示屏'; 'Input' = '输入设备'; 'Modules' = '模块'; 'profile=' = '配置档='; 'modules=' = '模块='
+    $Translations = @(
+        'error: |||错误：'; 'ok: |||正常：'; 'missing: |||缺少：'; 'valid: |||校验通过：'
+        'profile: |||配置档：'; 'config: |||配置：'; 'normalized: |||标准化配置：'
+        'previous profile preserved at |||已保留先前配置档：'
+        'cloud build request prepared; workflow dispatch belongs to |||云构建请求已准备；工作流分派属于 '
+        'missing |||缺少 '; 'unknown |||未知 '; 'invalid |||无效的 '; 'unsupported |||不支持的 '
+        'duplicate |||重复的 '; 'malformed |||格式错误的 '; 'configuration|||配置'; 'catalog|||目录'
+        'schema|||模式'; 'record|||记录'; 'file|||文件'; 'key|||键'; 'value|||值'
+        'module|||模块'; 'capability|||能力'; 'board|||开发板'; 'display|||显示屏'; 'input|||输入'
+        'profile|||配置档'; 'option|||选项'; 'command|||命令'; 'partition|||分区'; 'path|||路径'
+        'requires|||需要'; 'conflicts with|||与 '; 'assigned to both|||同时分配给 '
+        'is unavailable on|||在以下芯片不可用：'; 'is input-only and cannot drive|||仅可输入，不能驱动 '
+        'is dangerous; pass|||是危险引脚；请传入 '; 'does not accept options|||不接受选项'
+        'is not build-ready yet|||尚未具备本地构建条件'; 'Profile|||配置名称'; 'Board|||开发板'
+        'Display|||显示屏'; 'Input|||输入设备'; 'Modules|||模块'; 'profile=|||配置档='; 'modules=|||模块='
+    )
+    foreach ($Translation in $Translations) {
+        $Source, $Target = $Translation -split '\|\|\|', 2
+        $Text = $Text.Replace($Source, $Target)
     }
-    foreach ($Source in $Translations.Keys) { $Text = $Text.Replace($Source, $Translations[$Source]) }
     return $Text
 }
 
