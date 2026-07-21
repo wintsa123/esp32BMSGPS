@@ -15,6 +15,7 @@
 /sdkconfig.dragdiag-db.old
 /firmware-images/
 /firmware-packages/
+/firmware-builds/
 /release-images/
 /ota-images/
 /preview/

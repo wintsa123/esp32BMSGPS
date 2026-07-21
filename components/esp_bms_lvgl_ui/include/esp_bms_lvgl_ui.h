@@ -5,6 +5,10 @@
 #include "esp_err.h"
 #include "lvgl.h"
 
+#ifndef ESP_BMS_LVGL_UI_SIMULATOR
+#define ESP_BMS_LVGL_UI_SIMULATOR 0
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -57,6 +61,7 @@ typedef enum {
     ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_SOURCE = 29,
     ESP_BMS_LVGL_ACTION_SET_PRESET_RANGE = 30,
     ESP_BMS_LVGL_ACTION_SET_SPEED_DASHBOARD_STYLE = 31,
+    ESP_BMS_LVGL_ACTION_SET_BOOT_ANIMATION_STYLE = 32,
 } esp_bms_lvgl_action_t;
 
 #define ESP_BMS_LVGL_ACTION_EVENT_FLAG_COMMITTED (UINT8_C(1) << 0)
@@ -124,6 +129,40 @@ typedef enum {
     ESP_BMS_SPEED_DASHBOARD_STYLE_CONTROLLER = 1,
     ESP_BMS_SPEED_DASHBOARD_STYLE_HONDA_FIREBLADE = 2,
 } esp_bms_speed_dashboard_style_t;
+
+typedef enum {
+    ESP_BMS_GPS_MODULE_PROBING = 0,
+    ESP_BMS_GPS_MODULE_AVAILABLE = 1,
+    ESP_BMS_GPS_MODULE_UNAVAILABLE = 2,
+} esp_bms_gps_module_state_t;
+
+typedef enum {
+    ESP_BMS_BOOT_ANIMATION_CHARGE = 0,
+    ESP_BMS_BOOT_ANIMATION_GAUGE_SWEEP = 1,
+} esp_bms_boot_animation_style_t;
+
+static inline esp_bms_speed_source_t esp_bms_speed_source_resolve(
+    esp_bms_speed_source_t preference,
+    bool gps_available,
+    bool controller_online)
+{
+    if (preference == ESP_BMS_SPEED_SOURCE_CONTROLLER) {
+        if (controller_online) {
+            return ESP_BMS_SPEED_SOURCE_CONTROLLER;
+        }
+        if (gps_available) {
+            return ESP_BMS_SPEED_SOURCE_GPS;
+        }
+    } else {
+        if (gps_available) {
+            return ESP_BMS_SPEED_SOURCE_GPS;
+        }
+        if (controller_online) {
+            return ESP_BMS_SPEED_SOURCE_CONTROLLER;
+        }
+    }
+    return preference;
+}
 
 typedef enum {
     ESP_BMS_WIFI_SETUP_AP = 0,
@@ -217,6 +256,8 @@ typedef struct {
     uint8_t brightness_percent;
     uint8_t volume_percent;
     uint8_t bms_type;
+    uint8_t gps_module_state;
+    uint8_t boot_animation_style;
     uint8_t bms_protection_count;
     char bms_protection_codes[ESP_BMS_BMS_CODE_MAX_COUNT][ESP_BMS_BMS_CODE_TEXT_LEN];
     uint8_t bms_warning_count;
@@ -312,12 +353,22 @@ static inline void esp_bms_dashboard_snapshot_temperature_valid_set(esp_bms_dash
 
 esp_err_t esp_bms_lvgl_ui_init(lv_display_t *display);
 esp_err_t esp_bms_lvgl_ui_update(const esp_bms_dashboard_snapshot_t *snapshot);
+esp_err_t esp_bms_lvgl_ui_boot_start(const esp_bms_dashboard_snapshot_t *snapshot);
+esp_err_t esp_bms_lvgl_ui_boot_update(uint8_t progress_percent, const char *status_text);
+esp_err_t esp_bms_lvgl_ui_boot_finish(const esp_bms_dashboard_snapshot_t *snapshot);
 esp_err_t esp_bms_lvgl_ui_show_dashboard(void);
 esp_err_t esp_bms_lvgl_ui_touch_calibration_result(bool success);
 esp_err_t esp_bms_lvgl_ui_set_page(esp_bms_lvgl_page_t page, bool animated);
 esp_bms_lvgl_data_source_t esp_bms_lvgl_ui_stable_data_source(void);
 esp_err_t esp_bms_lvgl_ui_take_action_event(esp_bms_lvgl_action_event_t *event);
 esp_err_t esp_bms_lvgl_ui_take_action(esp_bms_lvgl_action_t *action);
+
+#if ESP_BMS_LVGL_UI_SIMULATOR
+esp_err_t esp_bms_lvgl_ui_simulator_open_boot_animation_settings(void);
+esp_err_t esp_bms_lvgl_ui_simulator_play_boot_animation(void);
+bool esp_bms_lvgl_ui_simulator_boot_animation_preview_active(void);
+bool esp_bms_lvgl_ui_simulator_boot_animation_settings_visible(void);
+#endif
 
 #ifdef __cplusplus
 }

@@ -78,7 +78,13 @@ UI 通过 snapshot 的实际能力禁用单一/无可用来源时的切换；run
 
 ### Persistence and settings
 
-新增 NVS u8 键 `boot_anim`。读取使用 optional 语义：旧 NVS 无此键时取 `CHARGE`；保存与恢复默认走现有 display settings 事务。新增 action `SET_BOOT_ANIMATION_STYLE`，numeric payload 只接受枚举范围。系统设置中新增两项选择页。
+新增 NVS u8 键 `boot_anim`。读取使用 optional 语义：旧 NVS 无此键时取 `CHARGE`；保存与恢复默认走现有 display settings 事务。新增 action `SET_BOOT_ANIMATION_STYLE`，numeric payload 只接受枚举范围。系统设置中新增两项选择页。显示设置在 bridge 初始化前读取，保存的旋转直接写入 `esp_bms_lvgl_bridge_config_t.rotation`，避免 LVGL adapter task 启动后再从主任务无锁修改分辨率/对象树。
+
+### Settings playback preview
+
+生产 UI 在“启动动画”三级设置页的持久导航栏右侧创建 `LV_SYMBOL_PLAY` 按钮，因此桌面模拟器与真机都显示同一个入口。点击后复制当前真实 snapshot 并调用既有 `boot_start()` / `boot_update()` / `boot_finish()`，不排队任何 action。`ESP_BMS_LVGL_UI_SIMULATOR=1` 只开放自动化导航、点击和状态查询钩子；固件默认该宏为 `0`，但不裁剪按钮或 timer。
+
+LVGL timer 按真实经过时间驱动约三秒的 `0 -> 100` 进度，并在 100% 短暂停留。完成后恢复最新真实 snapshot，重新打开“启动动画”选择页。重复播放和屏幕旋转重建会先删除并置空 timer，避免回调访问已删除 root。
 
 ## Compatibility
 
@@ -92,6 +98,8 @@ UI 通过 snapshot 的实际能力禁用单一/无可用来源时的切换；run
 - `runtime_update_snapshot_speed`、snapshot apply 和轮播映射均被 GitNexus 标记为 HIGH/CRITICAL；分别用纯派生逻辑、四组合矩阵和双方向模拟器隔离验证。
 - 进入/退出速度页前停止滚动动画，避免隐藏当前 snappable 子对象时保留越界 scroll_x。
 - boot overlay 和动画指针在旋转重建、完成和重复调用时统一清理，避免 LVGL 悬空对象。
+- 设置预览按钮与 timer 属于生产 UI，并在 root 删除前统一取消；仅自动化导航、点击和状态查询钩子由模拟器宏隔离，不进入固件 ABI。
+- 首帧旋转通过 bridge init config 一次生效；adapter task 启动后的动态旋转继续复用现有 bridge lock 临界区，防止 LVGL invalidation 与主任务并发触发 WDT。
 - 任何 GPS 探测失败都只降级功能，不中止启动。
 
 ## Rollback

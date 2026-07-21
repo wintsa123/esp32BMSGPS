@@ -1,0 +1,30 @@
+{
+  "id": "pcb-routing-signal-integrity",
+  "name": "pcb-routing-signal-integrity",
+  "title": "PCB走线信号完整性与四层回流优化",
+  "description": "完成 EasyEDA PCB1 的四层回流、关键网络规则、45度走线和全板 DRC 收敛",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": "hardware-pcb",
+  "package": null,
+  "priority": "P2",
+  "creator": "wintsa",
+  "assignee": "wintsa",
+  "createdAt": "2026-07-20",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "07-16-vehicle-head-unit-hardware",
+  "relatedFiles": [
+    "docs/hardware/04-constraints.md",
+    "docs/hardware/06-decisions.md",
+    "docs/hardware/07-schematics.md"
+  ],
+  "notes": "",
+  "meta": {}
+}

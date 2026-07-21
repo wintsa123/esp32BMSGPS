@@ -3,7 +3,7 @@
   "name": "vehicle-head-unit-hardware",
   "title": "高性能触屏车机硬件方案与嘉立创EDA设计",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -18,9 +18,24 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [],
+  "children": [
+    "07-20-pcb-routing-signal-integrity"
+  ],
   "parent": null,
-  "relatedFiles": [],
-  "notes": "",
-  "meta": {}
+  "relatedFiles": [
+    ".trellis/tasks/07-16-vehicle-head-unit-hardware/prd.md",
+    ".trellis/tasks/07-16-vehicle-head-unit-hardware/design.md",
+    ".trellis/tasks/07-16-vehicle-head-unit-hardware/implement.md",
+    "docs/hardware/hardware-solution.pdf",
+    "preview/pcb-final-112x68-fpc-mechanical-1to1.pdf",
+    "preview/pcb-final-112x68-j3-6pin-detail-4x.png",
+    "preview/pcb-freerouting-provisional-pass33.png"
+  ],
+  "notes": "2026-07-19：新增 J6 PH2.0-5P 壳内扩展口，针序为 GND/3V3_EXP/GPIO1/GPIO43_TX/GPIO44_RX，R38=0Ω、R39～R41=33Ω。导入默认板外停放已修正；J6 最终位于左下板边内侧 (16.51,58.42)mm，保存重开后为 132 个器件、411 个焊盘、89 个网络，Clearance/Keepout 为 0。原生自动布线仍以 duration=0 对全部 89 网络失败且未生成线/孔；外部 FreeRouting 首轮诊断仍只作证据，尚未回导。任务保持 PROVISIONAL / DO NOT FAB。",
+  "meta": {
+    "lastProgressAt": "2026-07-19",
+    "fabricationStatus": "provisional_do_not_fab",
+    "routingStatus": "native_failed_89_nets_external_diagnostic_not_imported",
+    "expansionHeader": "J6_PH2.0_5P_inside_board"
+  }
 }

@@ -49,6 +49,8 @@
 - 保留现有速度仪表风格、速度单位、旋转、控制器绑定及用户当前未提交 UI 修改。
 - 不引入矢量引擎、图片资源或新字体；目标 ESP32-WROOM-32E 无 PSRAM 时仍可运行。
 - 模拟器应能构造 GPS 可用/不可用和控制器在线/离线组合，并验证两套动画。
+- 桌面模拟器与真机的“启动动画”选择页导航栏都应显示播放按钮；点击后完整播放当前选择的动画，结束后自动返回同一选择页。
+- 播放预览只消费 UI snapshot，不产生 runtime action、不修改行程数据，也不写入持久化设置；真机与模拟器复用同一套生产 UI 按钮和 timer 路径。
 
 ## Acceptance Criteria
 
@@ -61,6 +63,7 @@
 - [ ] AC7: 电量充能动画呈现分段电池与真实阶段；机车扫表分别能使用现有 S1000RR 和 Fireblade UI 完成 `0 -> max -> 0`。
 - [ ] AC8: 两种方向的 LVGL headless 模拟器、自测、ESP-IDF 构建均通过；实机刷写后串口日志证明有 GPS 与无 GPS 分支，TFT 动画正常结束进入主界面。
 - [ ] AC9: GitNexus `detect_changes --scope compare --base-ref main` 仅报告预期启动、GPS runtime、LVGL UI、主循环和模拟器流程。
+- [ ] AC10: 模拟器与真机均显示播放按钮并可完整预览当前动画；结束后安全回到“启动动画”选择页，模拟器旋转重建也能恢复，且没有设置 action、snapshot 或 NVS 变更。
 
 ## Out of Scope
 

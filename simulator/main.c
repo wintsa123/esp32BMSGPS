@@ -18,6 +18,7 @@ typedef enum {
     HOST_COMMAND_PAGE_GPS,
     HOST_COMMAND_PAGE_CAST,
     HOST_COMMAND_TOGGLE_GPS_FIX,
+    HOST_COMMAND_TOGGLE_GPS_MODULE,
     HOST_COMMAND_TOGGLE_BMS,
     HOST_COMMAND_TOGGLE_CONTROLLER,
     HOST_COMMAND_TOGGLE_UNIT,
@@ -59,16 +60,19 @@ static void refresh_speed_snapshot(host_app_t *app)
     esp_bms_dashboard_snapshot_t *snapshot = &app->snapshot;
     const bool controller_online =
         snapshot_flag_get(snapshot, ESP_BMS_DASHBOARD_FLAG_CONTROLLER_ONLINE);
-    snapshot->active_speed_source =
-        snapshot->speed_source == ESP_BMS_SPEED_SOURCE_CONTROLLER && controller_online
-            ? ESP_BMS_SPEED_SOURCE_CONTROLLER
-            : ESP_BMS_SPEED_SOURCE_GPS;
+    const bool gps_available =
+        snapshot->gps_module_state == (uint8_t)ESP_BMS_GPS_MODULE_AVAILABLE;
+    snapshot->active_speed_source = esp_bms_speed_source_resolve(snapshot->speed_source,
+                                                                 gps_available,
+                                                                 controller_online);
     const bool speed_valid = snapshot->active_speed_source == ESP_BMS_SPEED_SOURCE_CONTROLLER
-                                 ? snapshot_flag_get(
-                                       snapshot,
-                                       ESP_BMS_DASHBOARD_FLAG_CONTROLLER_SPEED_VALID)
-                                 : snapshot_flag_get(snapshot,
-                                                     ESP_BMS_DASHBOARD_FLAG_GPS_FIX_VALID);
+                                 ? controller_online &&
+                                       snapshot_flag_get(
+                                           snapshot,
+                                           ESP_BMS_DASHBOARD_FLAG_CONTROLLER_SPEED_VALID)
+                                 : gps_available &&
+                                       snapshot_flag_get(snapshot,
+                                                         ESP_BMS_DASHBOARD_FLAG_GPS_FIX_VALID);
     snapshot_flag_set(snapshot, ESP_BMS_DASHBOARD_FLAG_SPEED_VALID, speed_valid);
     const uint16_t active_speed_kmh_deci =
         snapshot->active_speed_source == ESP_BMS_SPEED_SOURCE_CONTROLLER
@@ -149,6 +153,8 @@ static void init_snapshot(host_app_t *app)
     snapshot->speed_source = ESP_BMS_SPEED_SOURCE_GPS;
     snapshot->active_speed_source = ESP_BMS_SPEED_SOURCE_GPS;
     snapshot->speed_dashboard_style = ESP_BMS_SPEED_DASHBOARD_STYLE_HONDA_FIREBLADE;
+    snapshot->gps_module_state = (uint8_t)ESP_BMS_GPS_MODULE_AVAILABLE;
+    snapshot->boot_animation_style = (uint8_t)ESP_BMS_BOOT_ANIMATION_CHARGE;
     snapshot->average_speed_valid = true;
     snapshot->average_consumption_valid = true;
     snapshot->preset_range_km = ESP_BMS_PRESET_RANGE_DEFAULT_KM;
@@ -210,6 +216,8 @@ static host_command_t command_from_key(SDL_Keycode key)
         return HOST_COMMAND_PAGE_CAST;
     case SDLK_f:
         return HOST_COMMAND_TOGGLE_GPS_FIX;
+    case SDLK_g:
+        return HOST_COMMAND_TOGGLE_GPS_MODULE;
     case SDLK_b:
         return HOST_COMMAND_TOGGLE_BMS;
     case SDLK_c:
@@ -296,6 +304,18 @@ static bool apply_command(host_app_t *app, host_command_t command)
         snapshot_flag_set(snapshot,
                           ESP_BMS_DASHBOARD_FLAG_GPS_FIX_VALID,
                           !snapshot_flag_get(snapshot, ESP_BMS_DASHBOARD_FLAG_GPS_FIX_VALID));
+        refresh_speed_snapshot(app);
+        return true;
+    case HOST_COMMAND_TOGGLE_GPS_MODULE:
+        snapshot->gps_module_state =
+            snapshot->gps_module_state == (uint8_t)ESP_BMS_GPS_MODULE_AVAILABLE
+                ? (uint8_t)ESP_BMS_GPS_MODULE_UNAVAILABLE
+                : (uint8_t)ESP_BMS_GPS_MODULE_AVAILABLE;
+        if (snapshot->gps_module_state == (uint8_t)ESP_BMS_GPS_MODULE_UNAVAILABLE) {
+            snapshot_flag_set(snapshot, ESP_BMS_DASHBOARD_FLAG_GPS_FIX_VALID, false);
+            snapshot->gps_local_time_valid = false;
+            snapshot->gps_local_date_valid = false;
+        }
         refresh_speed_snapshot(app);
         return true;
     case HOST_COMMAND_TOGGLE_BMS:
@@ -403,11 +423,28 @@ static bool apply_action_event(host_app_t *app, const esp_bms_lvgl_action_event_
             return true;
         }
         return false;
-        return true;
+    case ESP_BMS_LVGL_ACTION_SET_BOOT_ANIMATION_STYLE:
+        if (esp_bms_lvgl_action_event_flag_get(
+                event, ESP_BMS_LVGL_ACTION_EVENT_FLAG_NUMERIC_DELTA_VALID) &&
+            event->numeric_delta >= ESP_BMS_BOOT_ANIMATION_CHARGE &&
+            event->numeric_delta <= ESP_BMS_BOOT_ANIMATION_GAUGE_SWEEP) {
+            snapshot->boot_animation_style = (uint8_t)event->numeric_delta;
+            return true;
+        }
+        return false;
     case ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_SOURCE:
-        snapshot->speed_source = snapshot->speed_source == ESP_BMS_SPEED_SOURCE_GPS
-                                     ? ESP_BMS_SPEED_SOURCE_CONTROLLER
-                                     : ESP_BMS_SPEED_SOURCE_GPS;
+        {
+            const esp_bms_speed_source_t target =
+                snapshot->speed_source == ESP_BMS_SPEED_SOURCE_GPS
+                    ? ESP_BMS_SPEED_SOURCE_CONTROLLER
+                    : ESP_BMS_SPEED_SOURCE_GPS;
+            if (target == ESP_BMS_SPEED_SOURCE_GPS &&
+                snapshot->gps_module_state !=
+                    (uint8_t)ESP_BMS_GPS_MODULE_AVAILABLE) {
+                return false;
+            }
+            snapshot->speed_source = target;
+        }
         refresh_speed_snapshot(app);
         return true;
     case ESP_BMS_LVGL_ACTION_SET_PRESET_RANGE:
@@ -481,8 +518,10 @@ static bool process_ui_action(host_app_t *app)
 
 static void print_help(const char *program)
 {
-    printf("用法: %s [--portrait] [--headless] [--screenshot FILE.bmp]\n", program);
-    puts("快捷键: 上/下=速度  1/2/3/4=页面  f=GPS  b=BMS  c=控制器  u=单位  e=电耗  r=旋转  q=退出");
+    printf("用法: %s [--portrait] [--headless] [--screenshot FILE.bmp] "
+           "[--boot charge|gauge] [--boot-progress 0..100]\n",
+           program);
+    puts("快捷键: 上/下=速度  1/2/3/4=页面  f=GPS定位  g=GPS模块  b=BMS  c=控制器  u=单位  e=电耗  r=旋转  q=退出");
 }
 
 static bool save_screenshot(lv_display_t *display, const char *path)
@@ -510,11 +549,201 @@ static bool save_screenshot(lv_display_t *display, const char *path)
     return true;
 }
 
+static bool speed_source_matrix_passes(void)
+{
+    return esp_bms_speed_source_resolve(ESP_BMS_SPEED_SOURCE_GPS, true, false) ==
+               ESP_BMS_SPEED_SOURCE_GPS &&
+           esp_bms_speed_source_resolve(ESP_BMS_SPEED_SOURCE_GPS, false, true) ==
+               ESP_BMS_SPEED_SOURCE_CONTROLLER &&
+           esp_bms_speed_source_resolve(ESP_BMS_SPEED_SOURCE_GPS, false, false) ==
+               ESP_BMS_SPEED_SOURCE_GPS &&
+           esp_bms_speed_source_resolve(ESP_BMS_SPEED_SOURCE_CONTROLLER, true, false) ==
+               ESP_BMS_SPEED_SOURCE_GPS &&
+           esp_bms_speed_source_resolve(ESP_BMS_SPEED_SOURCE_CONTROLLER, false, true) ==
+               ESP_BMS_SPEED_SOURCE_CONTROLLER &&
+           esp_bms_speed_source_resolve(ESP_BMS_SPEED_SOURCE_CONTROLLER, false, false) ==
+               ESP_BMS_SPEED_SOURCE_CONTROLLER;
+}
+
+static bool run_capability_matrix(host_app_t *app)
+{
+    static const struct {
+        bool gps_available;
+        bool controller_online;
+        bool speed_page_expected;
+    } cases[] = {
+        { true, false, true },
+        { false, false, false },
+        { false, true, true },
+        { true, true, true },
+    };
+
+    for (size_t index = 0U; index < sizeof(cases) / sizeof(cases[0]); ++index) {
+        app->snapshot.gps_module_state =
+            cases[index].gps_available ? (uint8_t)ESP_BMS_GPS_MODULE_AVAILABLE
+                                       : (uint8_t)ESP_BMS_GPS_MODULE_UNAVAILABLE;
+        snapshot_flag_set(&app->snapshot,
+                          ESP_BMS_DASHBOARD_FLAG_GPS_FIX_VALID,
+                          false);
+        snapshot_flag_set(&app->snapshot,
+                          ESP_BMS_DASHBOARD_FLAG_CONTROLLER_ONLINE,
+                          cases[index].controller_online);
+        app->snapshot.speed_source = ESP_BMS_SPEED_SOURCE_GPS;
+        refresh_speed_snapshot(app);
+        if (esp_bms_lvgl_ui_update(&app->snapshot) != ESP_OK ||
+            esp_bms_lvgl_ui_set_page(ESP_BMS_LVGL_PAGE_GPS, false) != ESP_OK) {
+            return false;
+        }
+        const bool speed_page_active =
+            esp_bms_lvgl_ui_stable_data_source() ==
+            ESP_BMS_LVGL_DATA_SOURCE_SPEED_DASHBOARD;
+        if (speed_page_active != cases[index].speed_page_expected) {
+            fprintf(stderr,
+                    "capability matrix mismatch: gps=%d controller=%d expected_speed_page=%d\n",
+                    cases[index].gps_available ? 1 : 0,
+                    cases[index].controller_online ? 1 : 0,
+                    cases[index].speed_page_expected ? 1 : 0);
+            return false;
+        }
+        if (esp_bms_lvgl_ui_set_page(ESP_BMS_LVGL_PAGE_CAST, false) != ESP_OK ||
+            esp_bms_lvgl_ui_stable_data_source() != ESP_BMS_LVGL_DATA_SOURCE_NONE ||
+            esp_bms_lvgl_ui_set_page(ESP_BMS_LVGL_PAGE_BATTERY, false) != ESP_OK) {
+            return false;
+        }
+    }
+
+    init_snapshot(app);
+    return esp_bms_lvgl_ui_update(&app->snapshot) == ESP_OK;
+}
+
+static bool run_boot_style_smoke(host_app_t *app,
+                                 esp_bms_boot_animation_style_t animation_style,
+                                 esp_bms_speed_dashboard_style_t dashboard_style)
+{
+    static const uint8_t progress_steps[] = { 0U, 25U, 50U, 75U, 100U };
+    app->snapshot.boot_animation_style = (uint8_t)animation_style;
+    app->snapshot.speed_dashboard_style = dashboard_style;
+    snapshot_flag_set(&app->snapshot,
+                      ESP_BMS_DASHBOARD_FLAG_CONTROLLER_PAGE_ENABLED,
+                      dashboard_style == ESP_BMS_SPEED_DASHBOARD_STYLE_CONTROLLER);
+    if (esp_bms_lvgl_ui_boot_start(&app->snapshot) != ESP_OK) {
+        return false;
+    }
+    for (size_t index = 0U;
+         index < sizeof(progress_steps) / sizeof(progress_steps[0]);
+         ++index) {
+        const char *status = progress_steps[index] == 100U ? "SYSTEM READY" : "GPS CHECK";
+        if (esp_bms_lvgl_ui_boot_update(progress_steps[index], status) != ESP_OK) {
+            return false;
+        }
+        lv_timer_handler();
+        lv_delay_ms(2);
+    }
+    return esp_bms_lvgl_ui_boot_finish(&app->snapshot) == ESP_OK;
+}
+
+static bool run_settings_boot_preview_smoke(
+    host_app_t *app,
+    esp_bms_boot_animation_style_t animation_style,
+    bool test_rebuild)
+{
+    app->snapshot.boot_animation_style = (uint8_t)animation_style;
+    const esp_bms_dashboard_snapshot_t snapshot_before = app->snapshot;
+    if (esp_bms_lvgl_ui_update(&app->snapshot) != ESP_OK ||
+        esp_bms_lvgl_ui_simulator_open_boot_animation_settings() != ESP_OK ||
+        !esp_bms_lvgl_ui_simulator_boot_animation_settings_visible() ||
+        esp_bms_lvgl_ui_simulator_play_boot_animation() != ESP_OK ||
+        !esp_bms_lvgl_ui_simulator_boot_animation_preview_active()) {
+        fputs("settings boot preview did not start\n", stderr);
+        return false;
+    }
+    const uint32_t started_ms = lv_tick_get();
+    while (esp_bms_lvgl_ui_simulator_boot_animation_preview_active() &&
+           lv_tick_elaps(started_ms) < 4500U) {
+        lv_timer_handler();
+        lv_delay_ms(5);
+    }
+    esp_bms_lvgl_action_event_t event = { 0 };
+    const bool preview_finished =
+        !esp_bms_lvgl_ui_simulator_boot_animation_preview_active();
+    const bool settings_restored =
+        esp_bms_lvgl_ui_simulator_boot_animation_settings_visible();
+    const bool no_action =
+        esp_bms_lvgl_ui_take_action_event(&event) == ESP_OK &&
+        event.action == ESP_BMS_LVGL_ACTION_NONE;
+    const bool snapshot_unchanged =
+        memcmp(&snapshot_before, &app->snapshot, sizeof(snapshot_before)) == 0;
+    if (!preview_finished || !settings_restored || !no_action ||
+        !snapshot_unchanged) {
+        fprintf(stderr,
+                "settings boot preview mismatch: finished=%d settings=%d action=%d snapshot=%d\n",
+                preview_finished ? 1 : 0,
+                settings_restored ? 1 : 0,
+                no_action ? 1 : 0,
+                snapshot_unchanged ? 1 : 0);
+        return false;
+    }
+    if (!test_rebuild) {
+        return esp_bms_lvgl_ui_show_dashboard() == ESP_OK;
+    }
+    if (esp_bms_lvgl_ui_simulator_play_boot_animation() != ESP_OK) {
+        fputs("settings boot preview rebuild smoke did not start\n", stderr);
+        return false;
+    }
+    rotate_display(app);
+    if (esp_bms_lvgl_ui_update(&app->snapshot) != ESP_OK ||
+        esp_bms_lvgl_ui_simulator_boot_animation_preview_active() ||
+        !esp_bms_lvgl_ui_simulator_boot_animation_settings_visible()) {
+        fputs("settings boot preview did not recover after rebuild\n", stderr);
+        return false;
+    }
+    memset(&event, 0, sizeof(event));
+    if (esp_bms_lvgl_ui_take_action_event(&event) != ESP_OK ||
+        event.action != ESP_BMS_LVGL_ACTION_NONE ||
+        memcmp(&snapshot_before, &app->snapshot, sizeof(snapshot_before)) != 0 ||
+        esp_bms_lvgl_ui_show_dashboard() != ESP_OK) {
+        fputs("settings boot preview rebuild changed state\n", stderr);
+        return false;
+    }
+    rotate_display(app);
+    return esp_bms_lvgl_ui_update(&app->snapshot) == ESP_OK;
+}
+
+static bool run_headless_feature_matrix(host_app_t *app)
+{
+    if (!speed_source_matrix_passes() || !run_capability_matrix(app)) {
+        return false;
+    }
+    if (!run_boot_style_smoke(app,
+                              ESP_BMS_BOOT_ANIMATION_CHARGE,
+                              ESP_BMS_SPEED_DASHBOARD_STYLE_S1000RR) ||
+        !run_boot_style_smoke(app,
+                              ESP_BMS_BOOT_ANIMATION_GAUGE_SWEEP,
+                              ESP_BMS_SPEED_DASHBOARD_STYLE_S1000RR) ||
+        !run_boot_style_smoke(app,
+                              ESP_BMS_BOOT_ANIMATION_GAUGE_SWEEP,
+                              ESP_BMS_SPEED_DASHBOARD_STYLE_HONDA_FIREBLADE)) {
+        return false;
+    }
+    if (!run_settings_boot_preview_smoke(app,
+                                         ESP_BMS_BOOT_ANIMATION_CHARGE,
+                                         false) ||
+        !run_settings_boot_preview_smoke(app,
+                                         ESP_BMS_BOOT_ANIMATION_GAUGE_SWEEP,
+                                         true)) {
+        return false;
+    }
+    init_snapshot(app);
+    return esp_bms_lvgl_ui_update(&app->snapshot) == ESP_OK;
+}
+
 int main(int argc, char **argv)
 {
     bool portrait = false;
     bool headless = false;
     bool run_ok = true;
+    int preview_boot_style = -1;
+    uint8_t preview_boot_progress = 50U;
     const char *screenshot_path = NULL;
     for (int index = 1; index < argc; ++index) {
         if (strcmp(argv[index], "--portrait") == 0) {
@@ -523,6 +752,24 @@ int main(int argc, char **argv)
             headless = true;
         } else if (strcmp(argv[index], "--screenshot") == 0 && index + 1 < argc) {
             screenshot_path = argv[++index];
+        } else if (strcmp(argv[index], "--boot") == 0 && index + 1 < argc) {
+            const char *style = argv[++index];
+            if (strcmp(style, "charge") == 0) {
+                preview_boot_style = ESP_BMS_BOOT_ANIMATION_CHARGE;
+            } else if (strcmp(style, "gauge") == 0) {
+                preview_boot_style = ESP_BMS_BOOT_ANIMATION_GAUGE_SWEEP;
+            } else {
+                fprintf(stderr, "未知启动动画: %s\n", style);
+                return 2;
+            }
+        } else if (strcmp(argv[index], "--boot-progress") == 0 && index + 1 < argc) {
+            char *end = NULL;
+            const long value = strtol(argv[++index], &end, 10);
+            if (!end || *end != '\0' || value < 0 || value > 100) {
+                fputs("--boot-progress 必须为 0..100\n", stderr);
+                return 2;
+            }
+            preview_boot_progress = (uint8_t)value;
         } else if (strcmp(argv[index], "--help") == 0 || strcmp(argv[index], "-h") == 0) {
             print_help(argv[0]);
             return 0;
@@ -561,9 +808,35 @@ int main(int argc, char **argv)
     SDL_AddEventWatch(sdl_event_watch, &app);
 
     if (esp_bms_lvgl_ui_init(app.display) != ESP_OK ||
-        esp_bms_lvgl_ui_update(&app.snapshot) != ESP_OK ||
-        esp_bms_lvgl_ui_set_page(ESP_BMS_LVGL_PAGE_GPS, false) != ESP_OK) {
+        esp_bms_lvgl_ui_update(&app.snapshot) != ESP_OK) {
         fputs("真实 UI 初始化失败\n", stderr);
+        SDL_DelEventWatch(sdl_event_watch, &app);
+        lv_deinit();
+        return 1;
+    }
+    bool boot_preview_active = false;
+    if (preview_boot_style >= 0) {
+        app.snapshot.boot_animation_style = (uint8_t)preview_boot_style;
+        if (esp_bms_lvgl_ui_boot_start(&app.snapshot) != ESP_OK ||
+            esp_bms_lvgl_ui_boot_update(preview_boot_progress,
+                                        preview_boot_progress >= 90U
+                                            ? "SYSTEM READY"
+                                            : "GPS CHECK") != ESP_OK) {
+            fputs("启动动画预览失败\n", stderr);
+            SDL_DelEventWatch(sdl_event_watch, &app);
+            lv_deinit();
+            return 1;
+        }
+        boot_preview_active = true;
+    } else if (esp_bms_lvgl_ui_set_page(ESP_BMS_LVGL_PAGE_GPS, false) != ESP_OK) {
+        fputs("速度页面初始化失败\n", stderr);
+        SDL_DelEventWatch(sdl_event_watch, &app);
+        lv_deinit();
+        return 1;
+    }
+    if (headless && !screenshot_path && preview_boot_style < 0 &&
+        !run_headless_feature_matrix(&app)) {
+        fputs("GPS/启动动画功能矩阵失败\n", stderr);
         SDL_DelEventWatch(sdl_event_watch, &app);
         lv_deinit();
         return 1;
@@ -583,7 +856,7 @@ int main(int argc, char **argv)
         bool snapshot_changed = apply_command(&app, command);
         snapshot_changed = process_ui_action(&app) || snapshot_changed;
 
-        if (headless && !screenshot_path) {
+        if (headless && !screenshot_path && preview_boot_style < 0) {
             if (stress_updates < 300U) {
                 app.speed_kmh_deci = (uint16_t)((stress_updates * 37U) % 1801U);
                 app.snapshot.controller_temp_c = 35 + (int16_t)(stress_updates % 40U);
@@ -620,6 +893,10 @@ int main(int argc, char **argv)
     if (screenshot_path && !save_screenshot(app.display, screenshot_path)) {
         run_ok = false;
     }
+    if (boot_preview_active &&
+        esp_bms_lvgl_ui_boot_finish(&app.snapshot) != ESP_OK) {
+        run_ok = false;
+    }
     SDL_DelEventWatch(sdl_event_watch, &app);
     if (!app.sdl_quit_seen) {
         lv_deinit();
@@ -629,6 +906,8 @@ int main(int argc, char **argv)
                portrait ? "240x320" : "320x240",
                frame);
         if (!screenshot_path) {
+            puts("GPS/controller capability matrix: passed");
+            puts("boot animations: charge + S1000RR sweep + Fireblade sweep passed");
             printf("fireblade stress updates: %u\n", stress_updates);
             if (stress_updates != 300U) {
                 run_ok = false;

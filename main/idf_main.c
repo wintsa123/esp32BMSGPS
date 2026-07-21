@@ -1,10 +1,11 @@
-#include "esp_bms_audio_feedback.h"
+#include "esp_bms_module_registry.h"
 #include "esp_bms_idf_runtime.h"
 #include "esp_bms_lvgl_bridge.h"
 #include "esp_bms_lvgl_ui.h"
 #include "esp_check.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "lvgl.h"
@@ -14,6 +15,7 @@ static const char *TAG = "bms_idf_main";
 
 #define MAIN_LOOP_TASK_PRIORITY 4U
 #define MAIN_LOOP_PERIOD_MS 50U
+#define BOOT_READY_HOLD_MS 80U
 #define SETUP_AP_IDLE_TIMEOUT_MS (5U * 60U * 1000U)
 
 typedef enum {
@@ -53,6 +55,7 @@ static bool action_should_save_display_settings(esp_bms_lvgl_action_t action)
            action == ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_CONNECTION ||
            action == ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_PAGE ||
            action == ESP_BMS_LVGL_ACTION_SET_SPEED_DASHBOARD_STYLE ||
+           action == ESP_BMS_LVGL_ACTION_SET_BOOT_ANIMATION_STYLE ||
            action == ESP_BMS_LVGL_ACTION_START_CONTROLLER_BIND ||
            action == ESP_BMS_LVGL_ACTION_ADJUST_CONTROLLER_WHEEL ||
            action == ESP_BMS_LVGL_ACTION_ADJUST_CONTROLLER_RATIO ||
@@ -89,6 +92,21 @@ static void log_heap_state(const char *stage)
              (unsigned)heap_caps_get_largest_free_block(psram_caps));
 }
 
+static void boot_animation_update(uint8_t progress_percent, const char *status_text)
+{
+    esp_err_t ret = esp_bms_lvgl_bridge_lock(-1);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "LVGL lock failed during boot animation: %s",
+                 esp_err_to_name(ret));
+        return;
+    }
+    ret = esp_bms_lvgl_ui_boot_update(progress_percent, status_text);
+    esp_bms_lvgl_bridge_unlock();
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "boot animation update failed: %s", esp_err_to_name(ret));
+    }
+}
+
 void app_main(void)
 {
     vTaskPrioritySet(NULL, MAIN_LOOP_TASK_PRIORITY);
@@ -97,35 +115,17 @@ void app_main(void)
 
     static esp_bms_idf_runtime_t runtime;
     esp_bms_idf_runtime_init(&runtime);
-    const esp_err_t audio_ret = esp_bms_audio_feedback_init();
-    if (audio_ret != ESP_OK) {
-        ESP_LOGW(TAG, "audio feedback init failed: %s", esp_err_to_name(audio_ret));
+    const esp_err_t modules_ret = esp_bms_module_registry_init(&runtime);
+    if (modules_ret != ESP_OK) {
+        ESP_LOGW(TAG, "optional module init failed: %s", esp_err_to_name(modules_ret));
     }
     log_heap_state("runtime_init");
-
-    const esp_bms_lvgl_bridge_config_t config = ESP_BMS_LVGL_BRIDGE_DEFAULT_CONFIG();
-    ESP_ERROR_CHECK(esp_bms_lvgl_bridge_init(&config));
-    ESP_ERROR_CHECK(esp_bms_lvgl_bridge_set_brightness(runtime.brightness_percent));
-    log_heap_state("lvgl_bridge");
-
-    ESP_ERROR_CHECK(esp_bms_lvgl_bridge_lock(-1));
-    ESP_ERROR_CHECK(esp_bms_lvgl_ui_init(esp_bms_lvgl_bridge_get_display()));
-    ESP_ERROR_CHECK(esp_bms_lvgl_ui_update(&runtime.snapshot));
-    esp_bms_lvgl_bridge_unlock();
-    log_heap_state("first_ui");
-
-    ESP_LOGI(TAG, "display path initialized");
 
     bool display_settings_loaded = false;
     const esp_err_t display_settings_ret =
         esp_bms_idf_runtime_load_display_settings(&runtime, &display_settings_loaded);
     if (display_settings_ret == ESP_OK && display_settings_loaded) {
-        ESP_LOGI(TAG, "display settings loaded from NVS");
-        ESP_ERROR_CHECK(esp_bms_lvgl_bridge_lock(-1));
-        ESP_ERROR_CHECK(esp_bms_lvgl_bridge_set_brightness(runtime.brightness_percent));
-        ESP_ERROR_CHECK(esp_bms_lvgl_bridge_set_rotation(bridge_rotation_from_runtime(runtime.display_rotation)));
-        ESP_ERROR_CHECK(esp_bms_lvgl_ui_update(&runtime.snapshot));
-        esp_bms_lvgl_bridge_unlock();
+        ESP_LOGI(TAG, "display settings loaded from NVS before first frame");
     } else if (display_settings_ret == ESP_ERR_NVS_NOT_FOUND ||
                display_settings_ret == ESP_ERR_INVALID_STATE) {
         if (display_settings_ret == ESP_ERR_INVALID_STATE) {
@@ -133,18 +133,82 @@ void app_main(void)
         }
         ESP_ERROR_CHECK_WITHOUT_ABORT(esp_bms_idf_runtime_save_display_settings(&runtime));
     } else {
-        ESP_LOGW(TAG, "display settings load failed: %s", esp_err_to_name(display_settings_ret));
+        ESP_LOGW(TAG, "display settings load failed: %s",
+                 esp_err_to_name(display_settings_ret));
     }
+
+    esp_bms_lvgl_bridge_config_t config = ESP_BMS_LVGL_BRIDGE_DEFAULT_CONFIG();
+    config.rotation = bridge_rotation_from_runtime(runtime.display_rotation);
+    ESP_ERROR_CHECK(esp_bms_lvgl_bridge_init(&config));
+    ESP_ERROR_CHECK(esp_bms_lvgl_bridge_set_brightness(runtime.brightness_percent));
+    log_heap_state("lvgl_bridge");
+
     const esp_err_t touch_calibration_load_ret =
         esp_bms_lvgl_bridge_load_touch_calibration();
     if (touch_calibration_load_ret != ESP_OK) {
         ESP_LOGW(TAG, "touch calibration load failed: %s",
                  esp_err_to_name(touch_calibration_load_ret));
     }
+
+    ESP_ERROR_CHECK(esp_bms_lvgl_bridge_lock(-1));
+    ESP_ERROR_CHECK(esp_bms_lvgl_ui_init(esp_bms_lvgl_bridge_get_display()));
+    ESP_ERROR_CHECK(esp_bms_lvgl_ui_boot_start(&runtime.snapshot));
+    esp_bms_lvgl_bridge_unlock();
+    log_heap_state("first_ui");
+
+    ESP_LOGI(TAG, "display path initialized");
+    vTaskDelay(pdMS_TO_TICKS(MAIN_LOOP_PERIOD_MS));
+    boot_animation_update(15U, "DISPLAY READY");
+    boot_animation_update(25U, "SETTINGS LOADED");
     log_heap_state("display_settings");
 
-    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_bms_idf_runtime_start_controller_ble_if_enabled(&runtime));
-    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_bms_idf_runtime_start_bms_ble_if_bound(&runtime));
+    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_bms_module_registry_start(&runtime));
+    boot_animation_update(35U, "BLE START");
+
+    if (esp_bms_module_registry_gps_enabled()) {
+        const int64_t gps_probe_start_us = esp_timer_get_time();
+        int64_t gps_probe_last_tick_us = gps_probe_start_us;
+        uint32_t gps_probe_elapsed_ms = 0U;
+        while (gps_probe_elapsed_ms < 3000U) {
+            vTaskDelay(pdMS_TO_TICKS(MAIN_LOOP_PERIOD_MS));
+            const int64_t now_us = esp_timer_get_time();
+            const uint32_t tick_elapsed_ms =
+                (uint32_t)((now_us - gps_probe_last_tick_us) / 1000);
+            gps_probe_last_tick_us = now_us;
+            (void)esp_bms_idf_runtime_tick(
+                &runtime, tick_elapsed_ms > 0U ? tick_elapsed_ms : MAIN_LOOP_PERIOD_MS);
+            esp_bms_module_registry_tick(&runtime,
+                                         tick_elapsed_ms > 0U ? tick_elapsed_ms : MAIN_LOOP_PERIOD_MS);
+            const uint64_t wall_elapsed_ms =
+                (uint64_t)(now_us - gps_probe_start_us) / UINT64_C(1000);
+            gps_probe_elapsed_ms = wall_elapsed_ms >= 3000U ? 3000U : (uint32_t)wall_elapsed_ms;
+            const char *gps_status = esp_bms_module_registry_gps_is_available(&runtime)
+                                         ? "GPS READY"
+                                         : "GPS CHECK";
+            boot_animation_update((uint8_t)(35U + ((gps_probe_elapsed_ms * 50U) / 3000U)),
+                                  gps_status);
+        }
+        (void)esp_bms_module_registry_gps_finish_startup_probe(&runtime);
+        boot_animation_update(92U,
+                              esp_bms_module_registry_gps_is_available(&runtime)
+                                  ? "GPS READY"
+                                  : "GPS OFFLINE");
+    } else {
+        boot_animation_update(92U, "MODULES READY");
+    }
+    boot_animation_update(100U, "SYSTEM READY");
+    vTaskDelay(pdMS_TO_TICKS(BOOT_READY_HOLD_MS));
+
+    esp_err_t boot_finish_ret = esp_bms_lvgl_bridge_lock(-1);
+    if (boot_finish_ret == ESP_OK) {
+        boot_finish_ret = esp_bms_lvgl_ui_boot_finish(&runtime.snapshot);
+        esp_bms_lvgl_bridge_unlock();
+    }
+    if (boot_finish_ret != ESP_OK) {
+        ESP_LOGE(TAG, "boot animation finish failed: %s",
+                 esp_err_to_name(boot_finish_ret));
+    }
+    log_heap_state("boot_ready");
 
     bool delayed_display_settings_save_pending = false;
     uint32_t delayed_display_settings_save_ms = 0;
@@ -154,20 +218,15 @@ void app_main(void)
 
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(MAIN_LOOP_PERIOD_MS));
-        esp_bms_audio_feedback_tick();
         const uint8_t previous_brightness = runtime.brightness_percent;
         const esp_bms_idf_display_rotation_t previous_rotation = runtime.display_rotation;
         const bool tick_changed = esp_bms_idf_runtime_tick(&runtime, 50);
+        const bool module_tick_changed =
+            esp_bms_module_registry_tick(&runtime, MAIN_LOOP_PERIOD_MS);
         const uint8_t connection_audio_events =
             esp_bms_idf_runtime_take_connection_audio_events(&runtime);
-        if ((connection_audio_events & ESP_BMS_IDF_RUNTIME_AUDIO_EVENT_BMS_CONNECTED) != 0U) {
-            esp_bms_audio_feedback_play_voice(ESP_BMS_AUDIO_VOICE_BMS_CONNECTED,
-                                              runtime.volume_percent);
-        }
-        if ((connection_audio_events & ESP_BMS_IDF_RUNTIME_AUDIO_EVENT_CONTROLLER_CONNECTED) != 0U) {
-            esp_bms_audio_feedback_play_voice(ESP_BMS_AUDIO_VOICE_CONTROLLER_CONNECTED,
-                                              runtime.volume_percent);
-        }
+        esp_bms_module_registry_play_connection_audio(connection_audio_events,
+                                                       runtime.volume_percent);
 
         esp_err_t ret = esp_bms_lvgl_bridge_lock(-1);
         if (ret != ESP_OK) {
@@ -252,7 +311,7 @@ void app_main(void)
             }
         }
         bool display_apply_failed = false;
-        if ((tick_changed || action_changed || http_config_changed) &&
+        if ((tick_changed || module_tick_changed || action_changed || http_config_changed) &&
             runtime.brightness_percent != previous_brightness) {
             ret = esp_bms_lvgl_bridge_set_brightness(runtime.brightness_percent);
             if (ret != ESP_OK) {
@@ -262,7 +321,7 @@ void app_main(void)
                 display_apply_failed = true;
             }
         }
-        if ((tick_changed || action_changed || http_config_changed) &&
+        if ((tick_changed || module_tick_changed || action_changed || http_config_changed) &&
             runtime.display_rotation != previous_rotation) {
             ret = esp_bms_lvgl_bridge_set_rotation(bridge_rotation_from_runtime(runtime.display_rotation));
             if (ret != ESP_OK) {
@@ -271,7 +330,8 @@ void app_main(void)
                 display_apply_failed = true;
             }
         }
-        if (tick_changed || action_changed || http_config_changed || display_apply_failed) {
+        if (tick_changed || module_tick_changed || action_changed || http_config_changed ||
+            display_apply_failed) {
             ret = esp_bms_lvgl_ui_update(&runtime.snapshot);
             if (ret != ESP_OK) {
                 ESP_LOGE(TAG, "update UI after action failed: %s", esp_err_to_name(ret));
@@ -344,7 +404,7 @@ void app_main(void)
 
         if (esp_bms_lvgl_action_event_flag_get(&action_event,
                                                ESP_BMS_LVGL_ACTION_EVENT_FLAG_VOLUME_FEEDBACK_VALID)) {
-            esp_bms_audio_feedback_play_volume(action_event.volume_feedback_percent);
+            esp_bms_module_registry_play_volume_audio(action_event.volume_feedback_percent);
         }
         if (should_save_display_settings) {
             const esp_err_t save_ret = esp_bms_idf_runtime_save_display_settings(&runtime);

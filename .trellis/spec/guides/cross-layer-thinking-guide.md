@@ -116,6 +116,9 @@ After implementation:
 - [ ] Tested with edge cases (null, empty, invalid)
 - [ ] Verified error handling at each boundary
 - [ ] Checked data survives round-trip
+- [ ] If persisted hardware/UI state affects first presentation, projected it
+      into initialization config before worker/render tasks start; any live
+      mutation after task start uses the subsystem lock
 - [ ] Checked that consumers import shared decoders / projections instead of
       casting payload fields locally
 - [ ] Checked that derived state points back to the source event identifier

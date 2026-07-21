@@ -91,6 +91,50 @@ RUN_TESTS=1 ./scripts/build-android-cast.sh
 
 ### 3. Contracts
 
+#### EasyEDA schematic-to-PCB sync contract
+
+- `eda.pcb_Document.importChanges(schematicUuid)` opens/applies the schematic
+  delta, but newly imported components may initially be parked outside the
+  board outline. That position is staging data, not an accepted PCB layout.
+- After every component import, move all new components inside the board and
+  outside mechanical keepouts, then run strict PCB DRC. The increment is not
+  accepted until `Clearance Error = 0` and keepout errors are zero for the new
+  parts, even if every component origin is numerically inside the board bounds.
+- Save the schematic and PCB, close and reopen the documents, then re-read the
+  component, pad, and net counts plus the new component coordinates. Persisted
+  readback is the authority; an unsaved canvas is not completion evidence.
+- Snapshot the `.eprj2` database before routing experiments and verify the copy
+  with SHA-256 plus `PRAGMA integrity_check`. Compare copper-line and via counts
+  before and after every autorouter call.
+- Treat EasyEDA native autorouting as unavailable when it returns
+  `success=false`, `duration=0`, or lists all board nets despite a requested net
+  subset. Do not keep tuning parameters or describe the board as routed when
+  copper-line/via counts remain unchanged.
+- The EasyEDA autorouter/manufacturing boundary requires one merged, closed
+  board-outline object. Separate layer-11 `LINE` primitives are not sufficient,
+  even when every endpoint is exact and `pcb_Document.zoomToBoardOutline()`
+  succeeds. Merge/convert imported lines into one closed `POLY` on layer 11.
+  After save/reopen, require `pcb_ManufactureData.getDsnFile()` to return a file
+  whose structure contains `boundary(path ...)`; zoom success alone is not an
+  autorouter acceptance test.
+- Treat external SES import as an untrusted conversion boundary. Verify units,
+  the routed-net allowlist, every copper layer, and strict DRC before retaining
+  imported copper. EasyEDA may quantize widths and may drop or reinterpret
+  bottom-layer SES paths. Roll back by exact copper-layer line IDs and via IDs;
+  never bulk-delete `pcb_PrimitiveLine.getAll()` without a layer filter because
+  that also returns board-outline and mechanical lines.
+- When creating a cross-layer route through the primitive API, create the via
+  before the line segments that terminate on it. Creating the via last can
+  leave geometrically coincident top/bottom tracks electrically disconnected in
+  the ratline graph. Read the actual pad layer before routing test points; a
+  bottom-only SMD test pad is not connected by a top-layer track at the same XY.
+- Keep the USB connector-side and MCU-side nets on separate rule boundaries
+  across the 22-ohm series resistors. Use differential pairs
+  `USB_CONN_DP_DN` (`USB_DP`/`USB_DN`) and `USB_MCU_DP_DN`
+  (`USB_DP_MCU`/`USB_DN_MCU`), with matching equal-length groups
+  `USB_CONN_LENGTH_MATCH` and `USB_MCU_LENGTH_MATCH`. Never place all four nets
+  in one equal-length group.
+
 #### Toolchain and dependency contract
 
 - Firmware is a pure ESP-IDF CMake application. Do not reintroduce a
@@ -151,6 +195,14 @@ RUN_TESTS=1 ./scripts/build-android-cast.sh
 | TFT or touch does not initialize | Compare wiring with the active bridge macro and validate boot-strapping pins under cold boot |
 | GPS UART receives no bytes | Confirm crossed TX/RX, UART1 GPIO27/GPIO18 ownership, 115200 baud, power, and signal level |
 | PPS never triggers | Check GPS fix/PPS output and GPIO35 voltage; do not enable nonexistent internal pulls |
+| EasyEDA import succeeds but new parts are outside the board | Move them into an approved functional area, check mechanical keepouts, run strict DRC, then save/close/reopen and re-read coordinates |
+| All component origins are inside but DRC reports pad clearance | Move the complete footprint, not just the origin; verify auxiliary/mechanical pads and rerun strict DRC |
+| EasyEDA autorouter returns `success=false` / `duration=0` | Confirm copper-line/via counts did not change, preserve the pre-route snapshot, record the backend as unavailable, and continue with the reviewed manual/external routing plan |
+| Autorouter ignores the requested net subset | Reject the result; never allow an unbounded run to touch USB, RF, power hot loops, display clocks, audio BTL, or ground-plane constraints |
+| EasyEDA says the board outline is missing or not closed | Read back layer 11; merge/replace separate lines with one closed layer-11 `POLY`, save/reopen, and require DSN export to contain `boundary(path ...)` |
+| SES import changes scale, drops bottom paths, or adds clearance errors | Reject and remove only the newly added copper-layer lines/vias by exact ID; preserve layer 11 and all mechanical projections |
+| A via and its top/bottom tracks share an XY but remain disconnected | Delete that net's affected primitives, recreate the via first and the track segments second, then require the target net to disappear from strict DRC connection errors |
+| A track reaches a test-pad XY but the pad remains disconnected | Read `pcb_PrimitivePad.layer`; route the final segment on the actual SMD pad layer or use a validated via transition |
 | Vercel page cannot reach `192.168.4.1` | Join the Setup AP and grant browser local/private-network permission; do not proxy device credentials through Vercel |
 | Android build cannot find its toolchain | Provide Android SDK 35 and Java 17; keep Gradle selection inside `scripts/build-android-cast.sh` |
 
@@ -159,10 +211,24 @@ RUN_TESTS=1 ./scripts/build-android-cast.sh
 - Good: change the GPIO macro in its owning component, update this table, run
   the firmware build, flash through the correct transport, and validate the
   affected hardware plus cold boot when a strapping pin is involved.
+- Good: import an EasyEDA delta, move staged parts inside the board, clear all
+  new-part clearance/keepout errors, save/close/reopen, and verify persisted
+  component/pad/net counts before calling placement complete.
+- Good: represent the board frame as one closed layer-11 polyline, prove the
+  autorouter sees it by exporting DSN with a boundary, then constrain low-speed helper routing to an explicit net allowlist and
+  Top/Bottom, create vias before tracks, then require zero target-net connection
+  errors and zero clearance/keepout errors after save/reopen.
 - Base: change only README or Trellis/spec documentation, validate links and
   Markdown, and do not flash unchanged firmware.
 - Bad: copy a pin map into README, edit only that copy, enable TF-card GPIO18
   while GPS still owns it, or use `socket://` for an esptool flash.
+- Bad: leave imported components below the board outline, check only component
+  origins, or accept an autorouter result whose duration is zero and whose
+  copper-line/via counts did not change.
+- Bad: assume touching layer-11 lines or `zoomToBoardOutline() = true` prove the
+  autorouter has a board boundary, trust SES layer
+  names without readback, create vias after their tracks, or connect a
+  bottom-only test pad with a top-layer endpoint.
 
 ### 6. Tests Required
 
@@ -192,6 +258,17 @@ RUN_TESTS=1 ./scripts/build-android-cast.sh
 
 - README/spec-only changes: check local links, language parity, command spelling,
   and `git diff --check`; no firmware flash is required.
+- EasyEDA schematic/PCB changes: save and reopen both documents; assert expected
+  component, pad, and net counts; assert all new parts are inside the outline;
+  run strict ERC/DRC; assert no new clearance/keepout errors; record copper-line
+  and via counts around autorouter experiments; validate the `.eprj2` snapshot
+  with SHA-256 and SQLite integrity check.
+- EasyEDA routing changes: assert layer 11 contains one closed `POLY`,
+  `zoomToBoardOutline()` succeeds, and DSN export contains `boundary(path ...)`;
+  assert every copper line/via net is in the
+  approved allowlist; assert no target net remains under `Connection Error`;
+  assert USB differential/equal-length groups remain split across the series
+  resistors; then save, close/reopen, and repeat the assertions.
 
 ### 7. Wrong vs Correct
 
@@ -225,3 +302,41 @@ idf.py -p socket://192.168.2.10:4000 flash
 
 README links to this contract and the owning source files instead of repeating
 the complete matrix.
+
+#### EasyEDA import placement
+
+Wrong:
+
+```text
+importChanges() returned true -> imported components are considered placed
+```
+
+Correct:
+
+```text
+importChanges() -> move staged parts inside -> strict DRC clearance/keepout = 0
+-> save -> close/reopen -> persisted component/pad/net and coordinate readback
+```
+
+#### EasyEDA board outline and layer-safe routing
+
+Wrong:
+
+```text
+four exact, geometrically closed LINE primitives on layer 11
+zoomToBoardOutline() == true
+getDsnFile() == undefined
+
+import SES -> delete pcb_PrimitiveLine.getAll() when DRC fails
+```
+
+Correct:
+
+```text
+one closed POLY on layer 11:
+top-left -> top-right -> bottom-right -> bottom-left -> top-left
+save/reopen -> getDsnFile() contains boundary(path ...)
+
+import/create allowlisted copper -> read back Top/Bottom by layer
+-> delete only new copper-layer line IDs and via IDs on failure
+```

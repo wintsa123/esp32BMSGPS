@@ -15,19 +15,6 @@ extern "C" {
 #define ESP_BMS_REMAINING_RANGE_MAX_KM 9999U
 
 typedef struct {
-    bool moving;
-} esp_bms_gps_motion_filter_t;
-
-typedef struct {
-    uint16_t year;
-    uint8_t month;
-    uint8_t day;
-    uint8_t hour;
-    uint8_t minute;
-    uint8_t second;
-} esp_bms_gps_datetime_t;
-
-typedef struct {
     uint64_t distance_mm;
     int64_t energy_uwh;
     int64_t anchor_time_us;
@@ -36,19 +23,6 @@ typedef struct {
     bool started;
     bool anchor_valid;
 } esp_bms_trip_efficiency_t;
-
-bool esp_bms_gps_utc_to_local_utc8(const esp_bms_gps_datetime_t *utc,
-                                    esp_bms_gps_datetime_t *local);
-
-bool esp_bms_gps_speed_knots_milli_parse(const char *field,
-                                          size_t field_len,
-                                          uint32_t *speed_knots_milli);
-
-void esp_bms_gps_motion_filter_reset(esp_bms_gps_motion_filter_t *filter);
-
-uint32_t esp_bms_gps_motion_filter_apply(esp_bms_gps_motion_filter_t *filter,
-                                         bool gps_fix_valid,
-                                         uint32_t speed_knots_milli);
 
 void esp_bms_trip_efficiency_reset(esp_bms_trip_efficiency_t *trip);
 

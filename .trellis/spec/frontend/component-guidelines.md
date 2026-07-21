@@ -110,6 +110,16 @@ Questions to answer:
 ./scripts/run-lvgl-simulator.sh [--portrait] [--headless]
 ```
 
+Simulator-only automation hooks are compiled only when
+`ESP_BMS_LVGL_UI_SIMULATOR=1`:
+
+```c
+esp_bms_lvgl_ui_simulator_open_boot_animation_settings();
+esp_bms_lvgl_ui_simulator_play_boot_animation();
+esp_bms_lvgl_ui_simulator_boot_animation_preview_active();
+esp_bms_lvgl_ui_simulator_boot_animation_settings_visible();
+```
+
 - The host entry must call the production API: `esp_bms_lvgl_ui_init()`, `esp_bms_lvgl_ui_update()`, `esp_bms_lvgl_ui_set_page()`, and `esp_bms_lvgl_ui_take_action_event()`.
 
 #### 3. Contracts
@@ -117,6 +127,8 @@ Questions to answer:
 - Compile `components/esp_bms_lvgl_ui/esp_bms_lvgl_ui.c`, its production font sources, the LVGL contract, repository LVGL 9.5.0, and system SDL2. Do not copy page, widget, drawing, or gesture logic into a host-only UI.
 - Host compatibility headers may implement only ESP-IDF APIs directly referenced by the UI component. The simulator must not enter the ESP-IDF component graph or change firmware configuration.
 - `--portrait` starts at 240x320; the default starts at 320x240. `--headless` sets SDL's dummy video driver before `lv_init()` and runs a fixed smoke sequence.
+- Host-only test controls in production UI source must be guarded by `ESP_BMS_LVGL_UI_SIMULATOR`; the simulator CMake target defines it as `1`, while firmware defaults to `0`. The startup-animation play button and its timer are production UI and must remain available in both builds.
+- The startup-animation settings play button calls the production boot start/update/finish path with the current UI snapshot on both desktop and device. Its timer emits no runtime action and is deleted and nulled before root rebuild; completion restores the latest snapshot and reopens the same settings subview.
 
 #### 4. Validation & Error Matrix
 
@@ -124,6 +136,7 @@ Questions to answer:
 - No desktop display and no `--headless` -> SDL display creation fails and the process exits non-zero.
 - UI init/update failure -> print an error and exit non-zero.
 - Headless success -> both orientations complete 120 frames after keyboard-driven speed, status, page, and rotation updates.
+- Boot preview timer allocation/update failure -> finish the active boot overlay and restore the startup-animation settings page; never leave a callback pointing at a deleted root.
 
 #### 5. Good / Base / Bad Cases
 
@@ -134,6 +147,7 @@ Questions to answer:
 #### 6. Tests Required
 
 - Run `./scripts/run-lvgl-simulator.sh --headless` and `./scripts/run-lvgl-simulator.sh --headless --portrait`; assert exit code 0 and the `headless smoke passed` line.
+- Assert the settings play button becomes visible only on the startup-animation subview, completes the current animation, returns to that subview, emits `ACTION_NONE`, and leaves the host snapshot byte-for-byte unchanged. Rotate during a second preview and assert root rebuild cancels the timer and restores the subview; repeat the visible-button/play/return check on the physical TFT.
 - Run the ESP-IDF build after simulator changes; assert the simulator directory is absent from the firmware component list and the firmware still links.
 - Before visual sign-off, operate the SDL window with a mouse in a desktop session and repeat color/touch-sensitive checks on the physical TFT.
 
@@ -142,6 +156,9 @@ Questions to answer:
 ```text
 Wrong: maintain desktop-only copies of the dashboard curve and settings pages.
 Correct: compile the production UI source and replace only display/input and the small ESP-IDF API surface.
+
+Wrong: hide the preview button from firmware, queue a settings action from it, or let its LVGL timer survive root deletion.
+Correct: keep the button/timer in production UI for simulator and device, guard only host automation hooks, reuse the production boot API, and cancel the timer before rebuild.
 ```
 
 ### LVGL Settings Navigation

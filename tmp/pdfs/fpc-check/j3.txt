@@ -1,0 +1,1399 @@
+                                                                                   0.5 mm and 1 mm Pitch FPC/FFC Connectors
+                                                                                   FH12 Series
+Nov.1.2016 Copyright 2016 HIROSE ELECTRIC CO., LTD. All Rights Reserved.
+
+
+
+
+                                                                           ■Features                                              Rotating one-touch ZIF mechanism
+                                                                           1. Rotating one-touch ZIF mechanism
+                                                                             The one-touch rotating ZIF mechanism is easier          q
+                                                                             to operate and works with a light force.
+                                                                           2. Clear tactile click
+                                                                             A clear tactile click is delivered upon the
+                                                                             successful completion of the mating process
+                                                                           3. Supports high density mounting
+                                                                             The FH12’s one-touch ZIF system requires less
+                                                                             space than a slide locking connector and can be
+                                                                             mounted in the center of the PCB.
+                                                                           4. Top & Bottom Contact and Vertical                      w
+                                                                              Mount type
+                                                                             There are three connection types available: top
+                                                                             contact, bottom contact and a Vertical mount.
+                                                                           5. 1 mm pitch product                                                                     Contact surface of the FPC+FFC
+                                                                             In addition to the 0.5 mm pitch connector, we also
+                                                                             offer a 1 mm pitch connector.
+                                                                           6. Reinforced actuator
+                                                                             The FH12S version in 30, 40, 45, 50, and 53 pin
+                                                                             counts are offered with a reinforced actuator that
+                                                                             provides an extra measure of security against
+                                                                             actuator breakage.                                      e
+
+                                                                           7. Supports 0.18 mm thick FPC
+                                                                             The FH12F version connector supports a 0.18
+                                                                             mm thick FPC (±0.05).
+                                                                             Double-sided FPC do not require a stiffener when
+                                                                             used on the connectors.
+
+
+
+
+                                                                                                                                                               2013.11②                               1
+                                                                               FH12 Series●0.5mm and 1mm Pitch Connectors For FPC/FFC
+
+
+
+                                                                               ■Product Specifications
+                                                                                                                         Current rating: 0.5A DC(Note 1) Operating Temperature Range:_40 to +85ç (Note 2) Storage Temperature Range:_10 to +50ç (Note 3)
+                                                                                             Rating                      Voltage rating: 50V AC Operating Humidity Range:Relative humidity, 90% max. Storage Humidity Range:Relative humidity, 90% max.
+                                                                                                                                                                                 (Not dewed)                                            (Not dewed)
+
+                                                                               Adaptive FPC/FFC contact specifications                 t=0.3±0.05 Gold plated                                    t=0.18 ± 0.05 for FH12F-*S-0.5SH
+
+                                                                                          Item                                          Specification                                                            Conditions
+                                                                               1. Insulation resistance                  500M ohms minimum                                        100V DC
+                                                                               2. Withstanding voltage                   No flashover or insulation breakdown.                    150V AC/1 minute
+                                                                               3. Contact resistance                     50m ohms maximum                                         1mA
+
+                                                                               4. Durability (Insertion/withdrawal) Contact resistance: 50m ohms maximum                          20 cycles
+                                                                                                                    No damage, cracks, or parts dislocation.
+Nov.1.2016 Copyright 2016 HIROSE ELECTRIC CO., LTD. All Rights Reserved.
+
+
+
+
+                                                                                                                    No electrical discontinuity of 1μs or more                    Frequency: 10 to 55 Hz, single amplitude of 0.75 mm,
+                                                                               5. Vibration                         Contact resistance: 50m ohms maximum.
+                                                                                                                                                                                  for 10 cycles in 3 axial directions
+                                                                                                                    No damage, cracks, or parts dislocation.
+                                                                                                                         No electrical discontinuity of 1μs or more               Acceleration of 981 m/s2, 6 ms duaration,
+                                                                               6. Shock                                  Contact resistance: 50m ohms maximum.
+                                                                                                                                                                                  sine half-wave waveform, 3 cycles in each of the 3 axis
+                                                                                                                         No damage, cracks, or parts dislocation.
+                                                                                                         Contact resistance: 50m ohms maximum.
+                                                                               7. Humidity(Steady state) Insulation resistance: 50M ohms minimum.                                 96 hours at 40ç and humidity of 90% to 95%
+                                                                                                         No damage, cracks, or parts dislocation.
+                                                                                                                         Contact resistance: 50m ohms maximum.                    Temperature: -40ç / 15 to 35ç / 85ç / 15 to 35ç,
+                                                                               8. Temperature Cycle                      Insulation resistance: 50M ohms minimum.                 Time: 30 / 2 to 3 / 30 / 2 to 3(minutes)
+                                                                                                                         No damage, cracks, or parts dislocation.                 5 cycles
+                                                                                                          No deformation of                               Reflow: At the recommended temperature profile
+                                                                               9.Resistance to Soldering heat
+                                                                                                          components affecting performance.               Manual soldering: 350±10ç for 5 seconds
+                                                                               Note 1: When passing the current through all of the contacts,use 70% of the current rating.
+                                                                               Note 2: Includes temperature rise caused by current flow.
+                                                                               Note 3: The term "storage" refers to products stored for long period of time prior to mounting and use. Operating Temperature
+                                                                                       Range and Humidity range covers nonconducting condition of installed connectors in storage, shipment or during
+                                                                                       transportation.
+
+
+                                                                               ■Material
+                                                                                                  Part                                      Material                                   Finish                                 Remarks
+                                                                                                                                 Polyamide, LCP(60 pos.)                         Color : Beige
+                                                                                              Insulator                                                                                                                       UL94V-0
+                                                                                                                                              PPS                                Color : Dark brown
+                                                                                               Contact                                Phosphor bronze                            Gold plated
+                                                                                                                                                                                                                               –––––––
+                                                                                          Metal Fittings                                     Brass                               Tin plated
+
+
+                                                                               ■Ordering Information
+                                                                                                              FH 12 A - 10 (4)                                                        **)
+                                                                                                                                                                        S A - 0.5 SH (*
+                                                                                                                 q           w       e            r        t            y      u             i          o            !0
+
+                                                                                              q Series Name      : FH                                y Contact alignment: Single
+                                                                                              w Series No.       : 12                                u Eccentric direction:
+                                                                                              e Blank : standard type                                                Blank : standard type
+                                                                                                A : Top contact type                                                 A : Eccentric type
+                                                                                                S : Type with strengthed flip-lock actuator          i Contacts Pitch : 0.5mm, 1mm
+                                                                                                F : Type with 0.18mm FPC End Thickness               o Contact type
+                                                                                              r Standard type : Number of contacts                      SH : SMT horizontal mounting type
+                                                                                                Eccentric type : Number of contacts in 0.5mm housing    SV : SMT vertical mounting type
+                                                                                              t Standard type : Blank                                !0 Plating specification
+                                                                                                Eccentric type : Number of contacts                      (54)     : Selective gold plated
+                                                                                                                                                         (55)     : Gold plated
+                                                                                                                                                         (1)(98) : Gold plated 500 pieces/reel
+
+
+
+
+                                                                           2
+                                                                                                                                                   FH12 Series●0.5mm and 1mm Pitch Connectors For FPC/FFC
+
+
+
+                                                                           ■Series Configuration
+                                                                            Pitch         Bottom Contact Type                             Top Contact Type                                 Vertical mounting Type
+Nov.1.2016 Copyright 2016 HIROSE ELECTRIC CO., LTD. All Rights Reserved.
+
+
+
+
+                                                                                                                                                                                                                FPC/FFC conductive
+                                                                                                                                                                                                                surface(bottom side)
+                                                                                                                                                                  FPC/FFC conductive
+                                                                                                                                                                  surface
+
+
+                                                                                    FH12- ** S-0.5SH                      P.4
+                                                                                    Number of contacts 6, 8, 10, 11, 12, 13,
+                                                                                                       14, 15, 16, 17, 18, 19,
+                                                                           0.5mm                       20, 22, 24, 25, 26, 28,
+                                                                                                       30, 32, 33, 34, 35, 36,
+                                                                                                       40, 45, 50, 53
+
+
+
+                                                                                    Type with Strengthened Lock Lever
+
+                                                                                    FH12S- ** S-0.5SH                     P.5
+                                                                                    Number of contacts 30, 40, 45, 50, 53
+
+                                                                                     Type with 0.18mm FPC End Thickness
+                                                                                                                                   FH12A- ** S-0.5SH                    P.7            FH12- ** S-0.5SV                   P.8
+                                                                                    FH12F- ** S-0.5SH                     P.6      Number of contacts 10, 12 ,15, 16, 18, 20,          Number of contacts 10, 12, 13, 15, 16, 17,
+                                                                                    Number of contacts 6, 8, 10, 12, 13, 14, 15,                      22, 24, 26, 28, 29, 30,                              18, 20, 22, 24, 26, 30,
+                                                                                                                                                      32, 33, 34, 36, 40, 42,
+                                                                                                     16, 18, 20, 22, 24, 25,                                                                               32, 33, 34, 36, 40, 45,
+                                                                                                                                                      45, 50
+                                                                                                     26, 28, 30, 32, 34, 36, 40                                                                            49, 50, 60
+
+
+
+
+                                                                                                                                                                                                                FPC/FFC conductive
+                                                                                                                                                                                                                surface(bottom side)
+
+
+
+
+                                                                            1mm
+                                                                                    Standard   FH12- ** S-1SH P.9
+                                                                                    Eccentric FH12- ** (**) SA-1SH
+                                                                                    Standard
+                                                                                     Number of contacts 5, 6, 7, 8, 9, 11,
+                                                                                                            12,16,17,22,26                                                             FH12- ** S-1SV                    P.10
+                                                                                    Eccentric
+                                                                                                                                                                                       Number of contacts 6, 7, 8, 16, 20, 22,
+                                                                                     Number of contacts 4, 6, 8, 10, 11,
+                                                                                                                                                                                                           24
+                                                                                                            14, 19, 24
+
+
+
+
+                                                                                                                                                                                                                                       3
+                                                                               FH12 Series●0.5mm and 1mm Pitch Connectors For FPC/FFC
+
+
+
+                                                                               ■0.5mm Pitch Bottom Contact Type
+                                                                                                                                                                       Ａ
+                                                                                                                                                 0.5
+                                                                                                                                               （ 0.2）
+
+
+
+
+                                                                                                                                   0.8
+                                                                                                                                   2
+                                                                                                                                   1.2
+                                                                                                                                           polarizing mark indicator       Number of Contacts indicator
+                                                                                                                                                                       Ｂ
+                                                                                                                                                                       Ｃ
+Nov.1.2016 Copyright 2016 HIROSE ELECTRIC CO., LTD. All Rights Reserved.
+
+
+
+
+                                                                                                                                                                                                                     1.85
+                                                                                                                                                                                                                 2
+                                                                                                                                                                                                                 5
+                                                                                                                                                                       Ｄ                                                         4.6
+                                                                                                                                                                                                                                5.6
+
+                                                                                             Note 1 : The coplanarity of each terminal lead within specified dimension is 0.1 mm Max.
+                                                                                             Note 2 : Packaged on tape and reel only. Check packaging specification.
+                                                                                             Note 3 : Slight variations in color of the plastic compounds do not affect form, fit or function of the connector.
+                                                                                             Note 4 : After reflow, the terminal plating may change color, however this does not represent a quality issue.
+                                                                                             Note 5 : If there is no problem with the connector height, we recommend the type with the strengthened Flip-
+                                                                                                      lock actuator (FH12S-*S-0.5SH). Standard type connector height: 2 mm Connector height of type with
+                                                                                                      strengthened Flip-lock actuator: 2.4 mm
+                                                                                                                                                                                               Unit:mm
+                                                                                                   Part Number              CL No.        Number of Contacts                  A                B           C                D
+                                                                                              FH12-6S-0.5SH(**)         586-0582-5-**                  6                    2.5              06.1         7.1          3.57
+                                                                                              FH12-8S-0.5SH(**)         586-0744-5-**                  8                    3.5              07.1         8.1          4.57
+                                                                                              FH12-10S-0.5SH(**)        586-0522-3-**                 10                    4.5              08.1         9.1          5.57
+                                                                                              FH12-11S-0.5SH(**)        586-0600-5-**                 11                    5.0              08.6         9.6          6.07
+                                                                                              FH12-12S-0.5SH(**)        586-0704-0-**                 12                    5.5              09.1         10.1         6.57
+                                                                                              FH12-13S-0.5SH(**)        586-0549-0-**                 13                    6.0              09.6         10.6         7.07
+                                                                                              FH12-14S-0.5SH(**)        586-0533-0-**                 14                    6.5              10.1         11.1         7.57
+                                                                                              FH12-15S-0.5SH(**)        586-0523-6-**                 15                    7.0              10.6         11.6         8.07
+                                                                                              FH12-16S-0.5SH(**)        586-0531-4-**                 16                    7.5              11.1         12.1         8.57
+                                                                                              FH12-17S-0.5SH(**)        586-0606-1-**                 17                    8.0              11.6         12.6         9.07
+                                                                                              FH12-18S-0.5SH(**)        586-0530-1-**                 18                    8.5              12.1         13.1         9.57
+                                                                                              FH12-19S-0.5SH(**)        586-0534-2-**                 19                    9.0              12.6         13.6        10.07
+                                                                                              FH12-20S-0.5SH(**)        586-0524-9-**                 20                    9.5              13.1         14.1        10.57
+                                                                                              FH12-22S-0.5SH(**)        586-0532-7-**                 22                   10.5              14.1         15.1        11.57
+                                                                                              FH12-24S-0.5SH(**)        586-0521-0-**                 24                   11.5              15.1         16.1        12.57
+                                                                                              FH12-25S-0.5SH(**)        586-0692-3-**                 25                   12.0              15.6         16.6        13.07
+                                                                                              FH12-26S-0.5SH(**)        586-0576-2-**                 26                   12.5              16.1         17.1        13.57
+                                                                                              FH12-28S-0.5SH(**)        586-0612-4-**                 28                   13.5              17.1         18.1        14.57
+                                                                                    Note 5    FH12-30S-0.5SH(**)        586-0525-1-**                 30                   14.5              18.1         19.1        15.57
+                                                                                              FH12-32S-0.5SH(**)        586-0681-7-**                 32                   15.5              19.1         20.1        16.57
+                                                                                              FH12-33S-0.5SH(**)        586-0520-8-**                 33                   16.0              19.6         20.6        17.07
+                                                                                              FH12-34S-0.5SH(**)        586-0617-8-**                 34                   16.5              20.1         21.1        17.57
+                                                                                              FH12-35S-0.5SH(**)        586-0740-4-**                 35                   17.0              20.6         21.6        18.07
+                                                                                              FH12-36S-0.5SH(**)        586-0526-4-**                 36                   17.5              21.1         22.1        18.57
+                                                                                    Note 5    FH12-40S-0.5SH(**)        586-0527-7-**                 40                   19.5              23.1         24.1        20.57
+                                                                                    Note 5    FH12-45S-0.5SH(**)        586-0528-0-**                 45                   22.0              25.6         26.6        23.07
+                                                                                    Note 5    FH12-50S-0.5SH(**)        586-0529-2-**                 50                   24.5              28.1         29.1        25.57
+                                                                                    Note 5    FH12-53S-0.5SH(**) 586-0595-7-**                53           26.0      29.6       30.6   27.07
+                                                                                             Note 1 : Embossed tape reel packaging (2,000 pieces/reel, 500 pieces/reel). Order by number of
+                                                                                                      reels.
+
+
+
+                                                                           4
+                                                                                                                                               FH12 Series●0.5mm and 1mm Pitch Connectors For FPC/FFC
+
+
+
+                                                                           ■0.5mm Pitch Bottom Contact Type with Strengthened Flip-lock Actuator
+                                                                                                                                                                Ａ
+                                                                                                                                       0.5
+                                                                                                                                      （0.2）
+
+
+
+
+                                                                                                                           0.8
+                                                                                                                           2
+                                                                                                                           1.2
+                                                                                                                                    polarizing mark indicator       Number of Contacts indicator
+                                                                                                                                                                Ｂ
+                                                                                                                                                                Ｃ
+Nov.1.2016 Copyright 2016 HIROSE ELECTRIC CO., LTD. All Rights Reserved.
+
+
+
+
+                                                                                                                                                                                                                2.25
+                                                                                                                                                                                                          2.4
+
+
+
+
+                                                                                                                                                                                                                                  2
+                                                                                                                                                                Ｄ                                                           4.6
+                                                                                                                                                                                                                           5.6
+
+
+                                                                                 Note 1   : The coplanarity of each terminal lead within specified dimension is 0.1 mm Max.
+                                                                                 Note 2   : Packaged on tape and reel only. Check packaging specification.
+                                                                                 Note 3   : Slight variations in color of the plastic compounds do not affect form, fit or function of the connector.
+                                                                                 Note 4   : After reflow, the terminal plating may change color, however this does not represent a quality issue.
+
+
+
+
+                                                                                                                                                                                                                Unit:mm
+                                                                                      Part Number                 CL No.         Number of Contacts                    A                  B         C                  D
+                                                                                  FH12S-30S-0.5SH(**)        586-0667-6-**                 30                       14.5               18.1        19.1         15.57
+                                                                                  FH12S-40S-0.5SH(**)        586-0640-0-**                 40                       19.5               23.1        24.1         20.57
+                                                                                  FH12S-45S-0.5SH(**)        586-0665-0-**                 45                       22.0               25.6        26.6         23.07
+                                                                                  FH12S-50S-0.5SH(**)        586-0642-5-**                 50                       24.5               28.1        29.1         25.57
+                                                                                  FH12S-53S-0.5SH(**)        586-0691-0-**                 53                       26.0               29.6        30.6         27.07
+                                                                                 Note 1 : Embossed tape reel packaging (2,000 pieces/reel, 500 pieces/reel).
+                                                                                          Order by number of reels.
+
+
+
+
+                                                                                                                                                                                                                                      5
+                                                                               FH12 Series●0.5mm and 1mm Pitch Connectors For FPC/FFC
+
+
+
+                                                                               ■0.5mm Pitch Bottom Contact Type with 0.18mm FPC End Thickness
+                                                                                                                                                                      Ａ                                  Applicable FPC end thickness : 0.18±0.05
+                                                                                                                                                0.5
+                                                                                                                                               （0.2）
+
+
+
+
+                                                                                                                                  0.8
+                                                                                                                                  2
+                                                                                                                                  1.2
+                                                                                                                                          polarizing mark indicator       Number of Contacts indicator
+                                                                                                                                                                      Ｂ
+                                                                                                                                                                      Ｃ
+Nov.1.2016 Copyright 2016 HIROSE ELECTRIC CO., LTD. All Rights Reserved.
+
+
+
+
+                                                                                                                                                                                                                       1.85
+                                                                                                                                                                                                                   2
+                                                                                                                                                                      Ｄ                                                            4.6
+                                                                                                                                                                                                                                  5.6
+
+
+                                                                                          Note 1   : The coplanarity of each terminal lead within specified dimension is 0.1 mm Max.
+                                                                                          Note 2   : Packaged on tape and reel only. Check packaging specification.
+                                                                                          Note 3   : Slight variations in color of the plastic compounds do not affect form, fit or function of the connector.
+                                                                                          Note 4   : After reflow, the terminal plating may change color, however this does not represent a quality issue.
+
+
+
+
+                                                                                                                                                                                                                       Unit:mm
+                                                                                               Part Number                 CL No.         Number of Contacts                 A                B               C               D
+                                                                                           FH12F-6S-0.5SH(**)         586-0672-6-**                   6                    2.5               6.1             7.1          3.57
+                                                                                           FH12F-8S-0.5SH(**)         586-0738-2-**                   8                    3.5               7.1             8.1          4.57
+                                                                                           FH12F-10S-0.5SH(**)        586-0709-4-**                  10                    4.5               8.1             9.1          5.57
+                                                                                           FH12F-12S-0.5SH(**)        586-0653-1-**                  12                    5.5               9.1            10.1          6.57
+                                                                                           FH12F-13S-0.5SH(**)        586-0629-7-**                  13                    6.0               9.6            10.6          7.07
+                                                                                           FH12F-14S-0.5SH(**)        586-0655-7-**                  14                    6.5              10.1            11.1          7.57
+                                                                                           FH12F-15S-0.5SH(**)        586-0680-4-**                  15                    7.0              10.6            11.6          8.07
+                                                                                           FH12F-16S-0.5SH(**)        586-0673-9-**                  16                    7.5              11.1            12.1          8.57
+                                                                                           FH12F-18S-0.5SH(**)        586-0626-9-**                  18                    8.5              12.1            13.1          9.57
+                                                                                           FH12F-20S-0.5SH(**)        586-0636-2-**                  20                    9.5              13.1            14.1        10.57
+                                                                                           FH12F-22S-0.5SH(**)        586-0630-6-**                  22                   10.5              14.1            15.1        11.57
+                                                                                           FH12F-24S-0.5SH(**)        586-0632-1-**                  24                   11.5              15.1            16.1        12.57
+                                                                                           FH12F-25S-0.5SH(**)        586-0733-9-**                  25                   12.0              15.6            16.6        13.07
+                                                                                           FH12F-26S-0.5SH(**)        586-0627-1-**                  26                   12.5              16.1            17.1        13.57
+                                                                                           FH12F-28S-0.5SH(**)        586-0643-8-**                  28                   13.5              17.1            18.1        14.57
+                                                                                           FH12F-30S-0.5SH(**)        586-0628-4-**                  30                   14.5              18.1            19.1        15.57
+                                                                                           FH12F-32S-0.5SH(**)        586-0705-3-**                  32                   15.5              19.1            20.1        16.57
+                                                                                           FH12F-34S-0.5SH(**)        586-0677-0-**                  34                   16.5              20.1            21.1        17.57
+                                                                                           FH12F-36S-0.5SH(**)        586-0656-0-**                  36                   17.5              21.1            22.1        18.57
+                                                                                           FH12F-40S-0.5SH(**)        586-0635-0-**                  40                   19.5              23.1            24.1        20.57
+                                                                                          Note 1 : Embossed tape reel packaging (2,000 pieces/reel).
+                                                                                                   Order by number of reels.
+
+
+
+
+                                                                           6
+                                                                                                                                                FH12 Series●0.5mm and 1mm Pitch Connectors For FPC/FFC
+
+
+
+                                                                           ■0.5mm Pitch Top Contact Type
+                                                                                                                                                         Ａ
+                                                                                                                                                         Ｂ
+                                                                                                                                                         Ｃ
+                                                                                                                                   0.5
+                                                                                                                                     ( 0.2)
+
+
+
+
+                                                                                                                                                                                      (1.85 )
+                                                                                                                                                                                                                6.2
+                                                                                                                                  polarizing mark indicator Ｄ
+
+
+
+
+                                                                                                                                                                                                 （3.6）
+
+
+
+
+                                                                                                                                                                                                                              2
+Nov.1.2016 Copyright 2016 HIROSE ELECTRIC CO., LTD. All Rights Reserved.
+
+
+
+
+                                                                                                                                                         Ｅ                                                                   ( 0.45 )
+                                                                                                                                                                              1.45                                             0.8
+
+
+
+
+                                                                                                                                                                                          0.85
+                                                                                                                                                                                          2.2
+                                                                              Note 1   : The coplanarity of each terminal lead within specified dimension is 0.1 mm Max.
+                                                                              Note 2   : Packaged on tape and reel only. Check packaging specification.
+                                                                              Note 3   : Slight variations in color of the plastic compounds do not affect form, fit or function of the connector.
+                                                                              Note 4   : After reflow, the terminal plating may change color, however this does not represent a quality issue.
+                                                                                                                                                                                                                 Unit:mm
+                                                                                   Part Number                 CL No.        Number of Contacts                 A      B             C                    D            E
+                                                                               FH12A-10S-0.5SH(**) 586-0550-9-**                      10                        9.1   8.35           4.5                 9.5          5.57
+                                                                               FH12A-12S-0.5SH(**) 586-0696-4-**                      12                    10.1      9.35           5.5                 10.5         6.57
+                                                                               FH12A-15S-0.5SH(**) 586-0551-1-**                      15                    11.6      10.85          7.0                 12.0         8.07
+                                                                               FH12A-16S-0.5SH(**) 586-0552-4-**                      16                    12.1      11.35          7.5                 12.5         8.57
+                                                                               FH12A-18S-0.5SH(**) 586-0553-7-**                      18                    13.1      12.35          8.5                 13.5         9.57
+                                                                               FH12A-20S-0.5SH(**) 586-0554-0-**                      20                    14.1      13.35          9.5                 14.5     10.57
+                                                                               FH12A-22S-0.5SH(**) 586-0686-0-**                      22                    15.1      14.35      10.5                    15.5     11.57
+                                                                               FH12A-24S-0.5SH(**) 586-0555-2-**                      24                    16.1      15.35      11.5                    16.5     12.57
+                                                                               FH12A-26S-0.5SH(**) 586-0663-5-**                      26                    17.1      16.35      12.5                    17.5     13.57
+                                                                               FH12A-28S-0.5SH(**) 586-0725-0-**                      28                    18.1      17.35      13.5                    18.5     14.57
+                                                                               FH12A-29S-0.5SH(**) 586-0585-3-**                      29                    18.6      17.85      14.0                    19.0     15.07
+                                                                               FH12A-30S-0.5SH(**) 586-0556-5-**                      30                    19.1      18.35      14.5                    19.5     15.57
+                                                                               FH12A-32S-0.5SH(**) 586-0687-3-**                      32                    20.1      19.35      15.5                    20.5     16.57
+                                                                               FH12A-33S-0.5SH(**) 586-0570-6-**                      33                    20.6      19.85      16.0                    21.0     17.07
+                                                                               FH12A-34S-0.5SH(**) 586-0670-0-**                      34                    21.1      20.35      16.5                    21.5     17.57
+                                                                               FH12A-36S-0.5SH(**) 586-0662-2-**                      36                    22.1      21.35      17.5                    22.5     18.57
+                                                                               FH12A-40S-0.5SH(**) 586-0557-8-**                      40                    24.1      23.35      19.5                    24.5     20.57
+                                                                               FH12A-42S-0.5SH(**) 586-0698-0-**                      42                    25.1      24.35      20.5                    25.5     21.57
+                                                                               FH12A-45S-0.5SH(**) 586-0558-0-**                      45                    26.6      25.85      22.0                    27.0     23.07
+                                                                               FH12A-50S-0.5SH(**) 586-0559-3-**                      50                    29.1      28.35      24.5                    29.5     25.57
+                                                                              Note 1 : Embossed tape reel packaging (2,000 pieces/reel).
+                                                                                       Order by number of reels.
+
+
+
+
+                                                                                                                                                                                                                                        7
+                                                                               FH12 Series●0.5mm and 1mm Pitch Connectors For FPC/FFC
+
+
+
+                                                                               ■0.5mm Pitch Vertical mounting Type
+                                                                                                                                                                                        Mated Cross-sectional Diagram
+
+                                                                                                                                     ( 0.2 )            1                     ( 0.15)                               FPC/FFC Contact Surface
+
+
+
+
+                                                                                                                                                                                                                     ( 2.15 )
+                                                                                                                                                                                                                       (1.4 )
+                                                                                                                                                    1              F                               0.5       2.5    0.5
+
+                                                                                                                                                                   A                                     ( 4.25 )
+                                                                                                                                                                   B                                      (1.75 )
+
+
+
+
+                                                                                                                                                                                        ( 4.85 )
+Nov.1.2016 Copyright 2016 HIROSE ELECTRIC CO., LTD. All Rights Reserved.
+
+
+
+
+                                                                                                                                                                                                                             5.5
+                                                                                                                                                                                                                          3.6
+                                                                                                                                                        0.5
+                                                                                                                                                                   C
+                                                                                                                                                                   D
+                                                                                                                                                                   E
+
+
+
+
+                                                                                  Note 1   : The coplanarity of each terminal lead within specified dimension is 0.1 mm Max.
+                                                                                  Note 2   : Packaged on tape and reel only. Check packaging specification.
+                                                                                  Note 3   : Slight variations in color of the plastic compounds do not affect form, fit or function of the connector.
+                                                                                  Note 4   : After reflow, the terminal plating may change color, however this does not represent a quality issue.
+
+
+
+                                                                                                                                                                                                                                    Unit:mm
+                                                                                       Part Number                 CL No.        Number of Contacts            A        B          C                     D                E              F
+                                                                                   FH12-10S-0.5SV(**)         586-0560-2-**                    10             8.4      6.9        4.5                6.5              8.2                4
+                                                                                   FH12-12S-0.5SV(**)         586-0615-2-**                    12             9.4      7.9        5.5                7.5              9.2                4
+                                                                                   FH12-13S-0.5SV(**)         586-0575-0-**                    13             9.9      8.4        6.0                8.0              9.7                4
+                                                                                   FH12-15S-0.5SV(**)         586-0561-5-**                    15             10.9     9.4        7.0                9.0             10.7                4
+                                                                                   FH12-16S-0.5SV(**)         586-0572-1-**                    16             11.4     9.9        7.5                9.5             11.2                4
+                                                                                   FH12-17S-0.5SV(**)         586-0601-8-**                    17             11.9     10.4       8.0               10.0             11.7                4
+                                                                                   FH12-18S-0.5SV(**)         586-0573-4-**                    18             12.4     10.9       8.5               10.5             12.2                4
+                                                                                   FH12-20S-0.5SV(**)         586-0562-8-**                    20             13.4     11.9       9.5               11.5             13.2                4
+                                                                                   FH12-22S-0.5SV(**)         586-0589-4-**                    22             14.4     12.9      10.5               12.5             14.2                8
+                                                                                   FH12-24S-0.5SV(**)         586-0563-0-**                    24             15.4     13.9      11.5               13.5             15.2                8
+                                                                                   FH12-26S-0.5SV(**)         586-0664-8-**                    26             16.4     14.9      12.5               14.5             16.2                8
+                                                                                   FH12-30S-0.5SV(**)         586-0564-3-**                    30             18.4     16.9      14.5               16.5             18.2                8
+                                                                                   FH12-32S-0.5SV(**)         586-0699-2-**                    32             19.4     17.9      15.5               17.5             19.2                8
+                                                                                   FH12-33S-0.5SV(**)         586-0565-6-**                    33             19.9     18.4      16.0               18.0             19.7                8
+                                                                                   FH12-34S-0.5SV(**)         586-0706-6-**                    34             20.4     18.9      16.5               18.5             20.2                8
+                                                                                   FH12-36S-0.5SV(**)         586-0641-2-**                    36             21.4     19.9      17.5               19.5             21.2                8
+                                                                                   FH12-40S-0.5SV(**)         586-0566-9-**                    40             23.4     21.9      19.5               21.5             23.2                8
+                                                                                   FH12-45S-0.5SV(**)         586-0567-1-**                    45             25.9     24.4      22.0               24.0             25.7                8
+                                                                                   FH12-49S-0.5SV(**)         586-0602-0-**                    49             27.9     26.4      24.0               26.0             27.7                8
+                                                                                   FH12-50S-0.5SV(**)         586-0568-4-**                    50             28.4     26.9      24.5               26.5             28.2                8
+                                                                                   FH12-60S-0.5SV(**)         586-0735-4-**                    60             33.4     31.9      29.5               31.5             33.2                8
+                                                                                  Note 1 : Embossed tape reel packaging (1,000 pieces/reel, 500 pieces/reel).
+                                                                                           Order by number of reels.
+
+
+
+
+                                                                           8
+                                                                                                                                                               FH12 Series●0.5mm and 1mm Pitch Connectors For FPC/FFC
+
+
+
+                                                                           ■1mm Pitch Type Bottom Contact Type
+                                                                                                                                                         2.3                          A                            E
+                                                                                                                                                                  1.0
+                                                                                                                                                                  (0.2)
+                                                                                                                                                                                                                                     Mated Cross-sectional Diagram
+
+
+
+
+                                                                                                                                                  0.8
+                                                                                                                                                  2
+                                                                                                                                                  1.2
+                                                                                                                                                                                                                                                    (2.1)
+                                                                                                                                                                                                                         FPC/FFC Contact Surface
+                                                                                                                                                                                                                                                   (3.1)    (1.3)
+                                                                                                                                                          polarizing mark indicator       Number of Contacts indicator
+                                                                                                                                                                                      B
+                                                                                                                                                                                      C
+Nov.1.2016 Copyright 2016 HIROSE ELECTRIC CO., LTD. All Rights Reserved.
+
+
+
+
+                                                                                                                                                                                                                                         1.85
+                                                                                                                                                                                                                             (4.8)
+                                                                                                                                                                                                                                     2
+                                                                                                                                                                                      D                                                             4.6
+                                                                                                                                                                                                                                                   5.6
+
+
+
+
+                                                                           Note 1               : The coplanarity of each terminal lead within specified dimension is 0.1 mm Max.
+                                                                           Note 2               : Packaged on tape and reel only. Check packaging specification.
+                                                                           Note 3               : Slight variations in color of the plastic compounds do not affect form, fit or function of the connector.
+                                                                           Note 4               : After reflow, the terminal plating may change color, however this does not represent a quality issue.
+
+
+
+                                                                                                                                                                                                                          Unit:mm
+                                                                                                Part Number            CL No.      Number of Contacts     A                 B                 C                   D              E
+                                                                                             FH12-5S-1SH(**)       586-0591-6-**            5              4               8.6               9.6               6.07           2.3
+                                                                                             FH12-6S-1SH(**)       586-0607-4-**            6              5               9.6             10.6                7.07           2.3
+                                                                                             FH12-7S-1SH(**)       586-0535-5-**            7              6              10.6             11.6                8.07           2.3
+                                                                                             FH12-8S-1SH(**)       586-0579-0-**            8              7              11.6             12.6                9.07           2.3
+                                                                            Standard type
+
+
+
+
+                                                                                             FH12-9S-1SH(**)       586-0540-5-**            9              8              12.6             13.6               10.07           2.3
+                                                                                             FH12-11S-1SH(**)      586-0668-9-**           11             10              14.6             15.6               12.07           2.3
+                                                                                             FH12-12S-1SH(**)      586-0741-7-**           12             11              15.6             16.6               13.07           2.3
+                                                                                             FH12-16S-1SH(**)      586-0536-8-**           16             15              19.6             20.6               17.07           2.3
+                                                                                             FH12-17S-1SH(**)      586-0739-5-**           17             16              20.6             21.6               18.07           2.3
+                                                                                             FH12-22S-1SH(**)      586-0547-4-**           22             21              25.6             26.6               23.07           2.3
+                                                                                             FH12-26S-1SH(**)      586-0592-9-**           26             25              29.6             30.6               27.07           2.3
+                                                                                             FH12-10(4)SA-1SH(**) 586-0537-0-**             4              3               8.1               9.1               5.57           2.8
+                                                                                             FH12-14(6)SA-1SH(**) 586-0538-3-**             6              5              10.1             11.1                7.57           2.8
+                                                                            Eccentric type
+
+
+
+
+                                                                                             FH12-18(8)SA-1SH(**) 586-0539-6-**             8              7              12.1             13.1                9.57           2.8
+                                                                                             FH12-22(10)SA-1SH(**) 586-0541-8-**           10              9              14.1             15.1               11.57           2.8
+                                                                                             FH12-24(11)SA-1SH(**) 586-0542-0-**           11             10              15.1             16.1               12.57           2.8
+                                                                                             FH12-30(14)SA-1SH(**) 586-0543-3-**           14             13              18.1             19.1               15.57           2.8
+                                                                                             FH12-40(19)SA-1SH(**) 586-0546-1-**           19             18              23.1             24.1               20.57           2.8
+                                                                                             FH12-50(24)SA-1SH(**) 586-0548-7-**           24             23              28.1             29.1               25.57           2.8
+                                                                           Note 1: Embossed tape reel packaging (2,000 pieces/reel, 500 pieces/reel). Order by number of reels.
+
+
+
+
+                                                                                                                                                                                                                                                                     9
+                                                                                FH12 Series●0.5mm and 1mm Pitch Connectors For FPC/FFC
+
+
+
+                                                                                ■1mm Pitch Vertical Mounting Type
+
+                                                                                                                                                                                           Mated Cross-sectional Diagram
+
+                                                                                                                                         (0.2)         2                     (0.15)                            FPC/FFC Contact Surface
+
+
+
+
+                                                                                                                                                                                                                (2.15)
+                                                                                                                                                                                                                 (1.4)
+                                                                                                                                                  2               F                             0.5   2.5      0.5
+
+                                                                                                                                                                  A                                   (4.25)
+                                                                                                                                                                  B                                   (1.75)
+Nov.1.2016 Copyright 2016 HIROSE ELECTRIC CO., LTD. All Rights Reserved.
+
+
+
+
+                                                                                                                                                                                           (4.85)
+
+
+
+
+                                                                                                                                                                                                                    5.5
+                                                                                                                                                                                                                  3.6
+                                                                                                                                                   1.0
+                                                                                                                                                                  C                                              3.8(Metal fitting dimension)
+                                                                                                                                                                  D
+                                                                                                                                                                  E
+
+
+
+
+                                                                                  Note 1   : The coplanarity of each terminal lead within specified dimension is 0.1 mm Max.
+                                                                                  Note 2   : Packaged on tape and reel only. Check packaging specification.
+                                                                                  Note 3   : Slight variations in color of the plastic compounds do not affect form, fit or function of the connector.
+                                                                                  Note 4   : After reflow, the terminal plating may change color, however this does not represent a quality issue.
+
+
+
+
+                                                                                                                                                                                                                                  Unit:mm
+                                                                                        Part Number                CL No.         Number of Contacts        A          B              C               D               E                  F
+                                                                                     FH12-6S-1SV(**)          586-0605-9-**               6                9.9        8.4             5               8              9.7                 4
+                                                                                     FH12-7S-1SV(**)          586-0610-9-**               7                10.9       9.4             6               9              10.7                4
+                                                                                     FH12-8S-1SV(**)          586-0593-1-**               8                11.9       10.4            7               10             11.7                4
+                                                                                     FH12-16S-1SV(**)         586-0574-7-**              16                19.9       18.4            15              18             19.7                8
+                                                                                     FH12-20S-1SV(**)         586-0634-7-**              20                23.9       22.4            19              22             23.7                8
+                                                                                     FH12-22S-1SV(**)         586-0584-0-**              22                25.9       24.4            21              24             25.7                8
+                                                                                     FH12-24S-1SV(**)         586-0594-4-**              24                27.9       26.4            23              26             27.7                8
+                                                                                  Note 1 : Embossed tape reel packaging (1,000 pieces/reel, 500 pieces/ree).
+                                                                                           Order by number of reels.
+
+
+
+
+                                                                           10
+                                                                                                                                                                             FH12 Series●0.5mm and 1mm Pitch Connectors For FPC/FFC
+
+
+
+                                                                           ■Recommended FPC/FFC dimensions and Land/Metal Mask dimensions
+                                                                           ●0.5mm Pitch Product
+                                                                                                           FPC/FFC dimensions                                                                          Land / Metal Mask dimensions
+
+                                                                                                                                                                                                                                                 B±0.1
+
+
+
+
+                                                                                                                                                                                                        2.2±0.1
+                                                                                                                                                                                                                                                 C±0.1
+
+
+
+
+                                                                                                                                                 4.5MIN
+                                                                                              3.5MIN
+
+
+
+
+                                                                                                                                                                                                        1.5±0.1
+                                                                                                            0.5±0.05          0.35±0.03(FPC)              C
+                                                                                                                              0.3±0.03(FFC)
+                                                                                            0.5±0.1             A±0.05                                                                                                                                                       0.3±0.03(Land)
+
+
+
+
+                                                                                                                                                                                                        1.3±0.1
+                                                                                                                B±0.07        0.5±0.1
+                                                                                                                                                                                                                       0.5±0.05                                              0.25±0.03(Metal mask)
+                                                                                                                                                                                                                                                 A±0.05
+Nov.1.2016 Copyright 2016 HIROSE ELECTRIC CO., LTD. All Rights Reserved.
+
+
+
+
+                                                                                       Product Type                    C Dimension
+                                                                           0.5mm      Types other than 0.3±0.05min                                                                                                Recommended metal mask thickness : 0.15mm
+                                                                                      those below      Stiffener thickness should be 0.188 mm (7.5 mil) min
+                                                                            Pitch         FH12F        0.18±0.05
+                                                                           Bottom
+                                                                           Contact                                                                              Unit: mm                                                                                                                                Unit: mm
+                                                                                                                                                                                        Dimension                                                               Dimension
+                                                                            Type       Number
+                                                                                                    Dimension
+                                                                                                                  A       B      Number
+                                                                                                                                          Dimension
+                                                                                                                                                              A          B                                         A          B                C                                     A              B                   C
+                                                                                                                                                                                  Number                                                                  Number
+                                                                                       of Contacts                               of Contacts                                      of Contacts                                                             of Contacts
+                                                                                                6                2.5      3.5             25              12.0       13.0                    6                     2.5       8.1          4.5                          25         12.0         17.6                  14.0
+                                                                                                8                3.5      4.5             26              12.5       13.5                    8                     3.5       9.1          5.5                          26         12.5         18.1                  14.5
+                                                                                                10               4.5      5.5             28              13.5       14.5                    10                    4.5      10.1          6.5                          28         13.5         19.1                  15.5
+                                                                                                11               5.0      6.0             29              14.0       15.0                    11                    5.0      10.6          7.0                          29         14.0         19.6                  16.0
+                                                                           0.5mm                12               5.5      6.5             30              14.5       15.5                    12                    5.5      11.1          7.5                          30         14.5         20.1                  16.5
+                                                                            Pitch
+                                                                                                13               6.0      7.0             32              15.5       16.5                    13                    6.0      11.6          8.0                          32         15.5         21.1                  17.5
+                                                                            Top
+                                                                                                14               6.5      7.5             33              16.0       17.0                    14                    6.5      12.1          8.5                          33         16.0         21.6                  18.0
+                                                                           Contact
+                                                                                                15               7.0      8.0             34              16.5       17.5                    15                    7.0      12.6          9.0                          34         16.5         22.1                  18.5
+                                                                            Type
+                                                                                                16               7.5      8.5             35              17.0       18.0                    16                    7.5      13.1          9.5                          35         17.0         22.6                  19.0
+                                                                                                17               8.0      9.0             36              17.5       18.5                    17                    8.0      13.6         10.0                          36         17.5         23.1                  19.5
+                                                                                                18               8.5      9.5             40              19.5       20.5                    18                    8.5      14.1         10.5                          40         19.5         25.1                  21.5
+                                                                                                19               9.0     10.0             42              20.5       21.5                    19                    9.0      14.6         11.0                          42         20.5         26.1                  22.5
+                                                                                                20               9.5     10.5             45              22.0       23.0                    20                    9.5      15.1         11.5                          45         22.0         27.6                  24.0
+                                                                                                22              10.5     11.5             50              24.5       25.5                    22                   10.5      16.1         12.5                          50         24.5         30.1                  26.5
+                                                                                                24              11.5     12.5             53              26.0       27.0                    24                   11.5      17.1         13.5                          53         26.0         31.6                  28.0
+
+                                                                                                                                                                                                        Even contact number                                             Odd contact number
+
+                                                                                                                                                                                                                                      No.1 contact                                                       No.1 contact
+                                                                                                                                                                                                                 A±0.1                                                             A±0.1
+                                                                                                                                                                                             1.8±0.1
+
+
+
+
+                                                                                                                                                                                                                                    1.5±0.1
+
+
+
+
+                                                                                                                                                                                                                                                             1.8±0.1
+
+
+
+
+                                                                                                                                                                                                                                                                                                        1.5±0.1
+                                                                                                                                                                                                           0.8±0.1(Land)                                                    0.8±0.1(Land)
+                                                                                                                                                                                                           0.65±0.05(Metal mask)                                            0.65±0.05(Metal mask)
+                                                                                                                                                              3MIN
+                                                                                             2MIN
+
+
+
+
+                                                                                                                                                                                   1.8±0.1
+
+
+
+
+                                                                                                                                                                                                                                                        1.8±0.1
+                                                                                                                                                                                                                                              1.5±0.1
+                                                                                                                                                                                                                                              4.5±0.1
+
+
+
+
+                                                                                                                                                                                                                                                                                                                  1.5±0.1
+                                                                                                                                                                                                                                                                                                                  4.5±0.1
+
+
+
+
+                                                                                                            0.5±0.05          0.35±0.03(FPC)                  0.3±0.05               0.5±0.05                                      0.6±0.1(Land) 0.5±0.05                                           0.6±0.1(Land)
+                                                                                                                              0.3±0.03(FFC)                                                  1±0.05                                0.5±0.05(Metal mask) 1±0.05                                      0.5±0.05(Metal mask)
+                                                                                            0.5±0.1          A±0.05
+                                                                                                                                                                                             1±0.05                 B±0.05         1±0.05               1±0.05                    B±0.05            1±0.05
+                                                                                                             B±0.07             0.5±0.1
+
+
+                                                                                           *Set the stiffener thickness to 0.188 (7.5mil) min.                                                                    Recommended metal mask thickness : 0.15mm
+
+                                                                           0.5mm                                                                                Unit: mm                                                                                                                            Unit: mm
+                                                                            Pitch                   Dimension                             Dimension                                                    Dimension                                                            Dimension
+                                                                           Vertical    Number                     A       B      Number                       A          B         Number                                     A                B          Number                                    A                 B
+                                                                                       of Contacts                               of Contacts                                       of Contacts                                                            of Contacts
+                                                                           Mountin              10              04.5     05.5             26              12.5       13.5                              10                  06.5          04.5                               26                14.5                 12.5
+                                                                           g Type               12              05.5     06.5             30              14.5       15.5                              12                  07.5          05.5                               30                16.5                 14.5
+                                                                                                13              06.0     07.0             32              15.5       16.5                              13                  08.0          06.0                               32                17.5                 15.5
+                                                                                                15              07.0     08.0             33              16.0       17.0                              15                  09.0          07.0                               33                18.0                 16.0
+                                                                                                16              07.5     08.5             34              16.5       17.5                              16                  09.5          07.5                               34                18.5                 16.5
+                                                                                                17              08.0     09.0             36              17.5       18.5                              17                  10.0          08.0                               36                19.5                 17.5
+                                                                                                18              08.5     09.5             40              19.5       20.5                              18                  10.5          08.5                               40                21.5                 19.5
+                                                                                                20              09.5     10.5             45              22.0       23.0                              20                  11.5          09.5                               45                24.0                 22.0
+                                                                                                22              10.5     11.5             49              24.0       25.0                              22                  12.5          10.5                               49                26.0                 24.0
+                                                                                                24              11.5     12.5             50              24.5       25.5                              24                  13.5          11.5                               50                26.5                 24.5
+                                                                                                                                          60              29.5       30.5                                                                                                   60                31.5                 29.5
+
+
+
+
+                                                                                                                                                                                                                                                                                                                            11
+                                                                                FH12 Series●0.5mm and 1mm Pitch Connectors For FPC/FFC
+
+
+
+                                                                                ■Recommended FPC/FFC dimensions and Land/Metal Mask dimensions
+                                                                                ●1mm Pitch Product
+                                                                                                                                  FPC/FFC dimensions                                                                                  Land / Metal Mask dimensions
+Nov.1.2016 Copyright 2016 HIROSE ELECTRIC CO., LTD. All Rights Reserved.
+
+
+
+
+                                                                                                               πSet the stiffener thickness to 0.188 (7.5mil) min.                                                                         Recommended metal mask thickness : 0.15mm
+
+
+                                                                                 1mm
+                                                                                 Pitch                                                                                                             Unit: mm                                                                                                     Unit: mm
+                                                                                Bottom                           Dimension                                                   Dimension                                              Dimension                                                 Dimension
+                                                                                                            Number           A        B          C                      Number               A    B     C                     Number          A   B     C       D                      Number           A   B    C   D
+                                                                                Contact                     of Contacts                                                 of Contacts                                           of Contacts                                              of Contacts
+                                                                                 Type                          5             04      06          1                           4            03     05.5   1.5                      5         04 10.6 07           1.5                         4        03 10.1 06.5    2
+                                                                                                               6             05      07          1                           6            05     07.5   1.5                      6         05 11.6 08           1.5                         6        05 12.1 08.5    2
+                                                                                                                                                       Eccentric Type
+
+
+
+
+                                                                                                                                                                                                                                                                      Eccentric Type
+                                                                                                               7             06      08          1                           8            07     09.5   1.5                      7         06 12.6 09           1.5                         8        07 14.1 10.5    2
+                                                                                            Standard Type
+
+
+
+
+                                                                                                                                                                                                              Standard Type
+
+                                                                                                               8             07      09          1                          10            09     11.5   1.5                      8         07 13.6 10           1.5                        10        09 16.1 12.5    2
+                                                                                                               9             08      10          1                          11            10     12.5   1.5                      9         08 14.6 11           1.5                        11        10 17.1 13.5    2
+                                                                                                               11            10      12          1                          14            13     15.5   1.5                      11        10 16.6 13           1.5                        14        13 20.1 16.5    2
+                                                                                                               12            11      13          1                          19            18     20.5   1.5                      12        11 17.6 14           1.5                        19        18 25.1 21.5    2
+                                                                                                               16            15      17          1                          24            23     25.5   1.5                      16        15 21.6 18           1.5                        24        23 30.1 26.5    2
+                                                                                                               17            16      18          1                                                                               17        16 22.6 19           1.5
+                                                                                                               22            21      23          1                                                                               22        21 27.6 24           1.5
+                                                                                                               26            25      27          1                                                                               26        25 31.6 28           1.5
+
+
+
+
+                                                                                  1mm
+                                                                                  Pitch
+                                                                                 Vertical                      *Set the stiffener thickness to 0.188 (7.5mil) min.                                                                         Recommended metal mask thickness : : 0.15mm
+                                                                                Mounting
+                                                                                  Type                                                                                   Unit: mm                                                                                                      Unit: mm
+                                                                                                                                           Dimension                                                                                                      Dimension
+                                                                                                                                   Number                               A                B                                                        Number                               A         B
+                                                                                                                                   of Contacts                                                                                                    of Contacts
+                                                                                                                                          6                             05               07                                                               6                        08           05
+                                                                                                                                          7                             06               08                                                               7                        09           06
+                                                                                                                                          8                             07               09                                                               8                        10           07
+                                                                                                                                          16                            15               17                                                              16                        18           15
+                                                                                                                                          20                            19               21                                                              20                        22           19
+                                                                                                                                          22                            21               23                                                              22                        24           21
+                                                                                                                                          24                            23               25                                                              24                        26           23
+
+
+
+
+                                                                           12
+                                                                                                                                                                                    FH12 Series●0.5mm and 1mm Pitch Connectors For FPC/FFC
+
+
+
+                                                                           ■Packaging Specification
+                                                                            Embossed Carrier Tape Dimensions
+                                                                                            Horizontal Type (Common to Bottom/Top Contact, 0.5mm/1mm Pitch)
+Nov.1.2016 Copyright 2016 HIROSE ELECTRIC CO., LTD. All Rights Reserved.
+
+
+
+
+                                                                                                                         (2.0)              Flat surface for placement
+                                                                                                                                            with Automatic equipment
+
+
+
+
+                                                                                            Reel Dimensions (Common to All Types)
+                                                                                                         3)
+
+
+
+
+                                                                                                                                                        (D : INSIDE)
+                                                                                                        (ø1
+
+
+
+
+                                                                                                                                                                                      End portion                    Mounting portion                         Lead portion (400mm min.)
+                                                                                                                            )
+                                                                                                                            )    (
+                                                                                                                            (
+
+
+
+
+                                                                                                                                                                                    Blank portion                      Embossed carrier tape            Blank portion                 Top cover tape
+                                                                                                                                                      ( E : OUTSIDE)
+                                                                                                                                                                                  (10 pockets min.)                                                    (10 pockets min.)
+
+
+                                                                           ●0.5mm Pitch Bottom/Top Contact Type                                                                                                                                                             Unit:mm
+                                                                                  Dimension                                                                                            Dimension
+                                                                           Number                             A            B               C           D            E           Number                           A              B                  C               D              E
+                                                                           of Contacts                                                                                          of Contacts
+                                                                                               6              16        ----------        07.5       17.4         21.4                              25           24          ----------          11.5             25.4          29.4
+                                                                                               8              16        ----------        07.5       17.4         21.4                              26           24          ----------          11.5             25.4          29.4
+                                                                                              10              16        ----------        07.5       17.4         21.4                              28           32           28.4               14.2             33.4          37.4
+                                                                                              11              16        ----------        07.5       17.4         21.4                              29           32           28.4               14.2             33.4          37.4
+                                                                                              12              24        ----------        11.5       25.4         29.4                              30           32           28.4               14.2             33.4          37.4
+                                                                                              13              24        ----------        11.5       25.4         29.4                              32           32           28.4               14.2             33.4          37.4
+                                                                                              14              24        ----------        11.5       25.4         29.4                              33           32           28.4               14.2             33.4          37.4
+                                                                                              15              24        ----------        11.5       25.4         29.4                              34           32           28.4               14.2             33.4          37.4
+                                                                                              16              24        ----------        11.5       25.4         29.4                              35           44           40.4               20.2             45.4          49.4
+                                                                                              17              24        ----------        11.5       25.4         29.4                              36           44           40.4               20.2             45.4          49.4
+                                                                                              18              24        ----------        11.5       25.4         29.4                              40           44           40.4               20.2             45.4          49.4
+                                                                                              19              24        ----------        11.5       25.4         29.4                              42           44           40.4               20.2             45.4          49.4
+                                                                                              20              24        ----------        11.5       25.4         29.4                              45           44           40.4               20.2             45.4          49.4
+                                                                                              22              24        ----------        11.5       25.4         29.4                              50           44           40.4               20.2             45.4          49.4
+                                                                                              24              24        ----------        11.5       25.4         29.4                              53           44           40.4               20.2             45.4          49.4
+
+                                                                           ● 1mm Pitch Bottom Contact Type                                                                                                                                                                             Unit:mm
+                                                                                                  Dimension                                                                                                Dimension
+                                                                                           Number                  A             B             C            D             E                         Number                  A                B                C             D               E
+                                                                                           of Contacts                                                                                              of Contacts
+                                                                                                   5               16        ----------      07.5          17.4          21.4                             4                16             ----------        07.5           17.4           21.4
+                                                                                                   6               24        ----------      11.5          25.4          29.4                             6                24             ----------        11.5           25.4           29.4
+                                                                                                                                                                                   Eccentric Type
+
+
+
+
+                                                                                                   7               24        ----------      11.5          25.4          29.4                             8                24             ----------        11.5           25.4           29.4
+                                                                           Standard Type
+
+
+
+
+                                                                                                   8               24        ----------      11.5          25.4          29.4                             10               24             ----------        11.5           25.4           29.4
+                                                                                                   9               24        ----------      11.5          25.4          29.4                             11               24             ----------        11.5           25.4           29.4
+                                                                                                   11              24        ----------      11.5          25.4          29.4                             14               32              28.4             14.2           33.4           37.4
+                                                                                                   12              24        ----------      11.5          25.4          29.4                             19               44              40.4             20.2           45.4           49.4
+                                                                                                   16              32         28.4           14.2          33.4          37.4                             24               44              40.4             20.2           45.4           49.4
+                                                                                                   17              44         40.4           20.2          45.4          49.4
+                                                                                                   22              44         40.4           20.2          45.4          49.4
+                                                                                                   26              44         40.4           20.2          45.4          49.4
+
+
+
+
+                                                                                                                                                                                                                                                                                                       13
+                                                                                FH12 Series●0.5mm and 1mm Pitch Connectors For FPC/FFC
+
+
+
+
+                                                                                      Vertical Mounting Type (Common to 0.5mm/1mm Pitch)
+Nov.1.2016 Copyright 2016 HIROSE ELECTRIC CO., LTD. All Rights Reserved.
+
+
+
+
+                                                                                                                                   Flat surface for placement
+                                                                                                                   (1.75)          with Automatic equipment
+
+
+
+
+                                                                                     Reel Dimensions (Common to All Types)
+                                                                                                    3)
+
+
+
+
+                                                                                                                                            (D : INSIDE)
+                                                                                                   (ø1
+
+
+
+
+                                                                                                                                                                    End portion           Mounting portion                  Lead portion (400mm min.)
+                                                                                                                   )
+                                                                                                                   )   (
+                                                                                                                   (
+
+
+
+
+                                                                                                                                                                    Blank portion          Embossed carrier tape       Blank portion           Top cover tape
+                                                                                                                                         ( E : OUTSIDE)
+                                                                                                                                                                  (10 pockets min.)                                (10 pockets min.)
+
+
+
+
+                                                                                ●0.5mm Pitch Vertical mounting Type                                                                                                                    Unit:mm
+                                                                                       Dimension                                                                       Dimension
+                                                                                Number                   A       B           C             D            E       Number                A             B              C            D          E
+                                                                                of Contacts                                                                     of Contacts
+                                                                                      10                 16   ----------    07.5         17.4         21.4             26             24         ----------   11.5            25.4       29.4
+                                                                                      12                 16   ----------    07.5         17.4         21.4             30             32          28.4        14.2            33.4       37.4
+                                                                                      13                 24   ----------    11.5         25.4         29.4             32             32          28.4        14.2            33.4       37.4
+                                                                                      15                 24   ----------    11.5         25.4         29.4             33             32          28.4        14.2            33.4       37.4
+                                                                                      16                 24   ----------    11.5         25.4         29.4             34             44          40.4        20.2            45.4       49.4
+                                                                                      17                 24   ----------    11.5         25.4         29.4             36             44          40.4        20.2            45.4       49.4
+                                                                                      18                 24   ----------    11.5         25.4         29.4             40             44          40.4        20.2            45.4       49.4
+                                                                                      20                 24   ----------    11.5         25.4         29.4             45             44          40.4        20.2            45.4       49.4
+                                                                                      22                 24   ----------    11.5         25.4         29.4             49             44          40.4        20.2            45.4       49.4
+                                                                                      24                 24   ----------    11.5         25.4         29.4             50             44          40.4        20.2            45.4       49.4
+                                                                                                                                                                       60             56          52.4        26.2            57.4       61.4
+
+                                                                                ●1mm Pitch Vertical mounting Type                                  Unit:mm
+                                                                                       Dimension
+                                                                                Number                   A       B           C             D            E
+                                                                                of Contacts
+                                                                                       6                 24   ----------    11.5         25.4         29.4
+                                                                                       7                 24   ----------    11.5         25.4         29.4
+                                                                                       8                 24   ----------    11.5         25.4         29.4
+                                                                                      16                 32   28.4          14.2         33.4         37.4
+                                                                                      20                 44   40.4          20.2         45.4         49.4
+                                                                                      22                 44   40.4          20.2         45.4         49.4
+                                                                                      24                 44   40.4          20.2         45.4         49.4
+
+
+                                                                           14
+                                                                                                                                                     FH12 Series●0.5mm and 1mm Pitch Connectors For FPC/FFC
+
+
+
+                                                                           ■FH12 Series FPC/FFC Construction (Recommended Specifications)
+
+                                                                            1. FFC                            FFC : Flexible Flat Cable
+
+                                                                                                                                      Material Name                            Material               Thickness (μm)
+                                                                                                                              Polyester film                                                                     (12)
+                                                                                                                              Adhesive                                Thermoplastic polyester                    (30)
+                                                                                                                               (Nickel under plated / Gold plated),
+                                                                                                                               soft copper film                                                                  35
+                                                                                                                              Adhesive                                Polyester type                             30
+                                                                                                                              Polyester                                                                          12
+                                                                                                                              Adhesive                                Polyester type                             30
+Nov.1.2016 Copyright 2016 HIROSE ELECTRIC CO., LTD. All Rights Reserved.
+
+
+
+
+                                                                                                                              Stiffener                               Polyester type                            188     (Note)
+                                                                                                                                                                      Total                                     295
+
+                                                                                                                            *Real tolerance of thickness dimension is on the order of ±20 μm (275 to 315 μm)
+
+                                                                            Note: Use of a thicker FFC results in a stiffer lock action and the lock is more easily released.
+                                                                                  A factor that contributes to thicker FFC is the use of 250 μm stiffener which is thicker than the standard (188 μm)
+                                                                                  product. This results in a total thickness of 357 μm.
+                                                                                  When using FFC, control of FFC thickness becomes easy if you indicate to us the thickness of the stiffener.
+
+
+
+                                                                            2. FPC                            FPC : Flexible Printed Circuit
+                                                                                                                                      Material Name                            Material               Thickness (μm)
+                                                                                                                              Covering layer film                     Polyimide 1 mil                            (25)
+                                                                                                                              Cover adhesive                                                                     (25)
+
+                                                                                                                                                                      Nickel under plated 1to 5μm /
+                                                                                                                              Surface treatmenta                                                                   3
+                                                                                                                                                                      Gold plated 0.2μm
+
+                                                                                                                              Copper foil                             Cu              1oz                        35
+                                                                                                                              Base adhesive                           Heat-hardened adhesive                     25
+                                                                                                                              Base film                               Polyimide 1 mil                            25
+                                                                                                                              Reinforcement material adhesive Heat-hardened adhesive                             30
+                                                                                                                              Stiffener                               Polyimide 7 mil                           175
+                                                                                                                                                                      Total                                     293
+
+
+                                                                           3. Precautions
+                                                                            1. This specification is a recommendation for the construction of the FH12 Series FPC and FFC (t=0.3 ±0.05).
+                                                                            2. For details about the construction, please contact the FPC/FFC manufacturers.
+
+
+
+
+                                                                                                                                                                                                                                 15
+                                                                                FH12 Series●0.5mm and 1mm Pitch Connectors For FPC/FFC
+
+
+
+                                                                                ■Recommended Temperature Profile
+
+                                                                                                                                                             MAX 250ç   HRS test conditions
+                                                                                                                                                                        Solder method       :Reflow, IR/hot air
+                                                                                                 250                                                                    Environment:        :Room air
+                                                                                                                                                            230ç        Solder composition  :Paste,
+                                                                                                                                                                                             96.5%Sn/3%Ag/0.5%Cu
+                                                                                   Temperature
+
+
+
+
+                                                                                                 200                                        200ç                                             (Senju Metal Industry, Co.,
+                                                                                                                                                                                             Ltd.’s
+                                                                                                                                                                                             Part Number: M705-221CM5-
+                                                                                                 150
+                                                                                                                         150ç
+                                                                                                                                                                                             32-10.5)
+                                                                                   (ç)                                                                                  Test board          :Glass epoxy
+                                                                                                                                                                                             40mm∞80mm∞1.6mm thick
+                                                                                                                                                                        Land dimensions     :Top and bottom
+Nov.1.2016 Copyright 2016 HIROSE ELECTRIC CO., LTD. All Rights Reserved.
+
+
+
+
+                                                                                                 100
+                                                                                                                                                                                             contact type 0.3mm∞1.3mm
+                                                                                                                                                                                             Vertical mounting type
+                                                                                                  50                                                                                         0.6mm∞1.5mm
+                                                                                                           25ç                                                          Metal mask          :Top and bottom contact type
+                                                                                                           (60 seconds) 90 to 120 seconds      30 seconds                                    0.25mm∞1.3mm∞0.15mm
+                                                                                                                           Preheating          Soldering                                     thick
+                                                                                                  0
+                                                                                                       Start                                                                                 Vertical mounting type
+                                                                                                                                                                                             0.5mm∞1.5mm∞0.15mm
+                                                                                                                            Time                                                             thick
+
+                                                                                                                                                                        This temperature profile is based on the above
+                                                                                                                                                                        conditions.
+                                                                                                                                                                        In individual applications the actual temperature may
+                                                                                                                                                                        vary, depending on solder paste type,
+                                                                                                                                                                        volume/thickness and board size/thickness. Consult
+                                                                                                                                                                        your solder paste and equipment manufacturer for
+                                                                                                                                                                        specific recommendations.
+
+
+
+
+                                                                           16
+                                                                                                                                        FH12 Series●0.5mm and 1mm Pitch Connectors For FPC/FFC
+
+
+
+                                                                           ■Connector Operating Instructions, precautions and recommendations
+                                                                           ●Bottom Contact Type (common for 0.5mm/1mm Pitch)
+                                                                                               Operation                                                         Precautions
+
+                                                                            1. FPC/FFC Termination procedure.                            1) Avoid grasping the actuator with two fingers or
+                                                                               Connector installed on the board.                            lifting the actuator with fingernail.
+                                                                            1) Lift up the actuator. Use thumb or index finger.
+Nov.1.2016 Copyright 2016 HIROSE ELECTRIC CO., LTD. All Rights Reserved.
+
+
+
+
+                                                                                                                                         2) Do not use a thin tool such as the tip of a
+                                                                                                                                            screwdriver to release the lock lever. Doing so
+                                                                                                                                            will cause deformation of the contacts.
+
+
+
+
+                                                                                                                                         3) Do not apply force in the direction of arrows A, B, or C
+                                                                                                                                            while the lock lever is open.
+                                                                                                                                            Doing so will cause the lock lever to become disen gaged,
+                                                                                                                                            or will damage the hook portion of the connector body.
+
+
+
+
+                                                                            2) Fully insert the FPC/FFC parallel to mounting
+                                                                               surface, with the exposed conductive traces
+                                                                               facing down.
+
+                                                                                                                                         4) When inserting the FPC/FFC, do not forcefully rub against
+                                                                                                                                            the surface beneath the connector insertion slot.
+                                                                                                                                            Doing so will result in the FPC/FFC forcefully striking the
+                                                                                                                                            contacts and this will cause contact deformation, peeling
+                                                                                                                                            of the FPC/FFC conductors, and other irregularities.
+
+
+
+
+                                                                                                            FPC/FFC conductive traces
+
+
+
+
+                                                                                                                                         5) Insert the FPC/FFC at the proper position of the connector
+                                                                                                                                            insertion slot, and insert perpendicularly with respect to the con-
+                                                                                                                                            nector. Improper insertion will cause continuity problems, disen-
+                                                                                                                                            gagement of the lock lever, and damage to the hook portion.
+
+
+
+
+                                                                                                                                                                                                                  17
+                                                                                FH12 Series●0.5mm and 1mm Pitch Connectors For FPC/FFC
+
+
+
+
+                                                                                ●Bottom Contact Type (common for 0.5mm/1mm Pitch)
+                                                                                                     Operation                                              Precautions
+
+                                                                                  3) Rotate down the actuator until firmly closed.       6) Partial insertion of the FPC/FFC, offset insertion,
+                                                                                     It is critical that the inserted FPC/FFC is not        and diagonal insertion will result in an unfavor-
+                                                                                     moved and remains fully inserted. Should the           able engagement of the lock lever in which the
+                                                                                     FPC/FFC be moved, open the actuator and                lock lever is raised. To correct this, first remove
+                                                                                     repeat the process, starting with Step 1.              the FPC/FFC and then reinsert it. Forcing the
+                                                                                                                                            lock will damage the connector.
+Nov.1.2016 Copyright 2016 HIROSE ELECTRIC CO., LTD. All Rights Reserved.
+
+
+
+
+                                                                                                                           Stiffener
+
+
+
+
+                                                                                                                                         7) When locking, handle the FPC/FFC so that a
+                                                                                                                                            load is not applied to the FPC/FFC as would
+                                                                                                                                            occur by pulling the FPC/FFC, or lifting it, etc.
+                                                                                                                                            When a load is applied in the opposite direc-
+                                                                                                                                            tion to the rotational movement of the lock, an
+                                                                                                                                            excessive load will be applied and this will
+                                                                                                                                            cause connector damage.
+
+
+
+
+                                                                                  2. FPC/FFC Removal
+                                                                                  1) Lift up the actuator.
+                                                                                  2) Carefully remove the FPC/FFC.
+
+
+
+
+                                                                                                                                         8) At the time of lock operation, application of
+                                                                                                                                            force such as that indicated by the arrows in
+                                                                                                                                            the diagrams below will cause the lock lever to
+                                                                                                                                            disengage. When the lock lever has become
+                                                                                                                                            disengaged, please exchange the entire con-
+                                                                                                                                            nector.
+
+
+
+
+                                                                           18
+                                                                                                                                           FH12 Series●0.5mm and 1mm Pitch Connectors For FPC/FFC
+
+
+
+
+                                                                           ●Top Contact Type
+                                                                                                   Operation                                                     Precautions
+
+                                                                            1. FPC/FFC Termination procedure.                               1) Avoid further lifting of the actuator once the lock has
+                                                                               Connector installed on the board.                               been released. Doing so will cause the lock lever to
+                                                                            1) Lift up the actuator. Use thumb or index finger.                separate from the rotational shaft, and the lock lever
+                                                                                                                                               will become disengaged or the hook portion of the
+                                                                                                                                               connector body will be damaged.
+
+                                                                                                                                                             actuator
+Nov.1.2016 Copyright 2016 HIROSE ELECTRIC CO., LTD. All Rights Reserved.
+
+
+
+
+                                                                                                                                                       Rotational shaft
+
+
+                                                                            2) Fully insert the FPC/FFC parallel to mounting
+                                                                               surface, with the exposed conductive traces
+                                                                               facing UP.
+                                                                                                                                            2) Avoid further pressing of the lock portion from
+                                                                                                           a   FPC/FFC conductive traces
+                                                                                                                                               the locked condition when the FPC/FFC has
+                                                                                                        are                                    not yet been inserted. Doing so will cause the
+                                                                                                 ertion
+                                                                                              ins                                              lock lever to become disengaged from the
+                                                                                          C
+                                                                                        FP                                                     rotational shaft, and the hook portion of the
+                                                                                                                                               connector body will be damaged.
+
+
+
+                                                                                                                   Stiffener
+
+
+                                                                            3) Rotate down the actuator until firmly closed.
+                                                                               It is critical that the inserted FPC/FFC is not
+                                                                               moved and remains fully inserted. Should the
+                                                                               FPC/FFC be moved, open the actuator and
+                                                                               repeat the process, starting with Step 1                     3) Do not insert the FPC/FFC diagonally. D o i n g
+                                                                               above.                                                          so will result in the corners of the FPC/FFC
+                                                                                                                                               catching on the contacts and will cause defor-
+                                                                                                                                               mation of the contacts.
+
+
+
+
+                                                                            2. FPC/FFC Removal
+                                                                            1) Lift up the actuator.
+                                                                            2) Carefully remove the FPC/FFC.
+                                                                                                                                            4) When closing down the actuator apply equal
+                                                                                                                                               pressure to both sides of the actuator.
+
+
+
+
+                                                                                                                                                                                                         19
+                                                                                                        FH12 Series●0.5mm and 1mm Pitch Connectors For FPC/FFC
+
+
+
+
+                                                                                                        ●Vertical Mounting type (common for 0.5 mm/1 mm pitch)
+                                                                                                                                 Operation                                                                   Precautions
+
+                                                                                                          1. FPC/FFC Termination procedure.                                         1) Avoid forcing the actuator up or down without
+                                                                                                             Connector installed on the board.                                         the FPC/FFC inserted.
+                                                                                                          1) Verify that the actuator is positioned upright.
+                                                                                                             If the actuator has rotated to the side, care-
+                                                                                                             fully rotate it upright. Actuator upright
+                        Nov.1.2016 Copyright 2016 HIROSE ELECTRIC CO., LTD. All Rights Reserved.
+
+
+
+
+                                                                                                                                                                                    2) Do not attempt to open or over rotate an already
+                                                                                                          2) Insert the FPC/FFC vertically in the connector                            released actuator (refer to the diagram below).
+                                                                                                             slot assuring that the conductive traces of the                           These actions may damage the actuator.
+                                                                                                             FPC/FFC are facing away from the actuator.
+                                                                                                                   Stiffener                        FPC/FFC conductive traces
+
+
+
+
+                                                                                                                          Sl
+                                                                                                                            ot                                                      3) Do not insert the FPC/FFC diagonally. Doing so
+                                                                                                                                                                                       will result in the corners of the FPC/FFC catching
+                                                                                                          3) Press down the actuator in the direction shown.                           on the contacts and will cause deformation of the
+                                                                                                                                                                                       contacts.
+
+
+
+
+                                                                                                          2. FPC/FFC Removal
+                                                                                                             Rotate the actuator upward and withdraw the FPC/FFC.
+                                                                                                                                                                                    4) Do not press down vertically on the actuator when
+                                                                                                                                                                                       the FPC/FFC already inserted, it needs to be rotat-
+                                                                                                                                                                                       ed to engage the lock. Refer to the diagram below.
+                                                                                                                                                                                    Doing so may cause actuator failure.
+
+
+
+
+                                                                                                                                   ®                 6-3,Nakagawa Chuoh-2-Chome,Tsuzuki-Ku,Yokohama-Shi 224-8540,JAPAN
+                                                                                                                                                     TEL: +81-45-620-3526 Fax: +81-45-591-3726
+                                                                                                                                                     http://www.hirose.com
+                                                                                                                                                     http://www.hirose-connectors.com
+
+
+
+                                                                                                                 The contents of this catalog are current as of date of 11/2013. Contents are subject to change without notice for the purpose of improvements.
+                                                                                                   20
+Powered by TCPDF (www.tcpdf.org)
+

@@ -287,7 +287,9 @@ idf.py -p /dev/ttyUSB0 flash
 - Good: GPS TX uses UART1 RX/GPIO27; UART0 remains dedicated to flash/logs; GPIO35 receives PPS.
 - Good: the helper prevalidates a multi-frame A-GNSS file and sends each valid
   frame through one atomic HTTP request.
-- Base: GPS is absent; UI shows invalid speed while boot uptime, BMS, touch, Wi-Fi, and logs remain operational.
+- Base: GPS is absent; startup marks the module unavailable, GPS-only actions
+  are disabled, and the speed page is omitted unless the controller is online,
+  while boot uptime, BMS, touch, Wi-Fi, and logs remain operational.
 - Base: stationary GPS emits `A` with an empty speed field; UI remains green
   with zero speed and the 60-second summary increments `A`, not `parse_errors`.
 - Bad: TF-card SCLK and GPS module RX both drive/use GPIO18 without an explicit ownership change, or GPS TX is tied to UART0 RX/GPIO3.
@@ -1029,9 +1031,11 @@ bound device update the runtime snapshot.
   Selecting controller monitor enables the controller connection lifecycle;
   selecting BMW does not disconnect an already active controller because the
   BMW layout still consumes controller gear and temperature when available.
-- Controller preference plus an online controller selects controller as the
-  active source. A disconnected or disabled controller selects GPS without
-  changing the preference; reconnect restores controller automatically.
+- Resolve the active source from the saved preference plus real capabilities.
+  Controller preference uses an online controller, then an available GPS;
+  GPS preference uses an available GPS, then an online controller. If neither
+  capability exists, retain the preference enum but set `SPEED_VALID=false`.
+  Reconnect/recovery restores the preferred source automatically.
 - Controller speed-field validity never determines the active source. An
   online controller with invalid speed renders `-`; it must not borrow GPS.
   GPS as active source also renders `-` while the RMC fix is invalid/stale.
@@ -1042,13 +1046,17 @@ bound device update the runtime snapshot.
   sign-normalized display current; discharge is positive and regeneration
   subtracts. Both interval endpoints require fresh GPS/BMS data, intervals
   over 3 seconds are discarded, and values remain invalid below 0.1 km.
-- The fixed carousel is Battery -> unified Speed -> Cast. The speed page keeps
-  BMS polling and FarDriver gather/keepalive active together; after trip
-  accumulation starts, BMS polling continues on other pages.
+- The normal carousel is Battery -> unified Speed -> Cast. The speed page
+  participates only while `GPS_MODULE_AVAILABLE || CONTROLLER_ONLINE`; when
+  both are false, Cast moves to the second physical slot and there must be no
+  blank middle page. A stable speed page keeps BMS polling and FarDriver
+  gather/keepalive active together; after trip accumulation starts, BMS polling
+  continues on other pages.
 - The unified physical speed page owns the BMW object tree and creates the
   controller-monitor overlay only when that style is first selected. Switching
-  back hides the opaque overlay and restores the BMW draw object without adding
-  or removing carousel pages.
+  back hides the opaque overlay and restores the BMW draw object. Capability
+  gating hides/shows this existing page object; it does not delete or recreate
+  the dashboard object tree.
 - The V4 page uses a custom draw object rather than a full-screen canvas.
   Metric range is 0..180 km/h and imperial range is 0..120 mph; the color band
   clamps at the range while the numeric speed keeps the real value.
@@ -1073,9 +1081,10 @@ bound device update the runtime snapshot.
   persist a partial configuration.
 - Saved `speed_style` is greater than `1` -> reject the display settings as
   invalid rather than guessing a style.
-- Controller preference is offline -> report preference=controller,
-  active=GPS, keep bound identity/parameters, hide controller/motor
-  temperature fields, and display gear `1`.
+- Controller preference is offline -> use GPS only when the module is
+  `AVAILABLE`; otherwise retain preference=controller with invalid speed. Keep
+  bound identity/parameters, hide controller/motor temperature fields, and
+  display gear `1`.
 - Controller is online but speed is invalid -> active=controller and
   `SPEED_VALID=false`; do not fall back.
 - GPS RMC or BMS freshness is lost -> break the efficiency anchor so recovery
@@ -1096,12 +1105,13 @@ bound device update the runtime snapshot.
 - Good: controller-monitor style with GPS preference keeps the monitor layout
   while the main speed remains GPS-derived; changing source does not change
   style, and changing style does not change source.
-- Base: no GPS fix, no controller, and no BMS; the unified page remains visible
-  with `-`, `--:--`, an orange GPS point, hidden battery/consumption/temperatures,
-  and default gear `1`.
+- Base: GPS module is available but has no fix, with no controller or BMS; the
+  unified page remains visible with `-`, `--:--`, an orange GPS point, hidden
+  battery/consumption/temperatures, and default gear `1`.
 - Bad: deriving style from `speed_source`, reusing `ctl_page` as the new style
-  key, removing the speed page when controller mode is disabled, using speed
-  validity as online state, resetting trip totals on a page swipe, or adding a
+  key, hiding the speed page merely because controller mode is disabled, using
+  fix/speed validity as module/connection state, leaving a blank slot when both
+  capabilities are absent, resetting trip totals on a page swipe, or adding a
   full-screen framebuffer on the 4 MB/no-PSRAM target.
 
 ### 6. Tests Required
@@ -1116,9 +1126,9 @@ bound device update the runtime snapshot.
   absent, missing controller gear renders `1`, and there is no clipping,
   overlap, scrollbar, or stale temperature field.
 - Exercise the TFT style list in both orientations. Assert BMW/controller
-  monitor selection survives reboot, preserves the source preference, keeps
-  the carousel at three pages, and returns one level with header-back or the
-  left-edge gesture.
+  monitor selection survives reboot, preserves the source preference, uses
+  three physical carousel slots while a speed capability exists and two when
+  neither exists, and returns one level with header-back or the left-edge gesture.
 - Render explicit BMS-offline landscape and portrait states. Assert the entire
   battery graphic and consumption label are absent while GPS/controller/time
   content keeps its normal geometry.
@@ -1140,9 +1150,169 @@ active = controller.speed_valid ? CONTROLLER : GPS;
 #### Correct
 
 ```c
-active = preference == CONTROLLER && controller_online ? CONTROLLER : GPS;
-speed_valid = active == CONTROLLER ? controller.speed_valid : gps_fix_valid;
+active = esp_bms_speed_source_resolve(preference,
+                                      gps_module_available,
+                                      controller_online);
+speed_valid = active == CONTROLLER
+                  ? controller_online && controller.speed_valid
+                  : gps_module_available && gps_fix_valid;
 ```
+
+## Scenario: GPS Startup Capability And Boot Animation
+
+### 1. Scope / Trigger
+
+- Trigger: changing GPS UART/NMEA/CASBIN detection, GPS-derived feature gates,
+  carousel membership, boot sequencing, boot animation selection, or the
+  snapshot/action/NVS contracts that connect those layers.
+
+### 2. Signatures
+
+- Capability enum: `esp_bms_gps_module_state_t` is `PROBING`, `AVAILABLE`, or
+  `UNAVAILABLE`; it is independent of `GPS_FIX_VALID`.
+- Startup finalize API:
+  `esp_bms_idf_runtime_finish_gps_startup_probe(runtime)`.
+- Snapshot fields: `gps_module_state` and `boot_animation_style`.
+- Source projection:
+  `esp_bms_speed_source_resolve(preference, gps_available, controller_online)`.
+- Boot UI API: `esp_bms_lvgl_ui_boot_start(snapshot)`,
+  `esp_bms_lvgl_ui_boot_update(progress_percent, ascii_status)`, and
+  `esp_bms_lvgl_ui_boot_finish(real_snapshot)`.
+- Simulator automation boundary: `ESP_BMS_LVGL_UI_SIMULATOR=1` plus
+  `esp_bms_lvgl_ui_simulator_open_boot_animation_settings()` and
+  `esp_bms_lvgl_ui_simulator_play_boot_animation()`; firmware defaults the
+  macro to `0`, while the visible play button and preview timer remain in the
+  shared production UI.
+- Host regression entry: `./scripts/run-host-selftests.sh` compiles GPS stream,
+  speed dashboard, and FarDriver protocol tests with `-Wall -Wextra -Werror`,
+  links FarDriver with `-lm`, then runs A-GNSS and firmware-code self-tests.
+- Persistent selection: action `SET_BOOT_ANIMATION_STYLE`; NVS `uint8_t` key
+  `boot_anim`, where `0=CHARGE` and `1=GAUGE_SWEEP`.
+
+### 3. Contracts
+
+- Runtime initialization starts in `PROBING`. UART configuration/pin/driver
+  failure immediately yields `UNAVAILABLE`; otherwise a three-second wall-clock
+  probe calls the normal `runtime_tick()` UART path.
+- A complete checksum-valid NMEA sentence or a complete valid CASBIN frame is
+  module-presence evidence. Raw bytes, PPS edges, UART driver readiness, or an
+  RMC fix are not required evidence. `RMC,V` proves the module is present while
+  keeping `GPS_FIX_VALID=false`.
+- Probe timeout sets `UNAVAILABLE` without uninstalling UART. Later valid
+  protocol evidence recovers to `AVAILABLE` without reboot.
+- `GPS_MODULE_AVAILABLE || CONTROLLER_ONLINE` gates the physical speed page.
+  When false, hide the existing speed object tree, move Cast from `2*width` to
+  `1*width`, compress both page-to-X and X-to-page mappings, and return an
+  active speed page safely to Battery.
+- GPS-unavailable settings may switch away from a saved GPS preference but may
+  not switch back to GPS. Runtime repeats the same validation. A-GNSS returns
+  HTTP 503 unless UART and module capability are both available.
+- Load display settings before bridge/UI creation. Project the saved rotation
+  into mutable `esp_bms_lvgl_bridge_config_t.rotation` before calling
+  `esp_bms_lvgl_bridge_init()`; do not initialize at the default rotation and
+  immediately mutate the live display. After the LVGL adapter task starts,
+  every live rotation/resolution/object mutation must hold the bridge lock.
+  After the first boot frame, start only the configured BMS/controller BLE
+  services, run the real GPS probe, restore the real snapshot, and enter Battery.
+- Charge animation uses only basic LVGL objects, persistent label buffers, ten
+  battery segments, and ASCII stage text. Gauge sweep reuses the production
+  S1000RR/Fireblade update path with `0 -> maximum -> 0`; controller-monitor
+  style falls back to S1000RR. Demo snapshots never enter runtime or trip data.
+- The device and desktop settings play button uses one shared wall-clock LVGL
+  timer to preview the currently selected style. It queues no action, restores
+  the latest snapshot, and reopens the startup-animation picker. Repeated play
+  and root rebuild delete and null the timer before object deletion.
+
+### 4. Validation & Error Matrix
+
+- Valid `RMC,V`, GGA, TXT, or CASBIN frame before timeout -> `AVAILABLE`; no
+  fix remains a normal search state and the speed page remains eligible.
+- Noise, partial sentence, bad checksum, or raw UART bytes only -> remain
+  `PROBING`; timeout -> `UNAVAILABLE`.
+- `UNAVAILABLE` plus controller offline -> Battery -> Cast with no blank slot;
+  controller online or later GPS recovery -> speed page returns automatically.
+- Source action targets unavailable GPS -> reject without changing or saving
+  the preference. Source fallback with neither capability -> invalid speed.
+- A-GNSS while probing/unavailable -> HTTP 503 and no UART write.
+- Missing `boot_anim` -> Charge default; value above `1` -> invalid settings;
+  committed valid action -> save with the existing display settings transaction.
+- Boot animation API called before UI initialization or update without an
+  active boot overlay -> `ESP_ERR_INVALID_STATE`.
+- Preview started outside the startup-animation picker ->
+  `ESP_ERR_INVALID_STATE`; timer allocation failure -> finish and restore the
+  picker; rotation/root rebuild during preview -> cancel the timer and restore
+  the picker without an action or snapshot mutation.
+- Saved non-default rotation applied by calling `set_rotation()` after bridge
+  init without the bridge lock -> LVGL task/main-task invalidation race and
+  task-WDT risk; pass it in the bridge init config instead.
+
+### 5. Good / Base / Bad Cases
+
+- Good: a cold, no-fix receiver emits valid `RMC,V`; the log reports module
+  available, the header shows `GPS --`, and the sweep completes before Battery.
+- Base: no GPS is installed; boot completes with `GPS OFFLINE`, GPS selection
+  is disabled, A-GNSS is unavailable, and all non-GPS functions continue.
+- Bad: treat UART-ready, arbitrary bytes, PPS, or missing fix as module
+  presence/absence; leave an invisible page gap; copy a third instrument UI;
+  or count 60 loop iterations while LVGL work stretches the wall-clock probe.
+
+### 6. Tests Required
+
+- Run GPS stream, speed dashboard, FarDriver, and A-GNSS host self-tests.
+- Run `./scripts/run-host-selftests.sh`; all five pass lines must be present.
+- Run simulator 320x240 and 240x320. Assert the GPS/controller four-combination
+  capability matrix, compressed Cast navigation, Charge, S1000RR sweep, and
+  Fireblade sweep. Also assert the settings play preview finishes and returns,
+  and that preview-time rotation safely cancels and rebuilds the same subview.
+- Render production boot previews under root `preview/`; audit all Han UI
+  characters against `settings_zh_10/13/16` with zero missing glyphs.
+- Run `git diff --check`, `./scripts/esp-idf-env.sh build`, and GitNexus
+  `detect-changes` against the task base.
+- Flash through the fixed RFC2217 endpoint. With GPS connected but no fix,
+  assert valid protocol evidence sets `AVAILABLE`; on the physical TFT also
+  assert the startup-animation picker exposes play, completes, and returns
+  without changing the configured style. Record the no-GPS hardware branch as
+  unavailable if it cannot be physically exercised.
+- Cold-boot with a saved non-default rotation and assert the initial touch/panel
+  rotation is logged once during bridge init, `heap[boot_ready]` is reached,
+  and no task-WDT backtrace appears.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```c
+gps_available = uart_driver_ready || gps_fix_valid;
+cast_x = width * 2;
+```
+
+#### Correct
+
+```c
+gps_available = valid_nmea_checksum || valid_casbin_frame;
+speed_page = gps_available || controller_online;
+cast_x = width * (speed_page ? 2 : 1);
+```
+
+#### Wrong
+
+```c
+const esp_bms_lvgl_bridge_config_t config = ESP_BMS_LVGL_BRIDGE_DEFAULT_CONFIG();
+esp_bms_lvgl_bridge_init(&config);
+esp_bms_lvgl_bridge_set_rotation(saved_rotation); /* adapter task is live, no lock */
+```
+
+#### Correct
+
+```c
+esp_bms_lvgl_bridge_config_t config = ESP_BMS_LVGL_BRIDGE_DEFAULT_CONFIG();
+config.rotation = saved_rotation;
+esp_bms_lvgl_bridge_init(&config);
+```
+
+The play button and preview timer belong to shared production UI. Only
+simulator navigation/click/status test hooks belong behind the host macro; do
+not add those hooks to the firmware symbol table.
 
 ## Scenario: FarDriver BLE Controller Telemetry
 
@@ -1184,10 +1354,12 @@ speed_valid = active == CONTROLLER ? controller.speed_valid : gps_fix_valid;
 - `controller_connection_enabled` is the lifecycle switch. Disabling it stops
   scan intent and terminates current or late-arriving connections without
   clearing the bound MAC/name; enabling it reconnects a bound controller.
-- The unified speed dashboard is always present. A stable speed dashboard
-  enables the FFEC CCCD and high-rate projection through the combined data
-  source. Settings, quick panel, and page drag/settle use data source NONE;
-  once trip-efficiency sampling starts, BMS polling continues across pages.
+- The unified speed dashboard object tree persists, but carousel participation
+  is capability-gated by GPS module availability or controller online state. A
+  stable visible speed dashboard enables the FFEC CCCD and high-rate projection
+  through the combined data source. Settings, quick panel, hidden speed state,
+  and page drag/settle use data source NONE; once trip-efficiency sampling
+  starts, BMS polling continues across pages.
 - `speed_src` stores the GPS/controller preference. A disconnected controller
   forces only the active speed source to GPS; the preference remains
   controller and resumes automatically after reconnect. An online controller
@@ -1225,9 +1397,10 @@ speed_valid = active == CONTROLLER ? controller.speed_valid : gps_fix_valid;
   terminate that connection immediately and skip GATT discovery.
 - Disconnect during rebind -> clear telemetry, then start the deferred scan
   only when connection remains enabled.
-- Offline controller -> keep the unified page present, hide controller-only
-  temperature fields, render default gear `1`, and preserve saved controller
-  parameters.
+- Offline controller -> keep the unified page present only when GPS capability
+  is available; otherwise hide it from the carousel. Hide controller-only
+  temperature fields, render default gear `1` when visible, and preserve saved
+  controller parameters.
 - Online controller with invalid speed -> keep controller as the active source
   and render `-`; do not silently switch to GPS.
 
@@ -1236,9 +1409,9 @@ speed_valid = active == CONTROLLER ? controller.speed_valid : gps_fix_valid;
 - Good: the unified speed page settles, CCCD enables, validated FFEC frames
   update fixed label buffers; `12-70-90` plus `RateRatio=60` projects about
   `1353 mm` and ratio `1.00`, then schedules one persistence update.
-- Base: the unified page remains available without a controller; telemetry
-  stays invalid, controller-only settings and temperatures hide, gear renders
-  `1`, and legacy `ctl_wheel` still loads safely.
+- Base: without a controller but with an available GPS module, the unified page
+  remains available; telemetry stays invalid, controller-only settings and
+  temperatures hide, gear renders `1`, and legacy `ctl_wheel` still loads safely.
 - Bad: clamping a controller-provided `26-110-210` tuple into roller limits,
   overwriting the user's fallback on every notification, removing the speed
   page when controller preference is off, or selecting a new MAC while leaving
@@ -1251,8 +1424,9 @@ speed_valid = active == CONTROLLER ? controller.speed_valid : gps_fix_valid;
   controller-priority speed, CRC, zero divisors, and overflow.
 - Run `git diff --check`, `./scripts/esp-idf-env.sh build`, GitNexus
   `detect-changes`, and one RFC2217 flash plus boot-log capture.
-- On hardware, verify the fixed battery/speed/cast three-page mapping, settings
-  return, source fallback/recovery, rotation, rebind, and
+- On hardware, verify three carousel positions with either speed capability and
+  the compressed Battery/Cast mapping with neither, plus settings return,
+  source fallback/recovery, rotation, rebind, and
   BMS/FarDriver/phone coexistence for at least 10 minutes.
 
 ### 7. Wrong vs Correct

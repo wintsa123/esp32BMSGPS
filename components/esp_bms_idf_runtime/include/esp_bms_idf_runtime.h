@@ -1,12 +1,11 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include "esp_err.h"
 #include "esp_http_server.h"
-#include "driver/uart.h"
 #include "esp_adc/adc_oneshot.h"
-#include "esp_bms_gps_stream.h"
 #include "esp_bms_lvgl_ui.h"
 #include "esp_bms_speed_dashboard.h"
 #include "esp_fardriver_protocol.h"
@@ -15,6 +14,10 @@
 
 #ifdef __cplusplus
 extern "C" {
+#endif
+
+#ifndef ESP_BMS_FEATURE_GPS
+#define ESP_BMS_FEATURE_GPS 1
 #endif
 
 typedef enum {
@@ -36,7 +39,6 @@ typedef enum {
 #define ESP_BMS_IDF_BMS_FRAME_MAX_LEN 192U
 
 #define ESP_BMS_IDF_RUNTIME_FLAG_BATTERY_ADC_READY (UINT64_C(1) << 0)
-#define ESP_BMS_IDF_RUNTIME_FLAG_GPS_UART_READY (UINT64_C(1) << 1)
 #define ESP_BMS_IDF_RUNTIME_FLAG_NVS_READY (UINT64_C(1) << 2)
 #define ESP_BMS_IDF_RUNTIME_FLAG_WIFI_STACK_READY (UINT64_C(1) << 3)
 #define ESP_BMS_IDF_RUNTIME_FLAG_WIFI_DRIVER_READY (UINT64_C(1) << 4)
@@ -47,9 +49,13 @@ typedef enum {
 #define ESP_BMS_IDF_RUNTIME_FLAG_HTTP_BMS_SCAN_PENDING (UINT64_C(1) << 14)
 #define ESP_BMS_IDF_RUNTIME_FLAG_HTTP_BMS_BIND_PENDING (UINT64_C(1) << 15)
 #define ESP_BMS_IDF_RUNTIME_FLAG_HTTP_SERVER_STARTED (UINT64_C(1) << 16)
-#define ESP_BMS_IDF_RUNTIME_FLAG_BMS_BLE_READY (UINT64_C(1) << 17)
-#define ESP_BMS_IDF_RUNTIME_FLAG_BMS_BLE_SYNCED (UINT64_C(1) << 18)
-#define ESP_BMS_IDF_RUNTIME_FLAG_BMS_BLE_HOST_STARTED (UINT64_C(1) << 19)
+#define ESP_BMS_IDF_RUNTIME_FLAG_BLE_HOST_READY (UINT64_C(1) << 17)
+#define ESP_BMS_IDF_RUNTIME_FLAG_BLE_HOST_SYNCED (UINT64_C(1) << 18)
+#define ESP_BMS_IDF_RUNTIME_FLAG_BLE_HOST_STARTED (UINT64_C(1) << 19)
+/* Compatibility aliases stay local to the transitional runtime implementation. */
+#define ESP_BMS_IDF_RUNTIME_FLAG_BMS_BLE_READY ESP_BMS_IDF_RUNTIME_FLAG_BLE_HOST_READY
+#define ESP_BMS_IDF_RUNTIME_FLAG_BMS_BLE_SYNCED ESP_BMS_IDF_RUNTIME_FLAG_BLE_HOST_SYNCED
+#define ESP_BMS_IDF_RUNTIME_FLAG_BMS_BLE_HOST_STARTED ESP_BMS_IDF_RUNTIME_FLAG_BLE_HOST_STARTED
 #define ESP_BMS_IDF_RUNTIME_FLAG_BMS_SCAN_REQUESTED (UINT64_C(1) << 20)
 #define ESP_BMS_IDF_RUNTIME_FLAG_BMS_SCAN_ACTIVE (UINT64_C(1) << 21)
 #define ESP_BMS_IDF_RUNTIME_FLAG_BLUETOOTH_ADVERTISE_REQUESTED (UINT64_C(1) << 25)
@@ -76,43 +82,49 @@ typedef enum {
 
 typedef esp_bms_bms_scan_candidate_t esp_bms_idf_bms_scan_candidate_t;
 
+typedef struct esp_bms_idf_runtime esp_bms_idf_runtime_t;
+
+typedef esp_err_t (*esp_bms_idf_runtime_optional_http_handler_t)(httpd_req_t *req,
+                                                                  void *context);
+typedef bool (*esp_bms_idf_runtime_bms_frame_handler_t)(esp_bms_idf_runtime_t *runtime,
+                                                         const uint8_t *chunk,
+                                                         size_t chunk_len);
+
+/* Optional BMS transport ownership lives in esp_bms_bms_ble.  The core only
+ * dispatches lifecycle events through this stable contract. */
 typedef struct {
+    esp_err_t (*start_if_bound)(esp_bms_idf_runtime_t *runtime);
+    esp_err_t (*start_for_bind)(esp_bms_idf_runtime_t *runtime);
+    esp_err_t (*resume_scan)(esp_bms_idf_runtime_t *runtime);
+    bool (*tick)(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_ms);
+    void (*on_ble_reset)(esp_bms_idf_runtime_t *runtime);
+} esp_bms_idf_runtime_bms_ble_driver_t;
+
+/* Optional controller transport ownership lives in esp_bms_controller_ble.
+ * The core retains settings and snapshot projection, then dispatches transport
+ * lifecycle through this contract. */
+typedef struct {
+    esp_err_t (*start_if_enabled)(esp_bms_idf_runtime_t *runtime);
+    esp_err_t (*start_scan)(esp_bms_idf_runtime_t *runtime);
+    void (*stop)(esp_bms_idf_runtime_t *runtime);
+    bool (*tick)(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_ms);
+    void (*on_ble_reset)(esp_bms_idf_runtime_t *runtime);
+} esp_bms_idf_runtime_controller_ble_driver_t;
+
+struct esp_bms_idf_runtime {
     esp_bms_dashboard_snapshot_t snapshot;
     adc_oneshot_unit_handle_t battery_adc;
     adc_channel_t battery_adc_channel;
-    uart_port_t gps_uart;
-    esp_bms_gps_stream_t gps_stream;
-    esp_bms_gps_casbin_stream_t gps_casbin_stream;
-    esp_bms_gps_motion_filter_t gps_motion_filter;
-    uint8_t gps_raw_sample[32];
     uint32_t tick_count;
     uint32_t elapsed_ms;
     uint32_t battery_sample_elapsed_ms;
     uint32_t battery_samples_seen;
     uint32_t battery_read_failures;
-    uint32_t gps_bytes_seen;
-    uint32_t gps_parse_errors;
-    uint32_t gps_casbin_errors;
-    uint32_t gps_overflow_lines;
-    uint32_t gps_rmc_valid_count;
-    uint32_t gps_rmc_invalid_count;
     uint32_t gps_speed_knots_milli;
-    volatile uint32_t gps_pps_isr_count;
-    uint32_t gps_pps_processed_count;
-    uint32_t gps_pps_last_tick;
-    uint32_t gps_summary_last_tick;
-    uint32_t gps_rmc_last_tick;
-    uint32_t gps_rmc_last_log_tick;
-    uint32_t gps_fix_log_last_tick;
-    uint32_t gps_security_last_query_tick;
-    uint32_t gps_security_verify_tick;
     int64_t bms_telemetry_last_us;
     uint32_t bms_status_poll_elapsed_ms;
     uint32_t controller_keepalive_elapsed_ms;
     uint32_t controller_scan_revision;
-    uint16_t gps_utc_year;
-    uint8_t gps_debug_lines_logged;
-    uint8_t gps_raw_sample_len;
     uint16_t bms_frame_len;
     uint16_t bms_conn_handle;
     uint16_t bluetooth_conn_handle;
@@ -150,27 +162,6 @@ typedef struct {
     uint8_t bms_scan_candidate_count;
     uint8_t controller_scan_candidate_count;
     uint8_t pending_audio_events;
-    uint8_t gps_utc_month;
-    uint8_t gps_utc_day;
-    uint8_t gps_utc_hour;
-    uint8_t gps_utc_minute;
-    uint8_t gps_utc_second;
-    uint8_t gps_spoof_state;
-    uint8_t gps_jam_level;
-    uint8_t gps_security_config_attempts;
-    bool gps_pps_active;
-    bool gps_pps_ever_seen;
-    bool gps_rmc_seen;
-    bool gps_rmc_timed_out;
-    bool gps_utc_valid;
-    bool gps_utc_logged;
-    bool gps_uart_diagnostic_logged;
-    bool gps_fix_log_valid;
-    bool gps_fix_logged_state;
-    bool gps_security_state_valid;
-    bool gps_security_configured;
-    bool gps_security_verify_pending;
-    bool gps_agnss_injection_active;
     bool cast_active;
     bool cast_frame_active;
     int cast_socket_fd;
@@ -198,7 +189,12 @@ typedef struct {
     esp_bms_idf_display_rotation_t http_pending_display_rotation;
     esp_bms_speed_unit_t http_pending_speed_unit;
     esp_bms_speed_source_t http_pending_speed_source;
-} esp_bms_idf_runtime_t;
+    esp_bms_idf_runtime_optional_http_handler_t optional_http_handler;
+    void *optional_http_context;
+    esp_bms_idf_runtime_bms_frame_handler_t bms_frame_handler;
+    const esp_bms_idf_runtime_bms_ble_driver_t *bms_ble_driver;
+    const esp_bms_idf_runtime_controller_ble_driver_t *controller_ble_driver;
+};
 
 static inline bool esp_bms_idf_runtime_flag_get(const esp_bms_idf_runtime_t *runtime,
                                                 uint64_t flag)
@@ -226,14 +222,50 @@ esp_err_t esp_bms_idf_runtime_save_display_settings(esp_bms_idf_runtime_t *runti
 esp_err_t esp_bms_idf_runtime_start_setup_ap(esp_bms_idf_runtime_t *runtime);
 esp_err_t esp_bms_idf_runtime_start_http_server(esp_bms_idf_runtime_t *runtime);
 esp_err_t esp_bms_idf_runtime_stop_setup_services(esp_bms_idf_runtime_t *runtime);
-esp_err_t esp_bms_idf_runtime_start_bms_ble_if_bound(esp_bms_idf_runtime_t *runtime);
-esp_err_t esp_bms_idf_runtime_start_bms_ble_for_bind(esp_bms_idf_runtime_t *runtime);
+esp_err_t esp_bms_idf_runtime_ensure_ble_host(esp_bms_idf_runtime_t *runtime);
+void esp_bms_idf_runtime_register_bms_frame_handler(
+    esp_bms_idf_runtime_t *runtime,
+    esp_bms_idf_runtime_bms_frame_handler_t handler);
+void esp_bms_idf_runtime_register_bms_ble_driver(
+    esp_bms_idf_runtime_t *runtime,
+    const esp_bms_idf_runtime_bms_ble_driver_t *driver);
+void esp_bms_idf_runtime_register_controller_ble_driver(
+    esp_bms_idf_runtime_t *runtime,
+    const esp_bms_idf_runtime_controller_ble_driver_t *driver);
+esp_err_t esp_bms_idf_runtime_load_bms_binding(esp_bms_idf_runtime_t *runtime);
+bool esp_bms_idf_runtime_bms_scan_project_snapshot(esp_bms_idf_runtime_t *runtime);
+void esp_bms_idf_runtime_bms_scan_clear_candidates(esp_bms_idf_runtime_t *runtime);
+void esp_bms_idf_runtime_bms_scan_store_candidate(esp_bms_idf_runtime_t *runtime,
+                                                   const char *mac,
+                                                   const char *name,
+                                                   int8_t rssi);
 esp_err_t esp_bms_idf_runtime_start_bluetooth_advertising(esp_bms_idf_runtime_t *runtime);
 esp_err_t esp_bms_idf_runtime_start_controller_ble_if_enabled(esp_bms_idf_runtime_t *runtime);
+esp_err_t esp_bms_idf_runtime_start_controller_scan(esp_bms_idf_runtime_t *runtime);
+void esp_bms_idf_runtime_stop_controller_ble(esp_bms_idf_runtime_t *runtime);
+void esp_bms_idf_runtime_project_controller_snapshot(esp_bms_idf_runtime_t *runtime);
 void esp_bms_idf_runtime_set_active_data_source(esp_bms_idf_runtime_t *runtime,
                                                 esp_bms_lvgl_data_source_t source);
 bool esp_bms_idf_runtime_apply_pending_http_config(esp_bms_idf_runtime_t *runtime);
 bool esp_bms_idf_runtime_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_ms);
+void esp_bms_idf_runtime_register_optional_http_handler(
+    esp_bms_idf_runtime_t *runtime,
+    esp_bms_idf_runtime_optional_http_handler_t handler,
+    void *context);
+bool esp_bms_idf_runtime_set_gps_module_state(esp_bms_idf_runtime_t *runtime,
+                                              esp_bms_gps_module_state_t state,
+                                              const char *reason);
+bool esp_bms_idf_runtime_publish_gps_sample(esp_bms_idf_runtime_t *runtime,
+                                            bool fix_valid,
+                                            uint32_t speed_knots_milli);
+void esp_bms_idf_runtime_publish_gps_datetime(esp_bms_idf_runtime_t *runtime,
+                                              uint16_t year,
+                                              uint8_t month,
+                                              uint8_t day,
+                                              uint8_t hour,
+                                              uint8_t minute,
+                                              bool valid);
+bool esp_bms_idf_runtime_timeout_gps(esp_bms_idf_runtime_t *runtime);
 uint8_t esp_bms_idf_runtime_take_connection_audio_events(esp_bms_idf_runtime_t *runtime);
 bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,
                                             const esp_bms_lvgl_action_event_t *event);

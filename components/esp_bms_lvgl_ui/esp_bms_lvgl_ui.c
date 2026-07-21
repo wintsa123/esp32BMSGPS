@@ -67,6 +67,9 @@ LV_FONT_DECLARE(settings_zh_16);
 #define SETTINGS_CHOICE_ROW_H_LANDSCAPE 48
 #define SETTINGS_LIST_MARGIN_X 8
 #define SETTINGS_LIST_PAD_Y 4
+#define SETTINGS_BOOT_PREVIEW_TIMER_MS 20U
+#define SETTINGS_BOOT_PREVIEW_DURATION_MS 3000U
+#define SETTINGS_BOOT_PREVIEW_READY_HOLD_MS 300U
 #define QUICK_BRIGHTNESS_MIN 10
 #define QUICK_BRIGHTNESS_MAX 100
 #define QUICK_VOLUME_MIN 0
@@ -105,6 +108,7 @@ LV_FONT_DECLARE(settings_zh_16);
 #define FIREBLADE_ARC_SWEEP_ANGLE 234
 #define FIREBLADE_SPEED_TICK_COUNT 18U
 #define FIREBLADE_SCALE_LABEL_COUNT ((FIREBLADE_SPEED_TICK_COUNT / 2U) + 1U)
+#define BOOT_CHARGE_SEGMENT_COUNT 10U
 #define DASHBOARD_CELL_KEY_BITMAP_W 28
 #define DASHBOARD_CELL_KEY_BITMAP_H 16
 #define DASHBOARD_CELL_KEY_BITMAP_BYTES \
@@ -238,6 +242,15 @@ _Static_assert(sizeof(esp_bms_speed_dashboard_style_t) == 4 &&
                    ESP_BMS_SPEED_DASHBOARD_STYLE_CONTROLLER == 1 &&
                    ESP_BMS_SPEED_DASHBOARD_STYLE_HONDA_FIREBLADE == 2,
                "esp_bms_speed_dashboard_style_t ABI changed; update runtime consumers too");
+_Static_assert(sizeof(esp_bms_gps_module_state_t) == 4 &&
+                   ESP_BMS_GPS_MODULE_PROBING == 0 &&
+                   ESP_BMS_GPS_MODULE_AVAILABLE == 1 &&
+                   ESP_BMS_GPS_MODULE_UNAVAILABLE == 2,
+               "esp_bms_gps_module_state_t ABI changed; update runtime consumers too");
+_Static_assert(sizeof(esp_bms_boot_animation_style_t) == 4 &&
+                   ESP_BMS_BOOT_ANIMATION_CHARGE == 0 &&
+                   ESP_BMS_BOOT_ANIMATION_GAUGE_SWEEP == 1,
+               "esp_bms_boot_animation_style_t ABI changed; update runtime consumers too");
 _Static_assert(sizeof(esp_bms_dashboard_snapshot_t) == 1048,
                "dashboard snapshot ABI size changed; update all C consumers too");
 _Static_assert(ESP_BMS_LVGL_ACTION_NONE == 0,
@@ -294,6 +307,8 @@ _Static_assert(ESP_BMS_LVGL_ACTION_SET_PRESET_RANGE == 30,
                "esp_bms_lvgl_action_t value changed; update C action consumers too");
 _Static_assert(ESP_BMS_LVGL_ACTION_SET_SPEED_DASHBOARD_STYLE == 31,
                "esp_bms_lvgl_action_t value changed; update C action consumers too");
+_Static_assert(ESP_BMS_LVGL_ACTION_SET_BOOT_ANIMATION_STYLE == 32,
+               "esp_bms_lvgl_action_t value changed; update C action consumers too");
 
 typedef struct {
     lv_display_t *display;
@@ -305,6 +320,11 @@ typedef struct {
     lv_obj_t *cast_page;
     lv_obj_t *cast_qr;
     lv_obj_t *controller_page;
+    lv_obj_t *boot_overlay;
+    lv_obj_t *boot_status;
+    lv_obj_t *boot_progress;
+    lv_obj_t *boot_scan_line;
+    lv_obj_t *boot_charge_segments[BOOT_CHARGE_SEGMENT_COUNT];
     lv_obj_t *settings_page;
     lv_obj_t *settings_root;
     lv_obj_t *settings_carousel;
@@ -312,6 +332,9 @@ typedef struct {
     lv_obj_t *settings_detail_header;
     lv_obj_t *settings_detail_title;
     lv_obj_t *settings_detail_edge_zone;
+    lv_obj_t *settings_boot_preview_button;
+    lv_timer_t *settings_boot_preview_timer;
+    uint32_t settings_boot_preview_started_ms;
     lv_obj_t *settings_bms_popup;
     lv_obj_t *settings_bms_ble_status;
     lv_obj_t *settings_preset_range_rollers[4];
@@ -437,6 +460,8 @@ typedef struct {
     char gps_speed_buf[12];
     char gps_speed_unit_buf[8];
     char gps_uptime_buf[24];
+    char boot_status_buf[24];
+    char boot_progress_buf[8];
     char fireblade_time_buf[8];
     char fireblade_controller_temp_buf[8];
     char fireblade_motor_temp_buf[8];
@@ -480,6 +505,8 @@ typedef struct {
     bool dragging;
     bool settling;
     bool controller_page_enabled;
+    bool speed_page_renderable;
+    bool boot_active;
     bool page_scroll_gesture_active;
     bool page_scroll_throw_frozen;
     int32_t drag_start_pages_x;
@@ -521,6 +548,9 @@ typedef struct {
     uint8_t quick_brightness_percent;
     uint8_t quick_volume_percent;
     uint8_t quick_rotate_toast_remaining_s;
+    uint8_t boot_animation_style;
+    esp_bms_speed_unit_t boot_speed_unit;
+    esp_bms_speed_dashboard_style_t boot_dashboard_style;
     uint32_t flags;
     esp_bms_dashboard_snapshot_t last_snapshot;
     esp_bms_dashboard_snapshot_t deferred_snapshot;
@@ -592,6 +622,10 @@ static const lv_color_t COLOR_MUTED = LV_COLOR_MAKE(0xa9, 0xb4, 0xc8);
 static const lv_color_t COLOR_ACCENT = LV_COLOR_MAKE(0x74, 0xd6, 0xb5);
 static const lv_color_t COLOR_WARN = LV_COLOR_MAKE(0xff, 0xc8, 0x57);
 static const lv_color_t COLOR_BAD = LV_COLOR_MAKE(0xff, 0x6b, 0x6b);
+static const lv_color_t COLOR_BOOT_CYAN = LV_COLOR_MAKE(0x00, 0xe5, 0xff);
+static const lv_color_t COLOR_BOOT_BLUE = LV_COLOR_MAKE(0x00, 0x66, 0xff);
+static const lv_color_t COLOR_BOOT_DIM = LV_COLOR_MAKE(0x0d, 0x2d, 0x3d);
+static const lv_color_t COLOR_BOOT_GRID = LV_COLOR_MAKE(0x0a, 0x22, 0x2d);
 static const lv_color_t COLOR_DASHBOARD_BG = LV_COLOR_MAKE(0x00, 0x00, 0x00);
 static const lv_color_t COLOR_DASHBOARD_PANEL = LV_COLOR_MAKE(0x09, 0x0c, 0x10);
 static const lv_color_t COLOR_DASHBOARD_SOC_PANEL = LV_COLOR_MAKE(0x06, 0x32, 0x70);
@@ -2188,6 +2222,7 @@ typedef enum {
     SETTINGS_SYSTEM_VIEW_BRIGHTNESS,
     SETTINGS_SYSTEM_VIEW_VOLUME,
     SETTINGS_SYSTEM_VIEW_LEVEL_POSITION,
+    SETTINGS_SYSTEM_VIEW_BOOT_ANIMATION,
     SETTINGS_SYSTEM_VIEW_TOUCH_CALIBRATION,
 } settings_system_view_t;
 
@@ -2227,6 +2262,8 @@ static void settings_show_controller_detail(void);
 static void settings_show_speed_unit_picker(void);
 static void settings_show_system_view(settings_system_view_t view);
 static void set_setup_ap(const esp_bms_dashboard_snapshot_t *snapshot);
+static void settings_boot_preview_button_event_cb(lv_event_t *event);
+static void settings_boot_preview_timer_cancel(void);
 
 static const quick_panel_item_t QUICK_PANEL_ITEMS[QUICK_PANEL_BUTTON_COUNT] = {
     { QUICK_ITEM_BLUETOOTH, QUICK_BLUETOOTH_SYMBOL, ESP_BMS_LVGL_ACTION_SHOW_SETTINGS,
@@ -2292,6 +2329,8 @@ static const settings_detail_row_t SETTINGS_SYSTEM_ROWS[] = {
     { "亮度", "调节屏幕亮度", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_BRIGHTNESS },
     { "音量", "调节提示音量", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_VOLUME },
     { "调节条位置", "中间", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_LEVEL_POSITION },
+    { "启动动画", "电量充能 / 机车扫表", ESP_BMS_LVGL_ACTION_NONE,
+      SETTINGS_SYSTEM_VIEW_BOOT_ANIMATION },
     { "屏幕校准", "校准触摸位置", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_TOUCH_CALIBRATION },
     { "旋转屏幕", "点击操作", ESP_BMS_LVGL_ACTION_ROTATE_DISPLAY, SETTINGS_SYSTEM_VIEW_ROOT },
     { "语言切换", "点击操作", ESP_BMS_LVGL_ACTION_TOGGLE_LANGUAGE, SETTINGS_SYSTEM_VIEW_ROOT },
@@ -2982,6 +3021,10 @@ static void settings_detail_chrome_show(settings_detail_id_t detail_id)
 {
     label_set_text_if_changed(s_ui.settings_detail_title,
                               settings_detail_title_text(detail_id));
+    const bool show_boot_preview =
+        detail_id == SETTINGS_DETAIL_SYSTEM &&
+        s_ui.settings_system_view == (uint8_t)SETTINGS_SYSTEM_VIEW_BOOT_ANIMATION;
+    set_obj_hidden(s_ui.settings_boot_preview_button, !show_boot_preview);
     set_obj_hidden(s_ui.settings_detail_header, false);
     set_obj_hidden(s_ui.settings_detail_edge_zone, false);
     settings_navigation_set_hidden(false, false);
@@ -4359,6 +4402,8 @@ static void settings_show_controller_detail(void)
                                                      SETTINGS_DETAIL_ROW_H_LANDSCAPE;
     const esp_bms_dashboard_snapshot_t *snapshot = settings_current_snapshot();
     const bool online = SNAPSHOT_FLAG(snapshot, CONTROLLER_ONLINE);
+    const bool gps_available =
+        snapshot->gps_module_state == (uint8_t)ESP_BMS_GPS_MODULE_AVAILABLE;
     const bool controller_synced =
         snapshot->controller_param_source ==
         (uint8_t)ESP_BMS_CONTROLLER_PARAM_SOURCE_CONTROLLER;
@@ -4384,13 +4429,20 @@ static void settings_show_controller_detail(void)
     if (snapshot->speed_source == ESP_BMS_SPEED_SOURCE_CONTROLLER) {
         (void)snprintf(speed_source,
                        sizeof(speed_source),
-                       online ? "控制器" : "控制器 / 离线·当前 GPS");
+                       !gps_available ? "控制器 / GPS 未检测到"
+                                      : online ? "控制器" : "控制器 / 离线·当前 GPS");
+    } else if (!gps_available) {
+        (void)snprintf(speed_source, sizeof(speed_source), "GPS 未检测到");
     } else {
         (void)snprintf(speed_source, sizeof(speed_source), "GPS");
     }
+    const bool speed_source_can_toggle =
+        snapshot->speed_source == ESP_BMS_SPEED_SOURCE_GPS || gps_available;
     const settings_detail_row_t speed_source_row = {
         "速度来源", speed_source,
-        ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_SOURCE, SETTINGS_SYSTEM_VIEW_ROOT,
+        speed_source_can_toggle ? ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_SOURCE
+                                : ESP_BMS_LVGL_ACTION_NONE,
+        SETTINGS_SYSTEM_VIEW_ROOT,
     };
     const settings_detail_row_t rows[] = {
         { "控制器连接", ble_status,
@@ -4407,12 +4459,19 @@ static void settings_show_controller_detail(void)
                                         row_h,
                                         main_row_count);
     size_t visible_index = 0U;
-    settings_detail_row(card,
-                        0,
-                        (int32_t)visible_index++ * row_h,
-                        card_w,
-                        row_h,
-                        &speed_source_row);
+    lv_obj_t *speed_source_box = settings_detail_row(card,
+                                                     0,
+                                                     (int32_t)visible_index++ * row_h,
+                                                     card_w,
+                                                     row_h,
+                                                     &speed_source_row);
+    if (!speed_source_can_toggle) {
+        lv_obj_clear_flag(speed_source_box, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_state(speed_source_box, LV_STATE_DISABLED);
+        lv_obj_set_style_opa(speed_source_box,
+                             LV_OPA_50,
+                             LV_PART_MAIN | LV_STATE_DISABLED);
+    }
     settings_controller_style_row(card,
                                   (int32_t)visible_index++ * row_h,
                                   card_w,
@@ -5213,6 +5272,197 @@ static void settings_show_touch_calibration(void)
     }
 }
 
+static const char *const SETTINGS_BOOT_ANIMATION_LABELS[] = {
+    "电量充能",
+    "机车扫表",
+};
+
+static void settings_boot_preview_timer_cancel(void)
+{
+    if (!s_ui.settings_boot_preview_timer) {
+        return;
+    }
+    lv_timer_t *timer = s_ui.settings_boot_preview_timer;
+    s_ui.settings_boot_preview_timer = NULL;
+    lv_timer_delete(timer);
+}
+
+static const char *settings_boot_preview_status(uint8_t progress_percent)
+{
+    if (progress_percent < 15U) {
+        return "POWER ON";
+    }
+    if (progress_percent < 30U) {
+        return "DISPLAY READY";
+    }
+    if (progress_percent < 40U) {
+        return "SETTINGS LOADED";
+    }
+    if (progress_percent < 50U) {
+        return "BLE START";
+    }
+    if (progress_percent < 90U) {
+        return "GPS CHECK";
+    }
+    if (progress_percent < 100U) {
+        return "GPS READY";
+    }
+    return "SYSTEM READY";
+}
+
+static void settings_boot_preview_finish(void)
+{
+    esp_bms_dashboard_snapshot_t snapshot = s_ui.last_snapshot;
+    settings_boot_preview_timer_cancel();
+    if (s_ui.boot_active) {
+        const esp_err_t ret = esp_bms_lvgl_ui_boot_finish(&snapshot);
+        if (ret != ESP_OK) {
+            ESP_LOGW(TAG, "boot preview finish failed: %d", (int)ret);
+        }
+    }
+    show_settings_view();
+    settings_show_system_view(SETTINGS_SYSTEM_VIEW_BOOT_ANIMATION);
+}
+
+static void settings_boot_preview_timer_cb(lv_timer_t *timer)
+{
+    if (timer != s_ui.settings_boot_preview_timer) {
+        return;
+    }
+    const uint32_t elapsed_ms = lv_tick_elaps(s_ui.settings_boot_preview_started_ms);
+    if (elapsed_ms >=
+        SETTINGS_BOOT_PREVIEW_DURATION_MS + SETTINGS_BOOT_PREVIEW_READY_HOLD_MS) {
+        settings_boot_preview_finish();
+        return;
+    }
+    const uint8_t progress = elapsed_ms >= SETTINGS_BOOT_PREVIEW_DURATION_MS
+                                 ? 100U
+                                 : (uint8_t)((elapsed_ms * 100U) /
+                                             SETTINGS_BOOT_PREVIEW_DURATION_MS);
+    const esp_err_t ret = esp_bms_lvgl_ui_boot_update(
+        progress, settings_boot_preview_status(progress));
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "boot preview update failed: %d", (int)ret);
+        settings_boot_preview_finish();
+    }
+}
+
+static esp_err_t settings_boot_preview_start(void)
+{
+    ESP_RETURN_ON_FALSE(s_ui.settings_detail_id == (uint8_t)SETTINGS_DETAIL_SYSTEM &&
+                            s_ui.settings_system_view ==
+                                (uint8_t)SETTINGS_SYSTEM_VIEW_BOOT_ANIMATION,
+                        ESP_ERR_INVALID_STATE, TAG,
+                        "boot animation settings view is not active");
+    settings_boot_preview_timer_cancel();
+    esp_bms_dashboard_snapshot_t snapshot = *settings_current_snapshot();
+    const esp_err_t ret = esp_bms_lvgl_ui_boot_start(&snapshot);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    s_ui.settings_boot_preview_started_ms = lv_tick_get();
+    s_ui.settings_boot_preview_timer = lv_timer_create(
+        settings_boot_preview_timer_cb, SETTINGS_BOOT_PREVIEW_TIMER_MS, NULL);
+    if (!s_ui.settings_boot_preview_timer) {
+        settings_boot_preview_finish();
+        return ESP_ERR_NO_MEM;
+    }
+    return ESP_OK;
+}
+
+static void settings_boot_preview_button_event_cb(lv_event_t *event)
+{
+    if (lv_event_get_code(event) != LV_EVENT_CLICKED) {
+        return;
+    }
+    const esp_err_t ret = settings_boot_preview_start();
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "boot preview start failed: %d", (int)ret);
+    }
+}
+
+static void settings_boot_animation_option_event_cb(lv_event_t *event)
+{
+    if (!settings_bms_popup_click_ready(event)) {
+        return;
+    }
+
+    const size_t selected = (size_t)(uintptr_t)lv_event_get_user_data(event);
+    if (selected >= ARRAY_SIZE(SETTINGS_BOOT_ANIMATION_LABELS)) {
+        return;
+    }
+    const size_t current = settings_current_snapshot()->boot_animation_style <=
+                                   (uint8_t)ESP_BMS_BOOT_ANIMATION_GAUGE_SWEEP
+                               ? settings_current_snapshot()->boot_animation_style
+                               : (size_t)ESP_BMS_BOOT_ANIMATION_CHARGE;
+    if (selected != current) {
+        queue_action_with_commit(ESP_BMS_LVGL_ACTION_SET_BOOT_ANIMATION_STYLE, true);
+        s_ui.pending_event.numeric_delta = (int16_t)selected;
+        ACTION_EVENT_SET_FLAG(&s_ui.pending_event, NUMERIC_DELTA_VALID, true);
+    }
+    lv_indev_wait_release(lv_indev_active());
+}
+
+static void settings_show_boot_animation_picker(void)
+{
+    const bool portrait = s_ui.width < s_ui.height;
+    const int32_t card_x = SETTINGS_LIST_MARGIN_X;
+    const int32_t card_w = s_ui.width - (SETTINGS_LIST_MARGIN_X * 2);
+    const int32_t row_h = portrait ? SETTINGS_CHOICE_ROW_H_PORTRAIT :
+                                     SETTINGS_CHOICE_ROW_H_LANDSCAPE;
+    const int32_t gap = portrait ? 8 : 6;
+    const uint8_t saved_style = settings_current_snapshot()->boot_animation_style;
+    const size_t current = saved_style <= (uint8_t)ESP_BMS_BOOT_ANIMATION_GAUGE_SWEEP
+                               ? saved_style
+                               : (size_t)ESP_BMS_BOOT_ANIMATION_CHARGE;
+
+    for (size_t index = 0; index < ARRAY_SIZE(SETTINGS_BOOT_ANIMATION_LABELS); ++index) {
+        const bool active = index == current;
+        lv_obj_t *row = panel(s_ui.settings_detail,
+                              card_x,
+                              12 + ((int32_t)index * (row_h + gap)),
+                              card_w,
+                              row_h,
+                              COLOR_SETTINGS_CARD);
+        lv_obj_set_style_radius(row, 8, LV_PART_MAIN);
+        lv_obj_set_style_border_width(row, active ? 2 : 1, LV_PART_MAIN);
+        lv_obj_set_style_border_color(row,
+                                      active ? COLOR_SWITCH_ACTIVE : COLOR_SETTINGS_BORDER,
+                                      LV_PART_MAIN);
+        lv_obj_set_style_border_opa(row, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_pad_all(row, 0, LV_PART_MAIN);
+        lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
+        settings_add_swipe_handlers(row);
+        lv_obj_add_event_cb(row,
+                            settings_boot_animation_option_event_cb,
+                            LV_EVENT_CLICKED,
+                            (void *)(uintptr_t)index);
+
+        const int32_t text_h = (int32_t)settings_zh_16.line_height + 4;
+        lv_obj_t *text = label(row,
+                               12,
+                               (row_h - text_h) / 2,
+                               card_w - 52,
+                               text_h,
+                               &settings_zh_16);
+        lv_label_set_text(text, SETTINGS_BOOT_ANIMATION_LABELS[index]);
+        lv_obj_set_style_text_color(text,
+                                    active ? COLOR_SWITCH_ACTIVE : COLOR_SETTINGS_TEXT,
+                                    LV_PART_MAIN);
+        if (active) {
+            lv_obj_t *check = label(row,
+                                    card_w - 38,
+                                    (row_h - 20) / 2,
+                                    26,
+                                    20,
+                                    &lv_font_montserrat_14);
+            lv_label_set_text(check, LV_SYMBOL_OK);
+            lv_obj_set_style_text_align(check, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+            lv_obj_set_style_text_color(check, COLOR_SWITCH_ACTIVE, LV_PART_MAIN);
+        }
+    }
+}
+
 static void settings_show_system_view(settings_system_view_t view)
 {
     lv_obj_clean(s_ui.settings_detail);
@@ -5241,6 +5491,10 @@ static void settings_show_system_view(settings_system_view_t view)
     case SETTINGS_SYSTEM_VIEW_LEVEL_POSITION:
         label_set_text_if_changed(s_ui.settings_detail_title, "调节条位置");
         settings_show_system_position();
+        break;
+    case SETTINGS_SYSTEM_VIEW_BOOT_ANIMATION:
+        label_set_text_if_changed(s_ui.settings_detail_title, "启动动画");
+        settings_show_boot_animation_picker();
         break;
     case SETTINGS_SYSTEM_VIEW_TOUCH_CALIBRATION:
         label_set_text_if_changed(s_ui.settings_detail_title, "屏幕校准");
@@ -6023,8 +6277,17 @@ static void set_header(const esp_bms_dashboard_snapshot_t *snapshot)
     const bool gps_fix_valid = SNAPSHOT_FLAG(snapshot, GPS_FIX_VALID);
     const bool bms_online = SNAPSHOT_FLAG(snapshot, BMS_ONLINE);
 
-    label_set_text_color_if_changed(s_ui.gps_state, gps_fix_valid ? COLOR_ACCENT : COLOR_WARN);
-    label_set_text_if_changed(s_ui.gps_state, gps_fix_valid ? "GPS OK" : "GPS --");
+    if (snapshot->gps_module_state == (uint8_t)ESP_BMS_GPS_MODULE_PROBING) {
+        label_set_text_color_if_changed(s_ui.gps_state, COLOR_WARN);
+        label_set_text_if_changed(s_ui.gps_state, "GPS...");
+    } else if (snapshot->gps_module_state == (uint8_t)ESP_BMS_GPS_MODULE_AVAILABLE) {
+        label_set_text_color_if_changed(s_ui.gps_state,
+                                        gps_fix_valid ? COLOR_ACCENT : COLOR_WARN);
+        label_set_text_if_changed(s_ui.gps_state, gps_fix_valid ? "GPS OK" : "GPS --");
+    } else {
+        label_set_text_color_if_changed(s_ui.gps_state, COLOR_BAD);
+        label_set_text_if_changed(s_ui.gps_state, "GPS OFF");
+    }
 
     label_set_text_color_if_changed(s_ui.bms_state, bms_online ? COLOR_ACCENT : COLOR_BAD);
     label_set_text_if_changed(s_ui.bms_state, bms_online ? "BMS OK" : "BMS OFF");
@@ -6646,6 +6909,7 @@ static bool settings_controller_view_changed(const esp_bms_dashboard_snapshot_t 
                                              bool had_previous)
 {
     return !had_previous ||
+           previous->gps_module_state != current->gps_module_state ||
            previous->speed_unit != current->speed_unit ||
            previous->speed_source != current->speed_source ||
            previous->active_speed_source != current->active_speed_source ||
@@ -8199,6 +8463,43 @@ static void create_gps_dashboard(void)
     speed_dashboard_apply_layout();
 }
 
+static void speed_page_sync(const esp_bms_dashboard_snapshot_t *snapshot)
+{
+    if (!snapshot || !s_ui.gps_page || !s_ui.cast_page) {
+        return;
+    }
+
+    const bool boot_requires_speed =
+        s_ui.boot_active &&
+        s_ui.boot_animation_style ==
+            (uint8_t)ESP_BMS_BOOT_ANIMATION_GAUGE_SWEEP;
+    const bool renderable =
+        boot_requires_speed ||
+        snapshot->gps_module_state == (uint8_t)ESP_BMS_GPS_MODULE_AVAILABLE ||
+        SNAPSHOT_FLAG(snapshot, CONTROLLER_ONLINE);
+    const bool changed = s_ui.speed_page_renderable != renderable;
+    esp_bms_lvgl_page_t retained_page = s_ui.page;
+
+    s_ui.speed_page_renderable = renderable;
+    set_obj_hidden(s_ui.gps_page, !renderable);
+    if (renderable) {
+        lv_obj_add_flag(s_ui.gps_page, LV_OBJ_FLAG_SNAPPABLE);
+    } else {
+        lv_obj_clear_flag(s_ui.gps_page, LV_OBJ_FLAG_SNAPPABLE);
+        if (retained_page == ESP_BMS_LVGL_PAGE_CONTROLLER ||
+            retained_page == ESP_BMS_LVGL_PAGE_GPS) {
+            retained_page = ESP_BMS_LVGL_PAGE_BATTERY;
+        }
+    }
+    lv_obj_set_x(s_ui.cast_page, s_ui.width * (renderable ? 2 : 1));
+
+    if (changed && s_ui.pages) {
+        lv_obj_update_layout(s_ui.pages);
+        move_to_page(retained_page, false);
+        lv_obj_invalidate(s_ui.pages);
+    }
+}
+
 static void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapshot)
 {
     const bool had_last_snapshot = UI_FLAG(LAST_SNAPSHOT_VALID);
@@ -8206,6 +8507,8 @@ static void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapsho
     const bool previous_controller_online =
         SNAPSHOT_FLAG(&s_ui.last_snapshot, CONTROLLER_ONLINE);
     const uint8_t previous_bms_type = s_ui.last_snapshot.bms_type;
+    const uint8_t previous_boot_animation_style =
+        s_ui.last_snapshot.boot_animation_style;
     const uint16_t previous_preset_range_km = s_ui.last_snapshot.preset_range_km;
     const bool previous_bluetooth_enabled = SNAPSHOT_FLAG(&s_ui.last_snapshot, BLUETOOTH_ENABLED);
     const bool previous_bluetooth_advertising = SNAPSHOT_FLAG(&s_ui.last_snapshot, BLUETOOTH_ADVERTISING);
@@ -8246,6 +8549,7 @@ static void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapsho
     memcpy(&s_ui.last_snapshot, snapshot, sizeof(s_ui.last_snapshot));
     UI_SET_FLAG(LAST_SNAPSHOT_VALID, true);
 
+    speed_page_sync(snapshot);
     set_header(snapshot);
     set_dashboard(snapshot);
     speed_dashboard_style_apply(snapshot);
@@ -8310,6 +8614,12 @@ static void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapsho
             settings_show_bms_ble_popup(SETTINGS_BLE_SOURCE_CONTROLLER, false);
         }
     }
+    if (s_ui.settings_detail_id == (uint8_t)SETTINGS_DETAIL_SYSTEM &&
+        s_ui.settings_system_view == (uint8_t)SETTINGS_SYSTEM_VIEW_BOOT_ANIMATION &&
+        (!had_last_snapshot ||
+         previous_boot_animation_style != snapshot->boot_animation_style)) {
+        settings_show_system_view(SETTINGS_SYSTEM_VIEW_BOOT_ANIMATION);
+    }
 }
 
 static void defer_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapshot)
@@ -8353,10 +8663,10 @@ static void invalidate_dashboard_viewport(void)
 static int32_t page_target_scroll_x(esp_bms_lvgl_page_t page)
 {
     if (page == ESP_BMS_LVGL_PAGE_CONTROLLER || page == ESP_BMS_LVGL_PAGE_GPS) {
-        return s_ui.width;
+        return s_ui.speed_page_renderable ? s_ui.width : 0;
     }
     if (page == ESP_BMS_LVGL_PAGE_CAST) {
-        return s_ui.width * 2;
+        return s_ui.width * (s_ui.speed_page_renderable ? 2 : 1);
     }
     return 0;
 }
@@ -8366,6 +8676,9 @@ static esp_bms_lvgl_page_t page_from_scroll_x(int32_t scroll_x)
     const int32_t index = (scroll_x + (s_ui.width / 2)) / s_ui.width;
     if (index <= 0) {
         return ESP_BMS_LVGL_PAGE_BATTERY;
+    }
+    if (!s_ui.speed_page_renderable) {
+        return ESP_BMS_LVGL_PAGE_CAST;
     }
     if (index == 1) {
         return ESP_BMS_LVGL_PAGE_GPS;
@@ -8398,6 +8711,9 @@ static void move_to_page(esp_bms_lvgl_page_t page, bool animated)
 {
     if (page == ESP_BMS_LVGL_PAGE_CONTROLLER) {
         page = ESP_BMS_LVGL_PAGE_GPS;
+    }
+    if (page == ESP_BMS_LVGL_PAGE_GPS && !s_ui.speed_page_renderable) {
+        page = ESP_BMS_LVGL_PAGE_BATTERY;
     }
     lv_obj_stop_scroll_anim(s_ui.pages);
     const int32_t target_x = page_target_scroll_x(page);
@@ -8888,12 +9204,12 @@ static void create_screen(lv_display_t *display)
     lv_obj_add_event_cb(s_ui.settings_button, action_event_cb, LV_EVENT_CLICKED,
                         (void *)(uintptr_t)ESP_BMS_LVGL_ACTION_SHOW_SETTINGS);
     if (portrait) {
-        s_ui.gps_state = label(s_ui.header, 42, 2, 46, 16, &lv_font_montserrat_14);
-        s_ui.bms_state = label(s_ui.header, 92, 2, 56, 16, &lv_font_montserrat_14);
-        s_ui.ap_state = label(s_ui.header, 152, 2, 80, 16, &lv_font_montserrat_14);
+        s_ui.gps_state = label(s_ui.header, 42, 2, 54, 16, &lv_font_montserrat_14);
+        s_ui.bms_state = label(s_ui.header, 100, 2, 56, 16, &lv_font_montserrat_14);
+        s_ui.ap_state = label(s_ui.header, 160, 2, 72, 16, &lv_font_montserrat_14);
     } else {
-        s_ui.gps_state = label(s_ui.header, 48, 2, 50, 16, &lv_font_montserrat_14);
-        s_ui.bms_state = label(s_ui.header, 104, 2, 54, 16, &lv_font_montserrat_14);
+        s_ui.gps_state = label(s_ui.header, 48, 2, 54, 16, &lv_font_montserrat_14);
+        s_ui.bms_state = label(s_ui.header, 106, 2, 54, 16, &lv_font_montserrat_14);
         s_ui.ap_state = label(s_ui.header, 166, 2, 148, 16, &lv_font_montserrat_14);
     }
 
@@ -8930,6 +9246,7 @@ static void create_screen(lv_display_t *display)
 
     s_ui.controller_page_enabled = false;
     s_ui.controller_page = NULL;
+    s_ui.speed_page_renderable = true;
 
     s_ui.gps_page = lv_obj_create(s_ui.pages);
     clear_style(s_ui.gps_page);
@@ -9306,6 +9623,36 @@ static void create_screen(lv_display_t *display)
     lv_obj_set_style_text_color(s_ui.settings_detail_title,
                                 COLOR_SETTINGS_TEXT,
                                 LV_PART_MAIN);
+
+    s_ui.settings_boot_preview_button = panel(s_ui.settings_detail_header,
+                                              s_ui.width - 52,
+                                              3,
+                                              48,
+                                              SETTINGS_DETAIL_HEADER_H - 6,
+                                              COLOR_SETTINGS_CARD);
+    lv_obj_set_style_radius(s_ui.settings_boot_preview_button, 6, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(s_ui.settings_boot_preview_button, 0, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s_ui.settings_boot_preview_button,
+                              COLOR_SETTINGS_LIST,
+                              LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_ext_click_area(s_ui.settings_boot_preview_button, 4);
+    lv_obj_add_flag(s_ui.settings_boot_preview_button, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(s_ui.settings_boot_preview_button,
+                        settings_boot_preview_button_event_cb,
+                        LV_EVENT_CLICKED,
+                        NULL);
+    lv_obj_t *boot_preview_icon = label(s_ui.settings_boot_preview_button,
+                                        0,
+                                        4,
+                                        48,
+                                        SETTINGS_DETAIL_HEADER_H - 10,
+                                        &lv_font_montserrat_24);
+    lv_label_set_text(boot_preview_icon, LV_SYMBOL_PLAY);
+    lv_obj_set_style_text_align(boot_preview_icon, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(boot_preview_icon,
+                                COLOR_SETTINGS_ACCENT,
+                                LV_PART_MAIN);
+    set_obj_hidden(s_ui.settings_boot_preview_button, true);
     set_obj_hidden(s_ui.settings_detail_header, true);
 
     s_ui.settings_detail_edge_zone = lv_obj_create(s_ui.settings_page);
@@ -9442,6 +9789,239 @@ static void create_screen(lv_display_t *display)
     lv_obj_add_flag(s_ui.header, LV_OBJ_FLAG_HIDDEN);
 }
 
+static lv_obj_t *boot_line(lv_obj_t *parent,
+                           int32_t x,
+                           int32_t y,
+                           int32_t w,
+                           int32_t h,
+                           lv_color_t color,
+                           lv_opa_t opacity)
+{
+    lv_obj_t *line = lv_obj_create(parent);
+    clear_style(line);
+    lv_obj_set_pos(line, x, y);
+    lv_obj_set_size(line, w, h);
+    lv_obj_set_style_bg_color(line, color, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(line, opacity, LV_PART_MAIN);
+    lv_obj_clear_flag(line, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    return line;
+}
+
+static void boot_overlay_delete(void)
+{
+    if (s_ui.boot_overlay) {
+        lv_obj_delete(s_ui.boot_overlay);
+    }
+    s_ui.boot_overlay = NULL;
+    s_ui.boot_status = NULL;
+    s_ui.boot_progress = NULL;
+    s_ui.boot_scan_line = NULL;
+    memset(s_ui.boot_charge_segments, 0, sizeof(s_ui.boot_charge_segments));
+}
+
+static lv_obj_t *boot_overlay_create(bool opaque)
+{
+    boot_overlay_delete();
+    lv_obj_t *overlay = lv_obj_create(s_ui.root);
+    clear_style(overlay);
+    lv_obj_set_pos(overlay, 0, 0);
+    lv_obj_set_size(overlay, s_ui.width, s_ui.height);
+    lv_obj_set_style_bg_color(overlay, COLOR_DASHBOARD_BG, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(overlay, opaque ? LV_OPA_COVER : LV_OPA_TRANSP,
+                            LV_PART_MAIN);
+    lv_obj_add_flag(overlay, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_FLOATING);
+    lv_obj_clear_flag(overlay, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_move_foreground(overlay);
+    s_ui.boot_overlay = overlay;
+    return overlay;
+}
+
+static void boot_corner_marks(lv_obj_t *parent)
+{
+    const int32_t margin = 10;
+    const int32_t length = 22;
+    const int32_t bottom = s_ui.height - margin - 2;
+    const int32_t right = s_ui.width - margin - 2;
+
+    (void)boot_line(parent, margin, margin, length, 2, COLOR_BOOT_CYAN, LV_OPA_COVER);
+    (void)boot_line(parent, margin, margin, 2, length, COLOR_BOOT_CYAN, LV_OPA_COVER);
+    (void)boot_line(parent, right - length, margin, length, 2,
+                    COLOR_BOOT_CYAN, LV_OPA_COVER);
+    (void)boot_line(parent, right, margin, 2, length, COLOR_BOOT_CYAN, LV_OPA_COVER);
+    (void)boot_line(parent, margin, bottom, length, 2, COLOR_BOOT_CYAN, LV_OPA_COVER);
+    (void)boot_line(parent, margin, bottom - length, 2, length,
+                    COLOR_BOOT_CYAN, LV_OPA_COVER);
+    (void)boot_line(parent, right - length, bottom, length, 2,
+                    COLOR_BOOT_CYAN, LV_OPA_COVER);
+    (void)boot_line(parent, right, bottom - length, 2, length,
+                    COLOR_BOOT_CYAN, LV_OPA_COVER);
+}
+
+static void boot_charge_create(void)
+{
+    const bool portrait = s_ui.width < s_ui.height;
+    lv_obj_t *overlay = boot_overlay_create(true);
+
+    for (int32_t x = 32; x < s_ui.width; x += 32) {
+        (void)boot_line(overlay, x, 28, 1, s_ui.height - 56,
+                        COLOR_BOOT_GRID, LV_OPA_COVER);
+    }
+    for (int32_t y = 40; y < s_ui.height - 24; y += 28) {
+        (void)boot_line(overlay, 16, y, s_ui.width - 32, 1,
+                        COLOR_BOOT_GRID, LV_OPA_COVER);
+    }
+    boot_corner_marks(overlay);
+
+    lv_obj_t *system_title = label(overlay,
+                                   18,
+                                   12,
+                                   s_ui.width - 36,
+                                   18,
+                                   &lv_font_montserrat_14);
+    lv_label_set_text(system_title, "POWER CORE // BOOT");
+    lv_obj_set_style_text_color(system_title, COLOR_BOOT_CYAN, LV_PART_MAIN);
+    lv_obj_set_style_text_letter_space(system_title, 1, LV_PART_MAIN);
+
+    const int32_t frame_w = portrait ? s_ui.width - 56 : s_ui.width - 104;
+    const int32_t frame_h = portrait ? 64 : 58;
+    const int32_t frame_x = (s_ui.width - frame_w) / 2 - 3;
+    const int32_t frame_y = portrait ? 108 : 72;
+    lv_obj_t *battery = lv_obj_create(overlay);
+    clear_style(battery);
+    lv_obj_set_pos(battery, frame_x, frame_y);
+    lv_obj_set_size(battery, frame_w, frame_h);
+    lv_obj_set_style_bg_color(battery, COLOR_DASHBOARD_BG, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(battery, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(battery, 2, LV_PART_MAIN);
+    lv_obj_set_style_border_color(battery, COLOR_BOOT_CYAN, LV_PART_MAIN);
+    lv_obj_set_style_border_opa(battery, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(battery, 4, LV_PART_MAIN);
+    lv_obj_clear_flag(battery, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    (void)boot_line(overlay,
+                    frame_x + frame_w + 4,
+                    frame_y + (frame_h - 20) / 2,
+                    7,
+                    20,
+                    COLOR_BOOT_CYAN,
+                    LV_OPA_COVER);
+
+    const int32_t gap = 3;
+    const int32_t inner_w = frame_w - 16;
+    const int32_t segment_w =
+        (inner_w - ((int32_t)BOOT_CHARGE_SEGMENT_COUNT - 1) * gap) /
+        (int32_t)BOOT_CHARGE_SEGMENT_COUNT;
+    for (uint32_t index = 0U; index < BOOT_CHARGE_SEGMENT_COUNT; ++index) {
+        lv_obj_t *segment = lv_obj_create(battery);
+        clear_style(segment);
+        lv_obj_set_pos(segment,
+                       6 + (int32_t)index * (segment_w + gap),
+                       7);
+        lv_obj_set_size(segment, segment_w, frame_h - 18);
+        lv_obj_set_style_bg_color(segment, COLOR_BOOT_DIM, LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(segment, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_border_width(segment, 1, LV_PART_MAIN);
+        lv_obj_set_style_border_color(segment, COLOR_BOOT_BLUE, LV_PART_MAIN);
+        lv_obj_set_style_border_opa(segment, LV_OPA_60, LV_PART_MAIN);
+        lv_obj_set_style_radius(segment, 2, LV_PART_MAIN);
+        lv_obj_clear_flag(segment, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+        s_ui.boot_charge_segments[index] = segment;
+    }
+
+    s_ui.boot_progress = label(overlay,
+                               0,
+                               frame_y + frame_h + (portrait ? 22 : 14),
+                               s_ui.width,
+                               lv_font_montserrat_48.line_height + 4,
+                               &lv_font_montserrat_48);
+    snprintf(s_ui.boot_progress_buf, sizeof(s_ui.boot_progress_buf), "0%%");
+    lv_label_set_text_static(s_ui.boot_progress, s_ui.boot_progress_buf);
+    lv_obj_set_style_text_align(s_ui.boot_progress, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.boot_progress, COLOR_BOOT_CYAN, LV_PART_MAIN);
+
+    s_ui.boot_status = label(overlay,
+                             20,
+                             s_ui.height - 48,
+                             s_ui.width - 40,
+                             24,
+                             &lv_font_montserrat_14);
+    snprintf(s_ui.boot_status_buf, sizeof(s_ui.boot_status_buf), "POWER ON");
+    lv_label_set_text_static(s_ui.boot_status, s_ui.boot_status_buf);
+    lv_obj_set_style_text_align(s_ui.boot_status, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.boot_status, COLOR_TEXT, LV_PART_MAIN);
+    lv_obj_set_style_text_letter_space(s_ui.boot_status, 2, LV_PART_MAIN);
+
+    s_ui.boot_scan_line = boot_line(overlay,
+                                    14,
+                                    32,
+                                    s_ui.width - 28,
+                                    2,
+                                    COLOR_BOOT_CYAN,
+                                    LV_OPA_50);
+    lv_obj_move_foreground(s_ui.boot_scan_line);
+}
+
+static void boot_gauge_hud_create(void)
+{
+    lv_obj_t *overlay = boot_overlay_create(false);
+    const int32_t hud_h = 36;
+    lv_obj_t *hud = panel(overlay,
+                          8,
+                          s_ui.height - hud_h - 8,
+                          s_ui.width - 16,
+                          hud_h,
+                          COLOR_PANEL_ALT);
+    lv_obj_set_style_radius(hud, 3, LV_PART_MAIN);
+    lv_obj_set_style_border_width(hud, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(hud, COLOR_BOOT_CYAN, LV_PART_MAIN);
+    lv_obj_set_style_border_opa(hud, LV_OPA_COVER, LV_PART_MAIN);
+
+    s_ui.boot_status = label(hud,
+                             10,
+                             9,
+                             s_ui.width - 92,
+                             18,
+                             &lv_font_montserrat_14);
+    snprintf(s_ui.boot_status_buf, sizeof(s_ui.boot_status_buf), "POWER ON");
+    lv_label_set_text_static(s_ui.boot_status, s_ui.boot_status_buf);
+    lv_obj_set_style_text_color(s_ui.boot_status, COLOR_BOOT_CYAN, LV_PART_MAIN);
+    lv_obj_set_style_text_letter_space(s_ui.boot_status, 1, LV_PART_MAIN);
+
+    s_ui.boot_progress = label(hud,
+                               s_ui.width - 88,
+                               9,
+                               58,
+                               18,
+                               &lv_font_montserrat_14);
+    snprintf(s_ui.boot_progress_buf, sizeof(s_ui.boot_progress_buf), "0%%");
+    lv_label_set_text_static(s_ui.boot_progress, s_ui.boot_progress_buf);
+    lv_obj_set_style_text_align(s_ui.boot_progress, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.boot_progress, COLOR_TEXT, LV_PART_MAIN);
+}
+
+static void boot_gauge_apply(uint8_t progress_percent)
+{
+    esp_bms_dashboard_snapshot_t demo = s_ui.last_snapshot;
+    const uint16_t maximum = s_ui.boot_speed_unit == ESP_BMS_SPEED_UNIT_MPH
+                                 ? 1200U
+                                 : 1800U;
+    const uint32_t phase = progress_percent <= 50U
+                               ? (uint32_t)progress_percent * 2U
+                               : (uint32_t)(100U - progress_percent) * 2U;
+
+    demo.speed_unit = s_ui.boot_speed_unit;
+    demo.speed_dashboard_style = s_ui.boot_dashboard_style;
+    demo.speed_deci_units = (uint16_t)(((uint32_t)maximum * phase) / 100U);
+    demo.gps_module_state = (uint8_t)ESP_BMS_GPS_MODULE_AVAILABLE;
+    esp_bms_dashboard_snapshot_flag_set(
+        &demo, ESP_BMS_DASHBOARD_FLAG_CONTROLLER_PAGE_ENABLED, false);
+    esp_bms_dashboard_snapshot_flag_set(
+        &demo, ESP_BMS_DASHBOARD_FLAG_GPS_FIX_VALID, true);
+    esp_bms_dashboard_snapshot_flag_set(
+        &demo, ESP_BMS_DASHBOARD_FLAG_SPEED_VALID, true);
+    speed_dashboard_style_apply(&demo);
+    set_gps_dashboard(&demo);
+}
+
 static esp_err_t rebuild_screen_if_needed(const esp_bms_dashboard_snapshot_t *snapshot)
 {
     ESP_RETURN_ON_FALSE(s_ui.display, ESP_ERR_INVALID_STATE, TAG, "display is not initialized");
@@ -9459,6 +10039,8 @@ static esp_err_t rebuild_screen_if_needed(const esp_bms_dashboard_snapshot_t *sn
     }
     const esp_bms_lvgl_action_event_t pending_event = s_ui.pending_event;
     const bool settings_visible = s_ui.settings_page && !lv_obj_has_flag(s_ui.settings_page, LV_OBJ_FLAG_HIDDEN);
+    const bool settings_boot_preview_active =
+        s_ui.settings_boot_preview_timer != NULL;
     const bool screen_locked = UI_FLAG(SCREEN_LOCKED);
     const bool rotate_toast_active = UI_FLAG(QUICK_ROTATE_TOAST_ACTIVE);
     const uint8_t quick_level_position = s_ui.quick_level_position;
@@ -9474,6 +10056,7 @@ static esp_err_t rebuild_screen_if_needed(const esp_bms_dashboard_snapshot_t *sn
     }
     quick_toast_cancel();
     screen_unlock_timer_cancel();
+    settings_boot_preview_timer_cancel();
     settings_bms_popup_close();
     settings_restore_popup_close();
     if (s_ui.settings_swipe_indicator) {
@@ -9497,7 +10080,10 @@ static esp_err_t rebuild_screen_if_needed(const esp_bms_dashboard_snapshot_t *sn
     UI_SET_FLAG(SCREEN_LOCKED, screen_locked);
     create_screen(display);
     move_to_page(page, false);
-    if (settings_visible) {
+    if (settings_boot_preview_active) {
+        show_settings_view();
+        settings_show_system_view(SETTINGS_SYSTEM_VIEW_BOOT_ANIMATION);
+    } else if (settings_visible) {
         show_settings_view();
     } else {
         show_dashboard_view();
@@ -9529,6 +10115,107 @@ esp_err_t esp_bms_lvgl_ui_update(const esp_bms_dashboard_snapshot_t *snapshot)
     }
 
     apply_dashboard_snapshot(snapshot);
+    return ESP_OK;
+}
+
+esp_err_t esp_bms_lvgl_ui_boot_start(const esp_bms_dashboard_snapshot_t *snapshot)
+{
+    ESP_RETURN_ON_FALSE(snapshot, ESP_ERR_INVALID_ARG, TAG, "snapshot is required");
+    ESP_RETURN_ON_FALSE(UI_FLAG(INITIALIZED), ESP_ERR_INVALID_STATE, TAG,
+                        "UI is not initialized");
+    ESP_RETURN_ON_ERROR(rebuild_screen_if_needed(snapshot), TAG,
+                        "rebuild boot UI failed");
+
+    const uint8_t configured_style = snapshot->boot_animation_style;
+    s_ui.boot_animation_style =
+        configured_style <= (uint8_t)ESP_BMS_BOOT_ANIMATION_GAUGE_SWEEP
+            ? configured_style
+            : (uint8_t)ESP_BMS_BOOT_ANIMATION_CHARGE;
+    const esp_bms_speed_dashboard_style_t configured_dashboard_style =
+        speed_dashboard_style_from_snapshot(snapshot);
+    s_ui.boot_dashboard_style =
+        configured_dashboard_style == ESP_BMS_SPEED_DASHBOARD_STYLE_HONDA_FIREBLADE
+            ? ESP_BMS_SPEED_DASHBOARD_STYLE_HONDA_FIREBLADE
+            : ESP_BMS_SPEED_DASHBOARD_STYLE_S1000RR;
+    s_ui.boot_speed_unit = snapshot->speed_unit;
+    s_ui.boot_active = true;
+    apply_dashboard_snapshot(snapshot);
+    show_dashboard_view();
+
+    if (s_ui.boot_animation_style ==
+        (uint8_t)ESP_BMS_BOOT_ANIMATION_GAUGE_SWEEP) {
+        move_to_page(ESP_BMS_LVGL_PAGE_GPS, false);
+        boot_gauge_hud_create();
+    } else {
+        move_to_page(ESP_BMS_LVGL_PAGE_BATTERY, false);
+        boot_charge_create();
+    }
+    return esp_bms_lvgl_ui_boot_update(0U, "POWER ON");
+}
+
+esp_err_t esp_bms_lvgl_ui_boot_update(uint8_t progress_percent, const char *status_text)
+{
+    ESP_RETURN_ON_FALSE(UI_FLAG(INITIALIZED), ESP_ERR_INVALID_STATE, TAG,
+                        "UI is not initialized");
+    ESP_RETURN_ON_FALSE(s_ui.boot_active && s_ui.boot_overlay,
+                        ESP_ERR_INVALID_STATE, TAG, "boot animation is not active");
+
+    const uint8_t progress = progress_percent > 100U ? 100U : progress_percent;
+    char progress_text[sizeof(s_ui.boot_progress_buf)] = { 0 };
+    (void)snprintf(progress_text, sizeof(progress_text), "%u%%", (unsigned)progress);
+    gps_label_set(s_ui.boot_progress,
+                  s_ui.boot_progress_buf,
+                  sizeof(s_ui.boot_progress_buf),
+                  progress_text);
+    gps_label_set(s_ui.boot_status,
+                  s_ui.boot_status_buf,
+                  sizeof(s_ui.boot_status_buf),
+                  status_text && status_text[0] != '\0' ? status_text : "BOOT");
+
+    if (s_ui.boot_animation_style ==
+        (uint8_t)ESP_BMS_BOOT_ANIMATION_GAUGE_SWEEP) {
+        boot_gauge_apply(progress);
+    } else {
+        const uint32_t filled = progress == 0U
+                                    ? 0U
+                                    : (((uint32_t)progress * BOOT_CHARGE_SEGMENT_COUNT) + 99U) /
+                                          100U;
+        for (uint32_t index = 0U; index < BOOT_CHARGE_SEGMENT_COUNT; ++index) {
+            if (!s_ui.boot_charge_segments[index]) {
+                continue;
+            }
+            const bool active = index < filled;
+            lv_obj_set_style_bg_color(s_ui.boot_charge_segments[index],
+                                      active ? COLOR_BOOT_CYAN : COLOR_BOOT_DIM,
+                                      LV_PART_MAIN);
+            lv_obj_set_style_border_color(s_ui.boot_charge_segments[index],
+                                          active ? COLOR_BOOT_CYAN : COLOR_BOOT_BLUE,
+                                          LV_PART_MAIN);
+            lv_obj_set_style_bg_opa(s_ui.boot_charge_segments[index],
+                                    active ? LV_OPA_COVER : LV_OPA_60,
+                                    LV_PART_MAIN);
+        }
+        if (s_ui.boot_scan_line) {
+            const int32_t scan_min_y = 32;
+            const int32_t scan_range = s_ui.height - 66;
+            lv_obj_set_y(s_ui.boot_scan_line,
+                         scan_min_y + (scan_range * (int32_t)progress) / 100);
+        }
+    }
+    return ESP_OK;
+}
+
+esp_err_t esp_bms_lvgl_ui_boot_finish(const esp_bms_dashboard_snapshot_t *snapshot)
+{
+    ESP_RETURN_ON_FALSE(snapshot, ESP_ERR_INVALID_ARG, TAG, "snapshot is required");
+    ESP_RETURN_ON_FALSE(UI_FLAG(INITIALIZED), ESP_ERR_INVALID_STATE, TAG,
+                        "UI is not initialized");
+
+    s_ui.boot_active = false;
+    boot_overlay_delete();
+    apply_dashboard_snapshot(snapshot);
+    show_dashboard_view();
+    move_to_page(ESP_BMS_LVGL_PAGE_BATTERY, false);
     return ESP_OK;
 }
 
@@ -9604,3 +10291,53 @@ esp_err_t esp_bms_lvgl_ui_take_action(esp_bms_lvgl_action_t *action)
     *action = event.action;
     return ESP_OK;
 }
+
+#if ESP_BMS_LVGL_UI_SIMULATOR
+bool esp_bms_lvgl_ui_simulator_boot_animation_preview_active(void)
+{
+    return s_ui.settings_boot_preview_timer != NULL;
+}
+
+bool esp_bms_lvgl_ui_simulator_boot_animation_settings_visible(void)
+{
+    return UI_FLAG(INITIALIZED) && s_ui.settings_page &&
+           !lv_obj_has_flag(s_ui.settings_page, LV_OBJ_FLAG_HIDDEN) &&
+           s_ui.settings_detail_id == (uint8_t)SETTINGS_DETAIL_SYSTEM &&
+           s_ui.settings_system_view ==
+               (uint8_t)SETTINGS_SYSTEM_VIEW_BOOT_ANIMATION &&
+           s_ui.settings_boot_preview_button &&
+           !lv_obj_has_flag(s_ui.settings_boot_preview_button, LV_OBJ_FLAG_HIDDEN);
+}
+
+esp_err_t esp_bms_lvgl_ui_simulator_open_boot_animation_settings(void)
+{
+    ESP_RETURN_ON_FALSE(UI_FLAG(INITIALIZED), ESP_ERR_INVALID_STATE, TAG,
+                        "UI is not initialized");
+    ESP_RETURN_ON_FALSE(!s_ui.settings_boot_preview_timer,
+                        ESP_ERR_INVALID_STATE, TAG,
+                        "boot animation preview is active");
+    show_settings_view();
+    settings_show_system_view(SETTINGS_SYSTEM_VIEW_BOOT_ANIMATION);
+    ESP_RETURN_ON_FALSE(
+        esp_bms_lvgl_ui_simulator_boot_animation_settings_visible(),
+        ESP_ERR_INVALID_STATE, TAG,
+        "boot animation settings view did not open");
+    return ESP_OK;
+}
+
+esp_err_t esp_bms_lvgl_ui_simulator_play_boot_animation(void)
+{
+    ESP_RETURN_ON_FALSE(
+        esp_bms_lvgl_ui_simulator_boot_animation_settings_visible(),
+        ESP_ERR_INVALID_STATE, TAG,
+        "boot animation settings view is not active");
+    (void)lv_obj_send_event(s_ui.settings_boot_preview_button,
+                            LV_EVENT_CLICKED,
+                            NULL);
+    ESP_RETURN_ON_FALSE(
+        esp_bms_lvgl_ui_simulator_boot_animation_preview_active(),
+        ESP_ERR_INVALID_STATE, TAG,
+        "boot animation preview did not start");
+    return ESP_OK;
+}
+#endif

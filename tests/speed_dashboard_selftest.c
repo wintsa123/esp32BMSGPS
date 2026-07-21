@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include "esp_bms_gps_stream.h"
 #include "esp_bms_speed_dashboard.h"
 
 static void test_utc8_rollover(void)
