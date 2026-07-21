@@ -76,14 +76,26 @@ grep -qx '校验通过：配置档=chinese-default 模块=network,ota' "${work_d
 rg -q '^用法：' "${work_dir}/chinese-help.out"
 expect_fail 'invalid language' "${repo_root}/start.sh" validate --lang en --lang ja
 
-printf '2\n\n\n\n\n\n\n' | FIRMWARE_BUILD_ROOT="${work_dir}/interactive-build" "${repo_root}/start.sh" >"${work_dir}/interactive.out"
+printf '2\n\n\n\n\n\n' | FIRMWARE_BUILD_ROOT="${work_dir}/interactive-build" "${repo_root}/start.sh" >"${work_dir}/interactive.out"
+rg -q '^=== ESP32 BMS GPS Firmware Configurator / ESP32 BMS GPS 固件定制器 ===$' "${work_dir}/interactive.out"
 rg -q '^请选择语言 / Select language$' "${work_dir}/interactive.out"
-rg -q '^config: .*/interactive-build/legacy/firmware.env$' "${work_dir}/interactive.out"
-! rg -q '^LANGUAGE=' "${work_dir}/interactive-build/legacy/firmware.env"
+rg -q '^ ESP32 BMS GPS Firmware Configurator$' "${work_dir}/interactive.out"
+rg -Fq '  1) esp32-wroom-32e-legacy ' "${work_dir}/interactive.out"
+rg -q '^Modules$' "${work_dir}/interactive.out"
+rg -q '^config: .*/interactive-build/esp32-wroom-32e-legacy/firmware.env$' "${work_dir}/interactive.out"
+! rg -q 'Profile \[' "${work_dir}/interactive.out"
+rg -qx 'PROFILE=esp32-wroom-32e-legacy' "${work_dir}/interactive-build/esp32-wroom-32e-legacy/firmware.env"
+! rg -q '^LANGUAGE=' "${work_dir}/interactive-build/esp32-wroom-32e-legacy/firmware.env"
 
-printf 'invalid\n2\n\n\n\n\n\n\n' | FIRMWARE_BUILD_ROOT="${work_dir}/interactive-retry-build" "${repo_root}/start.sh" >"${work_dir}/interactive-retry.out" 2>"${work_dir}/interactive-retry.err"
+printf 'invalid\n2\n\n\n\n\n\n' | FIRMWARE_BUILD_ROOT="${work_dir}/interactive-retry-build" "${repo_root}/start.sh" >"${work_dir}/interactive-retry.out" 2>"${work_dir}/interactive-retry.err"
 rg -q '^请输入 1、2、zh 或 en。 / Enter 1, 2, zh, or en\.$' "${work_dir}/interactive-retry.err"
-rg -q '^config: .*/interactive-retry-build/legacy/firmware.env$' "${work_dir}/interactive-retry.out"
+rg -q '^config: .*/interactive-retry-build/esp32-wroom-32e-legacy/firmware.env$' "${work_dir}/interactive-retry.out"
+
+printf '1\n2\n\n\n1,7\nn\n' | FIRMWARE_BUILD_ROOT="${work_dir}/interactive-cancel-build" "${repo_root}/start.sh" >"${work_dir}/interactive-cancel.out"
+rg -Fq '  1) ili9488-i80 ' "${work_dir}/interactive-cancel.out"
+rg -Fq '  1) ft6336u-i2c ' "${work_dir}/interactive-cancel.out"
+rg -q '^已取消生成配置。$' "${work_dir}/interactive-cancel.out"
+! test -e "${work_dir}/interactive-cancel-build/esp32s3-wroom-1-n16r8-i80/firmware.env"
 
 cat >"${profile_dir}/profile.cmake" <<'EOF'
 set(ESP_BMS_FEATURE_AUDIO 0)

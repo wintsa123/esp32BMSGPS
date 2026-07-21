@@ -62,11 +62,11 @@ message_text() {
     text="${text//is dangerous; pass /是危险引脚；请传入 }"
     text="${text//does not accept options /不接受选项}"
     text="${text//is not build-ready yet /尚未具备本地构建条件}"
-    text="${text//Profile /配置名称}"
-    text="${text//Board /开发板}"
-    text="${text//Display /显示屏}"
-    text="${text//Input /输入设备}"
-    text="${text//Modules /模块}"
+    text="${text//Profile/配置名称}"
+    text="${text//Board/开发板}"
+    text="${text//Display/显示屏}"
+    text="${text//Input/输入设备}"
+    text="${text//Modules/模块}"
     text="${text//profile=/配置档=}"
     text="${text//modules=/模块=}"
     printf '%s' "$text"
@@ -81,6 +81,9 @@ usage() {
     if [[ "$LANGUAGE" == en ]]; then
         cat <<'USAGE'
 Usage: ./start.sh <command> [options]
+
+ESP32 BMS GPS Firmware Configurator
+Build a firmware plan from the bundled hardware and module catalog.
 
 Commands:
   doctor       Check the local ESP-IDF build prerequisites.
@@ -108,6 +111,9 @@ USAGE
     fi
     cat <<'USAGE'
 用法：./start.sh <命令> [选项]
+
+ESP32 BMS GPS 固件定制器
+从内置硬件和功能目录选择方案，生成定制固件配置。
 
 命令：
   doctor       检查本地 ESP-IDF 构建前置条件。
@@ -624,6 +630,7 @@ run_doctor() {
 
 choose_interactive_language() {
     local answer
+    printf '%s\n' '=== ESP32 BMS GPS Firmware Configurator / ESP32 BMS GPS 固件定制器 ==='
     while true; do
         printf '%s\n' '请选择语言 / Select language'
         printf '%s\n' '  1) 简体中文'
@@ -637,23 +644,197 @@ choose_interactive_language() {
     done
 }
 
+print_interactive_title() {
+    if [[ "$LANGUAGE" == en ]]; then
+        cat <<'TITLE'
+
+========================================
+ ESP32 BMS GPS Firmware Configurator
+ Choose hardware and optional features to create a firmware plan.
+========================================
+TITLE
+    else
+        cat <<'TITLE'
+
+========================================
+ ESP32 BMS GPS 固件定制器
+ 选择硬件与可选功能，生成固件构建方案。
+========================================
+TITLE
+    fi
+}
+
+catalog_option_description() {
+    local kind="$1" id="$2" zh en
+    case "$kind:$id" in
+        board:esp32-wroom-32e-legacy) zh='ESP32-WROOM-32E，4MB Flash，可本地构建（推荐）'; en='ESP32-WROOM-32E, 4MB Flash, build-ready (recommended)' ;;
+        board:esp32s3-wroom-1-n16r8-i80) zh='ESP32-S3-WROOM-1，16MB Flash / 8MB PSRAM，尚未适配本地构建'; en='ESP32-S3-WROOM-1, 16MB Flash / 8MB PSRAM, local build not ready' ;;
+        display:st7789-spi) zh='ST7789 SPI 显示屏'; en='ST7789 SPI display' ;;
+        display:ili9488-i80) zh='ILI9488 8080 并行显示屏'; en='ILI9488 I80 parallel display' ;;
+        input:xpt2046-spi) zh='XPT2046 SPI 触摸屏'; en='XPT2046 SPI touch input' ;;
+        input:ft6336u-i2c) zh='FT6336U I2C 触摸屏'; en='FT6336U I2C touch input' ;;
+        module:bms) zh='BMS 蓝牙连接'; en='BMS Bluetooth connection' ;;
+        module:gps) zh='GPS 定位与测速'; en='GPS positioning and speed' ;;
+        module:controller) zh='控制器蓝牙'; en='Controller Bluetooth' ;;
+        module:audio) zh='音频提示'; en='Audio feedback' ;;
+        module:network) zh='Wi-Fi、设置热点与本地网页'; en='Wi-Fi, setup AP, and local web UI' ;;
+        module:ota) zh='本地 Web OTA 更新（自动需要 network）'; en='Local web OTA update (automatically requires network)' ;;
+        module:cast) zh='手机投屏（当前仍使用 legacy runtime）'; en='Phone casting (currently uses legacy runtime)' ;;
+        *) zh='目录中的可选项'; en='Catalog option' ;;
+    esac
+    [[ "$LANGUAGE" == en ]] && printf '%s' "$en" || printf '%s' "$zh"
+}
+
+catalog_ids() {
+    local kind="$1" file id
+    for file in "$CATALOG_DIR/$kind"/*.env; do
+        [[ -f "$file" ]] || continue
+        id="${file##*/}"
+        id="${id%.env}"
+        is_id "$id" && printf '%s\n' "$id"
+    done | LC_ALL=C sort -u
+}
+
+catalog_ids_matching() {
+    local kind="$1" key="$2" expected="$3" file id
+    local -A record=()
+    for file in "$CATALOG_DIR/$kind"/*.env; do
+        [[ -f "$file" ]] || continue
+        id="${file##*/}"
+        id="${id%.env}"
+        is_id "$id" || continue
+        read_kv_file "$file" record
+        [[ "${record[$key]:-}" == "$expected" ]] && printf '%s\n' "$id"
+    done | LC_ALL=C sort -u
+}
+
+choose_catalog_option() {
+    local kind="$1" title="$2" default="$3" answer option index
+    shift 3
+    local -a choices=("$@")
+    ((${#choices[@]} > 0)) || die "no compatible $kind catalog options"
+    while true; do
+        printf '\n%s\n' "$(message_text "$title")"
+        for index in "${!choices[@]}"; do
+            option="${choices[$index]}"
+            printf '  %d) %s — %s%s\n' "$((index + 1))" "$option" "$(catalog_option_description "$kind" "$option")" "$([[ "$option" == "$default" ]] && printf ' *')"
+        done
+        if [[ "$LANGUAGE" == en ]]; then
+            read -r -p "Enter a number or ID [$default]: " answer
+        else
+            read -r -p "输入编号或 ID [$default]：" answer
+        fi
+        [[ -n "$answer" ]] || answer="$default"
+        if [[ "$answer" =~ ^[0-9]+$ ]] && ((10#$answer >= 1 && 10#$answer <= ${#choices[@]})); then
+            MENU_SELECTION="${choices[$((10#$answer - 1))]}"
+            return
+        fi
+        for option in "${choices[@]}"; do
+            if [[ "$answer" == "$option" ]]; then
+                MENU_SELECTION="$option"
+                return
+            fi
+        done
+        [[ "$LANGUAGE" == en ]] && printf '%s\n' 'Invalid selection; please try again.' >&2 || printf '%s\n' '无效选择，请重新输入。' >&2
+    done
+}
+
+choose_module_options() {
+    local answer entry option candidate index
+    local -a choices=() selected=() entries=()
+    mapfile -t choices < <(catalog_ids module)
+    while true; do
+        printf '\n%s\n' "$(message_text 'Modules')"
+        printf '  0) %s\n' "$([[ "$LANGUAGE" == en ]] && printf 'No optional modules' || printf '不启用可选功能')"
+        for index in "${!choices[@]}"; do
+            option="${choices[$index]}"
+            printf '  %d) %s — %s%s\n' "$((index + 1))" "$option" "$(catalog_option_description module "$option")" "$([[ ",${CFG[MODULES]}," == *",$option,"* ]] && printf ' *')"
+        done
+        if [[ "$LANGUAGE" == en ]]; then
+            read -r -p "Enter comma-separated numbers or IDs [${CFG[MODULES]}]: " answer
+        else
+            read -r -p "输入以逗号分隔的编号或 ID [${CFG[MODULES]}]：" answer
+        fi
+        [[ -n "$answer" ]] || { MENU_SELECTION="${CFG[MODULES]}"; return; }
+        [[ "$answer" == 0 ]] && { MENU_SELECTION=''; return; }
+        IFS=, read -r -a entries <<< "$answer"
+        selected=()
+        for entry in "${entries[@]}"; do
+            entry="${entry//[[:space:]]/}"
+            candidate=''
+            if [[ "$entry" =~ ^[0-9]+$ ]] && ((10#$entry >= 1 && 10#$entry <= ${#choices[@]})); then
+                candidate="${choices[$((10#$entry - 1))]}"
+            else
+                for option in "${choices[@]}"; do
+                    [[ "$entry" == "$option" ]] && { candidate="$option"; break; }
+                done
+            fi
+            [[ -n "$candidate" ]] || {
+                [[ "$LANGUAGE" == en ]] && printf '%s\n' 'Invalid module selection; please try again.' >&2 || printf '%s\n' '无效功能选择，请重新输入。' >&2
+                selected=()
+                break
+            }
+            selected+=("$candidate")
+        done
+        ((${#selected[@]} > 0)) || continue
+        MENU_SELECTION="$(printf '%s\n' "${selected[@]}" | LC_ALL=C sort -u | paste -sd, -)"
+        return
+    done
+}
+
+set_interactive_profile_name() {
+    local source="${CFG[BOARD]}"
+    [[ -n "$source" && "$source" != custom-* ]] || source="${CFG[MCU]}"
+    CFG[PROFILE]="$source"
+}
+
+show_interactive_summary() {
+    if [[ "$LANGUAGE" == en ]]; then
+        printf '\nBuild plan\n  Board: %s\n  MCU: %s\n  Display: %s\n  Input: %s\n  Modules: %s\n  Output: firmware-builds/%s/\n' \
+            "${CFG[BOARD]}" "${CFG[MCU]}" "${CFG[DISPLAY]}" "${CFG[INPUT]}" "${CFG[MODULES]:-(none)}" "${CFG[PROFILE]}"
+    else
+        printf '\n构建方案\n  开发板：%s\n  MCU：%s\n  显示屏：%s\n  输入设备：%s\n  功能模块：%s\n  输出目录：firmware-builds/%s/\n' \
+            "${CFG[BOARD]}" "${CFG[MCU]}" "${CFG[DISPLAY]}" "${CFG[INPUT]}" "${CFG[MODULES]:-（无）}" "${CFG[PROFILE]}"
+    fi
+}
+
+confirm_interactive_plan() {
+    local answer
+    if [[ "$LANGUAGE" == en ]]; then
+        read -r -p 'Create this configuration? [Y/n]: ' answer
+    else
+        read -r -p '确认生成此配置？[Y/n]：' answer
+    fi
+    [[ -z "$answer" || "$answer" =~ ^[Yy]$ ]]
+}
+
 run_interactive() {
-    local profile mcu board display input modules
+    local -a choices=()
     choose_interactive_language
-    read -r -p "$(message_text 'Profile [legacy]: ')" profile
-    read -r -p "$(message_text 'MCU [esp32]: ')" mcu
-    read -r -p "$(message_text 'Board [esp32-wroom-32e-legacy]: ')" board
-    read -r -p "$(message_text 'Display [st7789-spi]: ')" display
-    read -r -p "$(message_text 'Input [xpt2046-spi]: ')" input
-    read -r -p "$(message_text 'Modules [bms,gps,controller,audio,network,ota,cast]: ')" modules
     set_defaults
-    [[ -z "$profile" ]] || CFG[PROFILE]="$profile"
-    [[ -z "$mcu" ]] || CFG[MCU]="$mcu"
-    [[ -z "$board" ]] || CFG[BOARD]="$board"
-    [[ -z "$display" ]] || CFG[DISPLAY]="$display"
-    [[ -z "$input" ]] || CFG[INPUT]="$input"
-    [[ -z "$modules" ]] || CFG[MODULES]="$modules"
+    print_interactive_title
+    mapfile -t choices < <(catalog_ids board)
+    choose_catalog_option board 'Board' "${CFG[BOARD]}" "${choices[@]}"
+    CFG[BOARD]="$MENU_SELECTION"
+    load_record board "${CFG[BOARD]}"
+    CFG[MCU]="${RECORD[MCU]}"
+    mapfile -t choices < <(catalog_ids_matching display BUS "${RECORD[DISPLAY_BUS]}")
+    [[ " ${choices[*]} " == *" ${CFG[DISPLAY]} "* ]] || CFG[DISPLAY]="${choices[0]}"
+    choose_catalog_option display 'Display' "${CFG[DISPLAY]}" "${choices[@]}"
+    CFG[DISPLAY]="$MENU_SELECTION"
+    mapfile -t choices < <(catalog_ids_matching input BUS "${RECORD[INPUT_BUS]}")
+    [[ " ${choices[*]} " == *" ${CFG[INPUT]} "* ]] || CFG[INPUT]="${choices[0]}"
+    choose_catalog_option input 'Input' "${CFG[INPUT]}" "${choices[@]}"
+    CFG[INPUT]="$MENU_SELECTION"
+    choose_module_options
+    CFG[MODULES]="$MENU_SELECTION"
+    set_interactive_profile_name
     validate_config
+    show_interactive_summary
+    if ! confirm_interactive_plan; then
+        [[ "$LANGUAGE" == en ]] && printf '%s\n' 'Configuration canceled.' || printf '%s\n' '已取消生成配置。'
+        return
+    fi
     write_config
 }
 

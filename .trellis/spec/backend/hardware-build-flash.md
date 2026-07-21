@@ -362,6 +362,9 @@ scripts/build-profile.sh [--lang zh|en] --config firmware.env
 
 - No-argument `start.sh`, `start.ps1`, and `start.cmd` executions must first
   offer `1`/`zh` for Simplified Chinese and `2`/`en` for English.
+- The interactive wizard then shows a title, numbered catalog options, a build
+  summary, and an explicit create/cancel confirmation. It must not ask the
+  user for an internal profile name.
 - Profiles set `ESP_BMS_FEATURE_{AUDIO,BMS,CONTROLLER,GPS,NETWORK,OTA}` and
   `ESP_BMS_PROFILE_MAIN_REQUIRES`; these are the component-closure contract.
 
@@ -374,6 +377,13 @@ scripts/build-profile.sh [--lang zh|en] --config firmware.env
 - Keep commands, options, exit codes, `KEY=VALUE` fields, paths, module IDs,
   and generated CMake ASCII. Localize human-facing help, prompts, status, and
   diagnostics only.
+- Interactive selection derives `PROFILE` from the selected board ID. A future
+  `custom-*` board may fall back to its selected MCU ID, but it must still have
+  catalog wiring before it can pass validation. `--profile` remains a
+  non-interactive compatibility override and is not shown in the wizard.
+- After board selection, derive the MCU and offer only display/input catalog
+  options compatible with that board's buses. When the previous default is
+  incompatible, choose the first compatible catalog option before prompting.
 - `ota` implies `network`. When OTA is disabled, the generated closure must not
   name `esp_bms_ota`, runtime must return `501 Not Implemented` for `/api/ota`,
   and no `esp_ota_*` update symbol may appear in the final ELF.
@@ -388,6 +398,8 @@ scripts/build-profile.sh [--lang zh|en] --config firmware.env
 | --- | --- |
 | `--lang` is missing or not `zh`/`en` | Exit 2 with a localized diagnostic; do not write a profile |
 | Interactive language answer is invalid | Re-prompt before any configuration prompt |
+| Interactive board choice changes bus | Replace stale display/input defaults with compatible choices before prompting |
+| User cancels the displayed build plan | Exit successfully without creating a configuration directory |
 | `ota` is selected | Resolve `network` and set both corresponding features |
 | OTA is off | Omit `esp_bms_ota`; prove no BMS OTA handler or `esp_ota_{begin,write,end,set_boot_partition}` symbol is linked |
 | Network is off | Omit `esp_bms_network` and its embedded `index.html` symbols |
@@ -397,12 +409,17 @@ scripts/build-profile.sh [--lang zh|en] --config firmware.env
 
 - Good: use `--lang en` for an automation assertion, then compare generated
   `firmware.env`/`normalized.env` bytes independently of displayed language.
+- Good: show all hardware and module choices with their catalog IDs and a
+  localized description, derive the output directory from the board, and let
+  the user confirm the summary.
 - Good: validate network/OTA on-off profiles through component descriptions,
   archives, map files, and final ELF symbols.
 - Base: observe `app_update` in an OTA-off ESP-IDF build, then attribute it to
   its SDK dependency path and still prove no application OTA code is linked.
 - Bad: persist a UI language choice in a profile or declare OTA removed merely
   because `esp_bms_ota` is absent while final `esp_ota_*` symbols remain.
+- Bad: prompt an operator for `Profile [legacy]`, retain a display/input choice
+  after its board becomes incompatible, or create files after cancellation.
 
 ### 6. Tests Required
 
@@ -416,6 +433,9 @@ node .gitnexus/run.cjs detect-changes --repo esp32BMSGPS
 - Test both language positions accepted by `start.sh`, the default Chinese
   output, English override, invalid language, no persistence, and an invalid
   interactive answer followed by a valid selection.
+- Test the title, numbered board/module options, automatic board-derived
+  `PROFILE`, no visible `Profile` prompt, compatible S3 display/input defaults,
+  and cancellation without generated files.
 - Build network+OTA, network-only, and neither profile. Assert component
   closure and final symbols, not just presence of an ESP-IDF archive.
 

@@ -65,6 +65,9 @@ if ($script:Language -eq 'en') {
 @'
 Usage: .\start.cmd <command> [options]
 
+ESP32 BMS GPS Firmware Configurator
+Build a firmware plan from the bundled hardware and module catalog.
+
 Commands:
   doctor       Check the local ESP-IDF build prerequisites.
   configure    Validate a configuration and generate a profile.
@@ -81,6 +84,9 @@ return
 }
 @'
 用法：.\start.cmd <命令> [选项]
+
+ESP32 BMS GPS 固件定制器
+从内置硬件和功能目录选择方案，生成定制固件配置。
 
 命令：
   doctor       检查本地 ESP-IDF 构建前置条件。
@@ -395,6 +401,7 @@ function Invoke-Doctor {
 }
 
 function Select-InteractiveLanguage {
+    Write-Output '=== ESP32 BMS GPS Firmware Configurator / ESP32 BMS GPS 固件定制器 ==='
     while ($true) {
         Write-Output '请选择语言 / Select language'
         Write-Output '  1) 简体中文'
@@ -403,19 +410,176 @@ function Select-InteractiveLanguage {
         switch ($Answer) {
             { $_ -in @('1', 'zh', 'ZH') } { $script:Language = 'zh'; return }
             { $_ -in @('2', 'en', 'EN') } { $script:Language = 'en'; return }
-            default { Write-Error '请输入 1、2、zh 或 en。 / Enter 1, 2, zh, or en.' }
+            default { [Console]::Error.WriteLine('请输入 1、2、zh 或 en。 / Enter 1, 2, zh, or en.') }
         }
     }
+}
+
+function Show-InteractiveTitle {
+    if ($script:Language -eq 'en') {
+        Write-Host ''
+        Write-Host '========================================'
+        Write-Host ' ESP32 BMS GPS Firmware Configurator'
+        Write-Host ' Choose hardware and optional features to create a firmware plan.'
+        Write-Host '========================================'
+    } else {
+        Write-Host ''
+        Write-Host '========================================'
+        Write-Host ' ESP32 BMS GPS 固件定制器'
+        Write-Host ' 选择硬件与可选功能，生成固件构建方案。'
+        Write-Host '========================================'
+    }
+}
+
+function Get-CatalogIds([string]$Kind) {
+    $Directory = Join-Path $CatalogDir $Kind
+    if (-not (Test-Path -LiteralPath $Directory -PathType Container)) { return @() }
+    return @(
+        Get-ChildItem -LiteralPath $Directory -Filter '*.env' -File |
+            ForEach-Object { $_.BaseName } |
+            Where-Object { Test-Id $_ } |
+            Sort-Object -Unique
+    )
+}
+
+function Get-CatalogIdsMatching([string]$Kind, [string]$Key, [string]$Expected) {
+    $Result = [System.Collections.Generic.List[string]]::new()
+    foreach ($Id in (Get-CatalogIds $Kind)) {
+        $Record = Get-Record $Kind $Id
+        if ($Record[$Key] -eq $Expected) { $Result.Add($Id) }
+    }
+    return @($Result | Sort-Object -Unique)
+}
+
+function Get-CatalogOptionDescription([string]$Kind, [string]$Id) {
+    $Labels = @{
+        'board/esp32-wroom-32e-legacy' = @('ESP32-WROOM-32E，4MB Flash，可本地构建（推荐）', 'ESP32-WROOM-32E, 4MB Flash, build-ready (recommended)')
+        'board/esp32s3-wroom-1-n16r8-i80' = @('ESP32-S3-WROOM-1，16MB Flash / 8MB PSRAM，尚未适配本地构建', 'ESP32-S3-WROOM-1, 16MB Flash / 8MB PSRAM, local build not ready')
+        'display/st7789-spi' = @('ST7789 SPI 显示屏', 'ST7789 SPI display')
+        'display/ili9488-i80' = @('ILI9488 8080 并行显示屏', 'ILI9488 I80 parallel display')
+        'input/xpt2046-spi' = @('XPT2046 SPI 触摸屏', 'XPT2046 SPI touch input')
+        'input/ft6336u-i2c' = @('FT6336U I2C 触摸屏', 'FT6336U I2C touch input')
+        'module/bms' = @('BMS 蓝牙连接', 'BMS Bluetooth connection')
+        'module/gps' = @('GPS 定位与测速', 'GPS positioning and speed')
+        'module/controller' = @('控制器蓝牙', 'Controller Bluetooth')
+        'module/audio' = @('音频提示', 'Audio feedback')
+        'module/network' = @('Wi-Fi、设置热点与本地网页', 'Wi-Fi, setup AP, and local web UI')
+        'module/ota' = @('本地 Web OTA 更新（自动需要 network）', 'Local web OTA update (automatically requires network)')
+        'module/cast' = @('手机投屏（当前仍使用 legacy runtime）', 'Phone casting (currently uses legacy runtime)')
+    }
+    $Label = $Labels["$Kind/$Id"]
+    if ($null -eq $Label) { return $(if ($script:Language -eq 'en') { 'Catalog option' } else { '目录中的可选项' }) }
+    if ($script:Language -eq 'en') { return $Label[1] }
+    return $Label[0]
+}
+
+function Select-CatalogOption([string]$Kind, [string]$Title, [string]$Default, [string[]]$Options) {
+    if ($Options.Count -eq 0) { Fail "no compatible $Kind catalog options" }
+    while ($true) {
+        Write-Host ''
+        Write-Host (Convert-LocalizedText $Title)
+        for ($Index = 0; $Index -lt $Options.Count; $Index++) {
+            $Option = $Options[$Index]
+            $Mark = if ($Option -eq $Default) { ' *' } else { '' }
+            Write-Host ("  {0}) {1} — {2}{3}" -f ($Index + 1), $Option, (Get-CatalogOptionDescription $Kind $Option), $Mark)
+        }
+        $Prompt = if ($script:Language -eq 'en') { "Enter a number or ID [$Default]" } else { "输入编号或 ID [$Default]" }
+        $Answer = Read-Host $Prompt
+        if ([string]::IsNullOrWhiteSpace($Answer)) { $Answer = $Default }
+        $Number = 0
+        if ([int]::TryParse($Answer, [ref]$Number) -and $Number -ge 1 -and $Number -le $Options.Count) { return $Options[$Number - 1] }
+        if ($Options -contains $Answer) { return $Answer }
+        [Console]::Error.WriteLine($(if ($script:Language -eq 'en') { 'Invalid selection; please try again.' } else { '无效选择，请重新输入。' }))
+    }
+}
+
+function Select-ModuleOptions([string]$Default) {
+    $Options = @(Get-CatalogIds 'module')
+    while ($true) {
+        Write-Host ''
+        Write-Host (Convert-LocalizedText 'Modules')
+        Write-Host $(if ($script:Language -eq 'en') { '  0) No optional modules' } else { '  0) 不启用可选功能' })
+        for ($Index = 0; $Index -lt $Options.Count; $Index++) {
+            $Option = $Options[$Index]
+            $Mark = if (",$Default," -like "*,$Option,*") { ' *' } else { '' }
+            Write-Host ("  {0}) {1} — {2}{3}" -f ($Index + 1), $Option, (Get-CatalogOptionDescription 'module' $Option), $Mark)
+        }
+        $Prompt = if ($script:Language -eq 'en') { "Enter comma-separated numbers or IDs [$Default]" } else { "输入以逗号分隔的编号或 ID [$Default]" }
+        $Answer = Read-Host $Prompt
+        if ([string]::IsNullOrWhiteSpace($Answer)) { return $Default }
+        if ($Answer.Trim() -eq '0') { return '' }
+        $Selected = [System.Collections.Generic.List[string]]::new()
+        $Valid = $true
+        foreach ($Entry in ($Answer.Split(',') | ForEach-Object { $_.Trim() })) {
+            $Number = 0
+            if ([int]::TryParse($Entry, [ref]$Number) -and $Number -ge 1 -and $Number -le $Options.Count) {
+                $Selected.Add($Options[$Number - 1])
+            } elseif ($Options -contains $Entry) {
+                $Selected.Add($Entry)
+            } else {
+                $Valid = $false
+                break
+            }
+        }
+        if ($Valid -and $Selected.Count -gt 0) { return ConvertTo-SortedCsv $Selected.ToArray() }
+        [Console]::Error.WriteLine($(if ($script:Language -eq 'en') { 'Invalid module selection; please try again.' } else { '无效功能选择，请重新输入。' }))
+    }
+}
+
+function Set-InteractiveProfileName([hashtable]$Config) {
+    $Source = $Config.BOARD
+    if ([string]::IsNullOrEmpty($Source) -or $Source -like 'custom-*') { $Source = $Config.MCU }
+    $Config.PROFILE = $Source
+}
+
+function Show-InteractiveSummary([hashtable]$Config) {
+    $Modules = if ([string]::IsNullOrEmpty($Config.MODULES)) { if ($script:Language -eq 'en') { '(none)' } else { '（无）' } } else { $Config.MODULES }
+    if ($script:Language -eq 'en') {
+        Write-Host "`nBuild plan"
+        Write-Host "  Board: $($Config.BOARD)"
+        Write-Host "  MCU: $($Config.MCU)"
+        Write-Host "  Display: $($Config.DISPLAY)"
+        Write-Host "  Input: $($Config.INPUT)"
+        Write-Host "  Modules: $Modules"
+        Write-Host "  Output: firmware-builds/$($Config.PROFILE)/"
+    } else {
+        Write-Host "`n构建方案"
+        Write-Host "  开发板：$($Config.BOARD)"
+        Write-Host "  MCU：$($Config.MCU)"
+        Write-Host "  显示屏：$($Config.DISPLAY)"
+        Write-Host "  输入设备：$($Config.INPUT)"
+        Write-Host "  功能模块：$Modules"
+        Write-Host "  输出目录：firmware-builds/$($Config.PROFILE)/"
+    }
+}
+
+function Confirm-InteractivePlan {
+    $Prompt = if ($script:Language -eq 'en') { 'Create this configuration? [Y/n]' } else { '确认生成此配置？[Y/n]' }
+    $Answer = Read-Host $Prompt
+    return [string]::IsNullOrEmpty($Answer) -or $Answer -match '^[Yy]$'
 }
 
 function Invoke-Interactive {
     $Config = New-DefaultConfig
     Select-InteractiveLanguage
-    foreach ($Pair in @(@('PROFILE', 'Profile'), @('MCU', 'MCU'), @('BOARD', 'Board'), @('DISPLAY', 'Display'), @('INPUT', 'Input'), @('MODULES', 'Modules'))) {
-        $Answer = Read-Host (Convert-LocalizedText "$($Pair[1]) [$($Config[$Pair[0]])]")
-        if (-not [string]::IsNullOrEmpty($Answer)) { $Config[$Pair[0]] = $Answer }
-    }
+    Show-InteractiveTitle
+    $Config.BOARD = Select-CatalogOption 'board' 'Board' $Config.BOARD @(Get-CatalogIds 'board')
+    $Board = Get-Record 'board' $Config.BOARD
+    $Config.MCU = $Board.MCU
+    $DisplayOptions = @(Get-CatalogIdsMatching 'display' 'BUS' $Board.DISPLAY_BUS)
+    if ($DisplayOptions -notcontains $Config.DISPLAY) { $Config.DISPLAY = $DisplayOptions[0] }
+    $Config.DISPLAY = Select-CatalogOption 'display' 'Display' $Config.DISPLAY $DisplayOptions
+    $InputOptions = @(Get-CatalogIdsMatching 'input' 'BUS' $Board.INPUT_BUS)
+    if ($InputOptions -notcontains $Config.INPUT) { $Config.INPUT = $InputOptions[0] }
+    $Config.INPUT = Select-CatalogOption 'input' 'Input' $Config.INPUT $InputOptions
+    $Config.MODULES = Select-ModuleOptions $Config.MODULES
+    Set-InteractiveProfileName $Config
     Validate-Config $Config
+    Show-InteractiveSummary $Config
+    if (-not (Confirm-InteractivePlan)) {
+        Write-Host $(if ($script:Language -eq 'en') { 'Configuration canceled.' } else { '已取消生成配置。' })
+        return
+    }
     Write-Profile $Config
 }
 
