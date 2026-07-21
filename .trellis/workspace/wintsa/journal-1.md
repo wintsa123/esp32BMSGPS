@@ -340,3 +340,36 @@ Added a primitive-drawn quick-panel lock icon, full-screen interaction guard, fr
 ### Next Steps
 
 - None - task complete
+
+
+## Session 11: 功能组件拆分与中文定制化编译脚本
+
+**Date**: 2026-07-21
+**Task**: 功能组件拆分与中文定制化编译脚本
+**Branch**: `main`
+
+### Summary
+
+实现每次无参数启动的中英文语言选择与 --lang 覆盖；补齐 Bash、PowerShell、CMD 入口及包装编译脚本本地化，增加无效语言重试回归。完成 network/OTA on-off 三组 ESP-IDF 构建和 ELF 闭包验证；发现 app_update 为 ESP-IDF 基础依赖，OTA-off 不含 BMS OTA 实现符号。RFC2217 刷写因远端拒绝参数协商未写入设备。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c64a4c2` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
