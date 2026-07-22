@@ -1,0 +1,2 @@
+source /vol1/1000/项目/esp32BmsGps/output/esp32-wroom-32e-legacy/idf-build/gdbinit/symbols
+source /vol1/1000/项目/esp32BmsGps/output/esp32-wroom-32e-legacy/idf-build/gdbinit/connect

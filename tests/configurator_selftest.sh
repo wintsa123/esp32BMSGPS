@@ -115,9 +115,28 @@ if [[ "${1:-}" == --version ]]; then
     printf '%s\n' 'ESP-IDF v6.0.2'
     exit 0
 fi
+args=("$@")
+for ((index = 0; index < ${#args[@]}; index++)); do
+    if [[ "${args[$index]}" == -B ]]; then
+        mkdir -p "${args[$((index + 1))]}"
+        : >"${args[$((index + 1))]}/esp32_bms_gps_idf.bin"
+        break
+    fi
+done
 printf '%s\n' "$@" >"${FAKE_IDF_ARGS:?}"
 EOF
 chmod +x "$fake_idf_root/bin/idf.py"
+
+IDF_PATH="$fake_idf_root" \
+    FIRMWARE_BUILD_ROOT="${work_dir}/local-build" \
+    ESP_BMS_IDF_BUILD_ROOT="${work_dir}/output" \
+    FAKE_IDF_ARGS="${work_dir}/local-idf.args" \
+    "${repo_root}/start.sh" compile-local --lang en --config "${work_dir}/golden.env" >"${work_dir}/local-build.out"
+rg -Fq 'Build completed' "${work_dir}/local-build.out"
+rg -Fx -- '-B' "${work_dir}/local-idf.args"
+rg -Fx "${work_dir}/output/golden/idf-build" "${work_dir}/local-idf.args"
+test -f "${work_dir}/output/golden/idf-build/esp32_bms_gps_idf.bin"
+
 printf '2\nsaved-s3\n' | \
     IDF_PATH="$fake_idf_root" \
     FIRMWARE_BUILD_ROOT="$saved_build_root" \
@@ -268,6 +287,12 @@ rg -Fq '& idf.py @IdfArgs' "${repo_root}/start.ps1"
 rg -Fq 'Test-Path -LiteralPath Variable:global:LASTEXITCODE' "${repo_root}/start.ps1"
 rg -Fq 'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME' "${repo_root}/start.ps1"
 rg -Fq 'scripts/esp-idf-env.sh' "${repo_root}/start.sh"
+rg -Fq 'IDF_BUILD_ROOT="${ESP_BMS_IDF_BUILD_ROOT:-$ROOT/output}"' "${repo_root}/start.sh"
+rg -Fq "Join-Path \$Root 'output'" "${repo_root}/start.ps1"
+rg -Fq '编译完成后保存此配置吗？[y/N]：' "${repo_root}/start.sh"
+rg -Fq '现在烧录这个固件吗？[y/N]：' "${repo_root}/start.sh"
+rg -Fq '编译完成后保存此配置吗？[y/N]' "${repo_root}/start.ps1"
+rg -Fq '现在烧录这个固件吗？[y/N]' "${repo_root}/start.ps1"
 rg -Fq 'ESP-IDF v6.0.2' "${repo_root}/start.ps1"
 rg -Fq 'esp-idf-v6.0.2' "${repo_root}/scripts/esp-idf-env.sh"
 rg -Fq -- '-DIDF_TARGET="${CFG[MCU]}"' "${repo_root}/start.sh"

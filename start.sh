@@ -4,10 +4,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CATALOG_DIR="${FIRMWARE_CATALOG_DIR:-$ROOT/firmware/catalog}"
 BUILD_ROOT="${FIRMWARE_BUILD_ROOT:-$ROOT/firmware-builds}"
-# ESP-IDF 6 writes a compiler response file inside its build directory.  Its
-# CMake toolchain currently corrupts non-ASCII build paths, so keep generated
-# profiles in the project but build under the ASCII volume root by default.
-IDF_BUILD_ROOT="${ESP_BMS_IDF_BUILD_ROOT:-/vol1/1000/esp32-idf6-builds}"
+# Keep generated profiles separate from build artifacts so local firmware
+# output remains under this project by default.
+IDF_BUILD_ROOT="${ESP_BMS_IDF_BUILD_ROOT:-$ROOT/output}"
 readonly SCHEMA_VERSION=1
 
 declare -A CFG RECORD MODULE_STATE GPIO_VALUES GPIO_KINDS BOARD_GPIO REQUIRED_GPIO_KINDS MODULE_GPIO_ROLE_STATE CUSTOM_MODULE_ROLE_STATE
@@ -1316,10 +1315,22 @@ choose_module_options() {
 }
 
 set_interactive_profile_name() {
-    local source="${CFG[BOARD]}"
+    local source="${CFG[BOARD]}" answer
     [[ "$source" == custom ]] && source="${CFG[BOARD_NAME]}"
     [[ -n "$source" ]] || source="${CFG[MCU]}"
     CFG[PROFILE]="$source"
+    [[ "${1:-}" == prompt ]] || return 0
+    is_interactive_terminal || return 0
+    while true; do
+        if [[ "$LANGUAGE" == en ]]; then
+            read -r -p "Configuration name [$source]: " answer
+        else
+            read -r -p "配置名称 [$source]：" answer
+        fi
+        [[ -z "$answer" ]] && return
+        is_id "$answer" && { CFG[PROFILE]="$answer"; return; }
+        [[ "$LANGUAGE" == en ]] && printf '%s\n' 'Use 1-64 ASCII letters, numbers, _ or -.' >&2 || printf '%s\n' '请输入 1–64 个 ASCII 字母、数字、_ 或 -。' >&2
+    done
 }
 
 configure_missing_board_gpio() {
@@ -1516,13 +1527,40 @@ run_interactive() {
         [[ "$LANGUAGE" == en ]] && printf '%s\n' 'Configuration canceled.' || printf '%s\n' '已取消生成配置。'
         return
     fi
-    write_config
     select_post_config_action
     case "$NEXT_ACTION" in
+        config)
+            write_config
+            ;;
         local)
-            env FIRMWARE_LANG="$LANGUAGE" "$ROOT/scripts/build-profile.sh" --config "$BUILD_ROOT/${CFG[PROFILE]}/firmware.env"
+            local temporary_build_root original_build_root build_status answer
+            mkdir -p "$ROOT/output"
+            temporary_build_root="$(mktemp -d "$ROOT/output/.config.XXXXXX")"
+            original_build_root="$BUILD_ROOT"
+            BUILD_ROOT="$temporary_build_root"
+            write_config >/dev/null
+            if env FIRMWARE_LANG="$LANGUAGE" FIRMWARE_BUILD_ROOT="$temporary_build_root" "$ROOT/start.sh" compile-local --config "$temporary_build_root/${CFG[PROFILE]}/firmware.env"; then
+                build_status=0
+            else
+                build_status=$?
+            fi
+            BUILD_ROOT="$original_build_root"
+            rm -rf "$temporary_build_root"
+            (( build_status == 0 )) || return "$build_status"
+            if is_interactive_terminal; then
+                if [[ "$LANGUAGE" == en ]]; then
+                    read -r -p 'Save this configuration after building? [y/N]: ' answer
+                else
+                    read -r -p '编译完成后保存此配置吗？[y/N]：' answer
+                fi
+                if [[ "$answer" =~ ^[Yy]$ ]]; then
+                    set_interactive_profile_name prompt
+                    write_config
+                fi
+            fi
             ;;
         cloud)
+            write_config
             report_cloud_build_pending
             return 3
             ;;
@@ -1562,6 +1600,24 @@ main() {
                     -DSDKCONFIG="$BUILD_ROOT/${CFG[PROFILE]}/sdkconfig" \
                     -DSDKCONFIG_DEFAULTS="$BUILD_ROOT/${CFG[PROFILE]}/sdkconfig.defaults" \
                     -DESP_BMS_PROFILE_FILE="$BUILD_ROOT/${CFG[PROFILE]}/generated/profile.cmake" build
+                local build_dir="$IDF_BUILD_ROOT/${CFG[PROFILE]}/idf-build" firmware_path answer
+                firmware_path="$build_dir/esp32_bms_gps_idf.bin"
+                [[ -f "$firmware_path" ]] || die "build completed but firmware is missing: $firmware_path"
+                if [[ "$LANGUAGE" == en ]]; then
+                    printf 'Build completed\n  Firmware: %s\n' "$firmware_path"
+                else
+                    printf '编译完成\n  固件地址：%s\n' "$firmware_path"
+                fi
+                if is_interactive_terminal; then
+                    if [[ "$LANGUAGE" == en ]]; then
+                        read -r -p 'Flash this firmware now? [y/N]: ' answer
+                    else
+                        read -r -p '现在烧录这个固件吗？[y/N]：' answer
+                    fi
+                    if [[ "$answer" =~ ^[Yy]$ ]]; then
+                        "$ROOT/scripts/esp-idf-env.sh" -B "$build_dir" -p 'rfc2217://192.168.2.10:4000?ign_set_control' -b 115200 flash
+                    fi
+                fi
             elif [[ "$command" == build-cloud ]]; then
                 write_config
                 report_cloud_build_pending

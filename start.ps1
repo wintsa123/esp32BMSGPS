@@ -11,7 +11,7 @@ $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $CatalogDir = if ($env:FIRMWARE_CATALOG_DIR) { $env:FIRMWARE_CATALOG_DIR } else { Join-Path $Root 'firmware/catalog' }
 $BuildRoot = if ($env:FIRMWARE_BUILD_ROOT) { $env:FIRMWARE_BUILD_ROOT } else { Join-Path $Root 'firmware-builds' }
-$IdfBuildRoot = if ($env:ESP_BMS_IDF_BUILD_ROOT) { $env:ESP_BMS_IDF_BUILD_ROOT } elseif ($env:OS -eq 'Windows_NT') { Join-Path $BuildRoot 'idf-builds' } else { '/vol1/1000/esp32-idf6-builds' }
+$IdfBuildRoot = if ($env:ESP_BMS_IDF_BUILD_ROOT) { $env:ESP_BMS_IDF_BUILD_ROOT } else { Join-Path $Root 'output' }
 $SchemaVersion = '1'
 $script:Language = if ($env:FIRMWARE_LANG -in @('zh', 'en')) { $env:FIRMWARE_LANG } else { 'zh' }
 $script:BuildExitCode = 0
@@ -1088,11 +1088,18 @@ function Set-CustomBoardConfig([System.Collections.IDictionary]$Config) {
     Set-CustomBoardGpio $Config
 }
 
-function Set-InteractiveProfileName([System.Collections.IDictionary]$Config) {
+function Set-InteractiveProfileName([System.Collections.IDictionary]$Config, [switch]$Prompt) {
     $Source = $Config.BOARD
     if ($Source -eq 'custom') { $Source = $Config.BOARD_NAME }
     if ([string]::IsNullOrEmpty($Source)) { $Source = $Config.MCU }
     $Config.PROFILE = $Source
+    if (-not $Prompt -or -not (Test-InteractiveTerminal)) { return }
+    while ($true) {
+        $Answer = Read-Host $(if ($script:Language -eq 'en') { "Configuration name [$Source]" } else { "配置名称 [$Source]" })
+        if ([string]::IsNullOrWhiteSpace($Answer)) { return }
+        if (Test-Id $Answer.Trim()) { $Config.PROFILE = $Answer.Trim(); return }
+        [Console]::Error.WriteLine($(if ($script:Language -eq 'en') { 'Use 1-64 ASCII letters, numbers, _ or -.' } else { '请输入 1–64 个 ASCII 字母、数字、_ 或 -。' }))
+    }
 }
 
 function Set-MissingBoardGpio([System.Collections.IDictionary]$Config) {
@@ -1283,10 +1290,26 @@ function Invoke-Interactive {
         Write-Host $(if ($script:Language -eq 'en') { 'Configuration canceled.' } else { '已取消生成配置。' })
         return
     }
-    Write-Profile $Config
     switch (Select-PostConfigAction) {
-        'local' { Invoke-LocalBuild $Config; exit $script:BuildExitCode }
-        'cloud' { Write-CloudBuildPending; exit 3 }
+        'config' { Write-Profile $Config; return }
+        'local' {
+            $PendingBuildRoot = Join-Path $Root ("output/.config-" + [guid]::NewGuid().ToString('N'))
+            $OriginalBuildRoot = $script:BuildRoot
+            try {
+                [void](New-Item -ItemType Directory -Path $PendingBuildRoot -Force)
+                $script:BuildRoot = $PendingBuildRoot
+                Write-Profile $Config
+                Invoke-LocalBuild $Config
+            } finally {
+                $script:BuildRoot = $OriginalBuildRoot
+                Remove-Item -LiteralPath $PendingBuildRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            if ($script:BuildExitCode -ne 0) { exit $script:BuildExitCode }
+            $Save = Read-Host $(if ($script:Language -eq 'en') { 'Save this configuration after building? [y/N]' } else { '编译完成后保存此配置吗？[y/N]' })
+            if ($Save -match '^[Yy]$') { Set-InteractiveProfileName $Config -Prompt; Write-Profile $Config }
+            exit 0
+        }
+        'cloud' { Write-Profile $Config; Write-CloudBuildPending; exit 3 }
     }
 }
 

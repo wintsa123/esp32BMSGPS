@@ -1,0 +1,8 @@
+-Wno-frame-address
+-mlongcalls
+-fno-builtin-memcpy
+-fno-builtin-memset
+-fno-builtin-bzero
+"-specs=/vol1/1000/
+/esp32BmsGps/output/esp32-wroom-32e-legacy/idf-build/specs/picolibc.specs"
+-fno-rtti
