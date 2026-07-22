@@ -62,12 +62,12 @@
 
 | 目标 | 开发进度 | 状态 |
 | --- | --- | :---: |
-| 🖥️ 用 240 × 320 TFT 提供适合骑行的速度、BMS、控制器和 GPS 仪表 | ST7789、XPT2046、LVGL 仪表与设置、旋转、亮度、触摸校准和快捷面板均已接入 | 🚧 持续优化 |
+| 🖥️ 用 TFT 提供适合骑行的速度、BMS、控制器和 GPS 仪表 | 配置档可选择 ST7789/XPT2046、ILI9488/FT6336U 或 ST7796U/GT1151；LVGL 仪表、旋转、亮度、触摸校准和快捷面板均已接入 | 🚧 持续优化 |
 | 🔋 通过 BLE 接入各两轮平台的电池保护板，所有遥测均来自真实设备 | ANT BMS 已完成扫描、绑定、连接、订阅、轮询和状态帧解析并通过实测，其他品牌与型号的保护板待适配验证 | 🚧 ANT 已实测，其他待测 |
 | 🛞 通过 BLE 接入各控制器平台并准确换算车辆参数 | 已接入 BLE 协议、真实遥测、轮胎参数和传动比换算，继续完善设备兼容与数据校准 | 🚧 持续优化，目前接入了远驱控制器还未测试 |
-| 🛰️ 提供 GPS 定位、速度、授时、轨迹记录和地图能力 | 已接入 336H UART NMEA、RMC 速度/定位/UTC 和 GPIO35 PPS 诊断，轨迹与地图尚未完成 | 🚧 基础链路可用 |
+| 🛰️ 提供 GPS 定位、速度、授时、轨迹记录和地图能力 | 已接入 336H UART NMEA、RMC 速度/定位/UTC 和按 profile 配置的 PPS 诊断，轨迹与地图尚未完成 | 🚧 基础链路可用 |
 | 📡 通过 Setup AP、本地 Web UI 和公网 HTTPS 控制站完成配置、诊断与维护 | 随机热点凭据、二维码、`192.168.4.1`、配置 API 和 BMS 扫描/绑定入口已接入；Vercel 控制站已上线 | ✅ 已实现 |
-| 🔊 为连接状态和设备操作提供清晰的音频反馈 | GPIO26 DAC 与 GPIO4 功放使能已用于连接提示和音量反馈 | ✅ 已实现 |
+| 🔊 为连接状态和设备操作提供清晰的音频反馈 | 经典 ESP32 可用 DAC，ESP32-S3 可用 I2S；功放与音频引脚由 profile 配置 | ✅ 已实现 |
 | 📱 通过 Android 低延迟投屏扩展地图、导航与复杂信息展示 | 独立 Kotlin 应用和投屏协议已建立，正在优化延迟、稳定性与机型兼容 | 🚧 开发中 |
 | 🌏 默认使用中文，并在设备设置中提供英文切换 | 中文默认界面与设置内语言切换策略已经确定，TFT 语言状态使用 ASCII `ZH` / `EN` 标记 | 🚧 持续完善 |
 | 🔄 建立 OTA、TF 卡记录、历史轨迹和地图的完整闭环 | OTA API 尚未形成完整升级闭环，TF 卡记录、历史轨迹和地图属于后续阶段 | ⏳ 待实现 |
@@ -76,28 +76,28 @@
 
 ## 🧩 目标硬件与 GPIO 配置位置
 
-- MCU：ESP32-WROOM-32E，4 MB Flash，不使用 PSRAM。
-- 屏幕：TPM408 2.8 英寸，ST7789，240 × 320，BGR。
-- 触摸：XPT2046 / XP2046。
-- GPS：336H，UART NMEA + PPS。
+- 经典 ESP32：ESP32-WROOM-32E、4 MB Flash、无 PSRAM，可选 ST7789/XPT2046 与 DAC 音频。
+- ESP32-S3：支持 I80 ILI9488/FT6336U 与 I80 ST7796U/GT1151 profile，使用各自的 Flash、PSRAM 和 GPIO 合同。
+- GPS：336H UART NMEA + PPS，仅在选择 GPS 模块时生成和校验相应 GPIO。
 - BMS：已实测 ANT BMS BLE；其他两轮平台保护板待适配验证；控制器协议为远驱 BLE。
 
-GPIO 不在 README 中重复维护，代码中的配置位置如下：
+硬件和 GPIO 不在 README 或 C 源码中重复维护，配置链如下：
 
-- 显示、触摸、背光：[`components/esp_bms_lvgl_bridge/include/esp_bms_lvgl_bridge.h`](./components/esp_bms_lvgl_bridge/include/esp_bms_lvgl_bridge.h)
-- GPS、PPS、本机电池 ADC：[`components/esp_bms_idf_runtime/esp_bms_idf_runtime.c`](./components/esp_bms_idf_runtime/esp_bms_idf_runtime.c)
-- 音频 DAC 与功放使能：[`components/esp_bms_audio_feedback/esp_bms_audio_feedback.c`](./components/esp_bms_audio_feedback/esp_bms_audio_feedback.c)
+- 板、显示、触摸和模块事实：[`firmware/catalog`](./firmware/catalog)
+- 用户保存的选择与 GPIO 覆盖：`firmware-builds/<profile>/firmware.env`
+- 构建时生成的 C/CMake 配置：`firmware-builds/<profile>/generated/`
+- 通用显示 bridge、GPS、ADC 和音频组件只消费生成配置
 - 完整引脚表、冲突说明与构建约定：[`hardware-build-flash.md`](./.trellis/spec/backend/hardware-build-flash.md)
 
-修改 GPIO 时必须同步修改对应代码配置和项目规范，不能只改 README。
+修改 GPIO 时必须更新已验证的 catalog 或 profile 覆盖并重新生成；不能只改 README，也不能新增代码默认引脚。
 
 ## 🛠️ 开发栈
 
 | 层 | 技术 |
 | --- | --- |
 | 固件 | C、ESP-IDF 6.0.2、FreeRTOS、CMake / `idf.py` |
-| 显示 | LVGL 9.5、`esp_lvgl_adapter`、`esp_lcd`、ST7789、XPT2046 |
-| 设备能力 | NimBLE、Wi-Fi SoftAP、`esp_http_server`、NVS、UART NMEA、ADC、LEDC、DAC |
+| 显示 | LVGL 9.5、`esp_lvgl_adapter`、`esp_lcd`、ST7789/XPT2046、ILI9488/FT6336U、ST7796U/GT1151 |
+| 设备能力 | NimBLE、Wi-Fi SoftAP、`esp_http_server`、NVS、UART NMEA、ADC、LEDC、DAC、I2S |
 | 嵌入式 Web | 单页 HTML / CSS / Vanilla JavaScript，编译进固件镜像 |
 | Vercel 控制站 | React 19、TypeScript、Vite 6、Vercel |
 | Android 投屏 | Kotlin、Android SDK 35、Java 17、Gradle 8.14.2 |

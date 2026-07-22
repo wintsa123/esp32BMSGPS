@@ -12,6 +12,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
+#include "soc/soc_caps.h"
 
 static const char *TAG = "bms_audio_feedback";
 
@@ -48,7 +49,9 @@ typedef struct {
     uint8_t volume_percent;
 } audio_command_t;
 
+#if SOC_DAC_SUPPORTED
 static dac_continuous_handle_t s_dac;
+#endif
 static i2s_chan_handle_t s_i2s_tx;
 static QueueHandle_t s_audio_command_queue;
 static bool s_audio_ready;
@@ -67,11 +70,13 @@ static bool audio_uses_i2s(void)
     return ESP_BMS_PROFILE_AUDIO_BACKEND == ESP_BMS_PROFILE_AUDIO_BACKEND_I2S;
 }
 
-static esp_err_t audio_transport_write(const uint8_t *samples, size_t sample_count)
+static esp_err_t audio_transport_write(uint8_t *samples, size_t sample_count)
 {
+#if SOC_DAC_SUPPORTED
     if (!audio_uses_i2s()) {
         return dac_continuous_write(s_dac, samples, sample_count, NULL, -1);
     }
+#endif
     if (!s_i2s_tx) {
         return ESP_ERR_INVALID_STATE;
     }
@@ -99,8 +104,13 @@ static esp_err_t audio_output_enable(void)
                         "enable audio amplifier failed");
     if (audio_uses_i2s()) {
         ESP_RETURN_ON_ERROR(i2s_channel_enable(s_i2s_tx), TAG, "enable I2S channel failed");
+#if SOC_DAC_SUPPORTED
     } else {
         ESP_RETURN_ON_ERROR(dac_continuous_enable(s_dac), TAG, "enable DAC channel failed");
+#else
+    } else {
+        return ESP_ERR_NOT_SUPPORTED;
+#endif
     }
     s_audio_output_enabled = true;
     vTaskDelay(pdMS_TO_TICKS(AUDIO_AMPLIFIER_SETTLE_MS));
@@ -118,8 +128,10 @@ static void audio_output_disable(void)
     }
     if (audio_uses_i2s()) {
         (void)i2s_channel_disable(s_i2s_tx);
+#if SOC_DAC_SUPPORTED
     } else {
         (void)dac_continuous_disable(s_dac);
+#endif
     }
     (void)gpio_set_level(AUDIO_ENABLE_GPIO, !AUDIO_ENABLE_ACTIVE_LEVEL);
     s_audio_output_enabled = false;
@@ -276,6 +288,7 @@ esp_err_t esp_bms_audio_feedback_init(void)
             s_i2s_tx = NULL;
             return i2s_ret;
         }
+#if SOC_DAC_SUPPORTED
     } else if (ESP_BMS_PROFILE_AUDIO_BACKEND == ESP_BMS_PROFILE_AUDIO_BACKEND_DAC) {
         if (AUDIO_DAC_GPIO == GPIO_NUM_NC) {
             ESP_LOGE(TAG, "DAC audio GPIO is not configured");
@@ -292,6 +305,11 @@ esp_err_t esp_bms_audio_feedback_init(void)
         };
         ESP_RETURN_ON_ERROR(dac_continuous_new_channels(&dac_config, &s_dac), TAG,
                             "create DAC channel failed");
+#else
+    } else if (ESP_BMS_PROFILE_AUDIO_BACKEND == ESP_BMS_PROFILE_AUDIO_BACKEND_DAC) {
+        ESP_LOGE(TAG, "DAC audio is not supported on this target");
+        return ESP_ERR_NOT_SUPPORTED;
+#endif
     } else {
         return ESP_ERR_NOT_SUPPORTED;
     }

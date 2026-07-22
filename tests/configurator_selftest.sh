@@ -36,7 +36,7 @@ rg -qx 'INPUT=gt1151-i2c' "${work_dir}/s3-default-build/s3-default/firmware.env"
 rg -qx 'GPIO_TFT_D15=4' "${work_dir}/s3-default-build/s3-default/firmware.env"
 rg -qx 'GPIO_TOUCH_INT=42' "${work_dir}/s3-default-build/s3-default/firmware.env"
 ! rg -q '^GPIO_GPS_' "${work_dir}/s3-default-build/s3-default/firmware.env"
-expect_fail 'gps requires input GPIO role GPS_RX' "${repo_root}/start.sh" validate --lang en --profile s3-missing-gps --modules gps
+expect_fail 'missing required input GPIO role GPS_PPS' "${repo_root}/start.sh" validate --lang en --profile s3-missing-gps --modules gps
 FIRMWARE_BUILD_ROOT="${work_dir}/s3-gps-build" "${repo_root}/start.sh" configure --lang en --profile s3-gps --modules gps --gpio GPS_RX=37 --gpio GPS_PPS=47 --gpio GPS_TX=48 >/dev/null
 rg -qx 'GPIO_GPS_RX=37' "${work_dir}/s3-gps-build/s3-gps/firmware.env"
 rg -qx 'GPIO_GPS_PPS=47' "${work_dir}/s3-gps-build/s3-gps/firmware.env"
@@ -154,7 +154,7 @@ rg -qx 'BOARD=custom' "${work_dir}/custom-build/custom-gps/firmware.env"
 rg -qx 'BOARD_NAME=my-esp32-board' "${work_dir}/custom-build/custom-gps/firmware.env"
 rg -qx 'GPIO_GPS_TX=18' "${work_dir}/custom-build/custom-gps/firmware.env"
 sed 's/,GPS_TX:[0-9][0-9]*//' "${work_dir}/custom.env" >"${work_dir}/custom-missing-gps.env"
-expect_fail 'gps requires output GPIO role GPS_TX' "${repo_root}/start.sh" validate --lang en --config "${work_dir}/custom-missing-gps.env"
+expect_fail 'missing required output GPIO role GPS_TX' "${repo_root}/start.sh" validate --lang en --config "${work_dir}/custom-missing-gps.env"
 
 expect_fail 'missing configuration file' "${repo_root}/scripts/build-profile.sh" --lang en --config "${work_dir}/missing.env"
 
@@ -186,7 +186,7 @@ printf 'invalid\n2\n\n\n\n\n\n' | FIRMWARE_BUILD_ROOT="${work_dir}/interactive-r
 rg -q '^请输入 1、2、zh 或 en。 / Enter 1, 2, zh, or en\.$' "${work_dir}/interactive-retry.err"
 rg -q '^config: .*/interactive-retry-build/esp32s3-n16r8-st7796u-gt1151/firmware.env$' "${work_dir}/interactive-retry.out"
 
-printf '1\n2\n\n\n1,7\nn\n' | FIRMWARE_BUILD_ROOT="${work_dir}/interactive-cancel-build" "${repo_root}/start.sh" >"${work_dir}/interactive-cancel.out"
+printf '1\n2\n\n\n2,7\nn\n' | FIRMWARE_BUILD_ROOT="${work_dir}/interactive-cancel-build" "${repo_root}/start.sh" >"${work_dir}/interactive-cancel.out"
 rg -Fq '  1) ili9488-i80 ' "${work_dir}/interactive-cancel.out"
 rg -Fq '  1) ft6336u-i2c ' "${work_dir}/interactive-cancel.out"
 rg -q '^已取消生成配置。$' "${work_dir}/interactive-cancel.out"
@@ -195,11 +195,11 @@ rg -q '^已取消生成配置。$' "${work_dir}/interactive-cancel.out"
 if script --version >/dev/null 2>&1; then
     (
         cd "${repo_root}"
-        printf '2\n\n\n\n \033[B \n\n' |
+        printf '2\nesp32s3-wroom-1-n16r8-i80\nili9488-i80\nft6336u-i2c\n \033[B \n\n' |
             FIRMWARE_BUILD_ROOT="${work_dir}/keyboard-build" script -qefc './start.sh' /dev/null >"${work_dir}/keyboard.out"
     )
     rg -Fq 'Use Up/Down to move, Space to toggle, Enter to continue.' "${work_dir}/keyboard.out"
-    rg -qx 'MODULES=audio,cast,controller,network,ota' "${work_dir}/keyboard-build/esp32s3-n16r8-st7796u-gt1151/firmware.env"
+    rg -qx 'MODULES=audio,cast,controller,network,ota' "${work_dir}/keyboard-build/esp32s3-wroom-1-n16r8-i80/firmware.env"
 fi
 
 printf '%s\n' \
@@ -267,7 +267,7 @@ rg -Fq '. $IdfExport' "${repo_root}/start.ps1"
 rg -Fq '& idf.py @IdfArgs' "${repo_root}/start.ps1"
 rg -Fq 'Test-Path -LiteralPath Variable:global:LASTEXITCODE' "${repo_root}/start.ps1"
 rg -Fq 'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME' "${repo_root}/start.ps1"
-rg -Fq 'ESP-IDF v6.0.2' "${repo_root}/start.sh"
+rg -Fq 'scripts/esp-idf-env.sh' "${repo_root}/start.sh"
 rg -Fq 'ESP-IDF v6.0.2' "${repo_root}/start.ps1"
 rg -Fq 'esp-idf-v6.0.2' "${repo_root}/scripts/esp-idf-env.sh"
 rg -Fq -- '-DIDF_TARGET="${CFG[MCU]}"' "${repo_root}/start.sh"

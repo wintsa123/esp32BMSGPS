@@ -18,38 +18,27 @@ README files link here instead of copying the full pin/build matrix.
 
 ### 2. Signatures
 
-#### Active GPIO assignments
+#### Profile-driven hardware assignments
 
-| Function | GPIO | Code authority |
+| Configuration layer | Authority | Consumer |
 | --- | --- | --- |
-| TFT MISO / MOSI / SCLK / CS / DC | 12 / 13 / 14 / 15 / 2 | `ESP_BMS_LVGL_BRIDGE_DEFAULT_CONFIG()` in `components/esp_bms_lvgl_bridge/include/esp_bms_lvgl_bridge.h` |
-| TFT reset / backlight | not connected / 21 | Same bridge default config; backlight uses LEDC channel 0 in `esp_bms_lvgl_bridge.c` |
-| Touch IRQ / MISO / MOSI / CS / SCLK | 36 / 39 / 32 / 33 / 25 | Same bridge default config |
-| Local battery ADC | 34 (`ADC1_CH6`) | `BATTERY_GPIO` and ADC initialization in `components/esp_bms_idf_runtime/esp_bms_idf_runtime.c` |
-| GPS module TX to ESP32 UART1 RX | 27 | `GPS_UART_RX_GPIO` in `components/esp_bms_idf_runtime/esp_bms_idf_runtime.c` |
-| GPS module RX from ESP32 UART1 TX | 18 | `GPS_UART_TX_GPIO` in the same runtime source |
-| GPS PPS | 35 | `GPS_PPS_GPIO` in the same runtime source |
-| Audio DAC / amplifier enable | 26 / 4 | `AUDIO_DAC_GPIO` and `AUDIO_ENABLE_GPIO` in `components/esp_bms_audio_feedback/esp_bms_audio_feedback.c` |
+| Verified board wiring, GPIO direction, Flash and PSRAM | `firmware/catalog/board/*.env` | configurators and profile validation |
+| Display and touch protocol, controller, timing, orientation | `firmware/catalog/display/*.env`, `firmware/catalog/input/*.env` | generated bridge configuration |
+| Optional module GPIO roles | `firmware/catalog/module/*.env` | configurators and generated module settings |
+| Saved user selection and CLI GPIO overrides | `firmware-builds/<profile>/firmware.env` | reproducible local and cloud builds |
+| Generated CMake and C configuration | `firmware-builds/<profile>/generated/{profile.cmake,esp_bms_profile_hardware.h}` | `main`, runtime modules, audio, and LVGL bridge |
 
-GPS UART1 currently runs at `115200` baud. GPIO35, GPIO36, and GPIO39 are
-input-only; GPIO35 has no internal pull-up or pull-down. PPS must be a single
-signal no higher than 3.3 V.
+The LVGL bridge accepts only the generated `ESP_BMS_PROFILE_LVGL_CONFIG`; it
+does not define a board, controller, GPIO, or display default. GPS, battery
+ADC, and audio likewise read generated profile roles. A disabled module must
+not require or emit its GPIO roles. If a selected module needs a role absent
+from the selected board, interactive configuration collects a decimal GPIO;
+non-interactive callers must provide `--gpio ROLE=PIN`.
 
-#### Reserved board assignments
-
-These pins describe the board plan but are not active peripheral configuration
-unless a source file explicitly enables them:
-
-| Reserved function | GPIO | Conflict / requirement |
-| --- | --- | --- |
-| RGB LED R / G / B | 17 / 22 / 16 | No active RGB driver in the current firmware |
-| Expansion SPI CS | 27 | Conflicts with the active GPS UART1 RX assignment |
-| TF-card MOSI / MISO / SCLK / CS | 23 / 19 / 18 / 5 | GPIO18 conflicts with active GPS UART1 TX; resolve ownership before enabling TF |
-
-GPIO2, GPIO4, GPIO5, GPIO12, and GPIO15 can affect ESP32 boot strapping or
-attached-device boot behavior. Cold-boot validation is required whenever the
-connected hardware, pull resistors, or peripheral power sequencing on these
-pins changes.
+Catalog records list bootstrap-sensitive and input-only pins for each MCU.
+Changing a verified role requires the catalog/profile input, a regenerated
+profile, a firmware build, and cold-boot validation where the board flags the
+pin as dangerous. Do not add a source-code fallback GPIO.
 
 #### Build and flash commands
 
@@ -201,9 +190,9 @@ RUN_TESTS=1 ./scripts/build-android-cast.sh
 | RFC2217 TCP port is closed | Check the Windows bridge process, firewall scope, host IP, and port 4000 |
 | RFC2217 connects but flash sync fails | Close other clients, confirm the server is RFC2217 rather than raw TCP, and keep `-b 115200` |
 | Firmware flashes but boot loops after a partition change | Erase Flash once, then flash the complete ESP-IDF image set |
-| TFT or touch does not initialize | Compare wiring with the active bridge macro and validate boot-strapping pins under cold boot |
-| GPS UART receives no bytes | Confirm crossed TX/RX, UART1 GPIO27/GPIO18 ownership, 115200 baud, power, and signal level |
-| PPS never triggers | Check GPS fix/PPS output and GPIO35 voltage; do not enable nonexistent internal pulls |
+| TFT or touch does not initialize | Compare the generated profile header with the selected catalog record and validate board-designated dangerous pins under cold boot |
+| GPS UART receives no bytes | Confirm the generated GPS RX/TX roles, crossed wiring, selected UART baud, power, and signal level |
+| PPS never triggers | Check the generated PPS role, GPS fix/PPS output, voltage, and required external pull configuration |
 | EasyEDA import succeeds but new parts are outside the board | Move them into an approved functional area, check mechanical keepouts, run strict DRC, then save/close/reopen and re-read coordinates |
 | All component origins are inside but DRC reports pad clearance | Move the complete footprint, not just the origin; verify auxiliary/mechanical pads and rerun strict DRC |
 | EasyEDA autorouter returns `success=false` / `duration=0` | Confirm copper-line/via counts did not change, preserve the pre-route snapshot, record the backend as unavailable, and continue with the reviewed manual/external routing plan |
@@ -217,9 +206,10 @@ RUN_TESTS=1 ./scripts/build-android-cast.sh
 
 ### 5. Good / Base / Bad Cases
 
-- Good: change the GPIO macro in its owning component, update this table, run
-  the firmware build, flash through the correct transport, and validate the
-  affected hardware plus cold boot when a strapping pin is involved.
+- Good: update verified catalog wiring or an explicit profile override,
+  regenerate the profile, run the firmware build, flash through the correct
+  transport, and validate affected hardware plus cold boot when a dangerous
+  pin is involved.
 - Good: import an EasyEDA delta, move staged parts inside the board, clear all
   new-part clearance/keepout errors, save/close/reopen, and verify persisted
   component/pad/net counts before calling placement complete.
@@ -229,8 +219,8 @@ RUN_TESTS=1 ./scripts/build-android-cast.sh
   errors and zero clearance/keepout errors after save/reopen.
 - Base: change only README or Trellis/spec documentation, validate links and
   Markdown, and do not flash unchanged firmware.
-- Bad: copy a pin map into README, edit only that copy, enable TF-card GPIO18
-  while GPS still owns it, or use `socket://` for an esptool flash.
+- Bad: copy a pin map into README, add a source-code GPIO fallback, accept a
+  conflicting profile role, or use `socket://` for an esptool flash.
 - Bad: make a module default-enabled in the registry template but rely on a
   profile-only `REQUIRES` list; unprofiled `idf.py build` then cannot resolve
   the component header.

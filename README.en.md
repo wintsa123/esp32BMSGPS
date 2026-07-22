@@ -28,12 +28,12 @@ The control page is Chinese-first and can switch to English. The hotspot HTTP AP
 
 | Goal | Development progress | Status |
 | --- | --- | :---: |
-| 🖥️ Provide glanceable speed, BMS, controller, and GPS dashboards on a 240 × 320 TFT | ST7789, XPT2046, LVGL dashboards and settings, rotation, brightness, touch calibration, and the quick panel are integrated | 🚧 Being refined |
+| 🖥️ Provide glanceable speed, BMS, controller, and GPS dashboards on a TFT | Profiles select ST7789/XPT2046, ILI9488/FT6336U, or ST7796U/GT1151; LVGL dashboards, rotation, brightness, touch calibration, and the quick panel are integrated | 🚧 Being refined |
 | 🔋 Connect to battery protection boards used across two-wheel vehicle platforms over BLE, with all telemetry coming from real devices | ANT BMS scanning, binding, connection, subscription, polling, and status-frame parsing are implemented and hardware-tested; other brands and models await adaptation and validation | 🚧 ANT tested; others pending |
 | 🛞 Connect to FarDriver controllers over BLE and accurately convert vehicle parameters | BLE protocol, real telemetry, tire parameters, and gear-ratio conversion are integrated; device compatibility and data calibration continue | 🚧 Being refined |
-| 🛰️ Provide GPS positioning, speed, time synchronization, track recording, and maps | 336H UART NMEA, RMC speed/fix/UTC, and GPIO35 PPS diagnostics are integrated; track storage and maps are not complete | 🚧 Core path available |
+| 🛰️ Provide GPS positioning, speed, time synchronization, track recording, and maps | 336H UART NMEA, RMC speed/fix/UTC, and profile-configured PPS diagnostics are integrated; track storage and maps are not complete | 🚧 Core path available |
 | 📡 Support configuration, diagnostics, and maintenance through the Setup AP, embedded Web UI, and public HTTPS control page | Random hotspot credentials, QR code, `192.168.4.1`, configuration APIs, and BMS scan/bind entry points are integrated; the Vercel control page is live | ✅ Implemented |
-| 🔊 Provide clear audio feedback for connection state and device actions | GPIO26 DAC and GPIO4 amplifier enable are integrated for connection prompts and volume feedback | ✅ Implemented |
+| 🔊 Provide clear audio feedback for connection state and device actions | Classic ESP32 uses DAC and ESP32-S3 uses I2S; amplifier and audio pins come from the selected profile | ✅ Implemented |
 | 📱 Extend maps, navigation, and complex views through low-latency Android casting | A standalone Kotlin app and casting protocol exist; latency, stability, and device compatibility are being refined | 🚧 In development |
 | 🌏 Use Chinese by default and provide an English switch in device settings | The Chinese-first UI and settings-based language policy are defined; the TFT uses ASCII `ZH` / `EN` language markers | 🚧 In progress |
 | 🔄 Complete the OTA, TF-card recording, track history, and map workflow | OTA does not yet provide a complete upgrade loop; TF-card recording, track history, and maps are planned for later phases | ⏳ Pending |
@@ -42,28 +42,28 @@ The control page is Chinese-first and can switch to English. The hotspot HTTP AP
 
 ## 🧩 Target Hardware and GPIO Configuration
 
-- MCU: ESP32-WROOM-32E, 4 MB Flash, no PSRAM.
-- Display: TPM408 2.8-inch ST7789, 240 × 320, BGR.
-- Touch: XPT2046 / XP2046.
-- GPS: 336H, UART NMEA plus PPS.
+- Classic ESP32: ESP32-WROOM-32E, 4 MB Flash, no PSRAM, with optional ST7789/XPT2046 and DAC audio.
+- ESP32-S3: I80 ILI9488/FT6336U and I80 ST7796U/GT1151 profiles, each with its own Flash, PSRAM, and GPIO contract.
+- GPS: 336H UART NMEA plus PPS; its GPIO roles are generated and validated only when the GPS module is selected.
 - BMS: ANT BMS BLE has been hardware-tested; boards from other two-wheel platforms await adaptation and validation. The controller protocol is FarDriver BLE.
 
-The GPIO map is intentionally not duplicated in the README. Code configuration lives in:
+Hardware and GPIO assignments are not duplicated in the README or C source. The configuration chain is:
 
-- Display, touch, and backlight: [`components/esp_bms_lvgl_bridge/include/esp_bms_lvgl_bridge.h`](./components/esp_bms_lvgl_bridge/include/esp_bms_lvgl_bridge.h)
-- GPS, PPS, and local battery ADC: [`components/esp_bms_idf_runtime/esp_bms_idf_runtime.c`](./components/esp_bms_idf_runtime/esp_bms_idf_runtime.c)
-- Audio DAC and amplifier enable: [`components/esp_bms_audio_feedback/esp_bms_audio_feedback.c`](./components/esp_bms_audio_feedback/esp_bms_audio_feedback.c)
+- Board, display, touch, and module facts: [`firmware/catalog`](./firmware/catalog)
+- Saved selection and GPIO overrides: `firmware-builds/<profile>/firmware.env`
+- Generated C/CMake configuration: `firmware-builds/<profile>/generated/`
+- Generic display bridge, GPS, ADC, and audio components consume only generated configuration
 - Full pin map, conflicts, and build contract: [`hardware-build-flash.md`](./.trellis/spec/backend/hardware-build-flash.md)
 
-When a GPIO changes, update both its code authority and the project spec. Do not update the README alone.
+When a GPIO changes, update verified catalog data or an explicit profile override and regenerate. Do not update the README alone or add a source-code fallback pin.
 
 ## 🛠️ Development Stack
 
 | Layer | Technology |
 | --- | --- |
 | Firmware | C, ESP-IDF 6.0.2, FreeRTOS, CMake / `idf.py` |
-| Display | LVGL 9.5, `esp_lvgl_adapter`, `esp_lcd`, ST7789, XPT2046 |
-| Device services | NimBLE, Wi-Fi SoftAP, `esp_http_server`, NVS, UART NMEA, ADC, LEDC, DAC |
+| Display | LVGL 9.5, `esp_lvgl_adapter`, `esp_lcd`, ST7789/XPT2046, ILI9488/FT6336U, ST7796U/GT1151 |
+| Device services | NimBLE, Wi-Fi SoftAP, `esp_http_server`, NVS, UART NMEA, ADC, LEDC, DAC, I2S |
 | Embedded Web | Single-page HTML / CSS / vanilla JavaScript embedded in the firmware image |
 | Vercel control page | React 19, TypeScript, Vite 6, Vercel |
 | Android casting | Kotlin, Android SDK 35, Java 17, Gradle 8.14.2 |
