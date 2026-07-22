@@ -16,6 +16,7 @@
 /firmware-images/
 /firmware-packages/
 /firmware-builds/
+/output/
 /release-images/
 /ota-images/
 /preview/
