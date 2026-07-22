@@ -1,5 +1,35 @@
+if(NOT DEFINED ESP_BMS_FEATURE_DASHBOARD_S1000RR)
+    set(ESP_BMS_FEATURE_DASHBOARD_S1000RR 1)
+endif()
+if(NOT DEFINED ESP_BMS_FEATURE_DASHBOARD_CONTROLLER)
+    set(ESP_BMS_FEATURE_DASHBOARD_CONTROLLER 1)
+endif()
+if(NOT DEFINED ESP_BMS_FEATURE_DASHBOARD_FIREBLADE)
+    set(ESP_BMS_FEATURE_DASHBOARD_FIREBLADE 1)
+endif()
+
+set(ESP_BMS_LVGL_UI_SRCS
+    "esp_bms_lvgl_ui.c" "bluetoothon.c" "settings_zh_16.c" "settings_zh_13.c"
+    "settings_zh_10.c" "${CMAKE_SOURCE_DIR}/wlanJZ.c"
+)
+if(ESP_BMS_FEATURE_DASHBOARD_CONTROLLER)
+    list(APPEND ESP_BMS_LVGL_UI_SRCS "controller_digits_72.c")
+endif()
+if(ESP_BMS_FEATURE_DASHBOARD_FIREBLADE)
+    list(APPEND ESP_BMS_LVGL_UI_SRCS
+        "fireblade_digits_64.c" "fireblade_info_digits_12.c"
+        "fireblade_info_units_8.c" "fireblade_scale_digits_14.c"
+    )
+endif()
+
 idf_component_register(
-    SRCS "esp_bms_lvgl_ui.c" "controller_digits_72.c" "fireblade_digits_64.c" "fireblade_info_digits_12.c" "fireblade_info_units_8.c" "fireblade_scale_digits_14.c" "bluetoothon.c" "settings_zh_16.c" "settings_zh_13.c" "settings_zh_10.c" "${CMAKE_SOURCE_DIR}/wlanJZ.c"
+    SRCS ${ESP_BMS_LVGL_UI_SRCS}
     INCLUDE_DIRS "include"
     REQUIRES lvgl esp_bms_lvgl_contract esp_hw_support esp_timer
+)
+
+target_compile_definitions(${COMPONENT_LIB} PRIVATE
+    ESP_BMS_FEATURE_DASHBOARD_S1000RR=${ESP_BMS_FEATURE_DASHBOARD_S1000RR}
+    ESP_BMS_FEATURE_DASHBOARD_CONTROLLER=${ESP_BMS_FEATURE_DASHBOARD_CONTROLLER}
+    ESP_BMS_FEATURE_DASHBOARD_FIREBLADE=${ESP_BMS_FEATURE_DASHBOARD_FIREBLADE}
 )

@@ -107,7 +107,7 @@
 
 ## 🚀 如何烧录
 
-准备 ESP-IDF 6.0.2；仓库脚本会优先加载 `$IDF_PATH/export.sh` 并核验其版本，否则尝试 `$HOME/esp/esp-idf-v6.0.2/export.sh`。
+首次使用可运行 `./start.sh install-idf` 并填写绝对 ASCII 安装目录；脚本会按当前系统安装前置工具和 ESP-IDF 6.0.2。也可使用 `./start.sh install-idf --dir /home/USER/esp/esp-idf-v6.0.2` 非交互安装。已保存的路径会被项目脚本自动加载并校验版本。
 
 Linux 本地串口：
 
@@ -120,6 +120,8 @@ Windows 本地串口：
 ```powershell
 .\scripts\flash.ps1 -Port COM3 -Monitor
 ```
+
+Windows 首次安装可运行 `./start.cmd install-idf`，或指定 `./start.cmd install-idf --dir C:\esp\esp-idf-v6.0.2`。编译后的交互烧录默认选择本地串口；远程 RFC2217 仅在明确选择后才输入地址。
 
 如果设备此前使用其他分区表，首次切换时需要先擦除 Flash。详细的构建、擦除、诊断镜像、分区布局和故障排查见[固件硬件、构建与烧录规范](./.trellis/spec/backend/hardware-build-flash.md)。
 

@@ -719,12 +719,16 @@ static bool run_headless_feature_matrix(host_app_t *app)
                               ESP_BMS_SPEED_DASHBOARD_STYLE_S1000RR) ||
         !run_boot_style_smoke(app,
                               ESP_BMS_BOOT_ANIMATION_GAUGE_SWEEP,
-                              ESP_BMS_SPEED_DASHBOARD_STYLE_S1000RR) ||
-        !run_boot_style_smoke(app,
+                              ESP_BMS_SPEED_DASHBOARD_STYLE_S1000RR)) {
+        return false;
+    }
+#if ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
+    if (!run_boot_style_smoke(app,
                               ESP_BMS_BOOT_ANIMATION_GAUGE_SWEEP,
                               ESP_BMS_SPEED_DASHBOARD_STYLE_HONDA_FIREBLADE)) {
         return false;
     }
+#endif
     if (!run_settings_boot_preview_smoke(app,
                                          ESP_BMS_BOOT_ANIMATION_CHARGE,
                                          false) ||
@@ -907,11 +911,15 @@ int main(int argc, char **argv)
                frame);
         if (!screenshot_path) {
             puts("GPS/controller capability matrix: passed");
+#if ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
             puts("boot animations: charge + S1000RR sweep + Fireblade sweep passed");
             printf("fireblade stress updates: %u\n", stress_updates);
             if (stress_updates != 300U) {
                 run_ok = false;
             }
+#else
+            puts("boot animations: charge + S1000RR sweep passed");
+#endif
         }
         printf("remaining range: %u km (%s)\n",
                app.snapshot.remaining_range_km,

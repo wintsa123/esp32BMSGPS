@@ -25,6 +25,7 @@ README files link here instead of copying the full pin/build matrix.
 | Verified board wiring, GPIO direction, Flash and PSRAM | `firmware/catalog/board/*.env` | configurators and profile validation |
 | Display and touch protocol, controller, timing, orientation | `firmware/catalog/display/*.env`, `firmware/catalog/input/*.env` | generated bridge configuration |
 | Optional module GPIO roles | `firmware/catalog/module/*.env` | configurators and generated module settings |
+| Dashboard UI inclusion | `firmware/catalog/dashboard/*.env` | `DASHBOARDS` in saved profile and `ESP_BMS_FEATURE_DASHBOARD_*` CMake flags |
 | Saved user selection and CLI GPIO overrides | `firmware-builds/<profile>/firmware.env` | reproducible local and cloud builds |
 | Generated CMake and C configuration | `firmware-builds/<profile>/generated/{profile.cmake,esp_bms_profile_hardware.h}` | `main`, runtime modules, audio, and LVGL bridge |
 
@@ -130,9 +131,14 @@ RUN_TESTS=1 ./scripts/build-android-cast.sh
   Rust/Cargo firmware path.
 - `main/idf_component.yml` requires ESP-IDF `>=6.0.2, <6.1.0`; the current
   project helper and development environment target ESP-IDF `6.0.2`.
-- `scripts/esp-idf-env.sh` loads `$IDF_PATH/export.sh` when available, otherwise
-  `$HOME/esp/esp-idf-v6.0.2/export.sh`, verifies the resolved version, then
-  forwards arguments to `idf.py`.
+- `start.sh install-idf` installs Linux/macOS prerequisites through the detected
+  package manager, clones ESP-IDF `v6.0.2`, and records an absolute ASCII
+  install path in `$XDG_CONFIG_HOME/esp32-bms-gps/idf-path`. `start.ps1
+  install-idf` uses `winget`, runs `install.ps1`, and persists `IDF_PATH` in
+  the Windows user environment. Both accept `--dir` for non-interactive setup.
+- `scripts/esp-idf-env.sh` loads `$IDF_PATH/export.sh` when available, then the
+  configured path, then `$HOME/esp/esp-idf-v6.0.2/export.sh`; it verifies the
+  resolved version before forwarding arguments to `idf.py`.
 - The helper supplies localhost proxy defaults when the corresponding proxy
   variables are unset. Override `http_proxy`, `https_proxy`, and `all_proxy`
   explicitly on hosts that use a different proxy path.
@@ -169,6 +175,8 @@ RUN_TESTS=1 ./scripts/build-android-cast.sh
 #### Flash transport contract
 
 - Local paths may use a real serial device such as `/dev/ttyUSB0` or `COM3`.
+- Interactive configurator builds default to local serial flashing. Remote
+  RFC2217 requires an explicit target selection and URL.
 - The project remote bridge is
   `rfc2217://192.168.2.10:4000?ign_set_control`, backed by Windows `COM3` and
   `scripts/serial_tcp_bridge.ps1`.
@@ -247,9 +255,10 @@ node .gitnexus/run.cjs detect-changes -r esp32BMSGPS
   profile excludes its component and that the unprofiled default closure
   contains `esp_bms_gps`.
 
-- Hardware-impacting changes: flash through the fixed RFC2217 bridge unless the
-  user selects another explicit port, then inspect boot logs and the affected
-  peripheral. Pin changes involving GPIO2/4/5/12/15 require a power-cycle test.
+- Hardware-impacting changes: flash through the developer's local serial port
+  by default. Use the fixed RFC2217 bridge only when remote hardware validation
+  is explicitly required, then inspect boot logs and the affected peripheral.
+  Pin changes involving GPIO2/4/5/12/15 require a power-cycle test.
 - Vercel control-page changes:
 
 ```bash
@@ -381,15 +390,15 @@ import/create allowlisted copper -> read back Top/Bottom by layer
 ./start.sh [--lang zh|en] <command> [options]
 .\start.ps1 <command> [--lang zh|en] [options]
 scripts/build-profile.sh [--lang zh|en] --config firmware.env
+scripts/dispatch-cloud-build.py --config firmware.env
 ```
 
 - No-argument `start.sh`, `start.ps1`, and `start.cmd` executions must first
   offer `1`/`zh` for Simplified Chinese and `2`/`en` for English.
 - The interactive wizard then shows a title, numbered catalog options, a build
   summary, and an explicit create/cancel confirmation. After creation it asks
-  whether to build locally, prepare an online build request, or keep only the
-  generated configuration. It must not ask the user for an internal profile
-  name.
+  whether to build locally, trigger an online build, or keep only the generated
+  configuration. It must not ask the user for an internal profile name.
 - Profiles set `ESP_BMS_FEATURE_{AUDIO,BMS,CONTROLLER,GPS,NETWORK,OTA}` and
   `ESP_BMS_PROFILE_MAIN_REQUIRES`; these are the component-closure contract.
 - A saved profile has the build inputs
@@ -431,10 +440,19 @@ scripts/build-profile.sh [--lang zh|en] --config firmware.env
   scripts, pipes, and CI compatibility.
 - After an interactive configuration is written, option `1` must use the same
   isolated local-build path as `build-local`; option `2` must use the same
-  pending cloud-request diagnostic and non-zero status as `build-cloud`; option
-  `0` (and an empty or EOF response) leaves the generated configuration in
-  place without building. The pending cloud status lets no-argument
-  `start.cmd` retain its window so the operator can read the message.
+  `build-cloud` dispatch path; option `0` (and an empty or EOF response) leaves
+  the generated configuration in place without building.
+- `build-cloud` and interactive option `2` pass the generated, already
+  validated `firmware.env` to `scripts/dispatch-cloud-build.py`. The dispatcher
+  accepts only a GitHub `origin`, a checked-out branch whose `origin` SHA equals
+  local `HEAD`, and a token from `ESP_BMS_GITHUB_TOKEN` or a non-echoed terminal
+  prompt. It sends `workflow_dispatch` to `cloud-build.yml` with `ref` and the
+  Base64 `firmware_env_base64` input; it never commits, pushes, persists, or
+  prints the token.
+- `.github/workflows/cloud-build.yml` uses ESP-IDF `v6.0.2`, decodes and
+  revalidates the configuration, runs `build-local`, and uploads the generated
+  profile and firmware output. A dispatch HTTP 204 confirms only queuing, not
+  a completed build or a downloadable artifact.
 - After board selection, derive the MCU and offer only display/input catalog
   options compatible with that board's buses. When the previous default is
   incompatible, choose the first compatible catalog option before prompting.
@@ -473,7 +491,10 @@ scripts/build-profile.sh [--lang zh|en] --config firmware.env
 | Localized text map contains case-only duplicate keys in a hash literal | Do not start; replace the literal with ordered source/target pairs and run the script under an available PowerShell runtime |
 | Windows local build has no ESP-IDF `export.ps1` or no `idf.py` after import | Exit with a localized toolchain diagnostic; do not read an unset `LASTEXITCODE` or call the Bash wrapper |
 | Module wizard runs in a non-terminal or redirected session | Keep the line-based comma-separated number/ID parser; do not attempt raw key reads |
-| Interactive user selects online build | Write the profile, print the pending cloud-workflow diagnostic, and exit 3 so the Windows wrapper holds the message open |
+| Interactive user selects online build | Write the profile and call the same cloud dispatcher as `build-cloud` |
+| Current branch is detached, absent on `origin`, or its remote SHA differs from local `HEAD` | Do not send HTTP; exit with the localized instruction to push the current branch first |
+| `ESP_BMS_GITHUB_TOKEN` is absent outside a terminal, or the prompt is empty | Do not send HTTP; exit with a localized token diagnostic |
+| Actions API returns a non-204 status or network error | Do not print the token or request payload; exit with a localized HTTP-status or network diagnostic |
 | Profile defaults retain a relative partition CSV filename | Regenerate the profile with an absolute `CONFIG_PARTITION_TABLE_CUSTOM_FILENAME`; do not build against the repository root CSV |
 | Saved profile is hidden, malformed, or fails validation | Exclude it from the board menu; do not import or build it |
 | `ota` is selected | Resolve `network` and set both corresponding features |
@@ -495,6 +516,9 @@ scripts/build-profile.sh [--lang zh|en] --config firmware.env
 - Good: build an S3 profile from its generated defaults and verify IDF reports
   `0x600000` as the smallest app partition; build the legacy profile separately
   and verify its `0x1e0000` OTA-slot limit.
+- Good: push the commit containing `cloud-build.yml`, set
+  `ESP_BMS_GITHUB_TOKEN` only in the invoking session, then let `build-cloud`
+  queue the already-validated profile for GitHub Actions.
 - Base: observe `app_update` in an OTA-off ESP-IDF build, then attribute it to
   its SDK dependency path and still prove no application OTA code is linked.
 - Bad: persist a UI language choice in a profile or declare OTA removed merely
@@ -506,12 +530,15 @@ scripts/build-profile.sh [--lang zh|en] --config firmware.env
 - Bad: copy an S3 CSV into a profile while leaving
   `CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"`; IDF will use the
   root CSV instead of the copied S3 layout.
+- Bad: submit a local-only HEAD, put a GitHub token in `firmware.env`, or report
+  an HTTP 204 as completed firmware output.
 
 ### 6. Tests Required
 
 ```bash
 bash -n start.sh scripts/build-profile.sh tests/configurator_selftest.sh
 ./tests/configurator_selftest.sh
+python3 -m unittest tests/test_cloud_dispatch.py
 cmake --build firmware-builds/<profile>/idf-build
 node .gitnexus/run.cjs detect-changes --repo esp32BMSGPS
 ```
@@ -526,9 +553,10 @@ node .gitnexus/run.cjs detect-changes --repo esp32BMSGPS
   `Down`, `Space`, then `Enter`; assert that only the remaining sorted IDs are
   written. Keep the existing piped interactive tests to prove the line-input
   fallback remains automation-compatible.
-- From a piped interactive run, select next-step option `2`; assert that it
-  writes the configuration, emits the cloud-workflow diagnostic, and returns
-  exit code `3`.
+- Assert the Bash and PowerShell cloud entry points invoke the shared
+  dispatcher, the workflow declares `workflow_dispatch`, and the Python tests
+  cover GitHub-origin parsing, pushed-HEAD matching, Base64 request payloads,
+  and HTTP 204 acceptance without exposing the token.
 - Validate the default board/display pair and assert both configurators
   recognize `DISPLAY_DATA_WIDTH` and `DATA_WIDTH`; this prevents a catalog
   extension from failing only on one host platform.
@@ -595,4 +623,17 @@ CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 copy firmware/partitions/esp32s3-n16r8.csv -> profile/partitions.csv
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="/absolute/.../profile/partitions.csv"
 idf.py size -> smallest app partition = 0x600000
+```
+
+#### Wrong
+
+```text
+build-cloud -> write firmware.env -> exit 3 with a future-workflow message
+```
+
+#### Correct
+
+```text
+build-cloud -> validate generated firmware.env -> verify pushed GitHub branch
+-> workflow_dispatch(ref, firmware_env_base64) -> HTTP 204 means queued
 ```

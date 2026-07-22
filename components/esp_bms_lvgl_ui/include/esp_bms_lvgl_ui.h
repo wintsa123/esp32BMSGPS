@@ -9,6 +9,18 @@
 #define ESP_BMS_LVGL_UI_SIMULATOR 0
 #endif
 
+#ifndef ESP_BMS_FEATURE_DASHBOARD_S1000RR
+#define ESP_BMS_FEATURE_DASHBOARD_S1000RR 1
+#endif
+
+#ifndef ESP_BMS_FEATURE_DASHBOARD_CONTROLLER
+#define ESP_BMS_FEATURE_DASHBOARD_CONTROLLER 1
+#endif
+
+#ifndef ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
+#define ESP_BMS_FEATURE_DASHBOARD_FIREBLADE 1
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -359,6 +371,8 @@ esp_err_t esp_bms_lvgl_ui_boot_finish(const esp_bms_dashboard_snapshot_t *snapsh
 esp_err_t esp_bms_lvgl_ui_show_dashboard(void);
 esp_err_t esp_bms_lvgl_ui_touch_calibration_result(bool success);
 esp_err_t esp_bms_lvgl_ui_set_page(esp_bms_lvgl_page_t page, bool animated);
+bool esp_bms_lvgl_ui_speed_dashboard_style_available(esp_bms_speed_dashboard_style_t style);
+esp_bms_speed_dashboard_style_t esp_bms_lvgl_ui_default_speed_dashboard_style(void);
 esp_bms_lvgl_data_source_t esp_bms_lvgl_ui_stable_data_source(void);
 esp_err_t esp_bms_lvgl_ui_take_action_event(esp_bms_lvgl_action_event_t *event);
 esp_err_t esp_bms_lvgl_ui_take_action(esp_bms_lvgl_action_t *action);

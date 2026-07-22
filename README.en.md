@@ -73,7 +73,7 @@ Dependency versions, partitions, diagnostic images, and platform build commands 
 
 ## 🚀 Flashing
 
-Install ESP-IDF 6.0.2. The repository wrapper first loads `$IDF_PATH/export.sh` and verifies its version, then falls back to `$HOME/esp/esp-idf-v6.0.2/export.sh`.
+For a first-time setup, run `./start.sh install-idf` and enter an absolute ASCII installation directory. It installs the platform prerequisites and ESP-IDF 6.0.2. Non-interactive setup is `./start.sh install-idf --dir /home/USER/esp/esp-idf-v6.0.2`. The project wrapper reloads and verifies the saved path automatically.
 
 Linux local serial:
 
@@ -86,6 +86,8 @@ Windows local serial:
 ```powershell
 .\scripts\flash.ps1 -Port COM3 -Monitor
 ```
+
+On Windows, run `./start.cmd install-idf`, or pass `./start.cmd install-idf --dir C:\esp\esp-idf-v6.0.2`. Interactive flashing defaults to a local serial port; remote RFC2217 requires an explicit selection and URL.
 
 Erase Flash once when switching from a different partition table. See the [firmware hardware, build, and flash contract](./.trellis/spec/backend/hardware-build-flash.md) for build-only commands, erase flow, diagnostic images, partition layout, and troubleshooting.
 

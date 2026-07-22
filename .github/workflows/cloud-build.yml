@@ -1,0 +1,41 @@
+name: Cloud Firmware Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      firmware_env_base64:
+        description: Validated firmware.env encoded as Base64
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: espressif/idf:v6.0.2
+    timeout-minutes: 30
+    env:
+      IDF_PATH: /opt/esp/idf
+    steps:
+      - uses: actions/checkout@v4
+      - name: Decode and validate profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/cloud-build"
+          printf '%s' '${{ inputs.firmware_env_base64 }}' | base64 --decode > "$RUNNER_TEMP/cloud-build/firmware.env"
+          ./start.sh validate --lang en --config "$RUNNER_TEMP/cloud-build/firmware.env"
+      - name: Build firmware
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./start.sh build-local --lang en --config "$RUNNER_TEMP/cloud-build/firmware.env"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cloud-firmware
+          if-no-files-found: error
+          path: |
+            firmware-builds/
+            output/

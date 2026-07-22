@@ -17,11 +17,15 @@ static const char *TAG = "bms_lvgl_ui";
 
 LV_FONT_DECLARE(bluetoothon);
 LV_FONT_DECLARE(wlanJZ);
+#if ESP_BMS_FEATURE_DASHBOARD_CONTROLLER
 LV_FONT_DECLARE(controller_digits_72);
+#endif
+#if ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
 LV_FONT_DECLARE(fireblade_digits_64);
 LV_FONT_DECLARE(fireblade_info_digits_12);
 LV_FONT_DECLARE(fireblade_info_units_8);
 LV_FONT_DECLARE(fireblade_scale_digits_14);
+#endif
 LV_FONT_DECLARE(settings_zh_10);
 LV_FONT_DECLARE(settings_zh_13);
 LV_FONT_DECLARE(settings_zh_16);
@@ -611,7 +615,9 @@ static void screen_lock_enter(void);
 static void screen_lock_reapply(void);
 static void screen_lock_create(lv_obj_t *screen);
 static void screen_unlock_timer_cancel(void);
+#if ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
 static void create_fireblade_dashboard(void);
+#endif
 
 static const lv_color_t COLOR_BG = LV_COLOR_MAKE(0x08, 0x0a, 0x0e);
 static const lv_color_t COLOR_PANEL_ALT = LV_COLOR_MAKE(0x16, 0x20, 0x29);
@@ -632,13 +638,16 @@ static const lv_color_t COLOR_DASHBOARD_SOC_PANEL = LV_COLOR_MAKE(0x06, 0x32, 0x
 static const lv_color_t COLOR_DASHBOARD_BORDER = LV_COLOR_MAKE(0x3e, 0x42, 0x47);
 static const lv_color_t COLOR_DASHBOARD_SOC_BORDER = LV_COLOR_MAKE(0x4a, 0x9b, 0xf5);
 static const lv_color_t COLOR_DASHBOARD_VALUE = LV_COLOR_MAKE(0x2d, 0x8a, 0x66);
+#if ESP_BMS_FEATURE_DASHBOARD_CONTROLLER
 static const lv_color_t COLOR_CONTROLLER_VALUE = LV_COLOR_MAKE(0x20, 0xd7, 0x83);
+#endif
 static const lv_color_t COLOR_SPEED_BAND_DARK = LV_COLOR_MAKE(0x00, 0x55, 0x94);
 static const lv_color_t COLOR_SPEED_BAND_BLUE = LV_COLOR_MAKE(0x00, 0xb8, 0xf0);
 static const lv_color_t COLOR_SPEED_BAND_IDLE = LV_COLOR_MAKE(0x27, 0x29, 0x2d);
 static const lv_color_t COLOR_SPEED_BAND_DANGER = LV_COLOR_MAKE(0xc8, 0x24, 0x2f);
 static const lv_color_t COLOR_SPEED_DIVIDER = LV_COLOR_MAKE(0x00, 0xc8, 0xf2);
 static const lv_color_t COLOR_SPEED_GPS_OK = LV_COLOR_MAKE(0x43, 0xe3, 0x36);
+#if ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
 static const lv_color_t COLOR_FIREBLADE_BLACK = LV_COLOR_MAKE(0x05, 0x05, 0x05);
 static const lv_color_t COLOR_FIREBLADE_BRIDGE = LV_COLOR_MAKE(0x33, 0x33, 0x33);
 static const lv_color_t COLOR_FIREBLADE_MODE = LV_COLOR_MAKE(0x7f, 0x7f, 0x7e);
@@ -647,6 +656,7 @@ static const lv_color_t COLOR_FIREBLADE_RED = LV_COLOR_MAKE(0xf4, 0x18, 0x25);
 static const lv_color_t COLOR_FIREBLADE_DANGER_BG = LV_COLOR_MAKE(0xff, 0xcf, 0xcf);
 static const lv_color_t COLOR_FIREBLADE_GREEN = LV_COLOR_MAKE(0x08, 0xa8, 0x13);
 static const lv_color_t COLOR_FIREBLADE_GEAR_BORDER = LV_COLOR_MAKE(0xc8, 0xc8, 0xc8);
+#endif
 static const lv_color_t COLOR_DASHBOARD_BATTERY_LEVEL = LV_COLOR_MAKE(0x66, 0xbf, 0xf2);
 static const lv_color_t COLOR_SETTINGS_BG = LV_COLOR_MAKE(0x00, 0x00, 0x00);
 static const lv_color_t COLOR_SETTINGS_CARD = LV_COLOR_MAKE(0x00, 0x00, 0x00);
@@ -697,9 +707,11 @@ static const char *const DASHBOARD_TEMP_KEYS[ESP_BMS_BMS_TEMP_MAX_COUNT] = {
     "MOS",
 };
 
+#if ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
 static const char *const FIREBLADE_SCALE_LABELS[FIREBLADE_SCALE_LABEL_COUNT] = {
     "0", "20", "40", "60", "80", "100", "120", "140", "160", "180",
 };
+#endif
 
 static void clear_style(lv_obj_t *obj)
 {
@@ -4125,29 +4137,71 @@ static void settings_controller_value_row(lv_obj_t *parent,
     lv_obj_set_style_text_color(arrow, COLOR_SETTINGS_ACCENT, LV_PART_MAIN);
 }
 
+bool esp_bms_lvgl_ui_speed_dashboard_style_available(esp_bms_speed_dashboard_style_t style)
+{
+    switch (style) {
+    case ESP_BMS_SPEED_DASHBOARD_STYLE_S1000RR:
+        return ESP_BMS_FEATURE_DASHBOARD_S1000RR != 0;
+    case ESP_BMS_SPEED_DASHBOARD_STYLE_CONTROLLER:
+        return ESP_BMS_FEATURE_DASHBOARD_CONTROLLER != 0;
+    case ESP_BMS_SPEED_DASHBOARD_STYLE_HONDA_FIREBLADE:
+        return ESP_BMS_FEATURE_DASHBOARD_FIREBLADE != 0;
+    default:
+        return false;
+    }
+}
+
+esp_bms_speed_dashboard_style_t esp_bms_lvgl_ui_default_speed_dashboard_style(void)
+{
+    static const esp_bms_speed_dashboard_style_t styles[] = {
+        ESP_BMS_SPEED_DASHBOARD_STYLE_S1000RR,
+        ESP_BMS_SPEED_DASHBOARD_STYLE_CONTROLLER,
+        ESP_BMS_SPEED_DASHBOARD_STYLE_HONDA_FIREBLADE,
+    };
+    for (size_t index = 0U; index < ARRAY_SIZE(styles); ++index) {
+        if (esp_bms_lvgl_ui_speed_dashboard_style_available(styles[index])) {
+            return styles[index];
+        }
+    }
+    return ESP_BMS_SPEED_DASHBOARD_STYLE_S1000RR;
+}
+
 static esp_bms_speed_dashboard_style_t speed_dashboard_style_from_snapshot(
     const esp_bms_dashboard_snapshot_t *snapshot)
 {
     if (!snapshot) {
-        return ESP_BMS_SPEED_DASHBOARD_STYLE_S1000RR;
+        return esp_bms_lvgl_ui_default_speed_dashboard_style();
     }
-    if (snapshot->speed_dashboard_style == ESP_BMS_SPEED_DASHBOARD_STYLE_S1000RR &&
+    esp_bms_speed_dashboard_style_t style = snapshot->speed_dashboard_style;
+    if (style == ESP_BMS_SPEED_DASHBOARD_STYLE_S1000RR &&
         SNAPSHOT_FLAG(snapshot, CONTROLLER_PAGE_ENABLED)) {
-        return ESP_BMS_SPEED_DASHBOARD_STYLE_CONTROLLER;
+        style = ESP_BMS_SPEED_DASHBOARD_STYLE_CONTROLLER;
     }
-    if (snapshot->speed_dashboard_style > ESP_BMS_SPEED_DASHBOARD_STYLE_HONDA_FIREBLADE) {
-        return SNAPSHOT_FLAG(snapshot, CONTROLLER_PAGE_ENABLED)
-                   ? ESP_BMS_SPEED_DASHBOARD_STYLE_CONTROLLER
-                   : ESP_BMS_SPEED_DASHBOARD_STYLE_S1000RR;
-    }
-    return snapshot->speed_dashboard_style;
+    return esp_bms_lvgl_ui_speed_dashboard_style_available(style)
+               ? style
+               : esp_bms_lvgl_ui_default_speed_dashboard_style();
 }
 
-static const char *const SETTINGS_CONTROLLER_STYLE_LABELS[] = {
-    "宝马 S1000RR",
-    "控制器监控",
-    "本田火刃",
+typedef struct {
+    esp_bms_speed_dashboard_style_t style;
+    const char *label;
+} settings_dashboard_style_option_t;
+
+static const settings_dashboard_style_option_t SETTINGS_DASHBOARD_STYLE_OPTIONS[] = {
+    { ESP_BMS_SPEED_DASHBOARD_STYLE_S1000RR, "宝马 S1000RR" },
+    { ESP_BMS_SPEED_DASHBOARD_STYLE_CONTROLLER, "控制器监控" },
+    { ESP_BMS_SPEED_DASHBOARD_STYLE_HONDA_FIREBLADE, "本田火刃" },
 };
+
+static const char *settings_dashboard_style_label(esp_bms_speed_dashboard_style_t style)
+{
+    for (size_t index = 0U; index < ARRAY_SIZE(SETTINGS_DASHBOARD_STYLE_OPTIONS); ++index) {
+        if (SETTINGS_DASHBOARD_STYLE_OPTIONS[index].style == style) {
+            return SETTINGS_DASHBOARD_STYLE_OPTIONS[index].label;
+        }
+    }
+    return "--";
+}
 
 static void settings_show_controller_style_picker(void);
 
@@ -4166,17 +4220,18 @@ static void settings_controller_style_option_event_cb(lv_event_t *event)
         return;
     }
 
-    const size_t selected = (size_t)(uintptr_t)lv_event_get_user_data(event);
-    if (selected >= ARRAY_SIZE(SETTINGS_CONTROLLER_STYLE_LABELS)) {
+    const esp_bms_speed_dashboard_style_t selected =
+        (esp_bms_speed_dashboard_style_t)(uintptr_t)lv_event_get_user_data(event);
+    if (!esp_bms_lvgl_ui_speed_dashboard_style_available(selected)) {
         return;
     }
 
-    const size_t current = (size_t)speed_dashboard_style_from_snapshot(
+    const esp_bms_speed_dashboard_style_t current = speed_dashboard_style_from_snapshot(
         settings_current_snapshot());
     if (selected != current) {
         ESP_LOGI(TAG,
                  "[controller-ui] speed dashboard style selected: %s",
-                 SETTINGS_CONTROLLER_STYLE_LABELS[selected]);
+                 settings_dashboard_style_label(selected));
         queue_action_with_commit(ESP_BMS_LVGL_ACTION_SET_SPEED_DASHBOARD_STYLE, true);
         s_ui.pending_event.numeric_delta = (int16_t)selected;
         ACTION_EVENT_SET_FLAG(&s_ui.pending_event, NUMERIC_DELTA_VALID, true);
@@ -4193,20 +4248,25 @@ static void settings_show_controller_style_picker(void)
                                      SETTINGS_CHOICE_ROW_H_LANDSCAPE;
     const int32_t gap = portrait ? 8 : 6;
     const int32_t first_y = 12;
-    const size_t current = (size_t)speed_dashboard_style_from_snapshot(
+    const esp_bms_speed_dashboard_style_t current = speed_dashboard_style_from_snapshot(
         settings_current_snapshot());
 
     s_ui.settings_controller_view = (uint8_t)SETTINGS_CONTROLLER_VIEW_STYLE_LIST;
     s_ui.settings_bms_ble_status = NULL;
     lv_obj_clean(s_ui.settings_detail);
-    label_set_text_if_changed(s_ui.settings_detail_title, "速度仪表风格");
+    label_set_text_if_changed(s_ui.settings_detail_title, "选择仪表 UI");
     lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
 
-    for (size_t index = 0; index < ARRAY_SIZE(SETTINGS_CONTROLLER_STYLE_LABELS); ++index) {
-        const bool active = index == current;
+    size_t visible_index = 0U;
+    for (size_t index = 0U; index < ARRAY_SIZE(SETTINGS_DASHBOARD_STYLE_OPTIONS); ++index) {
+        const settings_dashboard_style_option_t *option = &SETTINGS_DASHBOARD_STYLE_OPTIONS[index];
+        if (!esp_bms_lvgl_ui_speed_dashboard_style_available(option->style)) {
+            continue;
+        }
+        const bool active = option->style == current;
         lv_obj_t *row = panel(s_ui.settings_detail,
                               card_x,
-                              first_y + ((int32_t)index * (row_h + gap)),
+                              first_y + ((int32_t)visible_index++ * (row_h + gap)),
                               card_w,
                               row_h,
                               COLOR_SETTINGS_CARD);
@@ -4222,7 +4282,7 @@ static void settings_show_controller_style_picker(void)
         lv_obj_add_event_cb(row,
                             settings_controller_style_option_event_cb,
                             LV_EVENT_CLICKED,
-                            (void *)(uintptr_t)index);
+                            (void *)(uintptr_t)option->style);
 
         const int32_t text_h = (int32_t)settings_zh_16.line_height + 4;
         lv_obj_t *text = label(row,
@@ -4231,7 +4291,7 @@ static void settings_show_controller_style_picker(void)
                                card_w - 52,
                                text_h,
                                &settings_zh_16);
-        lv_label_set_text(text, SETTINGS_CONTROLLER_STYLE_LABELS[index]);
+        lv_label_set_text(text, option->label);
         lv_obj_set_style_text_color(text,
                                     active ? COLOR_SWITCH_ACTIVE : COLOR_SETTINGS_TEXT,
                                     LV_PART_MAIN);
@@ -4377,7 +4437,7 @@ static void settings_controller_style_row(lv_obj_t *parent,
                                           const char *value)
 {
     const settings_detail_row_t descriptor = {
-        "速度仪表风格",
+        "仪表 UI",
         value,
         ESP_BMS_LVGL_ACTION_NONE,
         SETTINGS_SYSTEM_VIEW_ROOT,
@@ -4476,8 +4536,8 @@ static void settings_show_controller_detail(void)
                                   (int32_t)visible_index++ * row_h,
                                   card_w,
                                   row_h,
-                                  SETTINGS_CONTROLLER_STYLE_LABELS[
-                                      speed_dashboard_style_from_snapshot(snapshot)]);
+                                  settings_dashboard_style_label(
+                                      speed_dashboard_style_from_snapshot(snapshot)));
     for (size_t index = 0; index < ARRAY_SIZE(rows); ++index) {
         settings_detail_row(card,
                             0,
@@ -6518,6 +6578,7 @@ static void set_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
     update_quick_item_colors(snapshot);
 }
 
+#if ESP_BMS_FEATURE_DASHBOARD_CONTROLLER
 static void controller_label_set(lv_obj_t *label_obj,
                                  char *buffer,
                                  size_t buffer_len,
@@ -6586,6 +6647,7 @@ static lv_obj_t *controller_dashboard_panel(lv_obj_t *parent,
     lv_obj_set_style_radius(obj, 0, LV_PART_MAIN);
     return obj;
 }
+#endif
 
 static lv_obj_t *controller_dashboard_label(lv_obj_t *parent,
                                             const char *text,
@@ -6603,6 +6665,7 @@ static lv_obj_t *controller_dashboard_label(lv_obj_t *parent,
     return obj;
 }
 
+#if ESP_BMS_FEATURE_DASHBOARD_CONTROLLER
 static void controller_dashboard_vertical_separator(lv_obj_t *parent,
                                                     int32_t x,
                                                     int32_t y,
@@ -6841,6 +6904,7 @@ static void create_controller_dashboard(void)
                                          unit_font->line_height, unit_font, COLOR_CONTROLLER_VALUE);
     }
 }
+#endif
 
 static void speed_dashboard_style_apply(const esp_bms_dashboard_snapshot_t *snapshot)
 {
@@ -6848,6 +6912,7 @@ static void speed_dashboard_style_apply(const esp_bms_dashboard_snapshot_t *snap
         speed_dashboard_style_from_snapshot(snapshot);
     const bool controller_monitor = style == ESP_BMS_SPEED_DASHBOARD_STYLE_CONTROLLER;
     const bool honda_fireblade = style == ESP_BMS_SPEED_DASHBOARD_STYLE_HONDA_FIREBLADE;
+#if ESP_BMS_FEATURE_DASHBOARD_CONTROLLER
     if (controller_monitor && !s_ui.controller_page) {
         s_ui.controller_page = lv_obj_create(s_ui.gps_page);
         clear_style(s_ui.controller_page);
@@ -6859,18 +6924,30 @@ static void speed_dashboard_style_apply(const esp_bms_dashboard_snapshot_t *snap
                           LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
         create_controller_dashboard();
     }
+#endif
+#if ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
     if (honda_fireblade && !s_ui.fireblade_page) {
         create_fireblade_dashboard();
     }
+#endif
 
     set_obj_hidden(s_ui.speed_art, controller_monitor || honda_fireblade);
+#if ESP_BMS_FEATURE_DASHBOARD_CONTROLLER
     set_obj_hidden(s_ui.controller_page, !controller_monitor);
+#endif
+#if ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
     set_obj_hidden(s_ui.fireblade_page, !honda_fireblade);
+#endif
+#if ESP_BMS_FEATURE_DASHBOARD_CONTROLLER
     if (controller_monitor && s_ui.controller_page) {
         lv_obj_move_foreground(s_ui.controller_page);
-    } else if (honda_fireblade && s_ui.fireblade_page) {
+    } else
+#endif
+#if ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
+    if (honda_fireblade && s_ui.fireblade_page) {
         lv_obj_move_foreground(s_ui.fireblade_page);
     }
+#endif
 }
 
 static bool settings_ble_candidate_rows_changed(
@@ -7016,6 +7093,7 @@ static void speed_dashboard_draw_rect(lv_layer_t *layer,
     lv_draw_rect(layer, &rectangle, &area);
 }
 
+#if ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
 static lv_point_t fireblade_circle_point(lv_point_t center, int32_t radius, int32_t angle)
 {
     return speed_dashboard_point(
@@ -7838,6 +7916,7 @@ static void create_fireblade_dashboard(void)
         fireblade_create_landscape(s_ui.fireblade_page);
     }
 }
+#endif
 
 static uint32_t speed_dashboard_smooth_step(uint32_t index)
 {
@@ -8356,15 +8435,17 @@ static void set_gps_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
     const esp_bms_speed_dashboard_style_t style =
         speed_dashboard_style_from_snapshot(snapshot);
     if (style == ESP_BMS_SPEED_DASHBOARD_STYLE_HONDA_FIREBLADE) {
+#if ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
         set_fireblade_dashboard(snapshot);
-    } else {
-        const uint32_t render_signature = speed_dashboard_render_signature(snapshot);
-        if (s_ui.speed_art &&
-            (!s_ui.speed_art_signature_valid || s_ui.speed_art_signature != render_signature)) {
-            s_ui.speed_art_signature = render_signature;
-            s_ui.speed_art_signature_valid = true;
-            lv_obj_invalidate(s_ui.speed_art);
-        }
+        return;
+#endif
+    }
+    const uint32_t render_signature = speed_dashboard_render_signature(snapshot);
+    if (s_ui.speed_art &&
+        (!s_ui.speed_art_signature_valid || s_ui.speed_art_signature != render_signature)) {
+        s_ui.speed_art_signature = render_signature;
+        s_ui.speed_art_signature_valid = true;
+        lv_obj_invalidate(s_ui.speed_art);
     }
 }
 
@@ -8553,7 +8634,9 @@ static void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapsho
     set_header(snapshot);
     set_dashboard(snapshot);
     speed_dashboard_style_apply(snapshot);
+#if ESP_BMS_FEATURE_DASHBOARD_CONTROLLER
     set_controller_dashboard(snapshot);
+#endif
     set_gps_dashboard(snapshot);
     set_cast_page(snapshot);
     if (had_last_snapshot &&

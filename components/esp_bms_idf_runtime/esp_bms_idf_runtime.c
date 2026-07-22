@@ -1094,8 +1094,8 @@ static bool runtime_speed_source_matches_policy(uint8_t speed_source)
 
 static bool runtime_speed_dashboard_style_matches_policy(int32_t style)
 {
-    return style >= (int32_t)ESP_BMS_SPEED_DASHBOARD_STYLE_S1000RR &&
-           style <= (int32_t)ESP_BMS_SPEED_DASHBOARD_STYLE_HONDA_FIREBLADE;
+    return esp_bms_lvgl_ui_speed_dashboard_style_available(
+        (esp_bms_speed_dashboard_style_t)style);
 }
 
 static bool runtime_boot_animation_style_matches_policy(int32_t style)
@@ -1275,6 +1275,7 @@ static void runtime_reset_state(esp_bms_idf_runtime_t *runtime)
     runtime->snapshot.speed_unit = ESP_BMS_SPEED_UNIT_KMH;
     runtime->snapshot.speed_source = ESP_BMS_SPEED_SOURCE_GPS;
     runtime->snapshot.active_speed_source = ESP_BMS_SPEED_SOURCE_GPS;
+    runtime->snapshot.speed_dashboard_style = esp_bms_lvgl_ui_default_speed_dashboard_style();
 #if ESP_BMS_FEATURE_GPS
     runtime->snapshot.gps_module_state = (uint8_t)ESP_BMS_GPS_MODULE_PROBING;
 #else
@@ -1432,6 +1433,7 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
     uint16_t preset_range_km = ESP_BMS_PRESET_RANGE_DEFAULT_KM;
     bool speed_source_migration_needed = false;
     bool preset_range_migration_needed = false;
+    bool dashboard_style_migration_needed = false;
 
     ret = nvs_get_u8(handle, DISPLAY_NVS_BRIGHTNESS_KEY, &brightness_percent);
     if (ret == ESP_OK) {
@@ -1533,6 +1535,14 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
         return ret;
     }
 
+    if (!runtime_speed_dashboard_style_matches_policy(speed_dashboard_style)) {
+        ESP_LOGW(TAG,
+                 "[display] saved dashboard style %u is unavailable; using the configured default",
+                 speed_dashboard_style);
+        speed_dashboard_style = (uint8_t)esp_bms_lvgl_ui_default_speed_dashboard_style();
+        dashboard_style_migration_needed = true;
+    }
+
     if (!runtime_brightness_matches_policy(brightness_percent) ||
         !runtime_volume_matches_policy(volume_percent) ||
         !runtime_rotation_matches_policy(rotation) ||
@@ -1542,7 +1552,6 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
         !runtime_bms_type_matches_policy(bms_type) ||
         preset_range_km > ESP_BMS_REMAINING_RANGE_MAX_KM ||
         controller_connection_enabled > 1U || legacy_controller_page_enabled > 1U ||
-        !runtime_speed_dashboard_style_matches_policy(speed_dashboard_style) ||
         !runtime_boot_animation_style_matches_policy(boot_animation_style)) {
         return ESP_ERR_INVALID_STATE;
     }
@@ -1608,7 +1617,8 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
     runtime_project_controller_snapshot(runtime);
     runtime_update_snapshot_speed(runtime);
     *loaded = true;
-    if (speed_source_migration_needed || preset_range_migration_needed) {
+    if (speed_source_migration_needed || preset_range_migration_needed ||
+        dashboard_style_migration_needed) {
         const esp_err_t migration_ret = esp_bms_idf_runtime_save_display_settings(runtime);
         if (migration_ret != ESP_OK) {
             ESP_LOGW(TAG, "[settings] migration save failed: %s",
@@ -3643,11 +3653,15 @@ bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,
         runtime_project_controller_snapshot(runtime);
         return true;
     case ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_PAGE:
+        if (!esp_bms_lvgl_ui_speed_dashboard_style_available(
+                ESP_BMS_SPEED_DASHBOARD_STYLE_CONTROLLER)) {
+            return false;
+        }
         runtime->controller_page_enabled = !runtime->controller_page_enabled;
         runtime->snapshot.speed_dashboard_style =
             runtime->controller_page_enabled
                 ? ESP_BMS_SPEED_DASHBOARD_STYLE_CONTROLLER
-                : ESP_BMS_SPEED_DASHBOARD_STYLE_S1000RR;
+                : esp_bms_lvgl_ui_default_speed_dashboard_style();
         if (runtime->controller_page_enabled) {
             runtime->controller_connection_enabled = true;
             (void)esp_bms_idf_runtime_start_controller_ble_if_enabled(runtime);

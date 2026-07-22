@@ -11,7 +11,14 @@ $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $CatalogDir = if ($env:FIRMWARE_CATALOG_DIR) { $env:FIRMWARE_CATALOG_DIR } else { Join-Path $Root 'firmware/catalog' }
 $BuildRoot = if ($env:FIRMWARE_BUILD_ROOT) { $env:FIRMWARE_BUILD_ROOT } else { Join-Path $Root 'firmware-builds' }
-$IdfBuildRoot = if ($env:ESP_BMS_IDF_BUILD_ROOT) { $env:ESP_BMS_IDF_BUILD_ROOT } else { Join-Path $Root 'output' }
+$IdfBuildRoot = if ($env:ESP_BMS_IDF_BUILD_ROOT) {
+    $env:ESP_BMS_IDF_BUILD_ROOT
+} elseif (-not [string]::IsNullOrWhiteSpace($env:IDF_PATH)) {
+    Join-Path (Split-Path -Parent $env:IDF_PATH) 'esp32-bms-gps-idf-builds'
+} else {
+    Join-Path ([System.IO.Path]::GetTempPath()) 'esp32-bms-gps-idf-builds'
+}
+$FirmwareOutputRoot = if ($env:FIRMWARE_OUTPUT_ROOT) { $env:FIRMWARE_OUTPUT_ROOT } else { Join-Path $Root 'output' }
 $SchemaVersion = '1'
 $script:Language = if ($env:FIRMWARE_LANG -in @('zh', 'en')) { $env:FIRMWARE_LANG } else { 'zh' }
 $script:BuildExitCode = 0
@@ -33,7 +40,7 @@ function Convert-LocalizedText([string]$Text) {
         'is unavailable on|||在以下芯片不可用：'; 'is input-only and cannot drive|||仅可输入，不能驱动 '
         'is dangerous; pass|||是危险引脚；请传入 '; 'does not accept options|||不接受选项'
         'is not build-ready yet|||尚未具备本地构建条件'; 'Profile|||配置名称'; 'Board|||开发板'
-        'Display|||显示屏'; 'Input|||输入设备'; 'Modules|||模块'; 'profile=|||配置档='; 'modules=|||模块='
+        'Display|||显示屏'; 'Input|||输入设备'; 'Modules|||模块'; 'Dashboard UIs|||仪表界面'; 'profile=|||配置档='; 'modules=|||模块='; 'dashboards=|||仪表='
     )
     foreach ($Translation in $Translations) {
         $Source, $Target = $Translation -split '\|\|\|', 2
@@ -62,6 +69,68 @@ function Assert-RequiredIdfVersion {
     if ($LASTEXITCODE -ne 0 -or $Version -ne $script:RequiredIdfVersion) {
         Fail "unsupported ESP-IDF version: expected $script:RequiredIdfVersion, got $Version"
     }
+}
+
+function Test-AsciiInstallDirectory([string]$Path) {
+    return $Path -match '^[A-Za-z]:\\[A-Za-z0-9._-]+(?:\\[A-Za-z0-9._-]+)*$'
+}
+
+function Get-IdfInstallDirectory([string[]]$Items) {
+    $Directory = $null
+    for ($Index = 0; $Index -lt $Items.Count; ) {
+        if ($Items[$Index] -ne '--dir') { Fail "install-idf does not accept option: $($Items[$Index])" }
+        if ($Index + 1 -ge $Items.Count) { Fail '--dir requires a directory' }
+        if ($null -ne $Directory) { Fail 'install-idf accepts --dir only once' }
+        $Directory = $Items[$Index + 1]
+        $Index += 2
+    }
+    if ([string]::IsNullOrWhiteSpace($Directory)) {
+        if (-not (Test-InteractiveTerminal)) { Fail 'install-idf requires --dir outside an interactive terminal' }
+        $Default = "$($env:SystemDrive)\esp\esp-idf-v6.0.2"
+        $Directory = Read-Host $(if ($script:Language -eq 'en') { "ESP-IDF installation directory [$Default]" } else { "ESP-IDF 安装目录 [$Default]" })
+        if ([string]::IsNullOrWhiteSpace($Directory)) { $Directory = $Default }
+    }
+    $Directory = [System.IO.Path]::GetFullPath($Directory)
+    if (-not (Test-AsciiInstallDirectory $Directory)) { Fail 'ESP-IDF installation directory must be an absolute ASCII path without spaces' }
+    return $Directory
+}
+
+function Install-HostPrerequisites {
+    $Missing = @(@('git', 'python') | Where-Object { $null -eq (Get-Command $_ -ErrorAction SilentlyContinue) })
+    if ($Missing.Count -eq 0) { return }
+    if ($env:OS -ne 'Windows_NT') { Fail 'install-idf on a non-Windows host must use start.sh' }
+    if ($null -eq (Get-Command winget -ErrorAction SilentlyContinue)) { Fail 'winget is required to install missing Windows build prerequisites' }
+    $PackageIds = @()
+    if ($Missing -contains 'git') { $PackageIds += 'Git.Git' }
+    if ($Missing -contains 'python') { $PackageIds += 'Python.Python.3.11' }
+    Write-Host $(if ($script:Language -eq 'en') { "Installing Windows prerequisites: $($Missing -join ', ')" } else { "正在安装 Windows 编译前置条件：$($Missing -join '、')" })
+    foreach ($PackageId in $PackageIds) {
+        & winget install --exact --id $PackageId --accept-source-agreements --accept-package-agreements
+        if ($LASTEXITCODE -ne 0) { Fail "winget failed to install $PackageId" }
+    }
+    $MachinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+    $UserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    $env:Path = (@($MachinePath, $UserPath, $env:Path) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join ';'
+    foreach ($Name in @('git', 'python')) {
+        if ($null -eq (Get-Command $Name -ErrorAction SilentlyContinue)) { Fail "missing required command after installation: $Name" }
+    }
+}
+
+function Install-EspIdf([string[]]$Items) {
+    $Directory = Get-IdfInstallDirectory $Items
+    if (Test-Path -LiteralPath $Directory) { Fail "installation directory already exists: $Directory" }
+    Install-HostPrerequisites
+    & git clone --branch v6.0.2 --depth 1 --recursive --shallow-submodules https://github.com/espressif/esp-idf.git $Directory
+    if ($LASTEXITCODE -ne 0) { Fail 'failed to clone ESP-IDF v6.0.2' }
+    & (Join-Path $Directory 'install.ps1') esp32 esp32s3
+    if ($LASTEXITCODE -ne 0) { Fail 'ESP-IDF tool installation failed' }
+    $env:IDF_PATH = $Directory
+    [Environment]::SetEnvironmentVariable('IDF_PATH', $Directory, 'User')
+    $IdfExport = Get-IdfExportScript
+    if ($null -eq $IdfExport) { Fail 'ESP-IDF installation did not provide export.ps1' }
+    . $IdfExport
+    Assert-RequiredIdfVersion
+    Write-Host $(if ($script:Language -eq 'en') { "ESP-IDF v6.0.2 installed and IDF_PATH configured: $Directory" } else { "ESP-IDF v6.0.2 已安装，IDF_PATH 已配置：$Directory" })
 }
 
 function Set-Language([string]$Value) {
@@ -95,15 +164,18 @@ Build a firmware plan from the bundled hardware and module catalog.
 
 Commands:
   doctor       Check the local ESP-IDF build prerequisites.
+  install-idf  Install ESP-IDF v6.0.2 and configure the user environment.
   configure    Validate a configuration and generate a profile.
   validate     Validate a configuration without writing a profile.
   build-local  Generate a profile, then build it in an isolated directory.
-  build-cloud  Validate and prepare a cloud-build request; it never pushes.
+  build-cloud  Validate and trigger a cloud build; it never pushes.
 
 Options: --lang zh|en --config FILE --profile ID --mcu ID --board ID --display ID --input ID
          --board-name ID --display-name ID --input-name ID --display-bus SPI|I80 --input-bus SPI|I2C|NONE
-         --flash-mb N --psram-mb N --partitions PATH --modules ID[,ID...] --gpio ROLE=PIN
+         --flash-mb N --psram-mb N --partitions PATH --modules ID[,ID...] --dashboards ID[,ID...] --gpio ROLE=PIN
          --input-gpio ROLE=PIN --output-gpio ROLE=PIN --confirm-dangerous-gpio
+
+install-idf options: --dir DIRECTORY (absolute ASCII path)
 
 Run without arguments to choose a language, then configure interactively.
 '@ | Write-Output
@@ -117,15 +189,18 @@ ESP32 BMS GPS 固件定制器
 
 命令：
   doctor       检查本地 ESP-IDF 构建前置条件。
+  install-idf  安装 ESP-IDF v6.0.2 并配置用户环境。
   configure    校验配置并生成配置档。
   validate     只校验配置，不写入配置档。
   build-local  生成配置档，并在隔离目录中构建。
-  build-cloud  校验并准备云构建请求；不会推送。
+  build-cloud  校验并触发云端构建；不会推送。
 
 选项：--lang zh|en --config FILE --profile ID --mcu ID --board ID --display ID --input ID
        --board-name ID --display-name ID --input-name ID --display-bus SPI|I80 --input-bus SPI|I2C|NONE
-       --flash-mb N --psram-mb N --partitions PATH --modules ID[,ID...] --gpio ROLE=PIN
+       --flash-mb N --psram-mb N --partitions PATH --modules ID[,ID...] --dashboards ID[,ID...] --gpio ROLE=PIN
        --input-gpio ROLE=PIN --output-gpio ROLE=PIN --confirm-dangerous-gpio
+
+install-idf 选项：--dir DIRECTORY（绝对 ASCII 路径）
 
 无参数运行时会先选择语言，再进入交互式配置。
 '@ | Write-Output
@@ -205,6 +280,7 @@ function New-DefaultConfig {
         INPUT_GPIO = ''
         OUTPUT_GPIO = ''
         MODULES = 'bms,controller,network,ota,cast'
+        DASHBOARDS = 's1000rr,controller,fireblade'
         CONFIRM_DANGEROUS_GPIO = 'NO'
     }
 }
@@ -214,7 +290,7 @@ function Import-UserConfig([System.Collections.IDictionary]$Config, [string]$Pat
     Require-Key $Input 'SCHEMA_VERSION'
     if ($Input.SCHEMA_VERSION -ne $SchemaVersion) { Fail 'unsupported configuration schema' }
     foreach ($Key in $Input.Keys) {
-        if ($Key -in @('SCHEMA_VERSION', 'PROFILE', 'MCU', 'BOARD', 'DISPLAY', 'INPUT', 'MODULES', 'CONFIRM_DANGEROUS_GPIO', 'BOARD_NAME', 'DISPLAY_NAME', 'INPUT_NAME', 'DISPLAY_BUS', 'INPUT_BUS', 'FLASH_MB', 'PSRAM_MB', 'PARTITIONS', 'INPUT_GPIO', 'OUTPUT_GPIO') -or $Key -match '^GPIO_[A-Z][A-Z0-9_]*$') {
+        if ($Key -in @('SCHEMA_VERSION', 'PROFILE', 'MCU', 'BOARD', 'DISPLAY', 'INPUT', 'MODULES', 'DASHBOARDS', 'CONFIRM_DANGEROUS_GPIO', 'BOARD_NAME', 'DISPLAY_NAME', 'INPUT_NAME', 'DISPLAY_BUS', 'INPUT_BUS', 'FLASH_MB', 'PSRAM_MB', 'PARTITIONS', 'INPUT_GPIO', 'OUTPUT_GPIO') -or $Key -match '^GPIO_[A-Z][A-Z0-9_]*$') {
             $Config[$Key] = $Input[$Key]
         } else {
             Fail "unknown configuration key $Key"
@@ -237,6 +313,7 @@ function Parse-Options([System.Collections.IDictionary]$Config, [string[]]$Items
             '--display' { if ($Index + 1 -ge $Items.Count) { Fail '--display requires a value' }; $Config.DISPLAY = $Items[$Index + 1]; $Index += 2 }
             '--input' { if ($Index + 1 -ge $Items.Count) { Fail '--input requires a value' }; $Config.INPUT = $Items[$Index + 1]; $Index += 2 }
             '--modules' { if ($Index + 1 -ge $Items.Count) { Fail '--modules requires a value' }; $Config.MODULES = $Items[$Index + 1]; $Index += 2 }
+            '--dashboards' { if ($Index + 1 -ge $Items.Count) { Fail '--dashboards requires a value' }; $Config.DASHBOARDS = $Items[$Index + 1]; $Index += 2 }
             '--board-name' { if ($Index + 1 -ge $Items.Count) { Fail '--board-name requires a value' }; $Config.BOARD_NAME = $Items[$Index + 1]; $Index += 2 }
             '--display-name' { if ($Index + 1 -ge $Items.Count) { Fail '--display-name requires a value' }; $Config.DISPLAY_NAME = $Items[$Index + 1]; $Index += 2 }
             '--input-name' { if ($Index + 1 -ge $Items.Count) { Fail '--input-name requires a value' }; $Config.INPUT_NAME = $Items[$Index + 1]; $Index += 2 }
@@ -517,6 +594,15 @@ function Validate-Config([System.Collections.IDictionary]$Config) {
     $script:SelectedModules = @()
     foreach ($Module in Split-Csv $Config.MODULES) { Visit-Module $Module }
     $Config.MODULES = ConvertTo-SortedCsv $script:SelectedModules
+    $SelectedDashboards = [System.Collections.Generic.List[string]]::new()
+    foreach ($Dashboard in Split-Csv $Config.DASHBOARDS) {
+        if (-not (Test-Id $Dashboard)) { Fail "invalid dashboard id: $Dashboard" }
+        $DashboardRecord = Get-Record 'dashboard' $Dashboard
+        Assert-Keys $DashboardRecord @('SCHEMA_VERSION', 'ID')
+        [void]$SelectedDashboards.Add($Dashboard)
+    }
+    $Config.DASHBOARDS = ConvertTo-SortedCsv $SelectedDashboards.ToArray()
+    if ([string]::IsNullOrEmpty($Config.DASHBOARDS)) { Fail 'select at least one dashboard UI' }
     if ($Config.BOARD -eq 'custom') { Assert-CustomBoardGpioRoles $Config }
 }
 
@@ -530,7 +616,7 @@ function Write-Profile([System.Collections.IDictionary]$Config) {
     $Temp = Join-Path $BuildRoot ".${Profile}.tmp.$([guid]::NewGuid().ToString('N'))"
     $ProfileDir = Join-Path $BuildRoot $Profile
     New-Item -ItemType Directory -Path (Join-Path $Temp 'generated') -Force | Out-Null
-    $Lines = @("SCHEMA_VERSION=$SchemaVersion", "PROFILE=$Profile", "MCU=$($Config.MCU)", "BOARD=$($Config.BOARD)", "DISPLAY=$($Config.DISPLAY)", "INPUT=$($Config.INPUT)", "MODULES=$($Config.MODULES)", "CONFIRM_DANGEROUS_GPIO=$($Config.CONFIRM_DANGEROUS_GPIO)")
+    $Lines = @("SCHEMA_VERSION=$SchemaVersion", "PROFILE=$Profile", "MCU=$($Config.MCU)", "BOARD=$($Config.BOARD)", "DISPLAY=$($Config.DISPLAY)", "INPUT=$($Config.INPUT)", "MODULES=$($Config.MODULES)", "DASHBOARDS=$($Config.DASHBOARDS)", "CONFIRM_DANGEROUS_GPIO=$($Config.CONFIRM_DANGEROUS_GPIO)")
     foreach ($Key in @('BOARD_NAME', 'DISPLAY_NAME', 'INPUT_NAME', 'DISPLAY_BUS', 'INPUT_BUS', 'FLASH_MB', 'PSRAM_MB', 'PARTITIONS', 'INPUT_GPIO', 'OUTPUT_GPIO')) {
         if (-not [string]::IsNullOrEmpty($Config[$Key])) { $Lines += "$Key=$($Config[$Key])" }
     }
@@ -548,6 +634,9 @@ function Write-Profile([System.Collections.IDictionary]$Config) {
     $GpsFeature = 0
     $NetworkFeature = 0
     $OtaFeature = 0
+    $DashboardS1000rrFeature = 0
+    $DashboardControllerFeature = 0
+    $DashboardFirebladeFeature = 0
     $Trimming = 'audio-component-excluded;legacy-runtime-untrimmed'
     if ((Split-Csv $Config.MODULES) -contains 'gps') {
         $MainRequires = @('esp_bms_gps') + $MainRequires
@@ -579,9 +668,13 @@ function Write-Profile([System.Collections.IDictionary]$Config) {
         $OtaFeature = 1
         $Trimming = 'ota-component-enabled;legacy-runtime-partially-untrimmed'
     }
+    if ((Split-Csv $Config.DASHBOARDS) -contains 's1000rr') { $DashboardS1000rrFeature = 1 }
+    if ((Split-Csv $Config.DASHBOARDS) -contains 'controller') { $DashboardControllerFeature = 1 }
+    if ((Split-Csv $Config.DASHBOARDS) -contains 'fireblade') { $DashboardFirebladeFeature = 1 }
     $Cmake = @(
         "set(ESP_BMS_PROFILE_ID `"$Profile`")"
         "set(ESP_BMS_SELECTED_MODULES `"$($Config.MODULES)`")"
+        "set(ESP_BMS_SELECTED_DASHBOARDS `"$($Config.DASHBOARDS)`")"
         'set(ESP_BMS_PROFILE_TRIMMING_READY FALSE)'
         "set(ESP_BMS_FEATURE_AUDIO $AudioFeature CACHE BOOL `"Firmware profile audio feature`" FORCE)"
         "set(ESP_BMS_FEATURE_BMS $BmsFeature CACHE BOOL `"Firmware profile BMS feature`" FORCE)"
@@ -589,10 +682,13 @@ function Write-Profile([System.Collections.IDictionary]$Config) {
         "set(ESP_BMS_FEATURE_GPS $GpsFeature CACHE BOOL `"Firmware profile GPS feature`" FORCE)"
         "set(ESP_BMS_FEATURE_NETWORK $NetworkFeature CACHE BOOL `"Firmware profile network feature`" FORCE)"
         "set(ESP_BMS_FEATURE_OTA $OtaFeature CACHE BOOL `"Firmware profile OTA feature`" FORCE)"
+        "set(ESP_BMS_FEATURE_DASHBOARD_S1000RR $DashboardS1000rrFeature CACHE BOOL `"Firmware profile S1000RR dashboard`" FORCE)"
+        "set(ESP_BMS_FEATURE_DASHBOARD_CONTROLLER $DashboardControllerFeature CACHE BOOL `"Firmware profile controller dashboard`" FORCE)"
+        "set(ESP_BMS_FEATURE_DASHBOARD_FIREBLADE $DashboardFirebladeFeature CACHE BOOL `"Firmware profile Fireblade dashboard`" FORCE)"
         "set(ESP_BMS_PROFILE_MAIN_REQUIRES `"$($MainRequires -join ';')`" CACHE STRING `"Firmware profile component closure`" FORCE)"
     )
     Write-Utf8NoBom (Join-Path $Temp 'generated/profile.cmake') (($Cmake -join "`n") + "`n")
-    $ModuleLines = @("MODULES=$($Config.MODULES)")
+    $ModuleLines = @("MODULES=$($Config.MODULES)", "DASHBOARDS=$($Config.DASHBOARDS)")
     foreach ($Module in ($script:SelectedModules | Sort-Object -Unique)) {
         $Record = Get-Record 'module' $Module
         $ModuleLines += "MODULE_$Module`_COMPONENTS=$($Record.COMPONENTS)"
@@ -608,7 +704,7 @@ function Write-Profile([System.Collections.IDictionary]$Config) {
     $SdkconfigLines += "CONFIG_PARTITION_TABLE_CUSTOM_FILENAME=`"$ProfilePartitionTable`""
     Write-Utf8NoBom (Join-Path $Temp 'sdkconfig.defaults') (($SdkconfigLines -join "`n") + "`n")
     Copy-Item -LiteralPath (Join-Path $Root $script:BoardPartitions) -Destination (Join-Path $Temp 'partitions.csv')
-    $Report = @("PROFILE=$Profile", "MCU=$($Config.MCU)", "BOARD=$($Config.BOARD)", "BUILD_READY=$script:BoardBuildReady", "MODULES=$($Config.MODULES)", "TRIMMING=$Trimming", 'NOTE=Generated selection will become the component closure after runtime extraction.')
+    $Report = @("PROFILE=$Profile", "MCU=$($Config.MCU)", "BOARD=$($Config.BOARD)", "BUILD_READY=$script:BoardBuildReady", "MODULES=$($Config.MODULES)", "DASHBOARDS=$($Config.DASHBOARDS)", "TRIMMING=$Trimming", 'NOTE=Generated selection will become the component closure after runtime extraction.')
     Write-Utf8NoBom (Join-Path $Temp 'report.txt') (($Report -join "`n") + "`n")
     if (Test-Path -LiteralPath $ProfileDir) {
         $Backup = Join-Path $BuildRoot ".${Profile}.previous.$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())"
@@ -699,6 +795,11 @@ function Show-LocalBuildResult([System.Collections.IDictionary]$Config, [string]
 
     $FirmwarePath = (Resolve-Path -LiteralPath $FirmwarePath).Path
     $BuildDir = (Resolve-Path -LiteralPath $BuildDir).Path
+    $OutputDirectory = Join-Path $FirmwareOutputRoot $Config.PROFILE
+    [void](New-Item -ItemType Directory -Path $OutputDirectory -Force)
+    $OutputFirmwarePath = Join-Path $OutputDirectory 'esp32_bms_gps_idf.bin'
+    Copy-Item -LiteralPath $FirmwarePath -Destination $OutputFirmwarePath -Force
+    $FirmwarePath = (Resolve-Path -LiteralPath $OutputFirmwarePath).Path
     $FlashCommand = ".\scripts\flash.ps1 -Port COMx -BuildDir `"$BuildDir`""
 
     Write-Host ''
@@ -727,38 +828,39 @@ function Show-LocalBuildResult([System.Collections.IDictionary]$Config, [string]
     if (-not (Test-InteractiveTerminal)) { return }
     $ConfirmPrompt = if ($script:Language -eq 'en') { 'Flash this firmware now? [y/N]' } else { '现在烧录这个固件吗？[y/N]' }
     if ((Read-Host $ConfirmPrompt) -notmatch '^[Yy]$') { return }
-    $PortPrompt = if ($script:Language -eq 'en') { 'Serial port (for example COM3; leave blank to auto-detect)' } else { '串口（例如 COM3；留空则自动检测）' }
-    $Port = Read-Host $PortPrompt
     $FlashScript = Join-Path $Root 'scripts/flash.ps1'
-    if ([string]::IsNullOrWhiteSpace($Port)) {
-        & $FlashScript -BuildDir $BuildDir
-    } else {
-        & $FlashScript -Port $Port.Trim() -BuildDir $BuildDir
+    $Target = Read-Host $(if ($script:Language -eq 'en') { 'Flash target: 1) Local serial (default) 2) Remote RFC2217 [1]' } else { '烧录目标：1) 本地串口（默认）2) 远程 RFC2217 [1]' })
+    if ([string]::IsNullOrWhiteSpace($Target)) { $Target = '1' }
+    switch ($Target.Trim()) {
+        '1' {
+            $PortPrompt = if ($script:Language -eq 'en') { 'Local serial port (for example COM3; leave blank to auto-detect)' } else { '本地串口（例如 COM3；留空则自动检测）' }
+            $Port = Read-Host $PortPrompt
+            if ([string]::IsNullOrWhiteSpace($Port)) {
+                & $FlashScript -BuildDir $BuildDir
+            } else {
+                & $FlashScript -Port $Port.Trim() -BuildDir $BuildDir
+            }
+        }
+        '2' {
+            $Port = Read-Host $(if ($script:Language -eq 'en') { 'Remote RFC2217 URL' } else { '远程 RFC2217 地址' })
+            if ($Port -notmatch '(?i)^rfc2217://') { Fail 'remote flash requires an rfc2217:// URL' }
+            & $FlashScript -Port $Port.Trim() -BaudRate 115200 -BuildDir $BuildDir
+        }
+        default { Write-LocalizedError 'Flash canceled: invalid target' }
     }
 }
 
-function Write-CloudBuildPending {
-    Write-LocalizedError 'cloud build request prepared; workflow dispatch belongs to 07-21-build-cloud-verification'
+function Invoke-CloudBuild([System.Collections.IDictionary]$Config) {
+    $env:FIRMWARE_LANG = $script:Language
+    & python (Join-Path $Root 'scripts/dispatch-cloud-build.py') --config (Join-Path (Join-Path $BuildRoot $Config.PROFILE) 'firmware.env')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
 function Invoke-Doctor {
     $Missing = $false
-    foreach ($Name in @('git', 'cmake', 'python')) {
+    foreach ($Name in @('git', 'python')) {
         $CommandInfo = Get-Command $Name -ErrorAction SilentlyContinue
         if ($null -eq $CommandInfo) { Write-LocalizedError "missing: $Name"; $Missing = $true } else { Write-LocalizedOutput "ok: $Name=$($CommandInfo.Source)" }
-    }
-    $Ninja = Get-Command ninja -ErrorAction SilentlyContinue
-    if ($null -eq $Ninja) {
-        $NinjaRoot = Join-Path $env:USERPROFILE '.espressif/tools/ninja'
-        if (Test-Path -LiteralPath $NinjaRoot) { $Ninja = Get-ChildItem -LiteralPath $NinjaRoot -Filter ninja.exe -File -Recurse | Select-Object -First 1 }
-    }
-    if ($null -eq $Ninja) {
-        Write-LocalizedError 'missing: ninja'
-        $Missing = $true
-    } elseif ($Ninja -is [System.Management.Automation.CommandInfo]) {
-        Write-LocalizedOutput "ok: ninja=$($Ninja.Source)"
-    } else {
-        Write-LocalizedOutput "ok: ninja=$($Ninja.FullName)"
     }
     $IdfExport = Get-IdfExportScript
     if ($null -eq $IdfExport) {
@@ -766,10 +868,11 @@ function Invoke-Doctor {
         $Missing = $true
     } else {
         . $IdfExport
-        if ($null -eq (Get-Command idf.py -ErrorAction SilentlyContinue)) {
-            Write-LocalizedError 'missing: idf.py after ESP-IDF environment setup'
-            $Missing = $true
-        } else {
+        foreach ($Name in @('cmake', 'ninja', 'idf.py')) {
+            $CommandInfo = Get-Command $Name -ErrorAction SilentlyContinue
+            if ($null -eq $CommandInfo) { Write-LocalizedError "missing: $Name after ESP-IDF environment setup"; $Missing = $true } else { Write-LocalizedOutput "ok: $Name=$($CommandInfo.Source)" }
+        }
+        if ($null -ne (Get-Command idf.py -ErrorAction SilentlyContinue)) {
             try {
                 Assert-RequiredIdfVersion
                 Write-LocalizedOutput "ok: $script:RequiredIdfVersion"
@@ -849,7 +952,6 @@ function Get-CatalogOptionDescription([string]$Kind, [string]$Id) {
         'mcu/esp32s3' = @('ESP32-S3，最多 48 路 GPIO，支持 SPI / I80 显示', 'ESP32-S3, up to GPIO48, SPI / I80 display support')
         'board/esp32-wroom-32e-legacy' = @('ESP32-WROOM-32E，4MB Flash，可本地构建（推荐）', 'ESP32-WROOM-32E, 4MB Flash, build-ready (recommended)')
         'board/esp32s3-n16r8-st7796u-gt1151' = @('慧勤智远 ESP32-S3 N16R8，ST7796U / GT1151，16MB Flash / 8MB PSRAM，可本地构建', 'Huiqin Zhiyuan ESP32-S3 N16R8, ST7796U / GT1151, 16MB Flash / 8MB PSRAM, build-ready')
-        'board/esp32s3-wroom-1-n16r8-i80' = @('ESP32-S3-WROOM-1，ILI9488 / FT6336U，16MB Flash / 8MB PSRAM，可本地构建', 'ESP32-S3-WROOM-1, ILI9488 / FT6336U, 16MB Flash / 8MB PSRAM, build-ready')
         'board/custom' = @('自定义开发板：选择 MCU、显示屏并填写 GPIO', 'Custom board: choose MCU, display, and GPIO pins')
         'display/st7789-spi' = @('ST7789 SPI 显示屏', 'ST7789 SPI display')
         'display/ili9488-i80' = @('ILI9488 8080 并行显示屏', 'ILI9488 I80 parallel display')
@@ -866,7 +968,10 @@ function Get-CatalogOptionDescription([string]$Kind, [string]$Id) {
         'module/audio' = @('音频提示', 'Audio feedback')
         'module/network' = @('Wi-Fi、设置热点与本地网页', 'Wi-Fi, setup AP, and local web UI')
         'module/ota' = @('本地 Web OTA 更新（自动需要 network）', 'Local web OTA update (automatically requires network)')
-        'module/cast' = @('手机投屏（当前仍使用 legacy runtime）', 'Phone casting (currently uses legacy runtime)')
+        'module/cast' = @('实验性手机投屏（当前使用 legacy runtime）', 'Experimental phone casting (uses the legacy runtime)')
+        'dashboard/s1000rr' = @('宝马 S1000RR 速度仪表', 'BMW S1000RR speed dashboard')
+        'dashboard/controller' = @('控制器监控仪表', 'Controller monitoring dashboard')
+        'dashboard/fireblade' = @('本田火刃仪表', 'Honda Fireblade dashboard')
     }
     $Label = $Labels["$Kind/$Id"]
     if ($null -eq $Label) { return $(if ($script:Language -eq 'en') { 'Catalog option' } else { '目录中的可选项' }) }
@@ -1014,6 +1119,38 @@ function Select-ModuleOptions([string]$Default) {
     }
 }
 
+function Select-DashboardOptions([string]$Default) {
+    $Options = @(Get-CatalogIds 'dashboard')
+    if ($Options.Count -eq 0) { Fail 'no dashboard catalog options' }
+    while ($true) {
+        Write-Host ''
+        Write-Host (Convert-LocalizedText 'Dashboard UIs')
+        for ($Index = 0; $Index -lt $Options.Count; $Index++) {
+            $Option = $Options[$Index]
+            $Mark = if (",$Default," -like "*,$Option,*") { ' *' } else { '' }
+            Write-Host ("  {0}) {1} — {2}{3}" -f ($Index + 1), $Option, (Get-CatalogOptionDescription 'dashboard' $Option), $Mark)
+        }
+        $Prompt = if ($script:Language -eq 'en') { "Enter comma-separated numbers or IDs [$Default]" } else { "输入以逗号分隔的编号或 ID [$Default]" }
+        $Answer = Read-Host $Prompt
+        if ([string]::IsNullOrWhiteSpace($Answer)) { return $Default }
+        $Selected = [System.Collections.Generic.List[string]]::new()
+        $Valid = $true
+        foreach ($Entry in ($Answer.Split(',') | ForEach-Object { $_.Trim() })) {
+            $Number = 0
+            if ([int]::TryParse($Entry, [ref]$Number) -and $Number -ge 1 -and $Number -le $Options.Count) {
+                $Selected.Add($Options[$Number - 1])
+            } elseif ($Options -contains $Entry) {
+                $Selected.Add($Entry)
+            } else {
+                $Valid = $false
+                break
+            }
+        }
+        if ($Valid -and $Selected.Count -gt 0) { return ConvertTo-SortedCsv $Selected.ToArray() }
+        [Console]::Error.WriteLine($(if ($script:Language -eq 'en') { 'Invalid dashboard selection; please try again.' } else { '无效仪表选择，请重新输入。' }))
+    }
+}
+
 function Set-CustomBoardGpio([System.Collections.IDictionary]$Config) {
     $Config.INPUT_GPIO = ''
     $Config.OUTPUT_GPIO = ''
@@ -1085,6 +1222,7 @@ function Set-CustomBoardConfig([System.Collections.IDictionary]$Config) {
     $script:BoardDisplayBus = $Config.DISPLAY_BUS
     $script:BoardInputBus = $Config.INPUT_BUS
     $Config.MODULES = Select-ModuleOptions $Config.MODULES
+    $Config.DASHBOARDS = Select-DashboardOptions $Config.DASHBOARDS
     Set-CustomBoardGpio $Config
 }
 
@@ -1200,6 +1338,7 @@ function Show-InteractiveSummary([System.Collections.IDictionary]$Config) {
         Write-Host "  Display: $($Config.DISPLAY)"
         Write-Host "  Input: $($Config.INPUT)"
         Write-Host "  Modules: $Modules"
+        Write-Host "  Dashboard UIs: $($Config.DASHBOARDS)"
         Write-Host "  Output: firmware-builds/$($Config.PROFILE)/"
     } else {
         Write-Host "`n构建方案"
@@ -1208,6 +1347,7 @@ function Show-InteractiveSummary([System.Collections.IDictionary]$Config) {
         Write-Host "  显示屏：$($Config.DISPLAY)"
         Write-Host "  输入设备：$($Config.INPUT)"
         Write-Host "  功能模块：$Modules"
+        Write-Host "  仪表界面：$($Config.DASHBOARDS)"
         Write-Host "  输出目录：firmware-builds/$($Config.PROFILE)/"
     }
 }
@@ -1281,6 +1421,7 @@ function Invoke-Interactive {
         $Config.INPUT = Select-CatalogOption 'input' 'Input' $Config.INPUT $InputOptions
         if ($Config.INPUT -eq 'custom') { Read-CustomId $Config 'INPUT_NAME' '自定义输入设备名称（ASCII）' 'Custom input name (ASCII)' }
         $Config.MODULES = Select-ModuleOptions $Config.MODULES
+        $Config.DASHBOARDS = Select-DashboardOptions $Config.DASHBOARDS
         Set-MissingBoardGpio $Config
     }
     Set-InteractiveProfileName $Config
@@ -1309,7 +1450,7 @@ function Invoke-Interactive {
             if ($Save -match '^[Yy]$') { Set-InteractiveProfileName $Config -Prompt; Write-Profile $Config }
             exit 0
         }
-        'cloud' { Write-Profile $Config; Write-CloudBuildPending; exit 3 }
+        'cloud' { Write-Profile $Config; Invoke-CloudBuild $Config; exit 0 }
     }
 }
 
@@ -1317,15 +1458,16 @@ try {
     $Arguments = @(Remove-LanguageOptions $Arguments)
     if ([string]::IsNullOrEmpty($Command)) { Invoke-Interactive; exit 0 }
     switch ($Command) {
+        'install-idf' { Install-EspIdf $Arguments; exit 0 }
         'doctor' { if ($Arguments.Count -ne 0) { Fail 'doctor does not accept options' }; Invoke-Doctor; exit 0 }
         'configure' { $Config = New-DefaultConfig; Parse-Options $Config $Arguments; Validate-Config $Config; Write-Profile $Config; exit 0 }
-        'validate' { $Config = New-DefaultConfig; Parse-Options $Config $Arguments; Validate-Config $Config; Write-LocalizedOutput "valid: profile=$($Config.PROFILE) modules=$($Config.MODULES)"; exit 0 }
+        'validate' { $Config = New-DefaultConfig; Parse-Options $Config $Arguments; Validate-Config $Config; Write-LocalizedOutput "valid: profile=$($Config.PROFILE) modules=$($Config.MODULES) dashboards=$($Config.DASHBOARDS)"; exit 0 }
         'build-local' {
             $Config = New-DefaultConfig; Parse-Options $Config $Arguments; Validate-Config $Config; Write-Profile $Config
             Invoke-LocalBuild $Config
             exit $script:BuildExitCode
         }
-        'build-cloud' { $Config = New-DefaultConfig; Parse-Options $Config $Arguments; Validate-Config $Config; Write-Profile $Config; Write-CloudBuildPending; exit 3 }
+        'build-cloud' { $Config = New-DefaultConfig; Parse-Options $Config $Arguments; Validate-Config $Config; Write-Profile $Config; Invoke-CloudBuild $Config; exit 0 }
         'help' { Show-Usage; exit 0 }
         '-h' { Show-Usage; exit 0 }
         '--help' { Show-Usage; exit 0 }

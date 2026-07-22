@@ -4,9 +4,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CATALOG_DIR="${FIRMWARE_CATALOG_DIR:-$ROOT/firmware/catalog}"
 BUILD_ROOT="${FIRMWARE_BUILD_ROOT:-$ROOT/firmware-builds}"
-# Keep generated profiles separate from build artifacts so local firmware
-# output remains under this project by default.
-IDF_BUILD_ROOT="${ESP_BMS_IDF_BUILD_ROOT:-$ROOT/output}"
+# ESP-IDF's Xtensa toolchain cannot parse non-ASCII paths in generated specs.
+# Keep its CMake tree on the ASCII volume, then publish only the firmware here.
+IDF_BUILD_ROOT="${ESP_BMS_IDF_BUILD_ROOT:-/tmp/esp32-bms-gps-idf-builds/$UID}"
+FIRMWARE_OUTPUT_ROOT="${FIRMWARE_OUTPUT_ROOT:-$ROOT/output}"
 readonly SCHEMA_VERSION=1
 
 declare -A CFG RECORD MODULE_STATE GPIO_VALUES GPIO_KINDS BOARD_GPIO REQUIRED_GPIO_KINDS MODULE_GPIO_ROLE_STATE CUSTOM_MODULE_ROLE_STATE
@@ -70,14 +71,102 @@ message_text() {
     text="${text//Display/显示屏}"
     text="${text//Input/输入设备}"
     text="${text//Modules/模块}"
+    text="${text//Dashboard UIs/仪表界面}"
     text="${text//profile=/配置档=}"
     text="${text//modules=/模块=}"
+    text="${text//dashboards=/仪表=}"
     printf '%s' "$text"
 }
 
 die() {
     printf '%s\n' "$(message_text "error: $*")" >&2
     exit 2
+}
+
+is_ascii_install_dir() {
+    [[ "$1" =~ ^/[A-Za-z0-9._/-]+$ ]]
+}
+
+install_host_prerequisites() {
+    local command system
+    local -a missing=()
+    for command in git python3; do
+        command -v "$command" >/dev/null 2>&1 || missing+=("$command")
+    done
+    ((${#missing[@]} == 0)) && return
+
+    system="$(uname -s)"
+    if [[ "$LANGUAGE" == en ]]; then
+        printf 'Installing %s prerequisites: %s\n' "$system" "${missing[*]}"
+    else
+        printf '正在安装 %s 编译前置条件：%s\n' "$system" "${missing[*]}"
+    fi
+    case "$system" in
+        Linux)
+            if command -v apt-get >/dev/null 2>&1; then
+                sudo apt-get update
+                sudo apt-get install -y git python3 python3-venv
+            elif command -v dnf >/dev/null 2>&1; then
+                sudo dnf install -y git python3 python3-virtualenv
+            elif command -v pacman >/dev/null 2>&1; then
+                sudo pacman -Sy --needed git python python-virtualenv
+            elif command -v zypper >/dev/null 2>&1; then
+                sudo zypper --non-interactive install git python3 python3-virtualenv
+            else
+                die 'unsupported Linux package manager; install git, python3, and python3-venv first'
+            fi
+            ;;
+        Darwin)
+            command -v brew >/dev/null 2>&1 || die 'Homebrew is required to install missing macOS build prerequisites'
+            brew install git python
+            ;;
+        *) die "install-idf is unsupported on $system; use start.ps1 on Windows" ;;
+    esac
+    for command in git python3; do
+        command -v "$command" >/dev/null 2>&1 || die "missing required command after installation: $command"
+    done
+}
+
+install_idf() {
+    local install_dir='' default_dir config_dir answer
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --dir)
+                [[ $# -ge 2 ]] || die '--dir requires a directory'
+                install_dir="$2"
+                shift 2
+                ;;
+            *) die "install-idf does not accept option: $1" ;;
+        esac
+    done
+    default_dir="$HOME/esp/esp-idf-v6.0.2"
+    if [[ -z "$install_dir" ]]; then
+        is_interactive_terminal || die 'install-idf requires --dir outside an interactive terminal'
+        if [[ "$LANGUAGE" == en ]]; then
+            read -r -p "ESP-IDF installation directory [$default_dir]: " answer
+        else
+            read -r -p "ESP-IDF 安装目录 [$default_dir]：" answer
+        fi
+        install_dir="${answer:-$default_dir}"
+    fi
+    is_ascii_install_dir "$install_dir" || die 'ESP-IDF installation directory must be an absolute ASCII path without spaces'
+    [[ ! -e "$install_dir" ]] || die "installation directory already exists: $install_dir"
+
+    install_host_prerequisites
+    git clone --branch v6.0.2 --depth 1 --recursive --shallow-submodules \
+        https://github.com/espressif/esp-idf.git "$install_dir"
+    bash "$install_dir/install.sh" esp32 esp32s3
+
+    config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/esp32-bms-gps"
+    mkdir -p "$config_dir"
+    printf '%s\n' "$install_dir" > "$config_dir/idf-path"
+    export IDF_PATH="$install_dir"
+    "$ROOT/scripts/esp-idf-env.sh" --version >/dev/null
+    if [[ "$LANGUAGE" == en ]]; then
+        printf 'ESP-IDF v6.0.2 installed at %s\nProject environment configured at %s/idf-path\n' "$install_dir" "$config_dir"
+    else
+        printf 'ESP-IDF v6.0.2 已安装到 %s\n项目环境已配置到 %s/idf-path\n' "$install_dir" "$config_dir"
+    fi
 }
 
 usage() {
@@ -90,10 +179,11 @@ Build a firmware plan from the bundled hardware and module catalog.
 
 Commands:
   doctor       Check the local ESP-IDF build prerequisites.
+  install-idf  Install ESP-IDF v6.0.2 and configure this project's environment.
   configure    Validate a configuration and write one firmware.env file.
   validate     Validate a configuration without writing a profile.
   build-local  Write firmware.env, then compile it in an isolated directory.
-  build-cloud  Validate and prepare a cloud-build request; it never pushes.
+  build-cloud  Validate and trigger a cloud build; it never pushes.
 
 Options:
   --lang zh|en                 Language for this invocation (default: zh)
@@ -112,11 +202,15 @@ Options:
   --psram-mb N                 PSRAM size for custom hardware
   --partitions PATH            Existing partition CSV for custom hardware
   --modules ID[,ID...]         Optional modules
+  --dashboards ID[,ID...]      Included dashboard UIs (s1000rr,controller,fireblade)
   --gpio ROLE=PIN              Override a declared board GPIO role
   --input-gpio ROLE=PIN        Declare a custom board input GPIO role
   --output-gpio ROLE=PIN       Declare a custom board output GPIO role
   --confirm-dangerous-gpio     Allow a dangerous overridden GPIO
   -h, --help                   Show this help
+
+install-idf options:
+  --dir DIR                    Absolute ASCII installation directory
 
 Run without arguments to choose a language, then configure interactively.
 USAGE
@@ -130,10 +224,11 @@ ESP32 BMS GPS 固件定制器
 
 命令：
   doctor       检查本地 ESP-IDF 构建前置条件。
+  install-idf  安装 ESP-IDF v6.0.2 并配置本项目环境。
   configure    校验配置并写入一个 firmware.env 文件。
   validate     只校验配置，不写入配置档。
   build-local  写入 firmware.env，并在隔离目录中编译。
-  build-cloud  校验并准备云构建请求；不会推送。
+  build-cloud  校验并触发云端构建；不会推送。
 
 选项：
   --lang zh|en                 本次调用的语言（默认：zh）
@@ -152,11 +247,15 @@ ESP32 BMS GPS 固件定制器
   --psram-mb N                 自定义硬件的 PSRAM 容量
   --partitions PATH            自定义硬件使用的已有分区 CSV
   --modules ID[,ID...]         可选模块
+  --dashboards ID[,ID...]      编入的仪表 UI（s1000rr、controller、fireblade）
   --gpio ROLE=PIN              覆盖已声明的开发板 GPIO 角色
   --input-gpio ROLE=PIN        声明自定义开发板输入 GPIO 角色
   --output-gpio ROLE=PIN       声明自定义开发板输出 GPIO 角色
   --confirm-dangerous-gpio     允许危险 GPIO 覆盖
   -h, --help                   显示此帮助
+
+install-idf 选项：
+  --dir DIR                    绝对 ASCII 安装目录
 
 无参数运行时会先选择语言，再进入交互式配置。
 USAGE
@@ -306,6 +405,7 @@ set_defaults() {
     CFG[INPUT_GPIO]=''
     CFG[OUTPUT_GPIO]=''
     CFG[MODULES]=bms,controller,network,ota,cast
+    CFG[DASHBOARDS]=s1000rr,controller,fireblade
     CFG[CONFIRM_DANGEROUS_GPIO]=NO
 }
 
@@ -319,7 +419,7 @@ load_user_config() {
     [[ "${input[SCHEMA_VERSION]}" == "$SCHEMA_VERSION" ]] || die "unsupported configuration schema"
     for key in "${!input[@]}"; do
         case "$key" in
-            SCHEMA_VERSION|PROFILE|MCU|BOARD|DISPLAY|INPUT|MODULES|CONFIRM_DANGEROUS_GPIO|BOARD_NAME|DISPLAY_NAME|INPUT_NAME|DISPLAY_BUS|INPUT_BUS|FLASH_MB|PSRAM_MB|PARTITIONS|INPUT_GPIO|OUTPUT_GPIO)
+            SCHEMA_VERSION|PROFILE|MCU|BOARD|DISPLAY|INPUT|MODULES|DASHBOARDS|CONFIRM_DANGEROUS_GPIO|BOARD_NAME|DISPLAY_NAME|INPUT_NAME|DISPLAY_BUS|INPUT_BUS|FLASH_MB|PSRAM_MB|PARTITIONS|INPUT_GPIO|OUTPUT_GPIO)
                 CFG["$key"]="${input[$key]}"
                 ;;
             GPIO_*)
@@ -343,7 +443,7 @@ parse_options() {
                 load_user_config "$2"
                 shift 2
                 ;;
-            --profile|--mcu|--board|--display|--input|--modules|--board-name|--display-name|--input-name|--display-bus|--input-bus|--flash-mb|--psram-mb|--partitions)
+            --profile|--mcu|--board|--display|--input|--modules|--dashboards|--board-name|--display-name|--input-name|--display-bus|--input-bus|--flash-mb|--psram-mb|--partitions)
                 [[ $# -ge 2 ]] || die "$option requires a value"
                 value="$2"
                 case "$option" in
@@ -353,6 +453,7 @@ parse_options() {
                     --display) CFG[DISPLAY]="$value" ;;
                     --input) CFG[INPUT]="$value" ;;
                     --modules) CFG[MODULES]="$value" ;;
+                    --dashboards) CFG[DASHBOARDS]="$value" ;;
                     --board-name) CFG[BOARD_NAME]="$value" ;;
                     --display-name) CFG[DISPLAY_NAME]="$value" ;;
                     --input-name) CFG[INPUT_NAME]="$value" ;;
@@ -410,6 +511,23 @@ validate_modules() {
         visit_module "$module"
     done
     CFG[MODULES]="$(printf '%s\n' "${SELECTED_MODULES[@]}" | LC_ALL=C sort -u | paste -sd, -)"
+}
+
+validate_dashboards() {
+    local dashboard
+    local -a dashboards=()
+
+    IFS=, read -r -a dashboards <<< "${CFG[DASHBOARDS]}"
+    SELECTED_DASHBOARDS=()
+    for dashboard in "${dashboards[@]}"; do
+        [[ -n "$dashboard" ]] || continue
+        is_id "$dashboard" || die "invalid dashboard id: $dashboard"
+        load_record dashboard "$dashboard"
+        require_keys RECORD SCHEMA_VERSION ID
+        SELECTED_DASHBOARDS+=("$dashboard")
+    done
+    CFG[DASHBOARDS]="$(printf '%s\n' "${SELECTED_DASHBOARDS[@]}" | LC_ALL=C sort -u | paste -sd, -)"
+    [[ -n "${CFG[DASHBOARDS]}" ]] || die 'select at least one dashboard UI'
 }
 
 visit_module() {
@@ -696,6 +814,7 @@ validate_config() {
 
     validate_gpio
     validate_modules
+    validate_dashboards
     [[ "${CFG[BOARD]}" != custom ]] || validate_custom_board_gpio_roles
 }
 
@@ -725,7 +844,7 @@ validate_custom_board_gpio_roles() {
 write_profile() {
     local profile="${CFG[PROFILE]}"
     local profile_dir="$BUILD_ROOT/$profile"
-    local temporary backup partition_source sdkconfig_source role module main_requires audio_feature bms_feature controller_feature gps_feature network_feature ota_feature trimming
+    local temporary backup partition_source sdkconfig_source role module main_requires audio_feature bms_feature controller_feature gps_feature network_feature ota_feature dashboard_s1000rr_feature dashboard_controller_feature dashboard_fireblade_feature trimming
 
     mkdir -p "$BUILD_ROOT"
     temporary="$(mktemp -d "$BUILD_ROOT/.${profile}.tmp.XXXXXX")"
@@ -742,6 +861,9 @@ write_profile() {
     gps_feature=0
     network_feature=0
     ota_feature=0
+    dashboard_s1000rr_feature=0
+    dashboard_controller_feature=0
+    dashboard_fireblade_feature=0
     trimming="audio-component-excluded;legacy-runtime-untrimmed"
     if csv_has "${CFG[MODULES]}" gps; then
         main_requires="esp_bms_gps;${main_requires}"
@@ -773,9 +895,13 @@ write_profile() {
         ota_feature=1
         trimming="ota-component-enabled;legacy-runtime-partially-untrimmed"
     fi
+    csv_has "${CFG[DASHBOARDS]}" s1000rr && dashboard_s1000rr_feature=1
+    csv_has "${CFG[DASHBOARDS]}" controller && dashboard_controller_feature=1
+    csv_has "${CFG[DASHBOARDS]}" fireblade && dashboard_fireblade_feature=1
     {
         printf 'set(ESP_BMS_PROFILE_ID "%s")\n' "$profile"
         printf 'set(ESP_BMS_SELECTED_MODULES "%s")\n' "${CFG[MODULES]}"
+        printf 'set(ESP_BMS_SELECTED_DASHBOARDS "%s")\n' "${CFG[DASHBOARDS]}"
         printf 'set(ESP_BMS_PROFILE_TRIMMING_READY FALSE)\n'
         printf 'set(ESP_BMS_FEATURE_AUDIO %s CACHE BOOL "Firmware profile audio feature" FORCE)\n' "$audio_feature"
         printf 'set(ESP_BMS_FEATURE_BMS %s CACHE BOOL "Firmware profile BMS feature" FORCE)\n' "$bms_feature"
@@ -783,10 +909,14 @@ write_profile() {
         printf 'set(ESP_BMS_FEATURE_GPS %s CACHE BOOL "Firmware profile GPS feature" FORCE)\n' "$gps_feature"
         printf 'set(ESP_BMS_FEATURE_NETWORK %s CACHE BOOL "Firmware profile network feature" FORCE)\n' "$network_feature"
         printf 'set(ESP_BMS_FEATURE_OTA %s CACHE BOOL "Firmware profile OTA feature" FORCE)\n' "$ota_feature"
+        printf 'set(ESP_BMS_FEATURE_DASHBOARD_S1000RR %s CACHE BOOL "Firmware profile S1000RR dashboard" FORCE)\n' "$dashboard_s1000rr_feature"
+        printf 'set(ESP_BMS_FEATURE_DASHBOARD_CONTROLLER %s CACHE BOOL "Firmware profile controller dashboard" FORCE)\n' "$dashboard_controller_feature"
+        printf 'set(ESP_BMS_FEATURE_DASHBOARD_FIREBLADE %s CACHE BOOL "Firmware profile Fireblade dashboard" FORCE)\n' "$dashboard_fireblade_feature"
         printf 'set(ESP_BMS_PROFILE_MAIN_REQUIRES "%s" CACHE STRING "Firmware profile component closure" FORCE)\n' "$main_requires"
     } > "$temporary/generated/profile.cmake"
     {
         printf 'MODULES=%s\n' "${CFG[MODULES]}"
+        printf 'DASHBOARDS=%s\n' "${CFG[DASHBOARDS]}"
         for module in $(printf '%s\n' "${SELECTED_MODULES[@]}" | LC_ALL=C sort -u); do
             load_record module "$module"
             printf 'MODULE_%s_COMPONENTS=%s\n' "$module" "${RECORD[COMPONENTS]}"
@@ -806,6 +936,7 @@ write_profile() {
         printf 'BOARD=%s\n' "${CFG[BOARD]}"
         printf 'BUILD_READY=%s\n' "$BOARD_BUILD_READY"
         printf 'MODULES=%s\n' "${CFG[MODULES]}"
+        printf 'DASHBOARDS=%s\n' "${CFG[DASHBOARDS]}"
         printf 'TRIMMING=%s\n' "$trimming"
         printf 'NOTE=Generated selection will become the component closure after runtime extraction.\n'
     } > "$temporary/report.txt"
@@ -828,6 +959,7 @@ write_firmware_env() {
         printf 'DISPLAY=%s\n' "${CFG[DISPLAY]}"
         printf 'INPUT=%s\n' "${CFG[INPUT]}"
         printf 'MODULES=%s\n' "${CFG[MODULES]}"
+        printf 'DASHBOARDS=%s\n' "${CFG[DASHBOARDS]}"
         printf 'CONFIRM_DANGEROUS_GPIO=%s\n' "${CFG[CONFIRM_DANGEROUS_GPIO]}"
         for key in BOARD_NAME DISPLAY_NAME INPUT_NAME DISPLAY_BUS INPUT_BUS FLASH_MB PSRAM_MB PARTITIONS INPUT_GPIO OUTPUT_GPIO; do
             [[ -n "${CFG[$key]}" ]] && printf '%s=%s\n' "$key" "${CFG[$key]}"
@@ -855,8 +987,8 @@ write_config() {
 }
 
 run_doctor() {
-    local missing=0 command ninja_path
-    for command in git cmake python3; do
+    local missing=0 command tool_path tools_root
+    for command in git python3; do
         if command -v "$command" >/dev/null 2>&1; then
             printf '%s\n' "$(message_text "ok: $command=$(command -v "$command")")"
         else
@@ -864,16 +996,19 @@ run_doctor() {
             missing=1
         fi
     done
-    ninja_path="$(command -v ninja || true)"
-    if [[ -z "$ninja_path" ]]; then
-        ninja_path="$(find "$HOME/.espressif/tools/ninja" -type f -name ninja -perm -u+x -print -quit 2>/dev/null || true)"
-    fi
-    if [[ -n "$ninja_path" ]]; then
-        printf '%s\n' "$(message_text "ok: ninja=$ninja_path")"
-    else
-        printf '%s\n' "$(message_text 'missing: ninja')" >&2
-        missing=1
-    fi
+    tools_root="${IDF_TOOLS_PATH:-$HOME/.espressif}/tools"
+    for command in cmake ninja; do
+        tool_path="$(command -v "$command" || true)"
+        if [[ -z "$tool_path" ]]; then
+            tool_path="$(find "$tools_root/$command" -type f -name "$command" -perm -u+x -print -quit 2>/dev/null || true)"
+        fi
+        if [[ -n "$tool_path" ]]; then
+            printf '%s\n' "$(message_text "ok: $command=$tool_path")"
+        else
+            printf '%s\n' "$(message_text "missing: $command")" >&2
+            missing=1
+        fi
+    done
     if idf_version="$ROOT/scripts/esp-idf-env.sh --version" 2>&1; then
         printf '%s\n' "$(message_text "ok: $idf_version")"
     else
@@ -886,8 +1021,8 @@ run_doctor() {
     (( missing == 0 ))
 }
 
-report_cloud_build_pending() {
-    printf '%s\n' "$(message_text 'cloud build request prepared; workflow dispatch belongs to 07-21-build-cloud-verification')" >&2
+dispatch_cloud_build() {
+    env FIRMWARE_LANG="$LANGUAGE" python3 "$ROOT/scripts/dispatch-cloud-build.py" --config "$1"
 }
 
 choose_interactive_language() {
@@ -933,7 +1068,6 @@ catalog_option_description() {
         mcu:esp32s3) zh='ESP32-S3，最多 48 路 GPIO，支持 SPI / I80 显示'; en='ESP32-S3, up to GPIO48, SPI / I80 display support' ;;
         board:esp32-wroom-32e-legacy) zh='ESP32-WROOM-32E，4MB Flash，可本地构建（推荐）'; en='ESP32-WROOM-32E, 4MB Flash, build-ready (recommended)' ;;
         board:esp32s3-n16r8-st7796u-gt1151) zh='慧勤智远 ESP32-S3 N16R8，ST7796U / GT1151，16MB Flash / 8MB PSRAM，可本地构建'; en='Huiqin Zhiyuan ESP32-S3 N16R8, ST7796U / GT1151, 16MB Flash / 8MB PSRAM, build-ready' ;;
-        board:esp32s3-wroom-1-n16r8-i80) zh='ESP32-S3-WROOM-1，ILI9488 / FT6336U，16MB Flash / 8MB PSRAM，可本地构建'; en='ESP32-S3-WROOM-1, ILI9488 / FT6336U, 16MB Flash / 8MB PSRAM, build-ready' ;;
         board:custom) zh='自定义开发板：选择 MCU、显示屏并填写 GPIO'; en='Custom board: choose MCU, display, and GPIO pins' ;;
         display:st7789-spi) zh='ST7789 SPI 显示屏'; en='ST7789 SPI display' ;;
         display:ili9488-i80) zh='ILI9488 8080 并行显示屏'; en='ILI9488 I80 parallel display' ;;
@@ -950,7 +1084,10 @@ catalog_option_description() {
         module:audio) zh='音频提示'; en='Audio feedback' ;;
         module:network) zh='Wi-Fi、设置热点与本地网页'; en='Wi-Fi, setup AP, and local web UI' ;;
         module:ota) zh='本地 Web OTA 更新（自动需要 network）'; en='Local web OTA update (automatically requires network)' ;;
-        module:cast) zh='手机投屏（当前仍使用 legacy runtime）'; en='Phone casting (currently uses legacy runtime)' ;;
+        module:cast) zh='实验性手机投屏（当前使用 legacy runtime）'; en='Experimental phone casting (uses the legacy runtime)' ;;
+        dashboard:s1000rr) zh='宝马 S1000RR 速度仪表'; en='BMW S1000RR speed dashboard' ;;
+        dashboard:controller) zh='控制器监控仪表'; en='Controller monitoring dashboard' ;;
+        dashboard:fireblade) zh='本田火刃仪表'; en='Honda Fireblade dashboard' ;;
         *) zh='目录中的可选项'; en='Catalog option' ;;
     esac
     [[ "$LANGUAGE" == en ]] && printf '%s' "$en" || printf '%s' "$zh"
@@ -1195,11 +1332,48 @@ configure_custom_board() {
     BOARD_INPUT_BUS="${CFG[INPUT_BUS]}"
     choose_module_options
     CFG[MODULES]="$MENU_SELECTION"
+    choose_dashboard_options
+    CFG[DASHBOARDS]="$MENU_SELECTION"
     configure_custom_board_gpio
 }
 
 is_interactive_terminal() {
     [[ -t 0 && -t 1 ]]
+}
+
+flash_built_firmware() {
+    local build_dir="$1" answer port
+    local -a flash_args=(-B "$build_dir")
+
+    if [[ "$LANGUAGE" == en ]]; then
+        read -r -p 'Flash target: 1) Local serial (default) 2) Remote RFC2217 [1]: ' answer
+    else
+        read -r -p '烧录目标：1) 本地串口（默认）2) 远程 RFC2217 [1]：' answer
+    fi
+    case "$answer" in
+        ''|1|local)
+            if [[ "$LANGUAGE" == en ]]; then
+                read -r -p 'Local serial port (for example /dev/ttyUSB0; blank uses the ESP-IDF default): ' port
+            else
+                read -r -p '本地串口（例如 /dev/ttyUSB0；留空使用 ESP-IDF 默认值）：' port
+            fi
+            [[ -z "$port" ]] || flash_args+=(-p "$port")
+            ;;
+        2|remote)
+            if [[ "$LANGUAGE" == en ]]; then
+                read -r -p 'Remote RFC2217 URL: ' port
+            else
+                read -r -p '远程 RFC2217 地址：' port
+            fi
+            [[ "$port" == rfc2217://* ]] || die 'remote flash requires an rfc2217:// URL'
+            flash_args+=(-p "$port" -b 115200)
+            ;;
+        *)
+            [[ "$LANGUAGE" == en ]] && printf '%s\n' 'Flash canceled: invalid target.' >&2 || printf '%s\n' '已取消烧录：目标无效。' >&2
+            return
+            ;;
+    esac
+    "$ROOT/scripts/esp-idf-env.sh" "${flash_args[@]}" flash
 }
 
 choose_module_options_with_keyboard() {
@@ -1303,6 +1477,49 @@ choose_module_options() {
             fi
             [[ -n "$candidate" ]] || {
                 [[ "$LANGUAGE" == en ]] && printf '%s\n' 'Invalid module selection; please try again.' >&2 || printf '%s\n' '无效功能选择，请重新输入。' >&2
+                selected=()
+                break
+            }
+            selected+=("$candidate")
+        done
+        ((${#selected[@]} > 0)) || continue
+        MENU_SELECTION="$(printf '%s\n' "${selected[@]}" | LC_ALL=C sort -u | paste -sd, -)"
+        return
+    done
+}
+
+choose_dashboard_options() {
+    local answer entry option candidate index
+    local -a choices=() selected=() entries=()
+
+    mapfile -t choices < <(catalog_ids dashboard)
+    ((${#choices[@]} > 0)) || die 'no dashboard catalog options'
+    while true; do
+        printf '\n%s\n' "$(message_text 'Dashboard UIs')"
+        for index in "${!choices[@]}"; do
+            option="${choices[$index]}"
+            printf '  %d) %s — %s%s\n' "$((index + 1))" "$option" "$(catalog_option_description dashboard "$option")" "$([[ ",${CFG[DASHBOARDS]}," == *",$option,"* ]] && printf ' *')"
+        done
+        if [[ "$LANGUAGE" == en ]]; then
+            read -r -p "Enter comma-separated numbers or IDs [${CFG[DASHBOARDS]}]: " answer
+        else
+            read -r -p "输入以逗号分隔的编号或 ID [${CFG[DASHBOARDS]}]：" answer
+        fi
+        [[ -n "$answer" ]] || { MENU_SELECTION="${CFG[DASHBOARDS]}"; return; }
+        IFS=, read -r -a entries <<< "$answer"
+        selected=()
+        for entry in "${entries[@]}"; do
+            entry="${entry//[[:space:]]/}"
+            candidate=''
+            if [[ "$entry" =~ ^[0-9]+$ ]] && ((10#$entry >= 1 && 10#$entry <= ${#choices[@]})); then
+                candidate="${choices[$((10#$entry - 1))]}"
+            else
+                for option in "${choices[@]}"; do
+                    [[ "$entry" == "$option" ]] && { candidate="$option"; break; }
+                done
+            fi
+            [[ -n "$candidate" ]] || {
+                [[ "$LANGUAGE" == en ]] && printf '%s\n' 'Invalid dashboard selection; please try again.' >&2 || printf '%s\n' '无效仪表选择，请重新输入。' >&2
                 selected=()
                 break
             }
@@ -1439,11 +1656,11 @@ choose_board_or_saved_profile() {
 
 show_interactive_summary() {
     if [[ "$LANGUAGE" == en ]]; then
-        printf '\nBuild plan\n  Board: %s\n  MCU: %s\n  Display: %s\n  Input: %s\n  Modules: %s\n  Output: firmware-builds/%s/\n' \
-            "${CFG[BOARD]}" "${CFG[MCU]}" "${CFG[DISPLAY]}" "${CFG[INPUT]}" "${CFG[MODULES]:-(none)}" "${CFG[PROFILE]}"
+        printf '\nBuild plan\n  Board: %s\n  MCU: %s\n  Display: %s\n  Input: %s\n  Modules: %s\n  Dashboard UIs: %s\n  Output: firmware-builds/%s/\n' \
+            "${CFG[BOARD]}" "${CFG[MCU]}" "${CFG[DISPLAY]}" "${CFG[INPUT]}" "${CFG[MODULES]:-(none)}" "${CFG[DASHBOARDS]}" "${CFG[PROFILE]}"
     else
-        printf '\n构建方案\n  开发板：%s\n  MCU：%s\n  显示屏：%s\n  输入设备：%s\n  功能模块：%s\n  输出目录：firmware-builds/%s/\n' \
-            "${CFG[BOARD]}" "${CFG[MCU]}" "${CFG[DISPLAY]}" "${CFG[INPUT]}" "${CFG[MODULES]:-（无）}" "${CFG[PROFILE]}"
+        printf '\n构建方案\n  开发板：%s\n  MCU：%s\n  显示屏：%s\n  输入设备：%s\n  功能模块：%s\n  仪表界面：%s\n  输出目录：firmware-builds/%s/\n' \
+            "${CFG[BOARD]}" "${CFG[MCU]}" "${CFG[DISPLAY]}" "${CFG[INPUT]}" "${CFG[MODULES]:-（无）}" "${CFG[DASHBOARDS]}" "${CFG[PROFILE]}"
     fi
 }
 
@@ -1518,6 +1735,8 @@ run_interactive() {
         [[ "${CFG[INPUT]}" != custom ]] || prompt_custom_id INPUT_NAME '自定义输入设备名称（ASCII）' 'Custom input name (ASCII)'
         choose_module_options
         CFG[MODULES]="$MENU_SELECTION"
+        choose_dashboard_options
+        CFG[DASHBOARDS]="$MENU_SELECTION"
         configure_missing_board_gpio
     fi
     set_interactive_profile_name
@@ -1561,8 +1780,8 @@ run_interactive() {
             ;;
         cloud)
             write_config
-            report_cloud_build_pending
-            return 3
+            dispatch_cloud_build "$BUILD_ROOT/${CFG[PROFILE]}/firmware.env"
+            return
             ;;
     esac
 }
@@ -1574,6 +1793,9 @@ main() {
     [[ -n "$command" ]] || { run_interactive; return $?; }
     shift
     case "$command" in
+        install-idf)
+            install_idf "$@"
+            ;;
         doctor)
             [[ $# -eq 0 ]] || die "doctor does not accept options"
             run_doctor
@@ -1583,7 +1805,7 @@ main() {
             parse_options "$@"
             validate_config
             if [[ "$command" == validate ]]; then
-                printf '%s\n' "$(message_text "valid: profile=${CFG[PROFILE]} modules=${CFG[MODULES]}")"
+                printf '%s\n' "$(message_text "valid: profile=${CFG[PROFILE]} modules=${CFG[MODULES]} dashboards=${CFG[DASHBOARDS]}")"
                 return
             fi
             if [[ "$command" == configure ]]; then
@@ -1600,13 +1822,16 @@ main() {
                     -DSDKCONFIG="$BUILD_ROOT/${CFG[PROFILE]}/sdkconfig" \
                     -DSDKCONFIG_DEFAULTS="$BUILD_ROOT/${CFG[PROFILE]}/sdkconfig.defaults" \
                     -DESP_BMS_PROFILE_FILE="$BUILD_ROOT/${CFG[PROFILE]}/generated/profile.cmake" build
-                local build_dir="$IDF_BUILD_ROOT/${CFG[PROFILE]}/idf-build" firmware_path answer
+                local build_dir="$IDF_BUILD_ROOT/${CFG[PROFILE]}/idf-build" firmware_path output_firmware_path answer
                 firmware_path="$build_dir/esp32_bms_gps_idf.bin"
                 [[ -f "$firmware_path" ]] || die "build completed but firmware is missing: $firmware_path"
+                output_firmware_path="$FIRMWARE_OUTPUT_ROOT/${CFG[PROFILE]}/esp32_bms_gps_idf.bin"
+                mkdir -p "${output_firmware_path%/*}"
+                cp "$firmware_path" "$output_firmware_path"
                 if [[ "$LANGUAGE" == en ]]; then
-                    printf 'Build completed\n  Firmware: %s\n' "$firmware_path"
+                    printf 'Build completed\n  Firmware: %s\n' "$output_firmware_path"
                 else
-                    printf '编译完成\n  固件地址：%s\n' "$firmware_path"
+                    printf '编译完成\n  固件地址：%s\n' "$output_firmware_path"
                 fi
                 if is_interactive_terminal; then
                     if [[ "$LANGUAGE" == en ]]; then
@@ -1614,14 +1839,11 @@ main() {
                     else
                         read -r -p '现在烧录这个固件吗？[y/N]：' answer
                     fi
-                    if [[ "$answer" =~ ^[Yy]$ ]]; then
-                        "$ROOT/scripts/esp-idf-env.sh" -B "$build_dir" -p 'rfc2217://192.168.2.10:4000?ign_set_control' -b 115200 flash
-                    fi
+                    [[ "$answer" =~ ^[Yy]$ ]] && flash_built_firmware "$build_dir"
                 fi
             elif [[ "$command" == build-cloud ]]; then
                 write_config
-                report_cloud_build_pending
-                return 3
+                dispatch_cloud_build "$BUILD_ROOT/${CFG[PROFILE]}/firmware.env"
             fi
             ;;
         -h|--help|help)

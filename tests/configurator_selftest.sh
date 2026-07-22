@@ -22,11 +22,17 @@ expect_fail() {
 }
 
 "${repo_root}/start.sh" validate --lang en --modules ota --profile module-auto >"${work_dir}/modules.out"
-grep -qx 'valid: profile=module-auto modules=network,ota' "${work_dir}/modules.out"
+grep -qx 'valid: profile=module-auto modules=network,ota dashboards=controller,fireblade,s1000rr' "${work_dir}/modules.out"
+
+FIRMWARE_BUILD_ROOT="${work_dir}/dashboard-fireblade-build" "${repo_root}/start.sh" configure --lang en --profile dashboard-fireblade --dashboards fireblade >/dev/null
+rg -qx 'DASHBOARDS=fireblade' "${work_dir}/dashboard-fireblade-build/dashboard-fireblade/firmware.env"
+expect_fail 'select at least one dashboard UI' "${repo_root}/start.sh" validate --lang en --dashboards ''
+expect_fail 'missing file:' "${repo_root}/start.sh" validate --lang en --dashboards unknown
 
 expect_fail 'dangerous' "${repo_root}/start.sh" validate --lang en --gpio TFT_DC=0
 "${repo_root}/start.sh" validate --lang en --gpio TFT_DC=0 --confirm-dangerous-gpio >/dev/null
 expect_fail 'assigned to both' "${repo_root}/start.sh" validate --lang en --gpio TFT_DC=4
+expect_fail 'missing file:' "${repo_root}/start.sh" validate --lang en --mcu esp32s3 --board esp32s3-wroom-1-n16r8-i80 --display ili9488-i80 --input ft6336u-i2c
 
 FIRMWARE_BUILD_ROOT="${work_dir}/s3-default-build" "${repo_root}/start.sh" configure --profile s3-default >/dev/null
 rg -qx 'MCU=esp32s3' "${work_dir}/s3-default-build/s3-default/firmware.env"
@@ -50,14 +56,6 @@ python3 "${repo_root}/scripts/generate-hardware-config.py" --catalog "${repo_roo
 rg -Fx '#define ESP_BMS_PROFILE_BATTERY_ADC (gpio_num_t)34' "${work_dir}/audio-legacy.h"
 rg -Fx '#define ESP_BMS_PROFILE_AUDIO_BACKEND ESP_BMS_PROFILE_AUDIO_BACKEND_DAC' "${work_dir}/audio-legacy.h"
 
-FIRMWARE_BUILD_ROOT="${work_dir}/audio-s3-build" "${repo_root}/start.sh" configure --lang en --profile audio-s3 --mcu esp32s3 --board esp32s3-wroom-1-n16r8-i80 --display ili9488-i80 --input ft6336u-i2c --modules audio >/dev/null
-rg -qx 'GPIO_AMP_SHDN=2' "${work_dir}/audio-s3-build/audio-s3/firmware.env"
-rg -qx 'GPIO_I2S_BCLK=42' "${work_dir}/audio-s3-build/audio-s3/firmware.env"
-rg -qx 'GPIO_I2S_LRCK=47' "${work_dir}/audio-s3-build/audio-s3/firmware.env"
-rg -qx 'GPIO_I2S_DATA=48' "${work_dir}/audio-s3-build/audio-s3/firmware.env"
-python3 "${repo_root}/scripts/generate-hardware-config.py" --catalog "${repo_root}/firmware/catalog" --firmware-env "${work_dir}/audio-s3-build/audio-s3/firmware.env" --output "${work_dir}/audio-s3.h"
-rg -Fx '#define ESP_BMS_PROFILE_BATTERY_ADC GPIO_NUM_NC' "${work_dir}/audio-s3.h"
-rg -Fx '#define ESP_BMS_PROFILE_AUDIO_BACKEND ESP_BMS_PROFILE_AUDIO_BACKEND_I2S' "${work_dir}/audio-s3.h"
 expect_fail 'does not provide an audio hardware profile' "${repo_root}/start.sh" validate --lang en --profile audio-st7796 --mcu esp32s3 --board esp32s3-n16r8-st7796u-gt1151 --display st7796u-i80 --input gt1151-i2c --modules audio
 
 cat >"${work_dir}/malicious.env" <<'EOF'
@@ -128,19 +126,76 @@ EOF
 chmod +x "$fake_idf_root/bin/idf.py"
 
 IDF_PATH="$fake_idf_root" \
+    FIRMWARE_BUILD_ROOT="${work_dir}/dashboard-fireblade-build" \
+    ESP_BMS_IDF_BUILD_ROOT="${work_dir}/dashboard-fireblade-idf-build" \
+    FIRMWARE_OUTPUT_ROOT="${work_dir}/dashboard-fireblade-output" \
+    FAKE_IDF_ARGS="${work_dir}/dashboard-fireblade-idf.args" \
+    "${repo_root}/start.sh" compile-local --lang en --profile dashboard-fireblade --dashboards fireblade >/dev/null
+rg -Fx 'set(ESP_BMS_FEATURE_DASHBOARD_S1000RR 0 CACHE BOOL "Firmware profile S1000RR dashboard" FORCE)' "${work_dir}/dashboard-fireblade-build/dashboard-fireblade/generated/profile.cmake"
+rg -Fx 'set(ESP_BMS_FEATURE_DASHBOARD_CONTROLLER 0 CACHE BOOL "Firmware profile controller dashboard" FORCE)' "${work_dir}/dashboard-fireblade-build/dashboard-fireblade/generated/profile.cmake"
+rg -Fx 'set(ESP_BMS_FEATURE_DASHBOARD_FIREBLADE 1 CACHE BOOL "Firmware profile Fireblade dashboard" FORCE)' "${work_dir}/dashboard-fireblade-build/dashboard-fireblade/generated/profile.cmake"
+
+fake_git_bin="${work_dir}/fake-git-bin"
+mkdir -p "$fake_git_bin"
+cat >"$fake_git_bin/git" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "${1:-}" == clone ]] || exit 2
+destination="${!#}"
+mkdir -p "$destination/bin"
+cat >"$destination/export.sh" <<'EXPORT'
+export PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/bin:$PATH"
+EXPORT
+cat >"$destination/install.sh" <<'INSTALL'
+#!/usr/bin/env bash
+set -euo pipefail
+INSTALL
+cat >"$destination/bin/idf.py" <<'IDF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == --version ]]; then
+    printf '%s\n' 'ESP-IDF v6.0.2'
+    exit 0
+fi
+exit 2
+IDF
+chmod +x "$destination/install.sh" "$destination/bin/idf.py"
+printf '%s\n' "$@" >"${FAKE_GIT_ARGS:?}"
+EOF
+chmod +x "$fake_git_bin/git"
+
+install_home="${work_dir}/install-home"
+install_config="${work_dir}/install-config"
+install_dir="${work_dir}/installed-esp-idf"
+HOME="$install_home" \
+    XDG_CONFIG_HOME="$install_config" \
+    PATH="$fake_git_bin:$PATH" \
+    FAKE_GIT_ARGS="${work_dir}/install-git.args" \
+    "${repo_root}/start.sh" install-idf --lang en --dir "$install_dir" >"${work_dir}/install-idf.out"
+rg -Fq 'ESP-IDF v6.0.2 installed at' "${work_dir}/install-idf.out"
+rg -Fx 'clone' "${work_dir}/install-git.args"
+rg -Fx -- '--branch' "${work_dir}/install-git.args"
+rg -Fx 'v6.0.2' "${work_dir}/install-git.args"
+rg -Fx "$install_dir" "${work_dir}/install-config/esp32-bms-gps/idf-path"
+HOME="$install_home" XDG_CONFIG_HOME="$install_config" env -u IDF_PATH \
+    "${repo_root}/scripts/esp-idf-env.sh" --version >"${work_dir}/configured-idf.out"
+rg -Fx 'ESP-IDF v6.0.2' "${work_dir}/configured-idf.out"
+
+IDF_PATH="$fake_idf_root" \
     FIRMWARE_BUILD_ROOT="${work_dir}/local-build" \
-    ESP_BMS_IDF_BUILD_ROOT="${work_dir}/output" \
+    ESP_BMS_IDF_BUILD_ROOT="${work_dir}/ascii-idf-build" \
+    FIRMWARE_OUTPUT_ROOT="${work_dir}/output" \
     FAKE_IDF_ARGS="${work_dir}/local-idf.args" \
     "${repo_root}/start.sh" compile-local --lang en --config "${work_dir}/golden.env" >"${work_dir}/local-build.out"
 rg -Fq 'Build completed' "${work_dir}/local-build.out"
 rg -Fx -- '-B' "${work_dir}/local-idf.args"
-rg -Fx "${work_dir}/output/golden/idf-build" "${work_dir}/local-idf.args"
-test -f "${work_dir}/output/golden/idf-build/esp32_bms_gps_idf.bin"
+rg -Fx "${work_dir}/ascii-idf-build/golden/idf-build" "${work_dir}/local-idf.args"
+test -f "${work_dir}/output/golden/esp32_bms_gps_idf.bin"
 
 printf '2\nsaved-s3\n' | \
     IDF_PATH="$fake_idf_root" \
     FIRMWARE_BUILD_ROOT="$saved_build_root" \
     ESP_BMS_IDF_BUILD_ROOT="${work_dir}/saved-idf-build" \
+    FIRMWARE_OUTPUT_ROOT="${work_dir}/saved-output" \
     FAKE_IDF_ARGS="${work_dir}/saved-idf.args" \
     "${repo_root}/start.sh" >"${work_dir}/saved-profile.out"
 rg -Fq '[Saved configuration] saved-s3' "${work_dir}/saved-profile.out"
@@ -178,12 +233,12 @@ expect_fail 'missing required output GPIO role GPS_TX' "${repo_root}/start.sh" v
 expect_fail 'missing configuration file' "${repo_root}/scripts/build-profile.sh" --lang en --config "${work_dir}/missing.env"
 
 "${repo_root}/start.sh" validate --modules ota --profile chinese-default >"${work_dir}/chinese.out"
-grep -qx '校验通过：配置档=chinese-default 模块=network,ota' "${work_dir}/chinese.out"
+grep -qx '校验通过：配置档=chinese-default 模块=network,ota 仪表=controller,fireblade,s1000rr' "${work_dir}/chinese.out"
 "${repo_root}/start.sh" --lang zh help >"${work_dir}/chinese-help.out"
 rg -q '^用法：' "${work_dir}/chinese-help.out"
 expect_fail 'invalid language' "${repo_root}/start.sh" validate --lang en --lang ja
 
-printf '2\n\n\n\n\n\n' | FIRMWARE_BUILD_ROOT="${work_dir}/interactive-build" "${repo_root}/start.sh" >"${work_dir}/interactive.out"
+printf '2\n\n\n\n\n\n\n' | FIRMWARE_BUILD_ROOT="${work_dir}/interactive-build" "${repo_root}/start.sh" >"${work_dir}/interactive.out"
 rg -q '^=== ESP32 BMS GPS Firmware Configurator / ESP32 BMS GPS 固件定制器 ===$' "${work_dir}/interactive.out"
 rg -q '^请选择语言 / Select language$' "${work_dir}/interactive.out"
 rg -q '^ ESP32 BMS GPS Firmware Configurator$' "${work_dir}/interactive.out"
@@ -194,38 +249,26 @@ rg -q '^config: .*/interactive-build/esp32s3-n16r8-st7796u-gt1151/firmware.env$'
 rg -qx 'PROFILE=esp32s3-n16r8-st7796u-gt1151' "${work_dir}/interactive-build/esp32s3-n16r8-st7796u-gt1151/firmware.env"
 ! rg -q '^LANGUAGE=' "${work_dir}/interactive-build/esp32s3-n16r8-st7796u-gt1151/firmware.env"
 
-if printf '2\n\n\n\n\n\n2\n' | FIRMWARE_BUILD_ROOT="${work_dir}/interactive-cloud-build" "${repo_root}/start.sh" >"${work_dir}/interactive-cloud.out" 2>"${work_dir}/interactive-cloud.err"; then
-    echo 'expected interactive cloud choice to return exit code 3' >&2
-    exit 1
-fi
-rg -qx 'Next step' "${work_dir}/interactive-cloud.out"
-rg -Fq 'cloud build request prepared; workflow dispatch belongs to 07-21-build-cloud-verification' "${work_dir}/interactive-cloud.err"
+rg -Fq 'dispatch_cloud_build "$BUILD_ROOT/${CFG[PROFILE]}/firmware.env"' "${repo_root}/start.sh"
+rg -Fq 'Invoke-CloudBuild $Config' "${repo_root}/start.ps1"
+test -f "${repo_root}/.github/workflows/cloud-build.yml"
+rg -Fq 'workflow_dispatch:' "${repo_root}/.github/workflows/cloud-build.yml"
 
-printf 'invalid\n2\n\n\n\n\n\n' | FIRMWARE_BUILD_ROOT="${work_dir}/interactive-retry-build" "${repo_root}/start.sh" >"${work_dir}/interactive-retry.out" 2>"${work_dir}/interactive-retry.err"
+printf 'invalid\n2\n\n\n\n\n\n\n' | FIRMWARE_BUILD_ROOT="${work_dir}/interactive-retry-build" "${repo_root}/start.sh" >"${work_dir}/interactive-retry.out" 2>"${work_dir}/interactive-retry.err"
 rg -q '^请输入 1、2、zh 或 en。 / Enter 1, 2, zh, or en\.$' "${work_dir}/interactive-retry.err"
 rg -q '^config: .*/interactive-retry-build/esp32s3-n16r8-st7796u-gt1151/firmware.env$' "${work_dir}/interactive-retry.out"
 
-printf '1\n2\n\n\n2,7\nn\n' | FIRMWARE_BUILD_ROOT="${work_dir}/interactive-cancel-build" "${repo_root}/start.sh" >"${work_dir}/interactive-cancel.out"
+printf '1\n2\n\n\n2,7\n\nn\n' | FIRMWARE_BUILD_ROOT="${work_dir}/interactive-cancel-build" "${repo_root}/start.sh" >"${work_dir}/interactive-cancel.out"
 rg -Fq '  1) ili9488-i80 ' "${work_dir}/interactive-cancel.out"
 rg -Fq '  1) ft6336u-i2c ' "${work_dir}/interactive-cancel.out"
 rg -q '^已取消生成配置。$' "${work_dir}/interactive-cancel.out"
 ! test -e "${work_dir}/interactive-cancel-build/esp32s3-n16r8-st7796u-gt1151/firmware.env"
 
-if script --version >/dev/null 2>&1; then
-    (
-        cd "${repo_root}"
-        printf '2\nesp32s3-wroom-1-n16r8-i80\nili9488-i80\nft6336u-i2c\n \033[B \n\n' |
-            FIRMWARE_BUILD_ROOT="${work_dir}/keyboard-build" script -qefc './start.sh' /dev/null >"${work_dir}/keyboard.out"
-    )
-    rg -Fq 'Use Up/Down to move, Space to toggle, Enter to continue.' "${work_dir}/keyboard.out"
-    rg -qx 'MODULES=audio,cast,controller,network,ota' "${work_dir}/keyboard-build/esp32s3-wroom-1-n16r8-i80/firmware.env"
-fi
-
 printf '%s\n' \
-    2 4 console-custom 1 '' '' '' panel '' '' touch '' gps \
+    2 3 console-custom 1 '' '' '' panel '' '' touch '' gps fireblade \
     13 14 15 2 21 36 39 32 33 25 27 35 18 y y y |
     FIRMWARE_BUILD_ROOT="${work_dir}/interactive-custom-build" "${repo_root}/start.sh" >"${work_dir}/interactive-custom.out"
-rg -Fq '  4) custom ' "${work_dir}/interactive-custom.out"
+rg -Fq '  3) custom ' "${work_dir}/interactive-custom.out"
 rg -qx 'PROFILE=console-custom' "${work_dir}/interactive-custom-build/console-custom/firmware.env"
 rg -qx 'BOARD=custom' "${work_dir}/interactive-custom-build/console-custom/firmware.env"
 rg -qx 'GPIO_GPS_RX=27' "${work_dir}/interactive-custom-build/console-custom/firmware.env"
@@ -265,6 +308,8 @@ if [[ -n "${power_shell}" ]]; then
     rg -q '^用法：' "${work_dir}/powershell-help.out"
     FIRMWARE_BUILD_ROOT="${work_dir}/powershell-build" "${power_shell}" -NoProfile -NonInteractive -File "${repo_root}/start.ps1" configure --lang en --config "${work_dir}/golden.env" >/dev/null
     cmp "${work_dir}/bash-build/golden/firmware.env" "${work_dir}/powershell-build/golden/normalized.env"
+    FIRMWARE_BUILD_ROOT="${work_dir}/powershell-dashboard-build" "${power_shell}" -NoProfile -NonInteractive -File "${repo_root}/start.ps1" configure --lang en --profile dashboard-fireblade --dashboards fireblade >/dev/null
+    cmp "${work_dir}/dashboard-fireblade-build/dashboard-fireblade/firmware.env" "${work_dir}/powershell-dashboard-build/dashboard-fireblade/normalized.env"
     rg -Fx "CONFIG_PARTITION_TABLE_CUSTOM_FILENAME=\"${work_dir}/powershell-build/golden/partitions.csv\"" "${work_dir}/powershell-build/golden/sdkconfig.defaults"
 else
     echo 'PowerShell comparison skipped: no PowerShell runtime is available'
@@ -287,8 +332,18 @@ rg -Fq '& idf.py @IdfArgs' "${repo_root}/start.ps1"
 rg -Fq 'Test-Path -LiteralPath Variable:global:LASTEXITCODE' "${repo_root}/start.ps1"
 rg -Fq 'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME' "${repo_root}/start.ps1"
 rg -Fq 'scripts/esp-idf-env.sh' "${repo_root}/start.sh"
-rg -Fq 'IDF_BUILD_ROOT="${ESP_BMS_IDF_BUILD_ROOT:-$ROOT/output}"' "${repo_root}/start.sh"
-rg -Fq "Join-Path \$Root 'output'" "${repo_root}/start.ps1"
+rg -Fq 'IDF_BUILD_ROOT="${ESP_BMS_IDF_BUILD_ROOT:-/tmp/esp32-bms-gps-idf-builds/$UID}"' "${repo_root}/start.sh"
+rg -Fq 'FIRMWARE_OUTPUT_ROOT="${FIRMWARE_OUTPUT_ROOT:-$ROOT/output}"' "${repo_root}/start.sh"
+rg -Fq 'install-idf  Install ESP-IDF v6.0.2' "${repo_root}/start.sh"
+rg -Fq "'install-idf' { Install-EspIdf \$Arguments; exit 0 }" "${repo_root}/start.ps1"
+rg -Fq 'FIRMWARE_OUTPUT_ROOT' "${repo_root}/start.sh"
+rg -Fq '$FirmwareOutputRoot' "${repo_root}/start.ps1"
+rg -Fq 'idf-path' "${repo_root}/scripts/esp-idf-env.sh"
+! rg -Fq 'rfc2217://192.168.2.10:4000?ign_set_control' "${repo_root}/start.sh"
+rg -Fq 'Flash target: 1) Local serial (default) 2) Remote RFC2217 [1]' "${repo_root}/start.sh"
+rg -Fq 'Flash target: 1) Local serial (default) 2) Remote RFC2217 [1]' "${repo_root}/start.ps1"
+rg -Fq '实验性手机投屏（当前使用 legacy runtime）' "${repo_root}/start.sh"
+rg -Fq '实验性手机投屏（当前使用 legacy runtime）' "${repo_root}/start.ps1"
 rg -Fq '编译完成后保存此配置吗？[y/N]：' "${repo_root}/start.sh"
 rg -Fq '现在烧录这个固件吗？[y/N]：' "${repo_root}/start.sh"
 rg -Fq '编译完成后保存此配置吗？[y/N]' "${repo_root}/start.ps1"

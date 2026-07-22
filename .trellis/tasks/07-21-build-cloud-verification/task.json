@@ -3,7 +3,7 @@
   "name": "build-cloud-verification",
   "title": "本地云端构建与全矩阵验证",
   "description": "实现 doctor、本地/云构建、产物、矩阵和实机验收",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
