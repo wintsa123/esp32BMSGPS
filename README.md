@@ -43,7 +43,7 @@
     </td>
   </tr>
   <tr>
-    <th colspan="2">本田 Fireblade 风格仪表</th>
+    <th colspan="2">本田 火刃 风格仪表</th>
   </tr>
   <tr>
     <td align="center" colspan="2">
