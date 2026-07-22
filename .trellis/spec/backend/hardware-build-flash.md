@@ -139,10 +139,11 @@ RUN_TESTS=1 ./scripts/build-android-cast.sh
 
 - Firmware is a pure ESP-IDF CMake application. Do not reintroduce a
   Rust/Cargo firmware path.
-- `main/idf_component.yml` requires ESP-IDF `>=5.5`; the current project helper
-  and development environment target ESP-IDF `5.5.4`.
+- `main/idf_component.yml` requires ESP-IDF `>=6.0.2, <6.1.0`; the current
+  project helper and development environment target ESP-IDF `6.0.2`.
 - `scripts/esp-idf-env.sh` loads `$IDF_PATH/export.sh` when available, otherwise
-  `$HOME/esp/esp-idf-v5.5.4/export.sh`, then forwards arguments to `idf.py`.
+  `$HOME/esp/esp-idf-v6.0.2/export.sh`, verifies the resolved version, then
+  forwards arguments to `idf.py`.
 - The helper supplies localhost proxy defaults when the corresponding proxy
   variables are unset. Override `http_proxy`, `https_proxy`, and `all_proxy`
   explicitly on hosts that use a different proxy path.
@@ -151,6 +152,13 @@ RUN_TESTS=1 ./scripts/build-android-cast.sh
   a second dependency-version list in README.
 - The root `CMakeLists.txt` intentionally sets `COMPONENTS main`; component
   reachability comes from `main/CMakeLists.txt` and component `REQUIRES`.
+- `main/CMakeLists.txt` has two component-closure inputs: a generated
+  `ESP_BMS_PROFILE_MAIN_REQUIRES` for profile builds and
+  `ESP_BMS_MAIN_REQUIRES_DEFAULT` for direct builds. Every module whose
+  `ESP_BMS_FEATURE_*` default is `1` and whose registry template includes a
+  component header must be in the default closure too. For example,
+  `ESP_BMS_FEATURE_GPS=1` requires `esp_bms_gps`; otherwise direct IDF builds
+  generate an `esp_bms_gps.h` include without making that header reachable.
 
 #### Target and partition contract
 
@@ -187,8 +195,9 @@ RUN_TESTS=1 ./scripts/build-android-cast.sh
 
 | Condition | Required response |
 | --- | --- |
-| `idf.py` is missing | Set `IDF_PATH` or install ESP-IDF 5.5.4; do not substitute another build system |
+| `idf.py` is missing | Set `IDF_PATH` or install ESP-IDF 6.0.2; do not substitute another build system |
 | Managed-component download fails | Check the explicit proxy environment and `dependencies.lock` before changing dependency versions |
+| Direct build reports a missing module header from `esp_bms_module_registry.c` | Compare default `ESP_BMS_FEATURE_*` values, registry template includes, and `ESP_BMS_MAIN_REQUIRES_DEFAULT`; add the omitted owning component and a configurator self-test assertion |
 | RFC2217 TCP port is closed | Check the Windows bridge process, firewall scope, host IP, and port 4000 |
 | RFC2217 connects but flash sync fails | Close other clients, confirm the server is RFC2217 rather than raw TCP, and keep `-b 115200` |
 | Firmware flashes but boot loops after a partition change | Erase Flash once, then flash the complete ESP-IDF image set |
@@ -222,6 +231,9 @@ RUN_TESTS=1 ./scripts/build-android-cast.sh
   Markdown, and do not flash unchanged firmware.
 - Bad: copy a pin map into README, edit only that copy, enable TF-card GPIO18
   while GPS still owns it, or use `socket://` for an esptool flash.
+- Bad: make a module default-enabled in the registry template but rely on a
+  profile-only `REQUIRES` list; unprofiled `idf.py build` then cannot resolve
+  the component header.
 - Bad: leave imported components below the board outline, check only component
   origins, or accept an autorouter result whose duration is zero and whose
   copper-line/via counts did not change.
@@ -239,6 +251,11 @@ RUN_TESTS=1 ./scripts/build-android-cast.sh
 ./scripts/esp-idf-env.sh build
 node .gitnexus/run.cjs detect-changes -r esp32BMSGPS
 ```
+
+- When changing the module registry or its CMake dependency closure, also run
+  `./tests/configurator_selftest.sh`; it must prove both that a disabled
+  profile excludes its component and that the unprofiled default closure
+  contains `esp_bms_gps`.
 
 - Hardware-impacting changes: flash through the fixed RFC2217 bridge unless the
   user selects another explicit port, then inspect boot logs and the affected
@@ -303,6 +320,22 @@ idf.py -p socket://192.168.2.10:4000 flash
 README links to this contract and the owning source files instead of repeating
 the complete matrix.
 
+#### Default module closure
+
+Wrong:
+
+```cmake
+# ESP_BMS_FEATURE_GPS defaults to 1, but direct builds cannot include its header.
+set(ESP_BMS_MAIN_REQUIRES_DEFAULT esp_bms_idf_runtime)
+```
+
+Correct:
+
+```cmake
+# Every default-enabled registry module is directly reachable.
+set(ESP_BMS_MAIN_REQUIRES_DEFAULT esp_bms_gps esp_bms_idf_runtime)
+```
+
 #### EasyEDA import placement
 
 Wrong:
@@ -363,10 +396,15 @@ scripts/build-profile.sh [--lang zh|en] --config firmware.env
 - No-argument `start.sh`, `start.ps1`, and `start.cmd` executions must first
   offer `1`/`zh` for Simplified Chinese and `2`/`en` for English.
 - The interactive wizard then shows a title, numbered catalog options, a build
-  summary, and an explicit create/cancel confirmation. It must not ask the
-  user for an internal profile name.
+  summary, and an explicit create/cancel confirmation. After creation it asks
+  whether to build locally, prepare an online build request, or keep only the
+  generated configuration. It must not ask the user for an internal profile
+  name.
 - Profiles set `ESP_BMS_FEATURE_{AUDIO,BMS,CONTROLLER,GPS,NETWORK,OTA}` and
   `ESP_BMS_PROFILE_MAIN_REQUIRES`; these are the component-closure contract.
+- A saved profile has the build inputs
+  `firmware-builds/<profile>/{firmware.env,sdkconfig.defaults,partitions.csv}`.
+  Its board-menu entry is a build shortcut, not a catalog record.
 
 ### 3. Contracts
 
@@ -382,6 +420,11 @@ scripts/build-profile.sh [--lang zh|en] --config firmware.env
   `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe` explicitly
   and, for a no-argument launch, pauses after a failure so double-click users
   can read the error.
+- The Windows local-build path must dot-source ESP-IDF `export.ps1` (first
+  from `$env:IDF_PATH`, then `%USERPROFILE%\\esp\\esp-idf-v6.0.2`) and invoke
+  `idf.py` directly in the repository root. It must never invoke the Unix-only
+  `scripts/esp-idf-env.sh`. Read `LASTEXITCODE` only after that native
+  `idf.py` invocation and only when the variable exists under strict mode.
 - PowerShell localized-text mappings that can differ only by letter case (for
   example, `profile` and `Profile`) must be an ordered array of source/target
   pairs, not a hash literal: PowerShell hash keys are case-insensitive and
@@ -390,16 +433,43 @@ scripts/build-profile.sh [--lang zh|en] --config firmware.env
   `custom-*` board may fall back to its selected MCU ID, but it must still have
   catalog wiring before it can pass validation. `--profile` remains a
   non-interactive compatibility override and is not shown in the wizard.
+- When both standard input and output are attached to a terminal, module
+  selection is a keyboard multi-select: `Up`/`Down` moves the focus, `Space`
+  toggles the focused module, and `Enter` continues. The menu starts with the
+  default modules checked; an empty checked set means no optional modules. With
+  redirected input or output, retain the comma-separated number/ID prompt for
+  scripts, pipes, and CI compatibility.
+- After an interactive configuration is written, option `1` must use the same
+  isolated local-build path as `build-local`; option `2` must use the same
+  pending cloud-request diagnostic and non-zero status as `build-cloud`; option
+  `0` (and an empty or EOF response) leaves the generated configuration in
+  place without building. The pending cloud status lets no-argument
+  `start.cmd` retain its window so the operator can read the message.
 - After board selection, derive the MCU and offer only display/input catalog
   options compatible with that board's buses. When the previous default is
   incompatible, choose the first compatible catalog option before prompting.
+- Every non-custom board record includes `DISPLAY_DATA_WIDTH`: use `0` for a
+  serial display without a parallel data bus, and `8` or `16` for an I80
+  display. Its selected display record must carry the same `DATA_WIDTH`; both
+  Bash and PowerShell validate this catalog contract before generating a
+  profile.
 - `ota` implies `network`. When OTA is disabled, the generated closure must not
   name `esp_bms_ota`, runtime must return `501 Not Implemented` for `/api/ota`,
   and no `esp_ota_*` update symbol may appear in the final ELF.
-- ESP-IDF 5.5.4 currently builds `app_update` through the private dependencies
-  of `esp_partition`, `spi_flash`, and `espressif__esp_mmap_assets`. Its build
+- ESP-IDF can build `app_update` through the private dependencies of
+  `esp_partition`, `spi_flash`, and `espressif__esp_mmap_assets`. Its build
   directory or archive alone is not OTA feature evidence; verify the selected
   BMS component and final ELF symbols instead.
+- `write_profile` and `Write-Profile` must copy the selected catalog CSV into
+  `firmware-builds/<profile>/partitions.csv`, remove any inherited
+  `CONFIG_PARTITION_TABLE_CUSTOM_FILENAME` line from the target-specific
+  defaults, then append the absolute path to that copied CSV. ESP-IDF resolves
+  a relative filename from the repository root, so copying the file without
+  this override silently selects the root legacy partition table.
+- The Bash and PowerShell board menus may list only non-hidden, valid saved
+  profile directories. Selecting one reloads and revalidates `firmware.env`,
+  then enters the existing local-build path without repeating hardware or GPIO
+  questions.
 
 ### 4. Validation & Error Matrix
 
@@ -411,6 +481,11 @@ scripts/build-profile.sh [--lang zh|en] --config firmware.env
 | User cancels the displayed build plan | Exit successfully without creating a configuration directory |
 | `start.cmd` cannot invoke PowerShell | Print the resolved executable path; on a no-argument launch, pause instead of closing the error window |
 | Localized text map contains case-only duplicate keys in a hash literal | Do not start; replace the literal with ordered source/target pairs and run the script under an available PowerShell runtime |
+| Windows local build has no ESP-IDF `export.ps1` or no `idf.py` after import | Exit with a localized toolchain diagnostic; do not read an unset `LASTEXITCODE` or call the Bash wrapper |
+| Module wizard runs in a non-terminal or redirected session | Keep the line-based comma-separated number/ID parser; do not attempt raw key reads |
+| Interactive user selects online build | Write the profile, print the pending cloud-workflow diagnostic, and exit 3 so the Windows wrapper holds the message open |
+| Profile defaults retain a relative partition CSV filename | Regenerate the profile with an absolute `CONFIG_PARTITION_TABLE_CUSTOM_FILENAME`; do not build against the repository root CSV |
+| Saved profile is hidden, malformed, or fails validation | Exclude it from the board menu; do not import or build it |
 | `ota` is selected | Resolve `network` and set both corresponding features |
 | OTA is off | Omit `esp_bms_ota`; prove no BMS OTA handler or `esp_ota_{begin,write,end,set_boot_partition}` symbol is linked |
 | Network is off | Omit `esp_bms_network` and its embedded `index.html` symbols |
@@ -420,17 +495,27 @@ scripts/build-profile.sh [--lang zh|en] --config firmware.env
 
 - Good: use `--lang en` for an automation assertion, then compare generated
   `firmware.env`/`normalized.env` bytes independently of displayed language.
+- Good: PowerShell dot-sources `export.ps1`, runs `idf.py -B <profile>/idf-build
+  ... build`, and forwards its native exit code.
 - Good: show all hardware and module choices with their catalog IDs and a
   localized description, derive the output directory from the board, and let
   the user confirm the summary.
 - Good: validate network/OTA on-off profiles through component descriptions,
   archives, map files, and final ELF symbols.
+- Good: build an S3 profile from its generated defaults and verify IDF reports
+  `0x600000` as the smallest app partition; build the legacy profile separately
+  and verify its `0x1e0000` OTA-slot limit.
 - Base: observe `app_update` in an OTA-off ESP-IDF build, then attribute it to
   its SDK dependency path and still prove no application OTA code is linked.
 - Bad: persist a UI language choice in a profile or declare OTA removed merely
   because `esp_bms_ota` is absent while final `esp_ota_*` symbols remain.
+- Bad: execute `esp-idf-env.sh` from `start.ps1` and then dereference an unset
+  `LASTEXITCODE`; Windows PowerShell does not provide the Bash execution path.
 - Bad: prompt an operator for `Profile [legacy]`, retain a display/input choice
   after its board becomes incompatible, or create files after cancellation.
+- Bad: copy an S3 CSV into a profile while leaving
+  `CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"`; IDF will use the
+  root CSV instead of the copied S3 layout.
 
 ### 6. Tests Required
 
@@ -447,13 +532,33 @@ node .gitnexus/run.cjs detect-changes --repo esp32BMSGPS
 - Test the title, numbered board/module options, automatic board-derived
   `PROFILE`, no visible `Profile` prompt, compatible S3 display/input defaults,
   and cancellation without generated files.
+- Under a pseudo-terminal, deselect two default modules with `Space`,
+  `Down`, `Space`, then `Enter`; assert that only the remaining sorted IDs are
+  written. Keep the existing piped interactive tests to prove the line-input
+  fallback remains automation-compatible.
+- From a piped interactive run, select next-step option `2`; assert that it
+  writes the configuration, emits the cloud-workflow diagnostic, and returns
+  exit code `3`.
+- Validate the default board/display pair and assert both configurators
+  recognize `DISPLAY_DATA_WIDTH` and `DATA_WIDTH`; this prevents a catalog
+  extension from failing only on one host platform.
 - Assert the first three bytes of `start.ps1` are `EF BB BF` and that
   `start.cmd` uses the explicit built-in Windows PowerShell path. When a
   PowerShell runtime is available, execute `start.ps1` through `pwsh`,
   `powershell`, or `powershell.exe` and compare its normalized output with the
-  Bash result.
+  Bash result. Statically assert that `start.ps1` invokes `idf.py` directly,
+  has the guarded `LASTEXITCODE` read, and contains no
+  `scripts/esp-idf-env.sh` reference.
 - Build network+OTA, network-only, and neither profile. Assert component
   closure and final symbols, not just presence of an ESP-IDF archive.
+- Configure S3 with GPS disabled and assert no `GPIO_GPS_*` key is emitted.
+  With GPS selected on a board that has no GPS catalog roles, require CLI or
+  interactive decimal GPIO values and assert they are persisted. Exercise a
+  saved-profile board selection with a test `idf.py` and assert it reaches the
+  local build path while hidden and invalid profile directories remain absent.
+- For every profile build, assert the generated `sdkconfig.defaults` and final
+  `sdkconfig` contain the absolute profile `partitions.csv` path, then run
+  `idf.py size` and verify the smallest app partition matches that profile.
 
 ### 7. Wrong vs Correct
 
@@ -468,4 +573,36 @@ OTA off -> app_update archive exists -> report OTA trimming failed
 ```text
 OTA off -> no esp_bms_ota component/archive -> no esp_bms_ota or esp_ota_* ELF
 symbols -> app_update explained by ESP-IDF esp_partition dependency
+```
+
+#### Wrong
+
+```powershell
+& "$Root/scripts/esp-idf-env.sh" build
+$script:BuildExitCode = $LASTEXITCODE
+```
+
+#### Correct
+
+```powershell
+. $IdfExport
+& idf.py @IdfArgs
+if (Test-Path -LiteralPath Variable:global:LASTEXITCODE) {
+    $script:BuildExitCode = $global:LASTEXITCODE
+}
+```
+
+#### Wrong
+
+```text
+copy firmware/partitions/esp32s3-n16r8.csv -> profile/partitions.csv
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+```
+
+#### Correct
+
+```text
+copy firmware/partitions/esp32s3-n16r8.csv -> profile/partitions.csv
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="/absolute/.../profile/partitions.csv"
+idf.py size -> smallest app partition = 0x600000
 ```

@@ -9,7 +9,6 @@
 #include "esp_bms_lvgl_ui.h"
 #include "esp_bms_speed_dashboard.h"
 #include "esp_fardriver_protocol.h"
-#include "esp_netif_types.h"
 #include "freertos/semphr.h"
 
 #ifdef __cplusplus
@@ -18,6 +17,10 @@ extern "C" {
 
 #ifndef ESP_BMS_FEATURE_GPS
 #define ESP_BMS_FEATURE_GPS 1
+#endif
+
+#ifndef ESP_BMS_FEATURE_OTA
+#define ESP_BMS_FEATURE_OTA 1
 #endif
 
 typedef enum {
@@ -111,6 +114,15 @@ typedef struct {
     void (*on_ble_reset)(esp_bms_idf_runtime_t *runtime);
 } esp_bms_idf_runtime_controller_ble_driver_t;
 
+/* The optional network component owns Wi-Fi, HTTPD, and embedded Web assets.
+ * The core only retains its visible state and dispatches lifecycle requests. */
+typedef struct {
+    esp_err_t (*start_setup_ap)(esp_bms_idf_runtime_t *runtime);
+    esp_err_t (*start_http_server)(esp_bms_idf_runtime_t *runtime);
+    esp_err_t (*stop_setup_services)(esp_bms_idf_runtime_t *runtime);
+    esp_err_t (*refresh_setup_ap_config)(esp_bms_idf_runtime_t *runtime);
+} esp_bms_idf_runtime_network_driver_t;
+
 struct esp_bms_idf_runtime {
     esp_bms_dashboard_snapshot_t snapshot;
     adc_oneshot_unit_handle_t battery_adc;
@@ -152,8 +164,6 @@ struct esp_bms_idf_runtime {
     char controller_bound_mac[18];
     char controller_bound_name[ESP_BMS_IDF_BMS_SCAN_NAME_LEN + 1U];
     char bluetooth_name[32];
-    esp_netif_t *setup_ap_netif;
-    httpd_handle_t http_server;
     SemaphoreHandle_t http_pending_lock;
     SemaphoreHandle_t bms_scan_lock;
     esp_bms_idf_bms_scan_candidate_t bms_scan_candidates[ESP_BMS_IDF_BMS_SCAN_MAX_CANDIDATES];
@@ -194,6 +204,7 @@ struct esp_bms_idf_runtime {
     esp_bms_idf_runtime_bms_frame_handler_t bms_frame_handler;
     const esp_bms_idf_runtime_bms_ble_driver_t *bms_ble_driver;
     const esp_bms_idf_runtime_controller_ble_driver_t *controller_ble_driver;
+    const esp_bms_idf_runtime_network_driver_t *network_driver;
 };
 
 static inline bool esp_bms_idf_runtime_flag_get(const esp_bms_idf_runtime_t *runtime,
@@ -232,6 +243,12 @@ void esp_bms_idf_runtime_register_bms_ble_driver(
 void esp_bms_idf_runtime_register_controller_ble_driver(
     esp_bms_idf_runtime_t *runtime,
     const esp_bms_idf_runtime_controller_ble_driver_t *driver);
+void esp_bms_idf_runtime_register_network_driver(
+    esp_bms_idf_runtime_t *runtime,
+    const esp_bms_idf_runtime_network_driver_t *driver);
+esp_err_t esp_bms_idf_runtime_http_api_handler(httpd_req_t *req);
+esp_err_t esp_bms_idf_runtime_http_cast_ws_handler(httpd_req_t *req);
+void esp_bms_idf_runtime_stop_cast(esp_bms_idf_runtime_t *runtime, const char *reason);
 esp_err_t esp_bms_idf_runtime_load_bms_binding(esp_bms_idf_runtime_t *runtime);
 bool esp_bms_idf_runtime_bms_scan_project_snapshot(esp_bms_idf_runtime_t *runtime);
 void esp_bms_idf_runtime_bms_scan_clear_candidates(esp_bms_idf_runtime_t *runtime);

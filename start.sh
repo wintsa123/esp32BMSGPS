@@ -4,9 +4,13 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CATALOG_DIR="${FIRMWARE_CATALOG_DIR:-$ROOT/firmware/catalog}"
 BUILD_ROOT="${FIRMWARE_BUILD_ROOT:-$ROOT/firmware-builds}"
+# ESP-IDF 6 writes a compiler response file inside its build directory.  Its
+# CMake toolchain currently corrupts non-ASCII build paths, so keep generated
+# profiles in the project but build under the ASCII volume root by default.
+IDF_BUILD_ROOT="${ESP_BMS_IDF_BUILD_ROOT:-/vol1/1000/esp32-idf6-builds}"
 readonly SCHEMA_VERSION=1
 
-declare -A CFG RECORD MODULE_STATE GPIO_VALUES GPIO_KINDS BOARD_GPIO
+declare -A CFG RECORD MODULE_STATE GPIO_VALUES GPIO_KINDS BOARD_GPIO REQUIRED_GPIO_KINDS MODULE_GPIO_ROLE_STATE CUSTOM_MODULE_ROLE_STATE
 declare -a SELECTED_MODULES
 declare -a FILTERED_ARGS
 
@@ -100,8 +104,18 @@ Options:
   --board ID                   Catalog board identifier
   --display ID                 Catalog display identifier
   --input ID                   Catalog input identifier
+  --board-name ID              Name for BOARD=custom
+  --display-name ID            Name for DISPLAY=custom
+  --input-name ID              Name for INPUT=custom
+  --display-bus SPI|I80        Display bus for custom hardware
+  --input-bus SPI|I2C|NONE     Input bus for custom hardware
+  --flash-mb N                 Flash size for custom hardware
+  --psram-mb N                 PSRAM size for custom hardware
+  --partitions PATH            Existing partition CSV for custom hardware
   --modules ID[,ID...]         Optional modules
   --gpio ROLE=PIN              Override a declared board GPIO role
+  --input-gpio ROLE=PIN        Declare a custom board input GPIO role
+  --output-gpio ROLE=PIN       Declare a custom board output GPIO role
   --confirm-dangerous-gpio     Allow a dangerous overridden GPIO
   -h, --help                   Show this help
 
@@ -130,8 +144,18 @@ ESP32 BMS GPS 固件定制器
   --board ID                   catalog 开发板标识
   --display ID                 catalog 显示屏标识
   --input ID                   catalog 输入设备标识
+  --board-name ID              BOARD=custom 时的开发板名称
+  --display-name ID            DISPLAY=custom 时的显示屏名称
+  --input-name ID              INPUT=custom 时的输入设备名称
+  --display-bus SPI|I80        自定义硬件的显示总线
+  --input-bus SPI|I2C|NONE     自定义硬件的输入总线
+  --flash-mb N                 自定义硬件的 Flash 容量
+  --psram-mb N                 自定义硬件的 PSRAM 容量
+  --partitions PATH            自定义硬件使用的已有分区 CSV
   --modules ID[,ID...]         可选模块
   --gpio ROLE=PIN              覆盖已声明的开发板 GPIO 角色
+  --input-gpio ROLE=PIN        声明自定义开发板输入 GPIO 角色
+  --output-gpio ROLE=PIN       声明自定义开发板输出 GPIO 角色
   --confirm-dangerous-gpio     允许危险 GPIO 覆盖
   -h, --help                   显示此帮助
 
@@ -170,6 +194,17 @@ is_value() {
 
 is_pin() {
     [[ "$1" =~ ^[0-9]{1,2}$ ]]
+}
+
+is_unsigned_integer() {
+    [[ "$1" =~ ^[0-9]+$ ]]
+}
+
+append_gpio_declaration() {
+    local key="$1" role="$2" pin="$3" existing="${CFG[$1]}"
+    [[ "$role" =~ ^[A-Z][A-Z0-9_]*$ ]] || die "invalid GPIO role $role"
+    is_pin "$pin" || die "invalid GPIO pin $pin"
+    CFG["$key"]="${existing:+${existing},}${role}:${pin}"
 }
 
 read_kv_file() {
@@ -256,12 +291,22 @@ sorted_csv() {
 set_defaults() {
     CFG=()
     CFG[SCHEMA_VERSION]="$SCHEMA_VERSION"
-    CFG[PROFILE]=legacy
-    CFG[MCU]=esp32
-    CFG[BOARD]=esp32-wroom-32e-legacy
-    CFG[DISPLAY]=st7789-spi
-    CFG[INPUT]=xpt2046-spi
-    CFG[MODULES]=bms,gps,controller,audio,network,ota,cast
+    CFG[PROFILE]=esp32s3-n16r8-st7796u-gt1151
+    CFG[MCU]=esp32s3
+    CFG[BOARD]=esp32s3-n16r8-st7796u-gt1151
+    CFG[DISPLAY]=st7796u-i80
+    CFG[INPUT]=gt1151-i2c
+    CFG[BOARD_NAME]=''
+    CFG[DISPLAY_NAME]=''
+    CFG[INPUT_NAME]=''
+    CFG[DISPLAY_BUS]=''
+    CFG[INPUT_BUS]=''
+    CFG[FLASH_MB]=''
+    CFG[PSRAM_MB]=''
+    CFG[PARTITIONS]=''
+    CFG[INPUT_GPIO]=''
+    CFG[OUTPUT_GPIO]=''
+    CFG[MODULES]=bms,controller,network,ota,cast
     CFG[CONFIRM_DANGEROUS_GPIO]=NO
 }
 
@@ -275,7 +320,7 @@ load_user_config() {
     [[ "${input[SCHEMA_VERSION]}" == "$SCHEMA_VERSION" ]] || die "unsupported configuration schema"
     for key in "${!input[@]}"; do
         case "$key" in
-            SCHEMA_VERSION|PROFILE|MCU|BOARD|DISPLAY|INPUT|MODULES|CONFIRM_DANGEROUS_GPIO)
+            SCHEMA_VERSION|PROFILE|MCU|BOARD|DISPLAY|INPUT|MODULES|CONFIRM_DANGEROUS_GPIO|BOARD_NAME|DISPLAY_NAME|INPUT_NAME|DISPLAY_BUS|INPUT_BUS|FLASH_MB|PSRAM_MB|PARTITIONS|INPUT_GPIO|OUTPUT_GPIO)
                 CFG["$key"]="${input[$key]}"
                 ;;
             GPIO_*)
@@ -299,7 +344,7 @@ parse_options() {
                 load_user_config "$2"
                 shift 2
                 ;;
-            --profile|--mcu|--board|--display|--input|--modules)
+            --profile|--mcu|--board|--display|--input|--modules|--board-name|--display-name|--input-name|--display-bus|--input-bus|--flash-mb|--psram-mb|--partitions)
                 [[ $# -ge 2 ]] || die "$option requires a value"
                 value="$2"
                 case "$option" in
@@ -309,6 +354,14 @@ parse_options() {
                     --display) CFG[DISPLAY]="$value" ;;
                     --input) CFG[INPUT]="$value" ;;
                     --modules) CFG[MODULES]="$value" ;;
+                    --board-name) CFG[BOARD_NAME]="$value" ;;
+                    --display-name) CFG[DISPLAY_NAME]="$value" ;;
+                    --input-name) CFG[INPUT_NAME]="$value" ;;
+                    --display-bus) CFG[DISPLAY_BUS]="$value" ;;
+                    --input-bus) CFG[INPUT_BUS]="$value" ;;
+                    --flash-mb) CFG[FLASH_MB]="$value" ;;
+                    --psram-mb) CFG[PSRAM_MB]="$value" ;;
+                    --partitions) CFG[PARTITIONS]="$value" ;;
                 esac
                 shift 2
                 ;;
@@ -319,6 +372,17 @@ parse_options() {
                 [[ "$role" =~ ^[A-Z][A-Z0-9_]*$ ]] || die "invalid GPIO role $role"
                 is_pin "$pin" || die "invalid GPIO pin $pin"
                 CFG["GPIO_$role"]="$pin"
+                shift 2
+                ;;
+            --input-gpio|--output-gpio)
+                [[ $# -ge 2 && "$2" == *=* ]] || die "$option requires ROLE=PIN"
+                local custom_role="${2%%=*}"
+                local custom_pin="${2#*=}"
+                if [[ "$option" == --input-gpio ]]; then
+                    append_gpio_declaration INPUT_GPIO "$custom_role" "$custom_pin"
+                else
+                    append_gpio_declaration OUTPUT_GPIO "$custom_role" "$custom_pin"
+                fi
                 shift 2
                 ;;
             --confirm-dangerous-gpio)
@@ -360,7 +424,7 @@ visit_module() {
     esac
     MODULE_STATE["$module"]=visiting
     load_record module "$module"
-    require_keys RECORD SCHEMA_VERSION ID REQUIRES_CAPABILITIES REQUIRES_MODULES CONFLICTS COMPONENTS
+    require_keys RECORD SCHEMA_VERSION ID REQUIRES_CAPABILITIES REQUIRES_MODULES REQUIRES_INPUT_GPIO REQUIRES_OUTPUT_GPIO CONFLICTS COMPONENTS
     dependencies="${RECORD[REQUIRES_MODULES]}"
     capabilities="${RECORD[REQUIRES_CAPABILITIES]}"
     conflicts="${RECORD[CONFLICTS]}"
@@ -368,6 +432,8 @@ visit_module() {
     for capability in "${items[@]}"; do
         [[ -z "$capability" ]] || csv_has "$MCU_CAPABILITIES" "$capability" || die "$module requires capability $capability"
     done
+    validate_module_gpio_roles "$module" input "${RECORD[REQUIRES_INPUT_GPIO]}"
+    validate_module_gpio_roles "$module" output "${RECORD[REQUIRES_OUTPUT_GPIO]}"
     IFS=, read -r -a items <<< "$dependencies"
     for dependency in "${items[@]}"; do
         [[ -z "$dependency" ]] || visit_module "$dependency"
@@ -378,6 +444,108 @@ visit_module() {
     done
     MODULE_STATE["$module"]=done
     SELECTED_MODULES+=("$module")
+}
+
+validate_module_gpio_roles() {
+    local module="$1" expected_kind="$2" list="$3" role
+    IFS=, read -r -a items <<< "$list"
+    for role in "${items[@]}"; do
+        [[ -z "$role" ]] && continue
+        [[ -n "${GPIO_VALUES[$role]+x}" ]] || die "$module requires $expected_kind GPIO role $role"
+        [[ "${GPIO_KINDS[$role]}" == "$expected_kind" ]] || die "$module requires $expected_kind GPIO role $role"
+    done
+}
+
+require_gpio_role() {
+    local kind="$1" role="$2" current_kind
+    [[ "$kind" == input || "$kind" == output ]] || die "invalid GPIO direction for $role"
+    [[ "$role" =~ ^[A-Z][A-Z0-9_]*$ ]] || die "invalid GPIO role $role"
+    current_kind="${REQUIRED_GPIO_KINDS[$role]:-}"
+    [[ -z "$current_kind" || "$current_kind" == "$kind" ]] || die "GPIO role $role has incompatible directions"
+    REQUIRED_GPIO_KINDS["$role"]="$kind"
+}
+
+collect_module_gpio_roles() {
+    local module="$1" dependency role
+    [[ -z "${MODULE_GPIO_ROLE_STATE[$module]:-}" ]] || return 0
+    MODULE_GPIO_ROLE_STATE["$module"]=seen
+    load_record module "$module"
+    IFS=, read -r -a items <<< "${RECORD[REQUIRES_INPUT_GPIO]}"
+    for role in "${items[@]}"; do [[ -z "$role" ]] || require_gpio_role input "$role"; done
+    IFS=, read -r -a items <<< "${RECORD[REQUIRES_OUTPUT_GPIO]}"
+    for role in "${items[@]}"; do [[ -z "$role" ]] || require_gpio_role output "$role"; done
+    IFS=, read -r -a items <<< "${RECORD[REQUIRES_MODULES]}"
+    for dependency in "${items[@]}"; do [[ -z "$dependency" ]] || collect_module_gpio_roles "$dependency"; done
+}
+
+collect_required_gpio_roles() {
+    local role module entry kind
+    REQUIRED_GPIO_KINDS=()
+    MODULE_GPIO_ROLE_STATE=()
+    if [[ "${CFG[BOARD]}" == custom ]]; then
+        csv_has "${CFG[MODULES]}" audio && die "custom board audio requires a catalog board hardware profile"
+        while IFS= read -r entry; do
+            [[ -n "$entry" ]] || continue
+            kind="${entry%%:*}"
+            role="${entry#*:}"
+            require_gpio_role "$kind" "$role"
+        done < <(custom_board_gpio_requirements)
+        return
+    fi
+
+    case "$BOARD_DISPLAY_BUS" in
+        SPI)
+            for role in TFT_MOSI TFT_SCLK TFT_CS TFT_DC; do require_gpio_role output "$role"; done
+            ;;
+        I80)
+            for ((index = 0; index < BOARD_DISPLAY_DATA_WIDTH; index++)); do require_gpio_role output "TFT_D$index"; done
+            for role in TFT_WR TFT_CS TFT_DC; do require_gpio_role output "$role"; done
+            ;;
+    esac
+    if [[ "${CFG[INPUT]}" != none ]]; then
+        case "$BOARD_INPUT_BUS" in
+            SPI)
+                for role in TOUCH_MISO; do require_gpio_role input "$role"; done
+                for role in TOUCH_MOSI TOUCH_CS TOUCH_SCLK; do require_gpio_role output "$role"; done
+                ;;
+            I2C)
+                for role in TOUCH_SDA TOUCH_SCL; do require_gpio_role output "$role"; done
+                ;;
+        esac
+        if [[ "${CFG[INPUT]}" != custom ]]; then
+            load_record input "${CFG[INPUT]}"
+            [[ "${RECORD[USE_IRQ]}" != 1 ]] || require_gpio_role input TOUCH_INT
+        fi
+    fi
+    if board_declares_gpio_role BATTERY_ADC; then
+        require_gpio_role input BATTERY_ADC
+    fi
+    IFS=, read -r -a items <<< "${CFG[MODULES]}"
+    for module in "${items[@]}"; do [[ -z "$module" ]] || collect_module_gpio_roles "$module"; done
+    if csv_has "${CFG[MODULES]}" audio; then
+        case "$BOARD_AUDIO_BACKEND" in
+            DAC)
+                for role in AUDIO_DAC AUDIO_ENABLE; do require_gpio_role output "$role"; done
+                ;;
+            I2S)
+                for role in I2S_BCLK I2S_LRCK I2S_DATA AMP_SHDN; do require_gpio_role output "$role"; done
+                ;;
+            NONE)
+                die "board ${CFG[BOARD]} does not provide an audio hardware profile"
+                ;;
+            *)
+                die "unsupported audio backend: $BOARD_AUDIO_BACKEND"
+                ;;
+        esac
+    fi
+}
+
+board_declares_gpio_role() {
+    local role="$1" pair
+    for pair in ${BOARD_INPUT_GPIO//,/ } ${BOARD_OUTPUT_GPIO//,/ }; do
+        [[ "${pair%%:*}" == "$role" ]] && return 0
+    done
+    return 1
 }
 
 load_gpio_list() {
@@ -392,6 +560,8 @@ load_gpio_list() {
         pin="${pair#*:}"
         [[ "$role" =~ ^[A-Z][A-Z0-9_]*$ ]] || die "invalid board GPIO role $role"
         is_pin "$pin" || die "invalid board GPIO pin $pin"
+        [[ -n "${REQUIRED_GPIO_KINDS[$role]+x}" ]] || continue
+        [[ "${REQUIRED_GPIO_KINDS[$role]}" == "$kind" ]] || die "board GPIO role $role has the wrong direction"
         [[ -z "${GPIO_VALUES[$role]+x}" ]] || die "duplicate board GPIO role $role"
         GPIO_VALUES["$role"]="$pin"
         BOARD_GPIO["$role"]="$pin"
@@ -404,13 +574,21 @@ validate_gpio() {
     GPIO_VALUES=()
     GPIO_KINDS=()
     BOARD_GPIO=()
+    collect_required_gpio_roles
     load_gpio_list input "$BOARD_INPUT_GPIO"
     load_gpio_list output "$BOARD_OUTPUT_GPIO"
     for role in "${!CFG[@]}"; do
         [[ "$role" == GPIO_* ]] || continue
         role="${role#GPIO_}"
-        [[ -n "${GPIO_VALUES[$role]+x}" ]] || die "GPIO override names an unknown board role: $role"
+        if [[ -z "${REQUIRED_GPIO_KINDS[$role]+x}" ]]; then
+            [[ "${CFG[BOARD]}" != custom ]] && board_declares_gpio_role "$role" && continue
+            die "GPIO override names an unknown required role: $role"
+        fi
         GPIO_VALUES["$role"]="${CFG[GPIO_$role]}"
+    done
+    for role in "${!REQUIRED_GPIO_KINDS[@]}"; do
+        [[ -n "${GPIO_VALUES[$role]+x}" ]] || die "missing required ${REQUIRED_GPIO_KINDS[$role]} GPIO role $role"
+        GPIO_KINDS["$role"]="${REQUIRED_GPIO_KINDS[$role]}"
     done
     for role in "${!GPIO_VALUES[@]}"; do
         pin="${GPIO_VALUES[$role]}"
@@ -431,7 +609,7 @@ validate_gpio() {
 }
 
 validate_config() {
-    local path
+    local path display_bus input_bus
     is_id "${CFG[PROFILE]}" || die "invalid profile name"
     is_id "${CFG[MCU]}" || die "invalid MCU id"
     is_id "${CFG[BOARD]}" || die "invalid board id"
@@ -449,42 +627,115 @@ validate_config() {
     MCU_INPUT_ONLY="${RECORD[INPUT_ONLY]}"
     MCU_DANGEROUS_GPIO="${RECORD[DANGEROUS_GPIO]}"
 
-    load_record board "${CFG[BOARD]}"
-    require_keys RECORD SCHEMA_VERSION ID MCU DISPLAY_BUS INPUT_BUS FLASH_MB PSRAM_MB PARTITIONS BUILD_READY INPUT_GPIO OUTPUT_GPIO APPROVED_DANGEROUS_GPIO
-    [[ "${RECORD[MCU]}" == "${CFG[MCU]}" ]] || die "board ${CFG[BOARD]} requires ${RECORD[MCU]}"
-    BOARD_DISPLAY_BUS="${RECORD[DISPLAY_BUS]}"
-    BOARD_INPUT_BUS="${RECORD[INPUT_BUS]}"
-    BOARD_PARTITIONS="${RECORD[PARTITIONS]}"
-    BOARD_BUILD_READY="${RECORD[BUILD_READY]}"
-    BOARD_INPUT_GPIO="${RECORD[INPUT_GPIO]}"
-    BOARD_OUTPUT_GPIO="${RECORD[OUTPUT_GPIO]}"
+    if [[ "${CFG[BOARD]}" == custom ]]; then
+        is_id "${CFG[BOARD_NAME]}" || die "custom board requires a valid BOARD_NAME"
+        is_unsigned_integer "${CFG[FLASH_MB]}" && (( 10#${CFG[FLASH_MB]} > 0 )) || die "custom board requires a positive FLASH_MB"
+        is_unsigned_integer "${CFG[PSRAM_MB]}" || die "custom board requires a non-negative PSRAM_MB"
+        BOARD_DISPLAY_BUS="${CFG[DISPLAY_BUS]}"
+        BOARD_DISPLAY_DATA_WIDTH="${BOARD_DISPLAY_DATA_WIDTH:-8}"
+        BOARD_INPUT_BUS="${CFG[INPUT_BUS]}"
+        BOARD_PARTITIONS="${CFG[PARTITIONS]}"
+        BOARD_BUILD_READY=NO
+        BOARD_AUDIO_BACKEND=NONE
+        BOARD_AUDIO_DAC_CHANNEL=0
+        BOARD_AUDIO_ENABLE_ACTIVE_LEVEL=0
+        BOARD_INPUT_GPIO="${CFG[INPUT_GPIO]}"
+        BOARD_OUTPUT_GPIO="${CFG[OUTPUT_GPIO]}"
+    else
+        load_record board "${CFG[BOARD]}"
+        require_keys RECORD SCHEMA_VERSION ID MCU DISPLAY_BUS DISPLAY_DATA_WIDTH INPUT_BUS FLASH_MB PSRAM_MB PARTITIONS BUILD_READY AUDIO_BACKEND AUDIO_DAC_CHANNEL AUDIO_ENABLE_ACTIVE_LEVEL INPUT_GPIO OUTPUT_GPIO APPROVED_DANGEROUS_GPIO
+        [[ "${RECORD[MCU]}" == "${CFG[MCU]}" ]] || die "board ${CFG[BOARD]} requires ${RECORD[MCU]}"
+        BOARD_DISPLAY_BUS="${RECORD[DISPLAY_BUS]}"
+        BOARD_DISPLAY_DATA_WIDTH="${RECORD[DISPLAY_DATA_WIDTH]}"
+        BOARD_INPUT_BUS="${RECORD[INPUT_BUS]}"
+        BOARD_PARTITIONS="${RECORD[PARTITIONS]}"
+        BOARD_BUILD_READY="${RECORD[BUILD_READY]}"
+        BOARD_AUDIO_BACKEND="${RECORD[AUDIO_BACKEND]}"
+        BOARD_AUDIO_DAC_CHANNEL="${RECORD[AUDIO_DAC_CHANNEL]}"
+        BOARD_AUDIO_ENABLE_ACTIVE_LEVEL="${RECORD[AUDIO_ENABLE_ACTIVE_LEVEL]}"
+        BOARD_INPUT_GPIO="${RECORD[INPUT_GPIO]}"
+        BOARD_OUTPUT_GPIO="${RECORD[OUTPUT_GPIO]}"
+    fi
+    display_bus="$BOARD_DISPLAY_BUS"
+    input_bus="$BOARD_INPUT_BUS"
+    [[ -n "$display_bus" ]] || die "custom board requires DISPLAY_BUS"
+    csv_has "$MCU_DISPLAY_BUSES" "$display_bus" || die "${CFG[MCU]} does not support display bus $display_bus"
+    [[ "$input_bus" == SPI || "$input_bus" == I2C || "$input_bus" == NONE ]] || die "unsupported input bus: $input_bus"
+    case "$BOARD_AUDIO_BACKEND" in
+        DAC) [[ "$BOARD_AUDIO_DAC_CHANNEL" == 1 || "$BOARD_AUDIO_DAC_CHANNEL" == 2 ]] || die "DAC board requires AUDIO_DAC_CHANNEL 1 or 2" ;;
+        I2S|NONE) [[ "$BOARD_AUDIO_DAC_CHANNEL" == 0 ]] || die "$BOARD_AUDIO_BACKEND board requires AUDIO_DAC_CHANNEL 0" ;;
+        *) die "unsupported audio backend: $BOARD_AUDIO_BACKEND" ;;
+    esac
+    [[ "$BOARD_AUDIO_ENABLE_ACTIVE_LEVEL" == 0 || "$BOARD_AUDIO_ENABLE_ACTIVE_LEVEL" == 1 ]] || die "AUDIO_ENABLE_ACTIVE_LEVEL must be 0 or 1"
     [[ "$BOARD_PARTITIONS" == partitions.csv || "$BOARD_PARTITIONS" == firmware/partitions/* ]] || die "unsupported partition path: $BOARD_PARTITIONS"
     [[ "$BOARD_PARTITIONS" != *..* ]] || die "partition path traversal is not allowed"
     path="$ROOT/$BOARD_PARTITIONS"
     [[ -f "$path" ]] || die "board partition file is missing: $BOARD_PARTITIONS"
 
-    load_record display "${CFG[DISPLAY]}"
-    require_keys RECORD SCHEMA_VERSION ID BUS
-    [[ "${RECORD[BUS]}" == "$BOARD_DISPLAY_BUS" ]] || die "display ${CFG[DISPLAY]} does not match board bus $BOARD_DISPLAY_BUS"
-    csv_has "$MCU_DISPLAY_BUSES" "${RECORD[BUS]}" || die "${CFG[MCU]} does not support display bus ${RECORD[BUS]}"
+    if [[ "${CFG[DISPLAY]}" == custom ]]; then
+        is_id "${CFG[DISPLAY_NAME]}" || die "custom display requires a valid DISPLAY_NAME"
+    else
+        load_record display "${CFG[DISPLAY]}"
+        require_keys RECORD SCHEMA_VERSION ID BUS DATA_WIDTH DRIVER WIDTH HEIGHT PIXEL_CLOCK_HZ ROTATION RGB_ORDER INVERT_COLOR SPI_MODE I80_SWAP_COLOR_BYTES I80_PCLK_ACTIVE_NEG I80_PCLK_IDLE_LOW BACKLIGHT_ON_LEVEL POWER_ON_DELAY_MS
+        [[ "${RECORD[BUS]}" == "$BOARD_DISPLAY_BUS" ]] || die "display ${CFG[DISPLAY]} does not match board bus $BOARD_DISPLAY_BUS"
+        if [[ "${CFG[BOARD]}" == custom ]]; then
+            BOARD_DISPLAY_DATA_WIDTH="${RECORD[DATA_WIDTH]}"
+        else
+            [[ "${RECORD[DATA_WIDTH]}" == "$BOARD_DISPLAY_DATA_WIDTH" ]] || die "display ${CFG[DISPLAY]} does not match board data width $BOARD_DISPLAY_DATA_WIDTH"
+        fi
+    fi
 
-    load_record input "${CFG[INPUT]}"
-    require_keys RECORD SCHEMA_VERSION ID BUS
-    [[ "${RECORD[BUS]}" == "$BOARD_INPUT_BUS" ]] || die "input ${CFG[INPUT]} does not match board bus $BOARD_INPUT_BUS"
+    if [[ "${CFG[INPUT]}" == custom ]]; then
+        is_id "${CFG[INPUT_NAME]}" || die "custom input requires a valid INPUT_NAME"
+    elif [[ "${CFG[INPUT]}" == none ]]; then
+        [[ "$BOARD_INPUT_BUS" == NONE ]] || die "input none requires board input bus NONE"
+    else
+        load_record input "${CFG[INPUT]}"
+        require_keys RECORD SCHEMA_VERSION ID BUS DRIVER USE_IRQ SWAP_XY MIRROR_X MIRROR_Y I2C_ADDRESS I2C_CLOCK_HZ I2C_CONTROL_PHASE_BYTES I2C_DC_BIT_OFFSET I2C_CMD_BITS I2C_PARAM_BITS I2C_DISABLE_CONTROL_PHASE I2C_INTERNAL_PULLUP RESET_LEVEL IRQ_LEVEL
+        [[ "${RECORD[BUS]}" == "$BOARD_INPUT_BUS" ]] || die "input ${CFG[INPUT]} does not match board bus $BOARD_INPUT_BUS"
+    fi
 
-    validate_modules
     validate_gpio
+    validate_modules
+    [[ "${CFG[BOARD]}" != custom ]] || validate_custom_board_gpio_roles
+}
+
+custom_required_gpio_roles() {
+    local module="$1" dependency role
+    [[ -z "${CUSTOM_MODULE_ROLE_STATE[$module]:-}" ]] || return
+    CUSTOM_MODULE_ROLE_STATE["$module"]=seen
+    load_record module "$module"
+    IFS=, read -r -a items <<< "${RECORD[REQUIRES_INPUT_GPIO]}"
+    for role in "${items[@]}"; do [[ -z "$role" ]] || printf 'input:%s\n' "$role"; done
+    IFS=, read -r -a items <<< "${RECORD[REQUIRES_OUTPUT_GPIO]}"
+    for role in "${items[@]}"; do [[ -z "$role" ]] || printf 'output:%s\n' "$role"; done
+    IFS=, read -r -a items <<< "${RECORD[REQUIRES_MODULES]}"
+    for dependency in "${items[@]}"; do [[ -z "$dependency" ]] || custom_required_gpio_roles "$dependency"; done
+}
+
+validate_custom_board_gpio_roles() {
+    local kind role
+    while IFS= read -r kind; do
+        [[ -n "$kind" ]] || continue
+        role="${kind#*:}"
+        kind="${kind%%:*}"
+        [[ -n "${GPIO_VALUES[$role]+x}" && "${GPIO_KINDS[$role]}" == "$kind" ]] || die "custom board requires $kind GPIO role $role"
+    done < <(custom_board_gpio_requirements)
 }
 
 write_profile() {
     local profile="${CFG[PROFILE]}"
     local profile_dir="$BUILD_ROOT/$profile"
-    local temporary backup partition_source role module main_requires audio_feature bms_feature controller_feature gps_feature network_feature ota_feature trimming
+    local temporary backup partition_source sdkconfig_source role module main_requires audio_feature bms_feature controller_feature gps_feature network_feature ota_feature trimming
 
     mkdir -p "$BUILD_ROOT"
     temporary="$(mktemp -d "$BUILD_ROOT/.${profile}.tmp.XXXXXX")"
     mkdir -p "$temporary/generated"
     write_firmware_env "$temporary/firmware.env"
+    python3 "$ROOT/scripts/generate-hardware-config.py" \
+        --catalog "$CATALOG_DIR" \
+        --firmware-env "$temporary/firmware.env" \
+        --output "$temporary/generated/esp_bms_profile_hardware.h"
     main_requires="esp_bms_idf_runtime;esp_bms_lvgl_bridge;esp_bms_lvgl_ui;lvgl;esp_lvgl_adapter"
     audio_feature=0
     bms_feature=0
@@ -542,7 +793,12 @@ write_profile() {
             printf 'MODULE_%s_COMPONENTS=%s\n' "$module" "${RECORD[COMPONENTS]}"
         done
     } > "$temporary/generated/modules.env"
-    cp "$ROOT/sdkconfig.defaults" "$temporary/sdkconfig.defaults"
+    sdkconfig_source="$ROOT/sdkconfig.defaults.${CFG[MCU]}"
+    [[ -f "$sdkconfig_source" ]] || sdkconfig_source="$ROOT/sdkconfig.defaults"
+    {
+        sed '/^CONFIG_PARTITION_TABLE_CUSTOM_FILENAME=/d' "$sdkconfig_source"
+        printf 'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="%s"\n' "$profile_dir/partitions.csv"
+    } > "$temporary/sdkconfig.defaults"
     partition_source="$ROOT/$BOARD_PARTITIONS"
     cp "$partition_source" "$temporary/partitions.csv"
     {
@@ -574,6 +830,9 @@ write_firmware_env() {
         printf 'INPUT=%s\n' "${CFG[INPUT]}"
         printf 'MODULES=%s\n' "${CFG[MODULES]}"
         printf 'CONFIRM_DANGEROUS_GPIO=%s\n' "${CFG[CONFIRM_DANGEROUS_GPIO]}"
+        for key in BOARD_NAME DISPLAY_NAME INPUT_NAME DISPLAY_BUS INPUT_BUS FLASH_MB PSRAM_MB PARTITIONS INPUT_GPIO OUTPUT_GPIO; do
+            [[ -n "${CFG[$key]}" ]] && printf '%s=%s\n' "$key" "${CFG[$key]}"
+        done
         for role in $(printf '%s\n' "${!GPIO_VALUES[@]}" | LC_ALL=C sort); do
             printf 'GPIO_%s=%s\n' "$role" "${GPIO_VALUES[$role]}"
         done
@@ -616,16 +875,20 @@ run_doctor() {
         printf '%s\n' "$(message_text 'missing: ninja')" >&2
         missing=1
     fi
-    if [[ -f "${IDF_PATH:-}/export.sh" || -f "$HOME/esp/esp-idf-v5.5.4/export.sh" ]]; then
-        printf '%s\n' "$(message_text 'ok: ESP-IDF export script')"
+    if idf_version="$ROOT/scripts/esp-idf-env.sh --version" 2>&1; then
+        printf '%s\n' "$(message_text "ok: $idf_version")"
     else
-        printf '%s\n' "$(message_text 'missing: ESP-IDF 5.5.4 export.sh')" >&2
+        printf '%s\n' "$(message_text "missing: $idf_version")" >&2
         missing=1
     fi
     df -Pk "$ROOT" | awk 'NR == 2 { printf "%s\n", $4 }' | while IFS= read -r available; do
         printf '%s\n' "$(message_text "disk-kb-available: $available")"
     done
     (( missing == 0 ))
+}
+
+report_cloud_build_pending() {
+    printf '%s\n' "$(message_text 'cloud build request prepared; workflow dispatch belongs to 07-21-build-cloud-verification')" >&2
 }
 
 choose_interactive_language() {
@@ -667,12 +930,21 @@ TITLE
 catalog_option_description() {
     local kind="$1" id="$2" zh en
     case "$kind:$id" in
+        mcu:esp32) zh='ESP32，最多 39 路 GPIO，支持 SPI 显示'; en='ESP32, up to GPIO39, SPI display support' ;;
+        mcu:esp32s3) zh='ESP32-S3，最多 48 路 GPIO，支持 SPI / I80 显示'; en='ESP32-S3, up to GPIO48, SPI / I80 display support' ;;
         board:esp32-wroom-32e-legacy) zh='ESP32-WROOM-32E，4MB Flash，可本地构建（推荐）'; en='ESP32-WROOM-32E, 4MB Flash, build-ready (recommended)' ;;
-        board:esp32s3-wroom-1-n16r8-i80) zh='ESP32-S3-WROOM-1，16MB Flash / 8MB PSRAM，尚未适配本地构建'; en='ESP32-S3-WROOM-1, 16MB Flash / 8MB PSRAM, local build not ready' ;;
+        board:esp32s3-n16r8-st7796u-gt1151) zh='慧勤智远 ESP32-S3 N16R8，ST7796U / GT1151，16MB Flash / 8MB PSRAM，可本地构建'; en='Huiqin Zhiyuan ESP32-S3 N16R8, ST7796U / GT1151, 16MB Flash / 8MB PSRAM, build-ready' ;;
+        board:esp32s3-wroom-1-n16r8-i80) zh='ESP32-S3-WROOM-1，ILI9488 / FT6336U，16MB Flash / 8MB PSRAM，可本地构建'; en='ESP32-S3-WROOM-1, ILI9488 / FT6336U, 16MB Flash / 8MB PSRAM, build-ready' ;;
+        board:custom) zh='自定义开发板：选择 MCU、显示屏并填写 GPIO'; en='Custom board: choose MCU, display, and GPIO pins' ;;
         display:st7789-spi) zh='ST7789 SPI 显示屏'; en='ST7789 SPI display' ;;
         display:ili9488-i80) zh='ILI9488 8080 并行显示屏'; en='ILI9488 I80 parallel display' ;;
+        display:st7796u-i80) zh='ST7796U 16 位 8080 并行显示屏（320 × 480）'; en='ST7796U 16-bit I80 parallel display (320 × 480)' ;;
+        display:custom) zh='自定义显示屏：填写名称并选择总线'; en='Custom display: name it and choose its bus' ;;
         input:xpt2046-spi) zh='XPT2046 SPI 触摸屏'; en='XPT2046 SPI touch input' ;;
         input:ft6336u-i2c) zh='FT6336U I2C 触摸屏'; en='FT6336U I2C touch input' ;;
+        input:gt1151-i2c) zh='GT1151 I2C 电容触摸屏'; en='GT1151 I2C capacitive touch input' ;;
+        input:custom) zh='自定义输入设备：填写名称并选择总线'; en='Custom input: name it and choose its bus' ;;
+        input:none) zh='不使用输入设备'; en='No input device' ;;
         module:bms) zh='BMS 蓝牙连接'; en='BMS Bluetooth connection' ;;
         module:gps) zh='GPS 定位与测速'; en='GPS positioning and speed' ;;
         module:controller) zh='控制器蓝牙'; en='Controller Bluetooth' ;;
@@ -708,6 +980,21 @@ catalog_ids_matching() {
     done | LC_ALL=C sort -u
 }
 
+catalog_display_ids_supported_by_mcu() {
+    local mcu="$1" file id bus mcu_display_buses
+    local -A display_record=()
+    load_record mcu "$mcu"
+    mcu_display_buses="${RECORD[DISPLAY_BUSES]}"
+    for file in "$CATALOG_DIR/display"/*.env; do
+        [[ -f "$file" ]] || continue
+        id="${file##*/}"
+        id="${id%.env}"
+        read_kv_file "$file" display_record
+        bus="${display_record[BUS]:-}"
+        csv_has "$mcu_display_buses" "$bus" && printf '%s\n' "$id"
+    done | LC_ALL=C sort -u
+}
+
 choose_catalog_option() {
     local kind="$1" title="$2" default="$3" answer option index
     shift 3
@@ -739,9 +1026,255 @@ choose_catalog_option() {
     done
 }
 
+choose_value_option() {
+    local title="$1" default="$2" answer option index
+    shift 2
+    local -a choices=("$@")
+    ((${#choices[@]} > 0)) || die "no $title options"
+    while true; do
+        printf '\n%s\n' "$(message_text "$title")"
+        for index in "${!choices[@]}"; do
+            option="${choices[$index]}"
+            printf '  %d) %s%s\n' "$((index + 1))" "$option" "$([[ "$option" == "$default" ]] && printf ' *')"
+        done
+        if [[ "$LANGUAGE" == en ]]; then
+            read -r -p "Enter a number or value [$default]: " answer
+        else
+            read -r -p "输入编号或值 [$default]：" answer
+        fi
+        [[ -n "$answer" ]] || answer="$default"
+        if [[ "$answer" =~ ^[0-9]+$ ]] && ((10#$answer >= 1 && 10#$answer <= ${#choices[@]})); then
+            MENU_SELECTION="${choices[$((10#$answer - 1))]}"
+            return
+        fi
+        for option in "${choices[@]}"; do
+            [[ "$answer" == "$option" ]] && { MENU_SELECTION="$option"; return; }
+        done
+        [[ "$LANGUAGE" == en ]] && printf '%s\n' 'Invalid selection; please try again.' >&2 || printf '%s\n' '无效选择，请重新输入。' >&2
+    done
+}
+
+prompt_custom_id() {
+    local key="$1" zh_prompt="$2" en_prompt="$3" answer
+    while true; do
+        if [[ "$LANGUAGE" == en ]]; then
+            read -r -p "$en_prompt: " answer
+        else
+            read -r -p "$zh_prompt：" answer
+        fi
+        is_id "$answer" && { CFG["$key"]="$answer"; return; }
+        [[ "$LANGUAGE" == en ]] && printf '%s\n' 'Use 1-64 ASCII letters, numbers, hyphens, or underscores.' >&2 || printf '%s\n' '请使用 1–64 位 ASCII 字母、数字、连字符或下划线。' >&2
+    done
+}
+
+prompt_custom_number() {
+    local key="$1" default="$2" zh_prompt="$3" en_prompt="$4" answer
+    while true; do
+        if [[ "$LANGUAGE" == en ]]; then
+            read -r -p "$en_prompt [$default]: " answer
+        else
+            read -r -p "$zh_prompt [$default]：" answer
+        fi
+        [[ -n "$answer" ]] || answer="$default"
+        is_unsigned_integer "$answer" && { CFG["$key"]="$answer"; return; }
+        [[ "$LANGUAGE" == en ]] && printf '%s\n' 'Enter a non-negative integer.' >&2 || printf '%s\n' '请输入非负整数。' >&2
+    done
+}
+
+custom_board_gpio_requirements() {
+    local module
+    CUSTOM_MODULE_ROLE_STATE=()
+    case "$BOARD_DISPLAY_BUS" in
+        SPI) printf '%s\n' output:TFT_MOSI output:TFT_SCLK output:TFT_CS output:TFT_DC output:TFT_BACKLIGHT ;;
+        I80)
+            printf '%s\n' output:TFT_D0 output:TFT_D1 output:TFT_D2 output:TFT_D3 output:TFT_D4 output:TFT_D5 output:TFT_D6 output:TFT_D7
+            [[ "$BOARD_DISPLAY_DATA_WIDTH" != 16 ]] || printf '%s\n' output:TFT_D8 output:TFT_D9 output:TFT_D10 output:TFT_D11 output:TFT_D12 output:TFT_D13 output:TFT_D14 output:TFT_D15
+            printf '%s\n' output:TFT_WR output:TFT_RD output:TFT_CS output:TFT_DC output:TFT_RESET output:TFT_BACKLIGHT
+            ;;
+    esac
+    case "$BOARD_INPUT_BUS" in
+        SPI) printf '%s\n' input:TOUCH_IRQ input:TOUCH_MISO output:TOUCH_MOSI output:TOUCH_CS output:TOUCH_SCLK ;;
+        I2C) printf '%s\n' input:TOUCH_IRQ output:TOUCH_SDA output:TOUCH_SCL ;;
+    esac
+    IFS=, read -r -a items <<< "${CFG[MODULES]}"
+    for module in "${items[@]}"; do
+        [[ -z "$module" ]] || custom_required_gpio_roles "$module"
+    done
+}
+
+configure_custom_board_gpio() {
+    local entry kind role answer input_fd
+    local -A seen=()
+    CFG[INPUT_GPIO]=''
+    CFG[OUTPUT_GPIO]=''
+    exec {input_fd}<&0
+    while IFS= read -r entry; do
+        [[ -n "$entry" ]] || continue
+        kind="${entry%%:*}"
+        role="${entry#*:}"
+        [[ -z "${seen[$kind:$role]+x}" ]] || continue
+        seen[$kind:$role]=1
+        while true; do
+            if [[ "$LANGUAGE" == en ]]; then
+                read -r -u "$input_fd" -p "$role GPIO (0-$MCU_GPIO_MAX): " answer
+            else
+                read -r -u "$input_fd" -p "$role 的 GPIO（0–$MCU_GPIO_MAX）：" answer
+            fi
+            is_pin "$answer" && { append_gpio_declaration "${kind^^}_GPIO" "$role" "$answer"; break; }
+            [[ "$LANGUAGE" == en ]] && printf '%s\n' 'Enter a GPIO number from 0 to 99.' >&2 || printf '%s\n' '请输入 0–99 的 GPIO 编号。' >&2
+        done
+    done < <(custom_board_gpio_requirements)
+    exec {input_fd}<&-
+    for entry in "${CFG[INPUT_GPIO]}" "${CFG[OUTPUT_GPIO]}"; do
+        IFS=, read -r -a items <<< "$entry"
+        for role in "${items[@]}"; do
+            answer="${role#*:}"
+            if csv_has "$MCU_DANGEROUS_GPIO" "$answer"; then
+                if [[ "$LANGUAGE" == en ]]; then
+                    read -r -p "GPIO $answer is a boot-sensitive pin. Confirm its use? [y/N]: " role
+                else
+                    read -r -p "GPIO $answer 是启动敏感引脚，确认使用吗？[y/N]：" role
+                fi
+                [[ "$role" =~ ^[Yy]$ ]] || die "dangerous GPIO $answer was not confirmed"
+                CFG[CONFIRM_DANGEROUS_GPIO]=YES
+            fi
+        done
+    done
+}
+
+configure_custom_board() {
+    local -a choices=()
+    CFG[BOARD]=custom
+    prompt_custom_id BOARD_NAME '自定义开发板名称（ASCII）' 'Custom board name (ASCII)'
+    mapfile -t choices < <(catalog_ids mcu)
+    choose_catalog_option mcu 'MCU' "${CFG[MCU]}" "${choices[@]}"
+    CFG[MCU]="$MENU_SELECTION"
+    load_record mcu "${CFG[MCU]}"
+    MCU_DISPLAY_BUSES="${RECORD[DISPLAY_BUSES]}"
+    MCU_GPIO_MAX="${RECORD[GPIO_MAX]}"
+    MCU_DANGEROUS_GPIO="${RECORD[DANGEROUS_GPIO]}"
+    prompt_custom_number FLASH_MB 4 'Flash 容量（MB）' 'Flash size (MB)'
+    prompt_custom_number PSRAM_MB 0 'PSRAM 容量（MB）' 'PSRAM size (MB)'
+    CFG[PARTITIONS]=partitions.csv
+
+    mapfile -t choices < <(catalog_display_ids_supported_by_mcu "${CFG[MCU]}")
+    choices+=(custom)
+    choose_catalog_option display 'Display' custom "${choices[@]}"
+    CFG[DISPLAY]="$MENU_SELECTION"
+    if [[ "${CFG[DISPLAY]}" == custom ]]; then
+        prompt_custom_id DISPLAY_NAME '自定义显示屏名称（ASCII）' 'Custom display name (ASCII)'
+        read -r -a choices <<< "${MCU_DISPLAY_BUSES//,/ }"
+        choose_value_option 'Display bus' "${choices[0]}" "${choices[@]}"
+        CFG[DISPLAY_BUS]="$MENU_SELECTION"
+        if [[ "${CFG[DISPLAY_BUS]}" == I80 ]]; then
+            choose_value_option 'I80 data width' 8 8 16
+            BOARD_DISPLAY_DATA_WIDTH="$MENU_SELECTION"
+        else
+            BOARD_DISPLAY_DATA_WIDTH=0
+        fi
+    else
+        load_record display "${CFG[DISPLAY]}"
+        CFG[DISPLAY_BUS]="${RECORD[BUS]}"
+        BOARD_DISPLAY_DATA_WIDTH="${RECORD[DATA_WIDTH]}"
+    fi
+
+    mapfile -t choices < <(catalog_ids input)
+    choices+=(custom none)
+    choose_catalog_option input 'Input' custom "${choices[@]}"
+    CFG[INPUT]="$MENU_SELECTION"
+    if [[ "${CFG[INPUT]}" == custom ]]; then
+        prompt_custom_id INPUT_NAME '自定义输入设备名称（ASCII）' 'Custom input name (ASCII)'
+        choose_value_option 'Input bus' SPI SPI I2C NONE
+        CFG[INPUT_BUS]="$MENU_SELECTION"
+    elif [[ "${CFG[INPUT]}" == none ]]; then
+        CFG[INPUT_BUS]=NONE
+    else
+        load_record input "${CFG[INPUT]}"
+        CFG[INPUT_BUS]="${RECORD[BUS]}"
+    fi
+    BOARD_DISPLAY_BUS="${CFG[DISPLAY_BUS]}"
+    BOARD_INPUT_BUS="${CFG[INPUT_BUS]}"
+    choose_module_options
+    CFG[MODULES]="$MENU_SELECTION"
+    configure_custom_board_gpio
+}
+
+is_interactive_terminal() {
+    [[ -t 0 && -t 1 ]]
+}
+
+choose_module_options_with_keyboard() {
+    local key suffix option index pointer mark
+    local cursor=0
+    local -a choices=()
+    local -A selected=()
+
+    mapfile -t choices < <(catalog_ids module)
+    ((${#choices[@]} > 0)) || die 'no module catalog options'
+    for option in "${choices[@]}"; do
+        if csv_has "${CFG[MODULES]}" "$option"; then
+            selected["$option"]=1
+        fi
+    done
+
+    while true; do
+        printf '\033[2J\033[H'
+        print_interactive_title
+        printf '\n%s\n' "$(message_text 'Modules')"
+        for index in "${!choices[@]}"; do
+            option="${choices[$index]}"
+            pointer=' '
+            (( index == cursor )) && pointer='>'
+            mark='[ ]'
+            [[ -n "${selected[$option]+x}" ]] && mark='[x]'
+            printf '  %s %s %d) %s — %s\n' "$pointer" "$mark" "$((index + 1))" "$option" "$(catalog_option_description module "$option")"
+        done
+        if [[ "$LANGUAGE" == en ]]; then
+            printf '%s\n' 'Use Up/Down to move, Space to toggle, Enter to continue.'
+        else
+            printf '%s\n' '使用 ↑/↓ 移动，空格切换，回车下一步。'
+        fi
+
+        key=''
+        IFS= read -rsn1 key || {
+            MENU_SELECTION="${CFG[MODULES]}"
+            return
+        }
+        if [[ "$key" == $'\e' ]]; then
+            suffix=''
+            IFS= read -rsn2 -t 0.1 suffix || true
+            key+="$suffix"
+        fi
+        case "$key" in
+            $'\e[A'|$'\eOA')
+                if (( cursor == 0 )); then cursor=$((${#choices[@]} - 1)); else cursor=$((cursor - 1)); fi
+                ;;
+            $'\e[B'|$'\eOB')
+                cursor=$(((cursor + 1) % ${#choices[@]}))
+                ;;
+            ' ')
+                option="${choices[$cursor]}"
+                if [[ -n "${selected[$option]+x}" ]]; then unset "selected[$option]"; else selected["$option"]=1; fi
+                ;;
+            ''|$'\r')
+                if ((${#selected[@]} == 0)); then
+                    MENU_SELECTION=''
+                else
+                    MENU_SELECTION="$(printf '%s\n' "${!selected[@]}" | LC_ALL=C sort | paste -sd, -)"
+                fi
+                return
+                ;;
+        esac
+    done
+}
+
 choose_module_options() {
     local answer entry option candidate index
     local -a choices=() selected=() entries=()
+    if is_interactive_terminal; then
+        choose_module_options_with_keyboard
+        return
+    fi
     mapfile -t choices < <(catalog_ids module)
     while true; do
         printf '\n%s\n' "$(message_text 'Modules')"
@@ -784,8 +1317,113 @@ choose_module_options() {
 
 set_interactive_profile_name() {
     local source="${CFG[BOARD]}"
-    [[ -n "$source" && "$source" != custom-* ]] || source="${CFG[MCU]}"
+    [[ "$source" == custom ]] && source="${CFG[BOARD_NAME]}"
+    [[ -n "$source" ]] || source="${CFG[MCU]}"
     CFG[PROFILE]="$source"
+}
+
+configure_missing_board_gpio() {
+    local role answer
+    local -a missing=()
+
+    load_record mcu "${CFG[MCU]}"
+    MCU_CAPABILITIES="${RECORD[CAPABILITIES]}"
+    MCU_DISPLAY_BUSES="${RECORD[DISPLAY_BUSES]}"
+    MCU_GPIO_MAX="${RECORD[GPIO_MAX]}"
+    MCU_INPUT_ONLY="${RECORD[INPUT_ONLY]}"
+    MCU_DANGEROUS_GPIO="${RECORD[DANGEROUS_GPIO]}"
+    load_record board "${CFG[BOARD]}"
+    BOARD_DISPLAY_BUS="${RECORD[DISPLAY_BUS]}"
+    BOARD_DISPLAY_DATA_WIDTH="${RECORD[DISPLAY_DATA_WIDTH]}"
+    BOARD_INPUT_BUS="${RECORD[INPUT_BUS]}"
+    BOARD_AUDIO_BACKEND="${RECORD[AUDIO_BACKEND]}"
+    BOARD_AUDIO_DAC_CHANNEL="${RECORD[AUDIO_DAC_CHANNEL]}"
+    BOARD_AUDIO_ENABLE_ACTIVE_LEVEL="${RECORD[AUDIO_ENABLE_ACTIVE_LEVEL]}"
+    BOARD_INPUT_GPIO="${RECORD[INPUT_GPIO]}"
+    BOARD_OUTPUT_GPIO="${RECORD[OUTPUT_GPIO]}"
+    collect_required_gpio_roles
+    GPIO_VALUES=()
+    GPIO_KINDS=()
+    BOARD_GPIO=()
+    load_gpio_list input "$BOARD_INPUT_GPIO"
+    load_gpio_list output "$BOARD_OUTPUT_GPIO"
+    for role in $(printf '%s\n' "${!REQUIRED_GPIO_KINDS[@]}" | LC_ALL=C sort); do
+        [[ -n "${GPIO_VALUES[$role]+x}" ]] || missing+=("$role")
+    done
+    for role in "${missing[@]}"; do
+        while true; do
+            if [[ "$LANGUAGE" == en ]]; then
+                read -r -p "$role GPIO (0-$MCU_GPIO_MAX): " answer
+            else
+                read -r -p "$role 的 GPIO（0–$MCU_GPIO_MAX）：" answer
+            fi
+            is_pin "$answer" || {
+                [[ "$LANGUAGE" == en ]] && printf '%s\n' 'Enter a GPIO number from 0 to 99.' >&2 || printf '%s\n' '请输入 0–99 的 GPIO 编号。' >&2
+                continue
+            }
+            CFG["GPIO_$role"]="$answer"
+            if csv_has "$MCU_DANGEROUS_GPIO" "$answer"; then
+                if [[ "$LANGUAGE" == en ]]; then
+                    read -r -p "GPIO $answer is a boot-sensitive pin. Confirm its use? [y/N]: " answer
+                else
+                    read -r -p "GPIO $answer 是启动敏感引脚，确认使用吗？[y/N]：" answer
+                fi
+                [[ "$answer" =~ ^[Yy]$ ]] || die "dangerous GPIO $answer was not confirmed"
+                CFG[CONFIRM_DANGEROUS_GPIO]=YES
+            fi
+            break
+        done
+    done
+}
+
+saved_profile_paths() {
+    local candidate profile firmware_env
+    [[ -d "$BUILD_ROOT" ]] || return
+    for candidate in "$BUILD_ROOT"/*; do
+        [[ -d "$candidate" && ! -L "$candidate" ]] || continue
+        profile="${candidate##*/}"
+        is_id "$profile" || continue
+        firmware_env="$candidate/firmware.env"
+        [[ -f "$firmware_env" && ! -L "$firmware_env" ]] || continue
+        if (set_defaults; load_user_config "$firmware_env"; validate_config) >/dev/null 2>&1; then
+            printf '%s\n' "$profile"
+        fi
+    done | LC_ALL=C sort -u
+}
+
+choose_board_or_saved_profile() {
+    local answer option index
+    local -a boards=() saved=() choices=()
+    mapfile -t boards < <(catalog_ids board)
+    boards+=(custom)
+    mapfile -t saved < <(saved_profile_paths)
+    choices=("${boards[@]}")
+    for option in "${saved[@]}"; do choices+=("saved:$option"); done
+    while true; do
+        printf '\n%s\n' "$(message_text 'Board')"
+        for index in "${!choices[@]}"; do
+            option="${choices[$index]}"
+            if [[ "$option" == saved:* ]]; then
+                printf '  %d) [%s] %s\n' "$((index + 1))" "$([[ "$LANGUAGE" == en ]] && printf 'Saved configuration' || printf '已保存配置')" "${option#saved:}"
+            else
+                printf '  %d) %s — %s%s\n' "$((index + 1))" "$option" "$(catalog_option_description board "$option")" "$([[ "$option" == "${CFG[BOARD]}" ]] && printf ' *')"
+            fi
+        done
+        if [[ "$LANGUAGE" == en ]]; then
+            read -r -p "Enter a number or ID [${CFG[BOARD]}]: " answer
+        else
+            read -r -p "输入编号或 ID [${CFG[BOARD]}]：" answer
+        fi
+        [[ -n "$answer" ]] || answer="${CFG[BOARD]}"
+        if [[ "$answer" =~ ^[0-9]+$ ]] && ((10#$answer >= 1 && 10#$answer <= ${#choices[@]})); then
+            MENU_SELECTION="${choices[$((10#$answer - 1))]}"
+            return
+        fi
+        for option in "${choices[@]}"; do
+            [[ "$answer" == "$option" || ("$option" == saved:* && "$answer" == "${option#saved:}") ]] && { MENU_SELECTION="$option"; return; }
+        done
+        [[ "$LANGUAGE" == en ]] && printf '%s\n' 'Invalid selection; please try again.' >&2 || printf '%s\n' '无效选择，请重新输入。' >&2
+    done
 }
 
 show_interactive_summary() {
@@ -808,26 +1446,69 @@ confirm_interactive_plan() {
     [[ -z "$answer" || "$answer" =~ ^[Yy]$ ]]
 }
 
+select_post_config_action() {
+    local answer
+    while true; do
+        if [[ "$LANGUAGE" == en ]]; then
+            printf '\n%s\n' 'Next step'
+            printf '%s\n' '  1) Build locally'
+            printf '%s\n' '  2) Prepare an online build request'
+            printf '%s\n' '  0) Keep the generated configuration and exit'
+            if ! read -r -p 'Choose [0]: ' answer; then NEXT_ACTION=config; return; fi
+        else
+            printf '\n%s\n' '下一步'
+            printf '%s\n' '  1) 本地编译'
+            printf '%s\n' '  2) 准备在线构建请求'
+            printf '%s\n' '  0) 保留生成的配置并退出'
+            if ! read -r -p '请选择 [0]：' answer; then NEXT_ACTION=config; return; fi
+        fi
+        case "$answer" in
+            ''|0|config) NEXT_ACTION=config; return ;;
+            1|local|build-local) NEXT_ACTION=local; return ;;
+            2|cloud|online|build-cloud) NEXT_ACTION=cloud; return ;;
+            *) [[ "$LANGUAGE" == en ]] && printf '%s\n' 'Invalid next step; please try again.' >&2 || printf '%s\n' '无效的下一步选择，请重新输入。' >&2 ;;
+        esac
+    done
+}
+
 run_interactive() {
     local -a choices=()
     choose_interactive_language
     set_defaults
     print_interactive_title
-    mapfile -t choices < <(catalog_ids board)
-    choose_catalog_option board 'Board' "${CFG[BOARD]}" "${choices[@]}"
+    choose_board_or_saved_profile
+    if [[ "$MENU_SELECTION" == saved:* ]]; then
+        local saved_profile="${MENU_SELECTION#saved:}"
+        set_defaults
+        load_user_config "$BUILD_ROOT/$saved_profile/firmware.env"
+        validate_config
+        show_interactive_summary
+        exec env FIRMWARE_LANG="$LANGUAGE" "$ROOT/scripts/build-profile.sh" --config "$BUILD_ROOT/$saved_profile/firmware.env"
+    fi
     CFG[BOARD]="$MENU_SELECTION"
-    load_record board "${CFG[BOARD]}"
-    CFG[MCU]="${RECORD[MCU]}"
-    mapfile -t choices < <(catalog_ids_matching display BUS "${RECORD[DISPLAY_BUS]}")
-    [[ " ${choices[*]} " == *" ${CFG[DISPLAY]} "* ]] || CFG[DISPLAY]="${choices[0]}"
-    choose_catalog_option display 'Display' "${CFG[DISPLAY]}" "${choices[@]}"
-    CFG[DISPLAY]="$MENU_SELECTION"
-    mapfile -t choices < <(catalog_ids_matching input BUS "${RECORD[INPUT_BUS]}")
-    [[ " ${choices[*]} " == *" ${CFG[INPUT]} "* ]] || CFG[INPUT]="${choices[0]}"
-    choose_catalog_option input 'Input' "${CFG[INPUT]}" "${choices[@]}"
-    CFG[INPUT]="$MENU_SELECTION"
-    choose_module_options
-    CFG[MODULES]="$MENU_SELECTION"
+    if [[ "${CFG[BOARD]}" == custom ]]; then
+        configure_custom_board
+    else
+        load_record board "${CFG[BOARD]}"
+        CFG[MCU]="${RECORD[MCU]}"
+        CFG[DISPLAY_BUS]="${RECORD[DISPLAY_BUS]}"
+        CFG[INPUT_BUS]="${RECORD[INPUT_BUS]}"
+        mapfile -t choices < <(catalog_ids_matching display BUS "${RECORD[DISPLAY_BUS]}")
+        choices+=(custom)
+        [[ " ${choices[*]} " == *" ${CFG[DISPLAY]} "* ]] || CFG[DISPLAY]="${choices[0]}"
+        choose_catalog_option display 'Display' "${CFG[DISPLAY]}" "${choices[@]}"
+        CFG[DISPLAY]="$MENU_SELECTION"
+        [[ "${CFG[DISPLAY]}" != custom ]] || prompt_custom_id DISPLAY_NAME '自定义显示屏名称（ASCII）' 'Custom display name (ASCII)'
+        mapfile -t choices < <(catalog_ids_matching input BUS "${RECORD[INPUT_BUS]}")
+        choices+=(custom)
+        [[ " ${choices[*]} " == *" ${CFG[INPUT]} "* ]] || CFG[INPUT]="${choices[0]}"
+        choose_catalog_option input 'Input' "${CFG[INPUT]}" "${choices[@]}"
+        CFG[INPUT]="$MENU_SELECTION"
+        [[ "${CFG[INPUT]}" != custom ]] || prompt_custom_id INPUT_NAME '自定义输入设备名称（ASCII）' 'Custom input name (ASCII)'
+        choose_module_options
+        CFG[MODULES]="$MENU_SELECTION"
+        configure_missing_board_gpio
+    fi
     set_interactive_profile_name
     validate_config
     show_interactive_summary
@@ -836,13 +1517,23 @@ run_interactive() {
         return
     fi
     write_config
+    select_post_config_action
+    case "$NEXT_ACTION" in
+        local)
+            env FIRMWARE_LANG="$LANGUAGE" "$ROOT/scripts/build-profile.sh" --config "$BUILD_ROOT/${CFG[PROFILE]}/firmware.env"
+            ;;
+        cloud)
+            report_cloud_build_pending
+            return 3
+            ;;
+    esac
 }
 
 main() {
     filter_language_options "$@"
     set -- "${FILTERED_ARGS[@]}"
     local command="${1:-}"
-    [[ -n "$command" ]] || { run_interactive; return; }
+    [[ -n "$command" ]] || { run_interactive; return $?; }
     shift
     case "$command" in
         doctor)
@@ -866,13 +1557,14 @@ main() {
                 write_profile
                 [[ "$BOARD_BUILD_READY" == YES ]] || die "board ${CFG[BOARD]} is not build-ready yet"
                 ESP_BMS_PROFILE_FILE="$BUILD_ROOT/${CFG[PROFILE]}/generated/profile.cmake" \
-                    "$ROOT/scripts/esp-idf-env.sh" -B "$BUILD_ROOT/${CFG[PROFILE]}/idf-build" \
+                    "$ROOT/scripts/esp-idf-env.sh" -B "$IDF_BUILD_ROOT/${CFG[PROFILE]}/idf-build" \
+                    -DIDF_TARGET="${CFG[MCU]}" \
                     -DSDKCONFIG="$BUILD_ROOT/${CFG[PROFILE]}/sdkconfig" \
                     -DSDKCONFIG_DEFAULTS="$BUILD_ROOT/${CFG[PROFILE]}/sdkconfig.defaults" \
                     -DESP_BMS_PROFILE_FILE="$BUILD_ROOT/${CFG[PROFILE]}/generated/profile.cmake" build
             elif [[ "$command" == build-cloud ]]; then
                 write_config
-                printf '%s\n' "$(message_text 'cloud build request prepared; workflow dispatch belongs to 07-21-build-cloud-verification')" >&2
+                report_cloud_build_pending
                 return 3
             fi
             ;;

@@ -1,21 +1,19 @@
 #include "esp_bms_idf_runtime.h"
 
 #include "esp_bms_lvgl_bridge.h"
+#include "esp_bms_profile_hardware.h"
+#if ESP_BMS_FEATURE_OTA
+#include "esp_bms_ota.h"
+#endif
 
-#include "esp_crc.h"
-#include "esp_event.h"
 #include "esp_err.h"
 #include "esp_check.h"
 #include "esp_heap_caps.h"
 #include "esp_http_server.h"
-#include "esp_mac.h"
 #include "esp_log.h"
-#include "esp_netif.h"
-#include "esp_ota_ops.h"
 #include "esp_random.h"
 #include "esp_system.h"
 #include "esp_timer.h"
-#include "esp_wifi.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "host/ble_gap.h"
@@ -41,7 +39,7 @@
 
 static const char *TAG = "bms_idf_runtime";
 
-#define BATTERY_GPIO 34
+#define BATTERY_GPIO ESP_BMS_PROFILE_BATTERY_ADC
 #define BATTERY_SAMPLE_PERIOD_MS 2000U
 #define BATTERY_ADC_MAX 4095U
 #define BATTERY_REFERENCE_MV 3300U
@@ -51,8 +49,6 @@ static const char *TAG = "bms_idf_runtime";
 #define SETUP_AP_SSID_PREFIX "fuckingBms_"
 #define SETUP_AP_SSID_SUFFIX_LEN 6U
 #define SETUP_AP_PASSWORD_LEN 8U
-#define SETUP_AP_CHANNEL 1U
-#define SETUP_AP_MAX_CONNECTIONS 1U
 #define SETUP_AP_NVS_NAMESPACE "esp_bms"
 #define SETUP_AP_NVS_SSID_KEY "setup_ssid"
 #define SETUP_AP_NVS_PASSWORD_KEY "setup_pw"
@@ -103,10 +99,6 @@ static const char *TAG = "bms_idf_runtime";
 #define CONTROLLER_RATIO_CENTI_DEFAULT ESP_BMS_CONTROLLER_RATIO_CENTI_DEFAULT
 #define HTTP_BODY_MAX_LEN 384U
 #define HTTP_JSON_MAX_LEN 1024U
-#define HTTP_OTA_BUFFER_SIZE 1024U
-#define HTTP_OTA_CODE_LEN 4U
-#define HTTP_OTA_RESTART_DELAY_MS 750U
-#define HTTP_SERVER_TASK_PRIORITY 3U
 #define CAST_PROTOCOL_VERSION 1U
 #define CAST_BLOCK_MAX_SIDE 16U
 #define CAST_BLOCK_MAX_BYTES (CAST_BLOCK_MAX_SIDE * CAST_BLOCK_MAX_SIDE * 2U)
@@ -134,7 +126,7 @@ static uint16_t runtime_cast_height(const esp_bms_idf_runtime_t *runtime)
     return runtime_cast_width(runtime) == 320U ? 240U : 320U;
 }
 
-static void runtime_cast_stop(esp_bms_idf_runtime_t *runtime, const char *reason)
+void esp_bms_idf_runtime_stop_cast(esp_bms_idf_runtime_t *runtime, const char *reason)
 {
     if (__atomic_load_n(&runtime->cast_active, __ATOMIC_RELAXED)) {
         ESP_LOGI(TAG, "[cast] stopped: %s", reason);
@@ -161,8 +153,6 @@ static void runtime_log_heap_state(const char *stage)
              (unsigned)heap_caps_get_largest_free_block(psram_caps));
 }
 
-extern const char web_index_html_start[] asm("_binary_index_html_start");
-extern const char web_index_html_end[] asm("_binary_index_html_end");
 void ble_store_config_init(void);
 
 /* Controller compatibility still uses this numeric phase representation. */
@@ -187,7 +177,6 @@ static bms_scan_name_cache_entry_t s_bms_scan_name_cache[ESP_BMS_IDF_BMS_SCAN_MA
 static uint8_t s_bms_scan_name_cache_count;
 static uint8_t s_bms_scan_name_cache_next;
 
-static esp_err_t runtime_apply_setup_ap_wifi_config(const esp_bms_idf_runtime_t *runtime);
 static int runtime_bluetooth_gap_event(struct ble_gap_event *event, void *arg);
 static esp_err_t runtime_bluetooth_start_advertising_now(esp_bms_idf_runtime_t *runtime);
 static esp_err_t runtime_init_ble_host(esp_bms_idf_runtime_t *runtime);
@@ -1324,6 +1313,10 @@ static void runtime_reset_state(esp_bms_idf_runtime_t *runtime)
 
 static void runtime_init_battery_adc(esp_bms_idf_runtime_t *runtime)
 {
+    if (BATTERY_GPIO == GPIO_NUM_NC) {
+        ESP_LOGI(TAG, "battery ADC is not configured for this profile");
+        return;
+    }
     adc_unit_t unit = ADC_UNIT_1;
     adc_channel_t channel = ADC_CHANNEL_6;
     esp_err_t ret = adc_oneshot_io_to_channel(BATTERY_GPIO, &unit, &channel);
@@ -1878,16 +1871,6 @@ static esp_err_t runtime_http_send_json(httpd_req_t *req, const char *json)
     return httpd_resp_send(req, json, HTTPD_RESP_USE_STRLEN);
 }
 
-static esp_err_t runtime_http_index_handler(httpd_req_t *req)
-{
-    const size_t html_size = (size_t)(web_index_html_end - web_index_html_start);
-    const size_t html_len = html_size > 0U && web_index_html_start[html_size - 1U] == '\0'
-                                ? html_size - 1U
-                                : html_size;
-    ESP_RETURN_ON_ERROR(httpd_resp_set_type(req, "text/html; charset=utf-8"), TAG, "set HTTP type failed");
-    return httpd_resp_send(req, web_index_html_start, (ssize_t)html_len);
-}
-
 static bool runtime_json_write_bms_codes(char *out,
                                          size_t out_len,
                                          const char codes[][ESP_BMS_BMS_CODE_TEXT_LEN],
@@ -2375,127 +2358,6 @@ static esp_err_t runtime_http_post_bms_scan_handler(httpd_req_t *req, esp_bms_id
     return runtime_http_send_no_content(req);
 }
 
-static bool runtime_http_read_ota_code(httpd_req_t *req, char code[HTTP_OTA_CODE_LEN + 1U])
-{
-    if (httpd_req_get_hdr_value_len(req, "X-Firmware-Code") != HTTP_OTA_CODE_LEN ||
-        httpd_req_get_hdr_value_str(req,
-                                    "X-Firmware-Code",
-                                    code,
-                                    HTTP_OTA_CODE_LEN + 1U) != ESP_OK) {
-        return false;
-    }
-    for (size_t index = 0; index < HTTP_OTA_CODE_LEN; ++index) {
-        if (!isdigit((unsigned char)code[index])) {
-            return false;
-        }
-    }
-    return code[HTTP_OTA_CODE_LEN] == '\0';
-}
-
-static esp_err_t runtime_http_post_ota_handler(httpd_req_t *req)
-{
-    char expected_code[HTTP_OTA_CODE_LEN + 1U] = { 0 };
-    if (!runtime_http_read_ota_code(req, expected_code)) {
-        return runtime_http_send_text(req, "400 Bad Request", "invalid firmware code");
-    }
-
-    const esp_partition_t *update_partition = esp_ota_get_next_update_partition(NULL);
-    if (!update_partition) {
-        return runtime_http_send_text(req, "500 Internal Server Error", "OTA partition missing");
-    }
-    if (req->content_len == 0U) {
-        return runtime_http_send_text(req, "400 Bad Request", "firmware image is empty");
-    }
-    if (req->content_len > update_partition->size) {
-        return runtime_http_send_text(req, "413 Payload Too Large", "firmware image is too large");
-    }
-
-    uint8_t *buffer = heap_caps_malloc(HTTP_OTA_BUFFER_SIZE,
-                                       MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    if (!buffer) {
-        return runtime_http_send_text(req, "500 Internal Server Error", "OTA buffer allocation failed");
-    }
-
-    esp_ota_handle_t ota_handle = 0;
-    esp_err_t ret = esp_ota_begin(update_partition, req->content_len, &ota_handle);
-    if (ret != ESP_OK) {
-        heap_caps_free(buffer);
-        ESP_LOGE(TAG, "[ota] begin failed: %s", esp_err_to_name(ret));
-        return runtime_http_send_text(req, "500 Internal Server Error", "OTA begin failed");
-    }
-
-    size_t remaining = req->content_len;
-    size_t received_total = 0U;
-    uint32_t crc = 0U;
-    while (remaining > 0U) {
-        const size_t requested = remaining < HTTP_OTA_BUFFER_SIZE
-                                     ? remaining
-                                     : HTTP_OTA_BUFFER_SIZE;
-        const int received = httpd_req_recv(req, (char *)buffer, requested);
-        if (received <= 0) {
-            ret = received == HTTPD_SOCK_ERR_TIMEOUT ? ESP_ERR_TIMEOUT : ESP_FAIL;
-            break;
-        }
-
-        ret = esp_ota_write(ota_handle, buffer, (size_t)received);
-        if (ret != ESP_OK) {
-            break;
-        }
-        crc = esp_crc32_le(crc, buffer, (uint32_t)received);
-        received_total += (size_t)received;
-        remaining -= (size_t)received;
-    }
-    heap_caps_free(buffer);
-
-    if (ret != ESP_OK || remaining != 0U) {
-        ESP_ERROR_CHECK_WITHOUT_ABORT(esp_ota_abort(ota_handle));
-        ESP_LOGE(TAG,
-                 "[ota] receive/write failed after %u bytes: %s",
-                 (unsigned)received_total,
-                 esp_err_to_name(ret));
-        const char *status = ret == ESP_ERR_TIMEOUT ? "408 Request Timeout" : "500 Internal Server Error";
-        return runtime_http_send_text(req, status, "OTA receive failed");
-    }
-
-    char actual_code[HTTP_OTA_CODE_LEN + 1U] = { 0 };
-    (void)snprintf(actual_code, sizeof(actual_code), "%04u", (unsigned)(crc % 10000U));
-    if (strcmp(actual_code, expected_code) != 0) {
-        ESP_ERROR_CHECK_WITHOUT_ABORT(esp_ota_abort(ota_handle));
-        ESP_LOGW(TAG, "[ota] firmware code mismatch: bytes=%u", (unsigned)received_total);
-        return runtime_http_send_text(req, "403 Forbidden", "firmware code mismatch");
-    }
-
-    ret = esp_ota_end(ota_handle);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "[ota] image validation failed: %s", esp_err_to_name(ret));
-        return runtime_http_send_text(req, "422 Unprocessable Content", "firmware image is invalid");
-    }
-
-    const esp_partition_t *running_partition = esp_ota_get_running_partition();
-    ret = esp_ota_set_boot_partition(update_partition);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "[ota] boot partition update failed: %s", esp_err_to_name(ret));
-        return runtime_http_send_text(req, "500 Internal Server Error", "OTA activation failed");
-    }
-
-    ESP_LOGI(TAG,
-             "[ota] image accepted: bytes=%u partition=%s",
-             (unsigned)received_total,
-             update_partition->label);
-    ret = runtime_http_send_json(req, "{\"status\":\"ready_to_reboot\"}");
-    if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "[ota] success response failed: %s", esp_err_to_name(ret));
-        if (running_partition) {
-            ESP_ERROR_CHECK_WITHOUT_ABORT(esp_ota_set_boot_partition(running_partition));
-        }
-        return ret;
-    }
-
-    vTaskDelay(pdMS_TO_TICKS(HTTP_OTA_RESTART_DELAY_MS));
-    esp_restart();
-    return ESP_OK;
-}
-
 static esp_err_t runtime_http_cast_info_handler(httpd_req_t *req, esp_bms_idf_runtime_t *runtime)
 {
     char json[192] = { 0 };
@@ -2541,7 +2403,7 @@ static esp_err_t runtime_cast_send_ack(httpd_req_t *req, uint32_t sequence)
     return httpd_ws_send_frame(req, &frame);
 }
 
-static esp_err_t runtime_http_cast_ws_handler(httpd_req_t *req)
+esp_err_t esp_bms_idf_runtime_http_cast_ws_handler(httpd_req_t *req)
 {
     esp_bms_idf_runtime_t *runtime = (esp_bms_idf_runtime_t *)req->user_ctx;
     if (!runtime) {
@@ -2564,7 +2426,7 @@ static esp_err_t runtime_http_cast_ws_handler(httpd_req_t *req)
     httpd_ws_frame_t frame = { 0 };
     ESP_RETURN_ON_ERROR(httpd_ws_recv_frame(req, &frame, 0), TAG, "read cast frame header failed");
     if (frame.type != HTTPD_WS_TYPE_BINARY || frame.len == 0U || frame.len > CAST_MESSAGE_MAX_BYTES) {
-        runtime_cast_stop(runtime, "invalid frame");
+        esp_bms_idf_runtime_stop_cast(runtime, "invalid frame");
         return ESP_ERR_INVALID_SIZE;
     }
     uint8_t message[CAST_MESSAGE_MAX_BYTES] = { 0 };
@@ -2588,7 +2450,7 @@ static esp_err_t runtime_http_cast_ws_handler(httpd_req_t *req)
     }
     if (message[0] != CAST_TYPE_RGB565_BLOCK || !runtime->cast_frame_active ||
         frame.len < CAST_BLOCK_HEADER_BYTES) {
-        runtime_cast_stop(runtime, "unknown message");
+        esp_bms_idf_runtime_stop_cast(runtime, "unknown message");
         return ESP_ERR_INVALID_ARG;
     }
 
@@ -2601,7 +2463,7 @@ static esp_err_t runtime_http_cast_ws_handler(httpd_req_t *req)
         x >= runtime_cast_width(runtime) || y >= runtime_cast_height(runtime) ||
         width > runtime_cast_width(runtime) - x || height > runtime_cast_height(runtime) - y ||
         frame.len != CAST_BLOCK_HEADER_BYTES + pixel_bytes) {
-        runtime_cast_stop(runtime, "block out of bounds");
+        esp_bms_idf_runtime_stop_cast(runtime, "block out of bounds");
         return ESP_ERR_INVALID_SIZE;
     }
     ESP_RETURN_ON_ERROR(esp_bms_lvgl_bridge_lock(-1), TAG, "lock display for cast failed");
@@ -2611,7 +2473,7 @@ static esp_err_t runtime_http_cast_ws_handler(httpd_req_t *req)
     return ret;
 }
 
-static esp_err_t runtime_http_api_handler(httpd_req_t *req)
+esp_err_t esp_bms_idf_runtime_http_api_handler(httpd_req_t *req)
 {
     esp_bms_idf_runtime_t *runtime = (esp_bms_idf_runtime_t *)req->user_ctx;
     if (!runtime) {
@@ -2653,7 +2515,11 @@ static esp_err_t runtime_http_api_handler(httpd_req_t *req)
         return runtime_http_post_bms_bind_handler(req, runtime);
     }
     if (req->method == HTTP_POST && strcmp(req->uri, "/api/ota") == 0) {
-        return runtime_http_post_ota_handler(req);
+#if ESP_BMS_FEATURE_OTA
+        return esp_bms_ota_handle_http_request(req);
+#else
+        return runtime_http_send_text(req, "501 Not Implemented", "not implemented");
+#endif
     }
     if (runtime->optional_http_handler) {
         const esp_err_t optional_result =
@@ -2664,64 +2530,6 @@ static esp_err_t runtime_http_api_handler(httpd_req_t *req)
     }
     ESP_LOGI(TAG, "[http] route not implemented: method=%d uri=%s", req->method, req->uri);
     return runtime_http_send_text(req, "501 Not Implemented", "not implemented");
-}
-
-static esp_err_t runtime_start_http_server(esp_bms_idf_runtime_t *runtime)
-{
-    if (RUNTIME_FLAG(runtime, HTTP_SERVER_STARTED)) {
-        return ESP_OK;
-    }
-
-    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.max_open_sockets = 4;
-    config.max_uri_handlers = 5;
-    config.stack_size = 4096;
-    config.task_priority = HTTP_SERVER_TASK_PRIORITY;
-    config.lru_purge_enable = true;
-    config.uri_match_fn = httpd_uri_match_wildcard;
-
-    esp_err_t ret = httpd_start(&runtime->http_server, &config);
-    if (ret != ESP_OK) {
-        return ret;
-    }
-
-    const httpd_uri_t root = {
-        .uri = "/",
-        .method = HTTP_GET,
-        .handler = runtime_http_index_handler,
-        .user_ctx = runtime,
-    };
-    const httpd_uri_t api = {
-        .uri = "/api/*",
-        .method = HTTP_ANY,
-        .handler = runtime_http_api_handler,
-        .user_ctx = runtime,
-    };
-    const httpd_uri_t cast = {
-        .uri = "/cast",
-        .method = HTTP_GET,
-        .handler = runtime_http_cast_ws_handler,
-        .user_ctx = runtime,
-        .is_websocket = true,
-    };
-
-    ret = httpd_register_uri_handler(runtime->http_server, &root);
-    if (ret == ESP_OK) {
-        ret = httpd_register_uri_handler(runtime->http_server, &api);
-    }
-    if (ret == ESP_OK) {
-        ret = httpd_register_uri_handler(runtime->http_server, &cast);
-    }
-    if (ret != ESP_OK) {
-        httpd_stop(runtime->http_server);
-        runtime->http_server = NULL;
-        return ret;
-    }
-
-    RUNTIME_SET_FLAG(runtime, HTTP_SERVER_STARTED, true);
-    ESP_LOGI(TAG, "[http] server started: port=80 routes=/,/api/*,/cast");
-    runtime_log_heap_state("http_server_started");
-    return ESP_OK;
 }
 
 static esp_err_t runtime_load_setup_ap_credentials(esp_bms_idf_runtime_t *runtime)
@@ -2917,7 +2725,9 @@ static bool runtime_apply_pending_http_ap_password(esp_bms_idf_runtime_t *runtim
 
     esp_err_t ret = ESP_OK;
     if (RUNTIME_FLAG(runtime, SETUP_AP_STARTED)) {
-        ret = runtime_apply_setup_ap_wifi_config(runtime);
+        ret = runtime->network_driver && runtime->network_driver->refresh_setup_ap_config
+                  ? runtime->network_driver->refresh_setup_ap_config(runtime)
+                  : ESP_ERR_NOT_SUPPORTED;
     }
     if (ret == ESP_OK) {
         ret = runtime_save_setup_ap_credentials(runtime);
@@ -2938,8 +2748,9 @@ static bool runtime_apply_pending_http_ap_password(esp_bms_idf_runtime_t *runtim
         xSemaphoreGive(runtime->http_pending_lock);
     }
     runtime_update_setup_ap_snapshot(runtime);
-    if (RUNTIME_FLAG(runtime, SETUP_AP_STARTED)) {
-        ESP_ERROR_CHECK_WITHOUT_ABORT(runtime_apply_setup_ap_wifi_config(runtime));
+    if (RUNTIME_FLAG(runtime, SETUP_AP_STARTED) && runtime->network_driver &&
+        runtime->network_driver->refresh_setup_ap_config) {
+        ESP_ERROR_CHECK_WITHOUT_ABORT(runtime->network_driver->refresh_setup_ap_config(runtime));
     }
     runtime_set_error(runtime, "AP PW FAIL");
     ESP_LOGW(TAG, "[wifi] setup AP password update failed: %s", esp_err_to_name(ret));
@@ -3125,29 +2936,6 @@ static void runtime_ensure_setup_ap_credentials(esp_bms_idf_runtime_t *runtime)
     } else {
         ESP_LOGW(TAG, "[wifi] setup AP credential save failed: %s", esp_err_to_name(save_ret));
     }
-}
-
-static esp_err_t runtime_configure_setup_ap_ip(esp_netif_t *netif)
-{
-    esp_err_t ret = esp_netif_dhcps_stop(netif);
-    if (ret != ESP_OK && ret != ESP_ERR_ESP_NETIF_DHCP_ALREADY_STOPPED) {
-        return ret;
-    }
-
-    esp_netif_ip_info_t ip_info = { 0 };
-    esp_netif_set_ip4_addr(&ip_info.ip, 192, 168, 4, 1);
-    esp_netif_set_ip4_addr(&ip_info.gw, 192, 168, 4, 1);
-    esp_netif_set_ip4_addr(&ip_info.netmask, 255, 255, 255, 0);
-    ret = esp_netif_set_ip_info(netif, &ip_info);
-    if (ret != ESP_OK) {
-        return ret;
-    }
-
-    ret = esp_netif_dhcps_start(netif);
-    if (ret == ESP_ERR_ESP_NETIF_DHCP_ALREADY_STARTED) {
-        return ESP_OK;
-    }
-    return ret;
 }
 
 static int runtime_bluetooth_gap_event(struct ble_gap_event *event, void *arg)
@@ -3484,152 +3272,13 @@ void esp_bms_idf_runtime_register_controller_ble_driver(
     }
 }
 
-static void runtime_wifi_event_handler(void *arg,
-                                       esp_event_base_t event_base,
-                                       int32_t event_id,
-                                       void *event_data)
+void esp_bms_idf_runtime_register_network_driver(
+    esp_bms_idf_runtime_t *runtime,
+    const esp_bms_idf_runtime_network_driver_t *driver)
 {
-    esp_bms_idf_runtime_t *runtime = (esp_bms_idf_runtime_t *)arg;
-    if (!runtime || event_base != WIFI_EVENT) {
-        return;
+    if (runtime) {
+        runtime->network_driver = driver;
     }
-
-    if (event_id == WIFI_EVENT_AP_START) {
-        RUNTIME_SET_FLAG(runtime, SETUP_AP_STARTED, true);
-        ESP_LOGI(TAG, "[wifi] AP started: ip=192.168.4.1 dhcp=on");
-        return;
-    }
-    if (event_id == WIFI_EVENT_AP_STOP) {
-        RUNTIME_SET_FLAG(runtime, SETUP_AP_STARTED, false);
-        runtime->setup_ap_clients = 0;
-        ESP_LOGI(TAG, "[wifi] AP stopped");
-        return;
-    }
-    if (event_id == WIFI_EVENT_AP_STACONNECTED) {
-        const wifi_event_ap_staconnected_t *event = (const wifi_event_ap_staconnected_t *)event_data;
-        if (runtime->setup_ap_clients < UINT8_MAX) {
-            runtime->setup_ap_clients++;
-        }
-        ESP_LOGI(TAG, "[wifi] AP client connected: clients=%u first_mac=" MACSTR,
-                 runtime->setup_ap_clients, MAC2STR(event->mac));
-        runtime_log_heap_state("ap_client_connected");
-        return;
-    }
-    if (event_id == WIFI_EVENT_AP_STADISCONNECTED) {
-        const wifi_event_ap_stadisconnected_t *event = (const wifi_event_ap_stadisconnected_t *)event_data;
-        if (runtime->setup_ap_clients > 0) {
-            runtime->setup_ap_clients--;
-        }
-        ESP_LOGI(TAG, "[wifi] AP client disconnected: clients=%u mac=" MACSTR " reason=%u",
-                 runtime->setup_ap_clients, MAC2STR(event->mac), event->reason);
-        runtime_log_heap_state("ap_client_disconnected");
-        return;
-    }
-}
-
-static void runtime_ip_event_handler(void *arg,
-                                     esp_event_base_t event_base,
-                                     int32_t event_id,
-                                     void *event_data)
-{
-    (void)arg;
-    if (event_base != IP_EVENT) {
-        return;
-    }
-
-    if (event_id == IP_EVENT_AP_STAIPASSIGNED) {
-        const ip_event_ap_staipassigned_t *event = (const ip_event_ap_staipassigned_t *)event_data;
-        char ip[16] = { 0 };
-        ESP_LOGI(TAG, "[wifi] DHCP lease assigned: ip=%s mac=" MACSTR,
-                 esp_ip4addr_ntoa(&event->ip, ip, sizeof(ip)), MAC2STR(event->mac));
-        return;
-    }
-}
-
-static esp_err_t runtime_register_wifi_handlers(esp_bms_idf_runtime_t *runtime)
-{
-    if (RUNTIME_FLAG(runtime, WIFI_HANDLERS_REGISTERED)) {
-        return ESP_OK;
-    }
-
-    ESP_RETURN_ON_ERROR(esp_event_handler_instance_register(WIFI_EVENT,
-                                                            ESP_EVENT_ANY_ID,
-                                                            runtime_wifi_event_handler,
-                                                            runtime,
-                                                            NULL),
-                        TAG,
-                        "Wi-Fi event handler registration failed");
-    ESP_RETURN_ON_ERROR(esp_event_handler_instance_register(IP_EVENT,
-                                                            ESP_EVENT_ANY_ID,
-                                                            runtime_ip_event_handler,
-                                                            runtime,
-                                                            NULL),
-                        TAG,
-                        "IP event handler registration failed");
-    RUNTIME_SET_FLAG(runtime, WIFI_HANDLERS_REGISTERED, true);
-    return ESP_OK;
-}
-
-static esp_err_t runtime_init_wifi_stack(esp_bms_idf_runtime_t *runtime)
-{
-    if (!RUNTIME_FLAG(runtime, WIFI_STACK_READY)) {
-        ESP_RETURN_ON_ERROR(runtime_init_nvs(runtime), TAG, "NVS init failed");
-
-        esp_err_t ret = esp_netif_init();
-        if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
-            ESP_LOGE(TAG, "esp_netif_init failed: %s", esp_err_to_name(ret));
-            return ret;
-        }
-
-        ret = esp_event_loop_create_default();
-        if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
-            ESP_LOGE(TAG, "event loop init failed: %s", esp_err_to_name(ret));
-            return ret;
-        }
-
-        runtime->setup_ap_netif = esp_netif_create_default_wifi_ap();
-        if (!runtime->setup_ap_netif) {
-            return ESP_ERR_NO_MEM;
-        }
-        ESP_RETURN_ON_ERROR(runtime_configure_setup_ap_ip(runtime->setup_ap_netif),
-                            TAG,
-                            "setup AP IP config failed");
-
-        RUNTIME_SET_FLAG(runtime, WIFI_STACK_READY, true);
-    }
-
-    if (!RUNTIME_FLAG(runtime, WIFI_DRIVER_READY)) {
-        wifi_init_config_t init_config = WIFI_INIT_CONFIG_DEFAULT();
-        ESP_RETURN_ON_ERROR(esp_wifi_init(&init_config), TAG, "esp_wifi_init failed");
-        RUNTIME_SET_FLAG(runtime, WIFI_DRIVER_READY, true);
-    }
-
-    return runtime_register_wifi_handlers(runtime);
-}
-
-static esp_err_t runtime_apply_setup_ap_wifi_config(const esp_bms_idf_runtime_t *runtime)
-{
-    if (!runtime_setup_ap_ssid_matches_policy(runtime->setup_ap_ssid) ||
-        !runtime_setup_ap_password_matches_policy(runtime->setup_ap_password)) {
-        return ESP_ERR_INVALID_STATE;
-    }
-
-    wifi_config_t wifi_config = { 0 };
-    const size_t ssid_len = strlen(runtime->setup_ap_ssid);
-    const size_t password_len = strlen(runtime->setup_ap_password);
-    memcpy(wifi_config.ap.ssid, runtime->setup_ap_ssid, ssid_len);
-    memcpy(wifi_config.ap.password, runtime->setup_ap_password, password_len);
-    wifi_config.ap.ssid_len = (uint8_t)ssid_len;
-    wifi_config.ap.channel = SETUP_AP_CHANNEL;
-    wifi_config.ap.authmode = WIFI_AUTH_WPA2_PSK;
-    wifi_config.ap.max_connection = SETUP_AP_MAX_CONNECTIONS;
-    wifi_config.ap.pmf_cfg.required = false;
-    return esp_wifi_set_config(WIFI_IF_AP, &wifi_config);
-}
-
-static bool runtime_wifi_started(const esp_bms_idf_runtime_t *runtime)
-{
-    return runtime && RUNTIME_FLAG(runtime, SETUP_AP_STARTED);
 }
 
 static bool runtime_sample_battery(esp_bms_idf_runtime_t *runtime)
@@ -3691,43 +3340,9 @@ esp_err_t esp_bms_idf_runtime_start_setup_ap(esp_bms_idf_runtime_t *runtime)
     if (!runtime) {
         return ESP_ERR_INVALID_ARG;
     }
-    if (RUNTIME_FLAG(runtime, SETUP_AP_STARTED)) {
-        return ESP_OK;
-    }
-    runtime_ensure_setup_ap_credentials(runtime);
-    ESP_LOGI(TAG, "[wifi] starting setup AP: ssid='%s' ap_pw_len=%u",
-             runtime->setup_ap_ssid,
-             (unsigned)strlen(runtime->setup_ap_password));
-
-    esp_err_t ret = runtime_init_wifi_stack(runtime);
-    if (ret != ESP_OK) {
-        runtime->snapshot.wifi = ESP_BMS_WIFI_OFFLINE;
-        RUNTIME_SET_SNAPSHOT_FLAG(runtime, SETUP_AP_ENABLED, false);
-        runtime_set_error(runtime, "AP FAIL");
-        return ret;
-    }
-
-    const bool wifi_was_started = runtime_wifi_started(runtime);
-    ret = esp_wifi_set_mode(WIFI_MODE_AP);
-    if (ret == ESP_OK) {
-        ret = runtime_apply_setup_ap_wifi_config(runtime);
-    }
-    if (ret == ESP_OK && !wifi_was_started) {
-        ret = esp_wifi_start();
-    }
-    if (ret != ESP_OK) {
-        runtime->snapshot.wifi = ESP_BMS_WIFI_OFFLINE;
-        RUNTIME_SET_SNAPSHOT_FLAG(runtime, SETUP_AP_ENABLED, false);
-        runtime_set_error(runtime, "AP FAIL");
-        ESP_LOGE(TAG, "[wifi] AP start failed: %s", esp_err_to_name(ret));
-        return ret;
-    }
-
-    RUNTIME_SET_FLAG(runtime, SETUP_AP_STARTED, true);
-    RUNTIME_SET_SNAPSHOT_FLAG(runtime, SETUP_AP_ENABLED, true);
-    runtime->snapshot.wifi = ESP_BMS_WIFI_SETUP_AP;
-    runtime_set_error(runtime, "AP READY");
-    return ESP_OK;
+    return runtime->network_driver && runtime->network_driver->start_setup_ap
+               ? runtime->network_driver->start_setup_ap(runtime)
+               : ESP_ERR_NOT_SUPPORTED;
 }
 
 esp_err_t esp_bms_idf_runtime_start_http_server(esp_bms_idf_runtime_t *runtime)
@@ -3735,16 +3350,9 @@ esp_err_t esp_bms_idf_runtime_start_http_server(esp_bms_idf_runtime_t *runtime)
     if (!runtime) {
         return ESP_ERR_INVALID_ARG;
     }
-    if (!RUNTIME_FLAG(runtime, SETUP_AP_STARTED)) {
-        return ESP_ERR_INVALID_STATE;
-    }
-    runtime_ensure_setup_ap_credentials(runtime);
-
-    const esp_err_t ret = runtime_start_http_server(runtime);
-    if (ret == ESP_OK) {
-        runtime_set_error(runtime, "HTTP ON");
-    }
-    return ret;
+    return runtime->network_driver && runtime->network_driver->start_http_server
+               ? runtime->network_driver->start_http_server(runtime)
+               : ESP_ERR_NOT_SUPPORTED;
 }
 
 esp_err_t esp_bms_idf_runtime_stop_setup_services(esp_bms_idf_runtime_t *runtime)
@@ -3753,34 +3361,9 @@ esp_err_t esp_bms_idf_runtime_stop_setup_services(esp_bms_idf_runtime_t *runtime
         return ESP_ERR_INVALID_ARG;
     }
 
-    esp_err_t result = ESP_OK;
-    runtime_cast_stop(runtime, "setup AP stopped");
-    if (runtime->http_server) {
-        const esp_err_t http_ret = httpd_stop(runtime->http_server);
-        if (http_ret != ESP_OK) {
-            ESP_LOGW(TAG, "[http] server stop failed: %s", esp_err_to_name(http_ret));
-            result = http_ret;
-        }
-        runtime->http_server = NULL;
-    }
-    RUNTIME_SET_FLAG(runtime, HTTP_SERVER_STARTED, false);
-
-    if (RUNTIME_FLAG(runtime, SETUP_AP_STARTED)) {
-        const esp_err_t wifi_ret = esp_wifi_stop();
-        if (wifi_ret != ESP_OK) {
-            ESP_LOGW(TAG, "[wifi] AP stop failed: %s", esp_err_to_name(wifi_ret));
-            if (result == ESP_OK) {
-                result = wifi_ret;
-            }
-        }
-    }
-    RUNTIME_SET_FLAG(runtime, SETUP_AP_STARTED, false);
-    runtime->setup_ap_clients = 0;
-    RUNTIME_SET_SNAPSHOT_FLAG(runtime, SETUP_AP_ENABLED, false);
-    runtime->snapshot.wifi = ESP_BMS_WIFI_OFFLINE;
-    runtime_set_error(runtime, "AP OFF");
-    runtime_log_heap_state("setup_services_stopped");
-    return result;
+    return runtime->network_driver && runtime->network_driver->stop_setup_services
+               ? runtime->network_driver->stop_setup_services(runtime)
+               : ESP_ERR_NOT_SUPPORTED;
 }
 
 esp_err_t esp_bms_idf_runtime_start_bluetooth_advertising(esp_bms_idf_runtime_t *runtime)
@@ -3920,7 +3503,7 @@ bool esp_bms_idf_runtime_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_m
     if (cast_active) {
         runtime->cast_heartbeat_elapsed_ms += elapsed_ms;
         if (runtime->cast_heartbeat_elapsed_ms >= CAST_HEARTBEAT_TIMEOUT_MS) {
-            runtime_cast_stop(runtime, "heartbeat timeout");
+            esp_bms_idf_runtime_stop_cast(runtime, "heartbeat timeout");
         }
     }
 

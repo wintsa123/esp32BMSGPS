@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include "driver/gpio.h"
 #include "esp_err.h"
+#include "esp_lcd_types.h"
 #include "lvgl.h"
 
 #ifdef __cplusplus
@@ -17,7 +18,28 @@ typedef enum {
     ESP_BMS_DISPLAY_ROTATION_INVERTED_LANDSCAPE,
 } esp_bms_display_rotation_t;
 
+typedef enum {
+    ESP_BMS_LVGL_DISPLAY_BUS_SPI = 0,
+    ESP_BMS_LVGL_DISPLAY_BUS_I80,
+} esp_bms_lvgl_display_bus_t;
+
+typedef enum {
+    ESP_BMS_LVGL_PANEL_ST7789 = 0,
+    ESP_BMS_LVGL_PANEL_ST7796,
+    ESP_BMS_LVGL_PANEL_ILI9488,
+} esp_bms_lvgl_panel_driver_t;
+
+typedef enum {
+    ESP_BMS_LVGL_TOUCH_NONE = 0,
+    ESP_BMS_LVGL_TOUCH_XPT2046,
+    ESP_BMS_LVGL_TOUCH_FT5X06,
+    ESP_BMS_LVGL_TOUCH_GT1151,
+} esp_bms_lvgl_touch_driver_t;
+
 typedef struct {
+    esp_bms_lvgl_display_bus_t display_bus;
+    esp_bms_lvgl_panel_driver_t panel_driver;
+    esp_bms_lvgl_touch_driver_t touch_driver;
     gpio_num_t pin_miso;
     gpio_num_t pin_mosi;
     gpio_num_t pin_sclk;
@@ -25,47 +47,44 @@ typedef struct {
     gpio_num_t pin_dc;
     gpio_num_t pin_reset;
     gpio_num_t pin_backlight;
+    gpio_num_t i80_data_pins[16];
+    gpio_num_t pin_wr;
+    uint8_t i80_bus_width;
     gpio_num_t pin_touch_miso;
     gpio_num_t pin_touch_mosi;
     gpio_num_t pin_touch_sclk;
     gpio_num_t pin_touch_cs;
     gpio_num_t pin_touch_irq;
+    gpio_num_t pin_touch_reset;
+    gpio_num_t pin_touch_sda;
+    gpio_num_t pin_touch_scl;
     int backlight_on_level;
     uint32_t pixel_clock_hz;
     uint16_t physical_width;
     uint16_t physical_height;
     esp_bms_display_rotation_t rotation;
+    lcd_rgb_element_order_t rgb_element_order;
+    bool invert_color;
+    uint8_t spi_mode;
+    bool i80_swap_color_bytes;
+    bool i80_pclk_active_neg;
+    bool i80_pclk_idle_low;
     bool touch_use_irq;
     bool touch_swap_xy;
     bool touch_mirror_x;
     bool touch_mirror_y;
+    uint16_t touch_i2c_address;
+    uint32_t touch_i2c_clock_hz;
+    uint8_t touch_i2c_control_phase_bytes;
+    uint8_t touch_i2c_dc_bit_offset;
+    uint8_t touch_i2c_cmd_bits;
+    uint8_t touch_i2c_param_bits;
+    bool touch_i2c_disable_control_phase;
+    bool touch_i2c_internal_pullup;
+    uint8_t touch_reset_level;
+    uint8_t touch_irq_level;
     uint32_t power_on_delay_ms;
 } esp_bms_lvgl_bridge_config_t;
-
-#define ESP_BMS_LVGL_BRIDGE_DEFAULT_CONFIG() {          \
-    .pin_miso = GPIO_NUM_12,                            \
-    .pin_mosi = GPIO_NUM_13,                            \
-    .pin_sclk = GPIO_NUM_14,                            \
-    .pin_cs = GPIO_NUM_15,                              \
-    .pin_dc = GPIO_NUM_2,                               \
-    .pin_reset = GPIO_NUM_NC,                           \
-    .pin_backlight = GPIO_NUM_21,                       \
-    .pin_touch_miso = GPIO_NUM_39,                      \
-    .pin_touch_mosi = GPIO_NUM_32,                      \
-    .pin_touch_sclk = GPIO_NUM_25,                      \
-    .pin_touch_cs = GPIO_NUM_33,                        \
-    .pin_touch_irq = GPIO_NUM_36,                       \
-    .backlight_on_level = 1,                            \
-    .pixel_clock_hz = 40 * 1000 * 1000,                 \
-    .physical_width = 240,                              \
-    .physical_height = 320,                             \
-    .rotation = ESP_BMS_DISPLAY_ROTATION_LANDSCAPE,     \
-    .touch_use_irq = false,                             \
-    .touch_swap_xy = true,                              \
-    .touch_mirror_x = false,                            \
-    .touch_mirror_y = false,                            \
-    .power_on_delay_ms = 1000,                          \
-}
 
 esp_err_t esp_bms_lvgl_bridge_init(const esp_bms_lvgl_bridge_config_t *config);
 esp_err_t esp_bms_lvgl_bridge_set_brightness(uint8_t percent);

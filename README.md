@@ -95,7 +95,7 @@ GPIO 不在 README 中重复维护，代码中的配置位置如下：
 
 | 层 | 技术 |
 | --- | --- |
-| 固件 | C、ESP-IDF 5.5.x（当前开发环境 5.5.4）、FreeRTOS、CMake / `idf.py` |
+| 固件 | C、ESP-IDF 6.0.2、FreeRTOS、CMake / `idf.py` |
 | 显示 | LVGL 9.5、`esp_lvgl_adapter`、`esp_lcd`、ST7789、XPT2046 |
 | 设备能力 | NimBLE、Wi-Fi SoftAP、`esp_http_server`、NVS、UART NMEA、ADC、LEDC、DAC |
 | 嵌入式 Web | 单页 HTML / CSS / Vanilla JavaScript，编译进固件镜像 |
@@ -107,7 +107,7 @@ GPIO 不在 README 中重复维护，代码中的配置位置如下：
 
 ## 🚀 如何烧录
 
-准备 ESP-IDF 5.5.x；仓库脚本会优先加载 `$IDF_PATH/export.sh`，否则尝试 `$HOME/esp/esp-idf-v5.5.4/export.sh`。
+准备 ESP-IDF 6.0.2；仓库脚本会优先加载 `$IDF_PATH/export.sh` 并核验其版本，否则尝试 `$HOME/esp/esp-idf-v6.0.2/export.sh`。
 
 Linux 本地串口：
 

@@ -5,6 +5,8 @@
 
 #include "driver/dac_continuous.h"
 #include "driver/gpio.h"
+#include "driver/i2s_std.h"
+#include "esp_bms_profile_hardware.h"
 #include "esp_check.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -13,8 +15,9 @@
 
 static const char *TAG = "bms_audio_feedback";
 
-#define AUDIO_DAC_GPIO GPIO_NUM_26
-#define AUDIO_ENABLE_GPIO GPIO_NUM_4
+#define AUDIO_DAC_GPIO ESP_BMS_PROFILE_AUDIO_DAC
+#define AUDIO_ENABLE_GPIO ESP_BMS_PROFILE_AUDIO_ENABLE
+#define AUDIO_ENABLE_ACTIVE_LEVEL ESP_BMS_PROFILE_AUDIO_ENABLE_ACTIVE_LEVEL
 #define AUDIO_SAMPLE_RATE_HZ 16000U
 #define AUDIO_DAC_BUFFER_SIZE 1024U
 #define AUDIO_DAC_DESCRIPTOR_COUNT 4U
@@ -46,15 +49,45 @@ typedef struct {
 } audio_command_t;
 
 static dac_continuous_handle_t s_dac;
+static i2s_chan_handle_t s_i2s_tx;
 static QueueHandle_t s_audio_command_queue;
 static bool s_audio_ready;
 static bool s_audio_output_enabled;
 static uint8_t s_volume_beep[AUDIO_BEEP_SAMPLE_COUNT];
 static uint8_t s_silence[AUDIO_DAC_BUFFER_SIZE];
+static int16_t s_i2s_stereo_samples[AUDIO_DAC_BUFFER_SIZE * 2U];
 
 static uint8_t audio_clamp_volume(uint8_t volume_percent)
 {
     return volume_percent > 100U ? 100U : volume_percent;
+}
+
+static bool audio_uses_i2s(void)
+{
+    return ESP_BMS_PROFILE_AUDIO_BACKEND == ESP_BMS_PROFILE_AUDIO_BACKEND_I2S;
+}
+
+static esp_err_t audio_transport_write(const uint8_t *samples, size_t sample_count)
+{
+    if (!audio_uses_i2s()) {
+        return dac_continuous_write(s_dac, samples, sample_count, NULL, -1);
+    }
+    if (!s_i2s_tx) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    for (size_t index = 0; index < sample_count; ++index) {
+        const int16_t sample = ((int16_t)samples[index] - 128) << 8;
+        s_i2s_stereo_samples[index * 2U] = sample;
+        s_i2s_stereo_samples[index * 2U + 1U] = sample;
+    }
+    size_t bytes_written = 0;
+    const size_t byte_count = sample_count * 2U * sizeof(s_i2s_stereo_samples[0]);
+    const esp_err_t ret = i2s_channel_write(s_i2s_tx,
+                                            s_i2s_stereo_samples,
+                                            byte_count,
+                                            &bytes_written,
+                                            portMAX_DELAY);
+    return ret == ESP_OK && bytes_written == byte_count ? ESP_OK : ESP_FAIL;
 }
 
 static esp_err_t audio_output_enable(void)
@@ -62,8 +95,13 @@ static esp_err_t audio_output_enable(void)
     if (s_audio_output_enabled) {
         return ESP_OK;
     }
-    ESP_RETURN_ON_ERROR(gpio_set_level(AUDIO_ENABLE_GPIO, 0), TAG, "enable audio amplifier failed");
-    ESP_RETURN_ON_ERROR(dac_continuous_enable(s_dac), TAG, "enable DAC channel failed");
+    ESP_RETURN_ON_ERROR(gpio_set_level(AUDIO_ENABLE_GPIO, AUDIO_ENABLE_ACTIVE_LEVEL), TAG,
+                        "enable audio amplifier failed");
+    if (audio_uses_i2s()) {
+        ESP_RETURN_ON_ERROR(i2s_channel_enable(s_i2s_tx), TAG, "enable I2S channel failed");
+    } else {
+        ESP_RETURN_ON_ERROR(dac_continuous_enable(s_dac), TAG, "enable DAC channel failed");
+    }
     s_audio_output_enabled = true;
     vTaskDelay(pdMS_TO_TICKS(AUDIO_AMPLIFIER_SETTLE_MS));
     return ESP_OK;
@@ -75,11 +113,15 @@ static void audio_output_disable(void)
         return;
     }
     memset(s_silence, 128, sizeof(s_silence));
-    if (dac_continuous_write(s_dac, s_silence, AUDIO_SILENCE_SAMPLE_COUNT, NULL, -1) == ESP_OK) {
+    if (audio_transport_write(s_silence, AUDIO_SILENCE_SAMPLE_COUNT) == ESP_OK) {
         vTaskDelay(pdMS_TO_TICKS(AUDIO_SILENCE_SETTLE_MS));
     }
-    (void)dac_continuous_disable(s_dac);
-    (void)gpio_set_level(AUDIO_ENABLE_GPIO, 1);
+    if (audio_uses_i2s()) {
+        (void)i2s_channel_disable(s_i2s_tx);
+    } else {
+        (void)dac_continuous_disable(s_dac);
+    }
+    (void)gpio_set_level(AUDIO_ENABLE_GPIO, !AUDIO_ENABLE_ACTIVE_LEVEL);
     s_audio_output_enabled = false;
 }
 
@@ -107,7 +149,7 @@ static esp_err_t audio_write_pcm(const uint8_t *pcm,
             const int32_t output = 128 + ((int32_t)centered * gain) / 100;
             buffer[index] = (uint8_t)(output < 0 ? 0 : output > 255 ? 255 : output);
         }
-        const esp_err_t ret = dac_continuous_write(s_dac, buffer, chunk_len, NULL, -1);
+        const esp_err_t ret = audio_transport_write(buffer, chunk_len);
         if (ret != ESP_OK) {
             return ret;
         }
@@ -136,7 +178,7 @@ static void audio_play_voice(esp_bms_audio_voice_t voice, uint8_t volume_percent
     memset(s_silence, 128, sizeof(s_silence));
     for (uint16_t offset = 0U; offset < AUDIO_VOICE_PREROLL_SAMPLE_COUNT;
          offset += AUDIO_DAC_BUFFER_SIZE) {
-        if (dac_continuous_write(s_dac, s_silence, sizeof(s_silence), NULL, -1) != ESP_OK) {
+        if (audio_transport_write(s_silence, sizeof(s_silence)) != ESP_OK) {
             ESP_LOGW(TAG, "voice pre-roll failed");
             return;
         }
@@ -187,6 +229,13 @@ static void audio_queue_command(audio_command_t command)
 
 esp_err_t esp_bms_audio_feedback_init(void)
 {
+    if (ESP_BMS_PROFILE_AUDIO_BACKEND == ESP_BMS_PROFILE_AUDIO_BACKEND_NONE) {
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+    if (AUDIO_ENABLE_GPIO == GPIO_NUM_NC) {
+        ESP_LOGE(TAG, "audio amplifier enable GPIO is not configured");
+        return ESP_ERR_INVALID_ARG;
+    }
     const gpio_config_t enable_config = {
         .pin_bit_mask = 1ULL << AUDIO_ENABLE_GPIO,
         .mode = GPIO_MODE_OUTPUT,
@@ -195,18 +244,57 @@ esp_err_t esp_bms_audio_feedback_init(void)
         .intr_type = GPIO_INTR_DISABLE,
     };
     ESP_RETURN_ON_ERROR(gpio_config(&enable_config), TAG, "configure audio enable GPIO failed");
-    ESP_RETURN_ON_ERROR(gpio_set_level(AUDIO_ENABLE_GPIO, 1), TAG, "disable audio amplifier failed");
+    ESP_RETURN_ON_ERROR(gpio_set_level(AUDIO_ENABLE_GPIO, !AUDIO_ENABLE_ACTIVE_LEVEL), TAG,
+                        "disable audio amplifier failed");
 
-    const dac_continuous_config_t dac_config = {
-        .chan_mask = DAC_CHANNEL_MASK_CH1,
-        .desc_num = AUDIO_DAC_DESCRIPTOR_COUNT,
-        .buf_size = AUDIO_DAC_BUFFER_SIZE,
-        .freq_hz = AUDIO_SAMPLE_RATE_HZ,
-        .offset = 0,
-        .clk_src = DAC_DIGI_CLK_SRC_APLL,
-        .chan_mode = DAC_CHANNEL_MODE_SIMUL,
-    };
-    ESP_RETURN_ON_ERROR(dac_continuous_new_channels(&dac_config, &s_dac), TAG, "create DAC channel failed");
+    if (audio_uses_i2s()) {
+        if (ESP_BMS_PROFILE_AUDIO_I2S_BCLK == GPIO_NUM_NC ||
+            ESP_BMS_PROFILE_AUDIO_I2S_LRCK == GPIO_NUM_NC ||
+            ESP_BMS_PROFILE_AUDIO_I2S_DATA == GPIO_NUM_NC) {
+            ESP_LOGE(TAG, "I2S audio GPIOs are incomplete");
+            return ESP_ERR_INVALID_ARG;
+        }
+        const i2s_chan_config_t channel_config =
+            I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_AUTO, I2S_ROLE_MASTER);
+        const i2s_std_config_t i2s_config = {
+            .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(AUDIO_SAMPLE_RATE_HZ),
+            .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT,
+                                                             I2S_SLOT_MODE_STEREO),
+            .gpio_cfg = {
+                .mclk = I2S_GPIO_UNUSED,
+                .bclk = ESP_BMS_PROFILE_AUDIO_I2S_BCLK,
+                .ws = ESP_BMS_PROFILE_AUDIO_I2S_LRCK,
+                .dout = ESP_BMS_PROFILE_AUDIO_I2S_DATA,
+                .din = I2S_GPIO_UNUSED,
+            },
+        };
+        ESP_RETURN_ON_ERROR(i2s_new_channel(&channel_config, &s_i2s_tx, NULL), TAG,
+                            "create I2S TX channel failed");
+        const esp_err_t i2s_ret = i2s_channel_init_std_mode(s_i2s_tx, &i2s_config);
+        if (i2s_ret != ESP_OK) {
+            (void)i2s_del_channel(s_i2s_tx);
+            s_i2s_tx = NULL;
+            return i2s_ret;
+        }
+    } else if (ESP_BMS_PROFILE_AUDIO_BACKEND == ESP_BMS_PROFILE_AUDIO_BACKEND_DAC) {
+        if (AUDIO_DAC_GPIO == GPIO_NUM_NC) {
+            ESP_LOGE(TAG, "DAC audio GPIO is not configured");
+            return ESP_ERR_INVALID_ARG;
+        }
+        const dac_continuous_config_t dac_config = {
+            .chan_mask = ESP_BMS_PROFILE_AUDIO_DAC_CHANNEL_MASK,
+            .desc_num = AUDIO_DAC_DESCRIPTOR_COUNT,
+            .buf_size = AUDIO_DAC_BUFFER_SIZE,
+            .freq_hz = AUDIO_SAMPLE_RATE_HZ,
+            .offset = 0,
+            .clk_src = DAC_DIGI_CLK_SRC_APLL,
+            .chan_mode = DAC_CHANNEL_MODE_SIMUL,
+        };
+        ESP_RETURN_ON_ERROR(dac_continuous_new_channels(&dac_config, &s_dac), TAG,
+                            "create DAC channel failed");
+    } else {
+        return ESP_ERR_NOT_SUPPORTED;
+    }
 
     s_audio_command_queue = xQueueCreate(AUDIO_COMMAND_QUEUE_LENGTH, sizeof(audio_command_t));
     if (!s_audio_command_queue) {
@@ -223,8 +311,8 @@ esp_err_t esp_bms_audio_feedback_init(void)
         return ESP_ERR_NO_MEM;
     }
     s_audio_ready = true;
-    ESP_LOGI(TAG, "audio feedback ready: dac_gpio=%d enable_gpio=%d sample_rate=%u",
-             AUDIO_DAC_GPIO, AUDIO_ENABLE_GPIO, AUDIO_SAMPLE_RATE_HZ);
+    ESP_LOGI(TAG, "audio feedback ready: backend=%d enable_gpio=%d sample_rate=%u",
+             ESP_BMS_PROFILE_AUDIO_BACKEND, AUDIO_ENABLE_GPIO, AUDIO_SAMPLE_RATE_HZ);
     return ESP_OK;
 }
 
@@ -250,5 +338,5 @@ void esp_bms_audio_feedback_play_voice(esp_bms_audio_voice_t voice, uint8_t volu
 
 void esp_bms_audio_feedback_tick(void)
 {
-    /* Playback is owned by the dedicated DAC task. */
+    /* Playback is owned by the dedicated audio task. */
 }

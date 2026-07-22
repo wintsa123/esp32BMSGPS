@@ -1,9 +1,17 @@
 dependencies:
   idf:
-    version: ">=5.5"
+    version: ">=6.0.2,<6.1.0"
   espressif/esp_lvgl_adapter:
     version: "^0.6.2"
   lvgl/lvgl:
     version: "9.5.0"
   atanisoft/esp_lcd_touch_xpt2046:
     version: "^1.0.6"
+  atanisoft/esp_lcd_ili9488:
+    version: "^1.1.1"
+  espressif/esp_lcd_st7796:
+    version: "^1.4.0"
+  espressif/esp_lcd_touch_ft5x06:
+    version: "^1.1.0"
+  espressif/esp_lcd_touch_gt1151:
+    version: "^1.1.0~1"

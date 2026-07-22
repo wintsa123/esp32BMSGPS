@@ -61,7 +61,7 @@ When a GPIO changes, update both its code authority and the project spec. Do not
 
 | Layer | Technology |
 | --- | --- |
-| Firmware | C, ESP-IDF 5.5.x (current environment: 5.5.4), FreeRTOS, CMake / `idf.py` |
+| Firmware | C, ESP-IDF 6.0.2, FreeRTOS, CMake / `idf.py` |
 | Display | LVGL 9.5, `esp_lvgl_adapter`, `esp_lcd`, ST7789, XPT2046 |
 | Device services | NimBLE, Wi-Fi SoftAP, `esp_http_server`, NVS, UART NMEA, ADC, LEDC, DAC |
 | Embedded Web | Single-page HTML / CSS / vanilla JavaScript embedded in the firmware image |
@@ -73,7 +73,7 @@ Dependency versions, partitions, diagnostic images, and platform build commands 
 
 ## 🚀 Flashing
 
-Install ESP-IDF 5.5.x. The repository wrapper first loads `$IDF_PATH/export.sh`, then falls back to `$HOME/esp/esp-idf-v5.5.4/export.sh`.
+Install ESP-IDF 6.0.2. The repository wrapper first loads `$IDF_PATH/export.sh` and verifies its version, then falls back to `$HOME/esp/esp-idf-v6.0.2/export.sh`.
 
 Linux local serial:
 

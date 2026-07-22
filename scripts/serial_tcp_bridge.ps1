@@ -14,7 +14,7 @@ function Initialize-IdfEnvironment {
     if (Test-Path Env:IDF_PATH) {
         $candidates += (Join-Path $env:IDF_PATH "export.ps1")
     }
-    $candidates += (Join-Path $env:USERPROFILE "esp\esp-idf-v5.5.4\export.ps1")
+    $candidates += (Join-Path $env:USERPROFILE "esp\esp-idf-v6.0.2\export.ps1")
 
     foreach ($candidate in $candidates) {
         if (Test-Path $candidate) {
@@ -46,7 +46,7 @@ function Resolve-Rfc2217Server {
         return $discoveredServer.FullName
     }
 
-    throw "esp_rfc2217_server.exe was not found after loading ESP-IDF. Set IDF_PATH, install ESP-IDF 5.5.4 under $env:USERPROFILE\esp, or pass -IdfPythonEnv."
+    throw "esp_rfc2217_server.exe was not found after loading ESP-IDF. Set IDF_PATH, install ESP-IDF 6.0.2 under $env:USERPROFILE\esp, or pass -IdfPythonEnv."
 }
 
 function Test-FirewallRuleScope {

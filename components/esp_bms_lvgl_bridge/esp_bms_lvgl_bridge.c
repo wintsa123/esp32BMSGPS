@@ -4,14 +4,21 @@
 #include <stddef.h>
 #include <string.h>
 #include "driver/gpio.h"
+#include "driver/i2c_master.h"
 #include "driver/ledc.h"
 #include "driver/spi_master.h"
 #include "esp_check.h"
 #include "esp_heap_caps.h"
+#include "esp_lcd_io_i2c.h"
+#include "esp_lcd_io_i80.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_panel_vendor.h"
 #include "esp_lcd_touch.h"
+#include "esp_lcd_touch_ft5x06.h"
+#include "esp_lcd_touch_gt1151.h"
 #include "esp_lcd_touch_xpt2046.h"
+#include "esp_lcd_ili9488.h"
+#include "esp_lcd_st7796.h"
 #include "esp_bms_lvgl_contract.h"
 #include "esp_lv_adapter.h"
 #include "esp_lv_adapter_input.h"
@@ -19,6 +26,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "nvs.h"
+#include "soc/soc_caps.h"
 
 static const char *TAG = "bms_lvgl_bridge";
 
@@ -49,6 +57,7 @@ static esp_lcd_panel_io_handle_t s_panel_io;
 static esp_lcd_panel_handle_t s_panel;
 static esp_lcd_panel_io_handle_t s_touch_io;
 static esp_lcd_touch_handle_t s_touch;
+static i2c_master_bus_handle_t s_touch_i2c_bus;
 static lv_display_t *s_display;
 static lv_indev_t *s_touch_indev;
 static gpio_num_t s_backlight_pin = GPIO_NUM_NC;
@@ -744,39 +753,10 @@ static esp_err_t touch_read_with_diagnostics(esp_lcd_touch_handle_t tp,
     return ESP_OK;
 }
 
-static esp_err_t init_touch(const esp_bms_lvgl_bridge_config_t *config, uint16_t hres, uint16_t vres)
+static esp_lcd_touch_config_t make_touch_config(const esp_bms_lvgl_bridge_config_t *config,
+                                                uint16_t hres,
+                                                uint16_t vres)
 {
-    if (config->pin_touch_cs == GPIO_NUM_NC) {
-        ESP_LOGI(TAG, "touch disabled");
-        return ESP_OK;
-    }
-
-    ESP_LOGI(TAG, "init XPT2046 touch on SPI3 clk=%d mosi=%d miso=%d cs=%d irq=%d polling=%s",
-             config->pin_touch_sclk,
-             config->pin_touch_mosi,
-             config->pin_touch_miso,
-             config->pin_touch_cs,
-             config->pin_touch_irq,
-             config->touch_use_irq ? "no" : "yes");
-
-    const spi_bus_config_t touch_bus_config = {
-        .sclk_io_num = config->pin_touch_sclk,
-        .mosi_io_num = config->pin_touch_mosi,
-        .miso_io_num = config->pin_touch_miso,
-        .quadwp_io_num = GPIO_NUM_NC,
-        .quadhd_io_num = GPIO_NUM_NC,
-        .max_transfer_sz = 256,
-    };
-    ESP_RETURN_ON_ERROR(spi_bus_initialize(SPI3_HOST, &touch_bus_config, SPI_DMA_CH_AUTO),
-                        TAG, "initialize touch SPI bus failed");
-
-    const esp_lcd_panel_io_spi_config_t touch_io_config =
-        ESP_LCD_TOUCH_IO_SPI_XPT2046_CONFIG(config->pin_touch_cs);
-    ESP_RETURN_ON_ERROR(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)SPI3_HOST,
-                                                &touch_io_config,
-                                                &s_touch_io),
-                        TAG, "create touch panel IO failed");
-
     s_touch_base_swap_xy = config->touch_swap_xy;
     s_touch_base_mirror_x = config->touch_mirror_x;
     s_touch_base_mirror_y = config->touch_mirror_y;
@@ -788,14 +768,14 @@ static esp_err_t init_touch(const esp_bms_lvgl_bridge_config_t *config, uint16_t
     uint16_t touch_x_max = 0;
     uint16_t touch_y_max = 0;
     touch_coordinate_range(touch_swap_xy, hres, vres, &touch_x_max, &touch_y_max);
-    const esp_lcd_touch_config_t touch_config = {
+    return (esp_lcd_touch_config_t) {
         .x_max = touch_x_max,
         .y_max = touch_y_max,
-        .rst_gpio_num = GPIO_NUM_NC,
+        .rst_gpio_num = config->pin_touch_reset,
         .int_gpio_num = config->touch_use_irq ? config->pin_touch_irq : GPIO_NUM_NC,
         .levels = {
-            .reset = 0,
-            .interrupt = 0,
+            .reset = config->touch_reset_level,
+            .interrupt = config->touch_irq_level,
         },
         .flags = {
             .swap_xy = touch_swap_xy,
@@ -803,30 +783,230 @@ static esp_err_t init_touch(const esp_bms_lvgl_bridge_config_t *config, uint16_t
             .mirror_y = touch_mirror_y,
         },
     };
-    ESP_RETURN_ON_ERROR(esp_lcd_touch_new_spi_xpt2046(s_touch_io, &touch_config, &s_touch),
-                        TAG, "create XPT2046 touch failed");
-    ESP_LOGI(TAG, "touch initial rotation swap_xy=%s mirror_x=%s mirror_y=%s x_max=%u y_max=%u",
-             touch_swap_xy ? "yes" : "no",
-             touch_mirror_x ? "yes" : "no",
-             touch_mirror_y ? "yes" : "no",
-             (unsigned)touch_x_max,
-             (unsigned)touch_y_max);
+}
 
+static esp_err_t register_touch(const esp_bms_lvgl_bridge_config_t *config)
+{
     esp_lv_adapter_touch_config_t adapter_touch_config =
         ESP_LV_ADAPTER_TOUCH_DEFAULT_CONFIG(s_display, s_touch);
     adapter_touch_config.callbacks.custom_touch_read = touch_read_with_diagnostics;
     s_touch_indev = esp_lv_adapter_register_touch(&adapter_touch_config);
     ESP_RETURN_ON_FALSE(s_touch_indev, ESP_FAIL, TAG, "register LVGL touch failed");
-
+    ESP_LOGI(TAG, "touch initialized driver=%d irq=%s", config->touch_driver,
+             config->touch_use_irq ? "enabled" : "polling");
     return ESP_OK;
+}
+
+static esp_err_t init_touch_xpt2046(const esp_bms_lvgl_bridge_config_t *config,
+                                    uint16_t hres,
+                                    uint16_t vres)
+{
+    ESP_RETURN_ON_FALSE(config->pin_touch_sclk != GPIO_NUM_NC &&
+                            config->pin_touch_mosi != GPIO_NUM_NC &&
+                            config->pin_touch_miso != GPIO_NUM_NC &&
+                            config->pin_touch_cs != GPIO_NUM_NC,
+                        ESP_ERR_INVALID_ARG, TAG, "XPT2046 pins are incomplete");
+    const spi_bus_config_t touch_bus_config = {
+        .sclk_io_num = config->pin_touch_sclk,
+        .mosi_io_num = config->pin_touch_mosi,
+        .miso_io_num = config->pin_touch_miso,
+        .quadwp_io_num = GPIO_NUM_NC,
+        .quadhd_io_num = GPIO_NUM_NC,
+        .max_transfer_sz = 256,
+    };
+    ESP_RETURN_ON_ERROR(spi_bus_initialize(SPI3_HOST, &touch_bus_config, SPI_DMA_CH_AUTO),
+                        TAG, "initialize touch SPI bus failed");
+    const esp_lcd_panel_io_spi_config_t touch_io_config =
+        ESP_LCD_TOUCH_IO_SPI_XPT2046_CONFIG(config->pin_touch_cs);
+    ESP_RETURN_ON_ERROR(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)SPI3_HOST,
+                                                   &touch_io_config, &s_touch_io),
+                        TAG, "create touch panel IO failed");
+    const esp_lcd_touch_config_t touch_config = make_touch_config(config, hres, vres);
+    ESP_RETURN_ON_ERROR(esp_lcd_touch_new_spi_xpt2046(s_touch_io, &touch_config, &s_touch),
+                        TAG, "create XPT2046 touch failed");
+    return register_touch(config);
+}
+
+static esp_err_t init_touch_i2c(const esp_bms_lvgl_bridge_config_t *config,
+                                uint16_t hres,
+                                uint16_t vres)
+{
+    ESP_RETURN_ON_FALSE(config->pin_touch_sda != GPIO_NUM_NC &&
+                            config->pin_touch_scl != GPIO_NUM_NC &&
+                            config->touch_i2c_address > 0U &&
+                            config->touch_i2c_clock_hz > 0U,
+                        ESP_ERR_INVALID_ARG, TAG, "I2C touch configuration is incomplete");
+    const i2c_master_bus_config_t i2c_bus_config = {
+        .i2c_port = -1,
+        .sda_io_num = config->pin_touch_sda,
+        .scl_io_num = config->pin_touch_scl,
+        .clk_source = I2C_CLK_SRC_DEFAULT,
+        .glitch_ignore_cnt = 7,
+        .flags.enable_internal_pullup = config->touch_i2c_internal_pullup,
+    };
+    ESP_RETURN_ON_ERROR(i2c_new_master_bus(&i2c_bus_config, &s_touch_i2c_bus),
+                        TAG, "initialize touch I2C bus failed");
+    const esp_lcd_panel_io_i2c_config_t touch_io_config = {
+        .dev_addr = config->touch_i2c_address,
+        .scl_speed_hz = config->touch_i2c_clock_hz,
+        .control_phase_bytes = config->touch_i2c_control_phase_bytes,
+        .dc_bit_offset = config->touch_i2c_dc_bit_offset,
+        .lcd_cmd_bits = config->touch_i2c_cmd_bits,
+        .lcd_param_bits = config->touch_i2c_param_bits,
+        .flags.disable_control_phase = config->touch_i2c_disable_control_phase,
+    };
+    ESP_RETURN_ON_ERROR(esp_lcd_new_panel_io_i2c(s_touch_i2c_bus, &touch_io_config, &s_touch_io),
+                        TAG, "create touch I2C panel IO failed");
+    const esp_lcd_touch_config_t touch_config = make_touch_config(config, hres, vres);
+    if (config->touch_driver == ESP_BMS_LVGL_TOUCH_FT5X06) {
+        ESP_RETURN_ON_ERROR(esp_lcd_touch_new_i2c_ft5x06(s_touch_io, &touch_config, &s_touch),
+                            TAG, "create FT5X06 touch failed");
+    } else {
+        ESP_RETURN_ON_ERROR(esp_lcd_touch_new_i2c_gt1151(s_touch_io, &touch_config, &s_touch),
+                            TAG, "create GT1151 touch failed");
+    }
+    return register_touch(config);
+}
+
+static esp_err_t init_touch(const esp_bms_lvgl_bridge_config_t *config, uint16_t hres, uint16_t vres)
+{
+    if (config->touch_driver == ESP_BMS_LVGL_TOUCH_NONE) {
+        ESP_LOGI(TAG, "touch disabled by profile");
+        return ESP_OK;
+    }
+    ESP_RETURN_ON_FALSE(!config->touch_use_irq || config->pin_touch_irq != GPIO_NUM_NC,
+                        ESP_ERR_INVALID_ARG, TAG, "touch IRQ is enabled without a GPIO");
+    switch (config->touch_driver) {
+    case ESP_BMS_LVGL_TOUCH_XPT2046:
+        return init_touch_xpt2046(config, hres, vres);
+    case ESP_BMS_LVGL_TOUCH_FT5X06:
+    case ESP_BMS_LVGL_TOUCH_GT1151:
+        return init_touch_i2c(config, hres, vres);
+    default:
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+}
+
+static esp_err_t init_panel_spi(const esp_bms_lvgl_bridge_config_t *config, int max_transfer_sz)
+{
+    ESP_RETURN_ON_FALSE(config->panel_driver == ESP_BMS_LVGL_PANEL_ST7789,
+                        ESP_ERR_NOT_SUPPORTED, TAG, "SPI panel driver is unsupported");
+    const spi_bus_config_t bus_config = {
+        .sclk_io_num = config->pin_sclk,
+        .mosi_io_num = config->pin_mosi,
+        .miso_io_num = config->pin_miso,
+        .quadwp_io_num = GPIO_NUM_NC,
+        .quadhd_io_num = GPIO_NUM_NC,
+        .max_transfer_sz = max_transfer_sz,
+    };
+    ESP_RETURN_ON_ERROR(spi_bus_initialize(SPI2_HOST, &bus_config, SPI_DMA_CH_AUTO),
+                        TAG, "initialize display SPI bus failed");
+    const esp_lcd_panel_io_spi_config_t io_config = {
+        .dc_gpio_num = config->pin_dc,
+        .cs_gpio_num = config->pin_cs,
+        .pclk_hz = config->pixel_clock_hz,
+        .lcd_cmd_bits = 8,
+        .lcd_param_bits = 8,
+        .spi_mode = config->spi_mode,
+        .trans_queue_depth = 10,
+    };
+    ESP_RETURN_ON_ERROR(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)SPI2_HOST,
+                                                   &io_config, &s_panel_io),
+                        TAG, "create display SPI panel IO failed");
+    const esp_lcd_panel_dev_config_t panel_config = {
+        .reset_gpio_num = config->pin_reset,
+        .rgb_ele_order = config->rgb_element_order,
+        .data_endian = LCD_RGB_DATA_ENDIAN_BIG,
+        .bits_per_pixel = 16,
+    };
+    return esp_lcd_new_panel_st7789(s_panel_io, &panel_config, &s_panel);
+}
+
+static esp_err_t init_panel_i80(const esp_bms_lvgl_bridge_config_t *config, int max_transfer_sz)
+{
+#if SOC_LCD_I80_SUPPORTED
+    const esp_lcd_i80_bus_config_t bus_config = {
+        .dc_gpio_num = config->pin_dc,
+        .wr_gpio_num = config->pin_wr,
+        .clk_src = LCD_CLK_SRC_DEFAULT,
+        .data_gpio_nums = {
+            config->i80_data_pins[0], config->i80_data_pins[1], config->i80_data_pins[2], config->i80_data_pins[3],
+            config->i80_data_pins[4], config->i80_data_pins[5], config->i80_data_pins[6], config->i80_data_pins[7],
+            config->i80_data_pins[8], config->i80_data_pins[9], config->i80_data_pins[10], config->i80_data_pins[11],
+            config->i80_data_pins[12], config->i80_data_pins[13], config->i80_data_pins[14], config->i80_data_pins[15],
+        },
+        .bus_width = config->i80_bus_width,
+        .max_transfer_bytes = (size_t)max_transfer_sz,
+        .dma_burst_size = 64,
+    };
+    esp_lcd_i80_bus_handle_t i80_bus = NULL;
+    ESP_RETURN_ON_ERROR(esp_lcd_new_i80_bus(&bus_config, &i80_bus), TAG, "initialize display I80 bus failed");
+    const esp_lcd_panel_io_i80_config_t io_config = {
+        .cs_gpio_num = config->pin_cs,
+        .pclk_hz = config->pixel_clock_hz,
+        .trans_queue_depth = 10,
+        .dc_levels = {
+            .dc_idle_level = 0,
+            .dc_cmd_level = 0,
+            .dc_dummy_level = 0,
+            .dc_data_level = 1,
+        },
+        .lcd_cmd_bits = 8,
+        .lcd_param_bits = 8,
+        .flags = {
+            .swap_color_bytes = config->i80_swap_color_bytes,
+            .pclk_active_neg = config->i80_pclk_active_neg,
+            .pclk_idle_low = config->i80_pclk_idle_low,
+        },
+    };
+    ESP_RETURN_ON_ERROR(esp_lcd_new_panel_io_i80(i80_bus, &io_config, &s_panel_io),
+                        TAG, "create display I80 panel IO failed");
+    const esp_lcd_panel_dev_config_t panel_config = {
+        .reset_gpio_num = config->pin_reset,
+        .rgb_ele_order = config->rgb_element_order,
+        .data_endian = LCD_RGB_DATA_ENDIAN_BIG,
+        .bits_per_pixel = 16,
+    };
+    if (config->panel_driver == ESP_BMS_LVGL_PANEL_ST7796) {
+        return esp_lcd_new_panel_st7796(s_panel_io, &panel_config, &s_panel);
+    }
+    if (config->panel_driver == ESP_BMS_LVGL_PANEL_ILI9488) {
+        return esp_lcd_new_panel_ili9488(s_panel_io, &panel_config, 0, &s_panel);
+    }
+    return ESP_ERR_NOT_SUPPORTED;
+#else
+    (void)config;
+    (void)max_transfer_sz;
+    return ESP_ERR_NOT_SUPPORTED;
+#endif
+}
+
+static esp_err_t init_panel(const esp_bms_lvgl_bridge_config_t *config, int max_transfer_sz)
+{
+    ESP_RETURN_ON_FALSE(config->pin_cs != GPIO_NUM_NC && config->pin_dc != GPIO_NUM_NC,
+                        ESP_ERR_INVALID_ARG, TAG, "display CS/DC pins are required");
+    switch (config->display_bus) {
+    case ESP_BMS_LVGL_DISPLAY_BUS_SPI:
+        ESP_RETURN_ON_FALSE(config->pin_sclk != GPIO_NUM_NC && config->pin_mosi != GPIO_NUM_NC,
+                            ESP_ERR_INVALID_ARG, TAG, "display SPI pins are incomplete");
+        return init_panel_spi(config, max_transfer_sz);
+    case ESP_BMS_LVGL_DISPLAY_BUS_I80:
+        ESP_RETURN_ON_FALSE(config->pin_wr != GPIO_NUM_NC &&
+                                (config->i80_bus_width == 8U || config->i80_bus_width == 16U),
+                            ESP_ERR_INVALID_ARG, TAG, "display I80 pins are incomplete");
+        return init_panel_i80(config, max_transfer_sz);
+    default:
+        return ESP_ERR_NOT_SUPPORTED;
+    }
 }
 
 esp_err_t esp_bms_lvgl_bridge_init(const esp_bms_lvgl_bridge_config_t *config)
 {
     ESP_RETURN_ON_FALSE(config, ESP_ERR_INVALID_ARG, TAG, "config is required");
     ESP_RETURN_ON_FALSE(!s_initialized, ESP_ERR_INVALID_STATE, TAG, "bridge already initialized");
-    ESP_RETURN_ON_FALSE(config->physical_width > 0 && config->physical_height > 0,
-                        ESP_ERR_INVALID_ARG, TAG, "invalid display resolution");
+    ESP_RETURN_ON_FALSE(config->physical_width > 0 && config->physical_height > 0 &&
+                            config->pixel_clock_hz > 0U,
+                        ESP_ERR_INVALID_ARG, TAG, "invalid display configuration");
 
     const uint16_t hres = logical_hres(config);
     const uint16_t vres = logical_vres(config);
@@ -841,58 +1021,19 @@ esp_err_t esp_bms_lvgl_bridge_init(const esp_bms_lvgl_bridge_config_t *config)
     s_physical_width = config->physical_width;
     s_physical_height = config->physical_height;
 
-    ESP_LOGI(TAG, "init ST7789 SPI display hres=%u vres=%u pclk=%lu",
-             hres, vres, (unsigned long)config->pixel_clock_hz);
-    ESP_LOGI(TAG,
-             "LVGL adapter tuning buffer_height=%u max_transfer=%d task_max_delay_ms=%u double_buffer=%s psram_free=%u psram_largest=%u psram_buffers=%s",
-             (unsigned)LVGL_SPI_DRAW_BUFFER_HEIGHT,
-             max_transfer_sz,
-             (unsigned)LVGL_TASK_MAX_DELAY_MS,
-             LVGL_REQUIRE_DOUBLE_BUFFER ? "yes" : "no",
-             (unsigned)psram_free,
-             (unsigned)psram_largest,
-             use_psram_buffers ? "yes" : "no");
-
+    ESP_LOGI(TAG, "init display bus=%d panel=%d hres=%u vres=%u pclk=%lu",
+             config->display_bus, config->panel_driver, hres, vres,
+             (unsigned long)config->pixel_clock_hz);
     ESP_RETURN_ON_ERROR(configure_backlight(config->pin_backlight, config->backlight_on_level),
                         TAG, "configure backlight failed");
-    if (config->power_on_delay_ms > 0) {
+    if (config->power_on_delay_ms > 0U) {
         vTaskDelay(pdMS_TO_TICKS(config->power_on_delay_ms));
     }
-
-    const spi_bus_config_t bus_config = {
-        .sclk_io_num = config->pin_sclk,
-        .mosi_io_num = config->pin_mosi,
-        .miso_io_num = config->pin_miso,
-        .quadwp_io_num = GPIO_NUM_NC,
-        .quadhd_io_num = GPIO_NUM_NC,
-        .max_transfer_sz = max_transfer_sz,
-    };
-    ESP_RETURN_ON_ERROR(spi_bus_initialize(SPI2_HOST, &bus_config, SPI_DMA_CH_AUTO),
-                        TAG, "initialize SPI bus failed");
-
-    const esp_lcd_panel_io_spi_config_t io_config = {
-        .dc_gpio_num = config->pin_dc,
-        .cs_gpio_num = config->pin_cs,
-        .pclk_hz = config->pixel_clock_hz,
-        .lcd_cmd_bits = 8,
-        .lcd_param_bits = 8,
-        .spi_mode = 0,
-        .trans_queue_depth = 10,
-    };
-    ESP_RETURN_ON_ERROR(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)SPI2_HOST, &io_config, &s_panel_io),
-                        TAG, "create panel IO failed");
-
-    const esp_lcd_panel_dev_config_t panel_config = {
-        .reset_gpio_num = config->pin_reset,
-        .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB,
-        .data_endian = LCD_RGB_DATA_ENDIAN_BIG,
-        .bits_per_pixel = 16,
-    };
-    ESP_RETURN_ON_ERROR(esp_lcd_new_panel_st7789(s_panel_io, &panel_config, &s_panel),
-                        TAG, "create ST7789 panel failed");
+    ESP_RETURN_ON_ERROR(init_panel(config, max_transfer_sz), TAG, "create display panel failed");
     ESP_RETURN_ON_ERROR(esp_lcd_panel_reset(s_panel), TAG, "reset panel failed");
     ESP_RETURN_ON_ERROR(esp_lcd_panel_init(s_panel), TAG, "init panel failed");
-    ESP_RETURN_ON_ERROR(esp_lcd_panel_invert_color(s_panel, false), TAG, "set inversion failed");
+    ESP_RETURN_ON_ERROR(esp_lcd_panel_invert_color(s_panel, config->invert_color),
+                        TAG, "set inversion failed");
 
     bool swap_xy = false;
     bool mirror_x = false;
@@ -909,7 +1050,6 @@ esp_err_t esp_bms_lvgl_bridge_init(const esp_bms_lvgl_bridge_config_t *config)
     adapter_config.stack_in_psram = use_psram_buffers;
 #endif
     ESP_RETURN_ON_ERROR(esp_lv_adapter_init(&adapter_config), TAG, "init LVGL adapter failed");
-
     esp_lv_adapter_display_config_t display_config =
         ESP_LV_ADAPTER_DISPLAY_SPI_WITHOUT_PSRAM_DEFAULT_CONFIG(
             s_panel, s_panel_io, hres, vres, ESP_LV_ADAPTER_ROTATE_0);
@@ -920,11 +1060,13 @@ esp_err_t esp_bms_lvgl_bridge_init(const esp_bms_lvgl_bridge_config_t *config)
     ESP_RETURN_ON_FALSE(s_display, ESP_FAIL, TAG, "register adapter display failed");
 
     ESP_RETURN_ON_ERROR(init_touch(config, hres, vres), TAG, "init touch failed");
-
     ESP_RETURN_ON_ERROR(esp_lv_adapter_start(), TAG, "start LVGL adapter failed");
     ESP_RETURN_ON_ERROR(set_backlight(config->pin_backlight, config->backlight_on_level),
                         TAG, "turn backlight on failed");
 
+    ESP_LOGI(TAG, "LVGL buffers height=%u double=%s psram=%s free=%u largest=%u",
+             (unsigned)LVGL_SPI_DRAW_BUFFER_HEIGHT, LVGL_REQUIRE_DOUBLE_BUFFER ? "yes" : "no",
+             use_psram_buffers ? "yes" : "no", (unsigned)psram_free, (unsigned)psram_largest);
     s_initialized = true;
     return ESP_OK;
 }

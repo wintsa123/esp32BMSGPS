@@ -5,6 +5,7 @@
 
 #include "driver/gpio.h"
 #include "driver/uart.h"
+#include "esp_bms_profile_hardware.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 
@@ -15,11 +16,11 @@
 static const char *TAG = "esp_bms_gps";
 
 #define GPS_UART_PORT UART_NUM_1
-#define GPS_UART_TX_GPIO 18
-#define GPS_UART_RX_GPIO 27
+#define GPS_UART_TX_GPIO ESP_BMS_PROFILE_GPS_TX
+#define GPS_UART_RX_GPIO ESP_BMS_PROFILE_GPS_RX
 #define GPS_UART_BAUD 115200
 #define GPS_UART_RX_BUFFER_SIZE 1024U
-#define GPS_PPS_GPIO GPIO_NUM_35
+#define GPS_PPS_GPIO ESP_BMS_PROFILE_GPS_PPS
 #define GPS_PPS_TIMEOUT_MS 3000U
 #define GPS_RMC_TIMEOUT_MS 3000U
 #define GPS_DIAGNOSTIC_PERIOD_MS 60000U
@@ -301,6 +302,10 @@ static void gps_pps_isr(void *arg)
 
 static void gps_init_pps(void)
 {
+    if (GPS_PPS_GPIO == GPIO_NUM_NC) {
+        ESP_LOGW(TAG, "PPS GPIO is not configured");
+        return;
+    }
     const gpio_config_t config = {
         .pin_bit_mask = UINT64_C(1) << GPS_PPS_GPIO,
         .mode = GPIO_MODE_INPUT,
@@ -342,6 +347,11 @@ static void gps_configure_receiver(void)
 
 static esp_err_t gps_init_uart(esp_bms_idf_runtime_t *runtime)
 {
+    if (GPS_UART_RX_GPIO == GPIO_NUM_NC || GPS_UART_TX_GPIO == GPIO_NUM_NC) {
+        ESP_LOGW(TAG, "GPS UART GPIO is not configured");
+        (void)gps_set_module_state(runtime, ESP_BMS_GPS_MODULE_UNAVAILABLE, "uart-gpio");
+        return ESP_ERR_INVALID_ARG;
+    }
     const uart_config_t config = {
         .baud_rate = GPS_UART_BAUD,
         .data_bits = UART_DATA_8_BITS,
@@ -682,7 +692,9 @@ void esp_bms_gps_stop(esp_bms_idf_runtime_t *runtime)
     if (s_gps.uart_ready) {
         (void)uart_driver_delete(s_gps.uart);
     }
-    (void)gpio_isr_handler_remove(GPS_PPS_GPIO);
+    if (GPS_PPS_GPIO != GPIO_NUM_NC) {
+        (void)gpio_isr_handler_remove(GPS_PPS_GPIO);
+    }
     s_gps.uart_ready = false;
     if (runtime) {
         esp_bms_idf_runtime_register_optional_http_handler(runtime, NULL, NULL);

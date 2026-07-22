@@ -2,13 +2,15 @@
 param(
     [string]$Port,
     [int]$BaudRate = 0,
-    [switch]$Monitor
+    [switch]$Monitor,
+    [string]$BuildDir
 )
 
 $ErrorActionPreference = "Stop"
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$idfExportScript = Join-Path $env:USERPROFILE "esp\esp-idf-v5.5.4\export.ps1"
+$idfExportScript = Join-Path $env:USERPROFILE "esp\esp-idf-v6.0.2\export.ps1"
+$requiredIdfVersion = "ESP-IDF v6.0.2"
 $originalLocation = Get-Location
 
 function Set-DefaultProxyEnv {
@@ -28,6 +30,13 @@ function Test-CommandExists {
 
     if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
         throw "Required command '$Name' was not found in PATH."
+    }
+}
+
+function Test-RequiredIdfVersion {
+    $version = ((& idf.py --version 2>&1) | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $version -ne $requiredIdfVersion) {
+        throw "Unsupported ESP-IDF version: expected $requiredIdfVersion, got $version."
     }
 }
 
@@ -84,6 +93,24 @@ function Resolve-FlashPort {
     throw "Multiple serial devices were found: $portList. Pass -Port COMx explicitly."
 }
 
+function Resolve-BuildDirectory {
+    param([string]$RequestedBuildDir)
+
+    if ([string]::IsNullOrWhiteSpace($RequestedBuildDir)) {
+        return $null
+    }
+
+    $candidate = if ([System.IO.Path]::IsPathRooted($RequestedBuildDir)) {
+        $RequestedBuildDir
+    } else {
+        Join-Path $repoRoot $RequestedBuildDir
+    }
+    if (-not (Test-Path -LiteralPath $candidate -PathType Container)) {
+        throw "Build directory was not found: $candidate"
+    }
+    return (Resolve-Path -LiteralPath $candidate).Path
+}
+
 function Invoke-Checked {
     param(
         [Parameter(Mandatory = $true)][string]$Step,
@@ -117,15 +144,21 @@ try {
     Set-DefaultProxyEnv
     Initialize-IdfEnvironment
     Test-CommandExists idf.py
+    Test-RequiredIdfVersion
 
     $resolvedPort = Resolve-FlashPort -RequestedPort $Port
+    $resolvedBuildDir = Resolve-BuildDirectory -RequestedBuildDir $BuildDir
     $effectiveBaudRate = $BaudRate
     if ($effectiveBaudRate -le 0 -and $resolvedPort -match "(?i)^socket://") {
         $effectiveBaudRate = 115200
         Write-Host "==> Raw socket serial selected; using -b $effectiveBaudRate to match the bridge baud rate" -ForegroundColor DarkGray
     }
 
-    $idfArgs = @("-p", $resolvedPort)
+    $idfArgs = @()
+    if ($null -ne $resolvedBuildDir) {
+        $idfArgs += @("-B", $resolvedBuildDir)
+    }
+    $idfArgs += @("-p", $resolvedPort)
     if ($effectiveBaudRate -gt 0) {
         $idfArgs += @("-b", "$effectiveBaudRate")
     }

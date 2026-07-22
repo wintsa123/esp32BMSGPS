@@ -1,6 +1,7 @@
 #include "esp_bms_module_registry.h"
 #include "esp_bms_idf_runtime.h"
 #include "esp_bms_lvgl_bridge.h"
+#include "esp_bms_profile_hardware.h"
 #include "esp_bms_lvgl_ui.h"
 #include "esp_check.h"
 #include "esp_heap_caps.h"
@@ -137,7 +138,7 @@ void app_main(void)
                  esp_err_to_name(display_settings_ret));
     }
 
-    esp_bms_lvgl_bridge_config_t config = ESP_BMS_LVGL_BRIDGE_DEFAULT_CONFIG();
+    esp_bms_lvgl_bridge_config_t config = ESP_BMS_PROFILE_LVGL_CONFIG;
     config.rotation = bridge_rotation_from_runtime(runtime.display_rotation);
     ESP_ERROR_CHECK(esp_bms_lvgl_bridge_init(&config));
     ESP_ERROR_CHECK(esp_bms_lvgl_bridge_set_brightness(runtime.brightness_percent));
@@ -432,7 +433,7 @@ void app_main(void)
             }
             setup_ap_idle_elapsed_ms = 0;
             log_heap_state("setup_stop_before");
-            ret = esp_bms_idf_runtime_stop_setup_services(&runtime);
+            ret = esp_bms_module_registry_stop_setup_services(&runtime);
             if (ret != ESP_OK) {
                 ESP_LOGE(TAG, "setup services stop failed: %s", esp_err_to_name(ret));
             }
@@ -455,7 +456,7 @@ void app_main(void)
             setup_service_start_stage = SETUP_SERVICE_START_IDLE;
             log_heap_state(stage == SETUP_SERVICE_START_AP ? "setup_ap_before" : "setup_http_before");
             if (stage == SETUP_SERVICE_START_AP) {
-                ret = esp_bms_idf_runtime_start_setup_ap(&runtime);
+                ret = esp_bms_module_registry_start_setup_ap(&runtime);
                 if (ret != ESP_OK) {
                     ESP_LOGE(TAG, "setup AP start failed: %s", esp_err_to_name(ret));
                 } else if (!esp_bms_idf_runtime_flag_get(&runtime,
@@ -464,7 +465,7 @@ void app_main(void)
                 }
                 log_heap_state("setup_ap_after");
             } else {
-                ret = esp_bms_idf_runtime_start_http_server(&runtime);
+                ret = esp_bms_module_registry_start_http_server(&runtime);
                 if (ret != ESP_OK) {
                     ESP_LOGE(TAG, "HTTP server start failed: %s", esp_err_to_name(ret));
                 }

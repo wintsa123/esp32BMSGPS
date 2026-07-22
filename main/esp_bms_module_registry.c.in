@@ -4,6 +4,7 @@
 #cmakedefine01 ESP_BMS_FEATURE_BMS
 #cmakedefine01 ESP_BMS_FEATURE_CONTROLLER
 #cmakedefine01 ESP_BMS_FEATURE_GPS
+#cmakedefine01 ESP_BMS_FEATURE_NETWORK
 
 #include "esp_bms_idf_runtime.h"
 
@@ -21,6 +22,10 @@
 
 #if ESP_BMS_FEATURE_GPS
 #include "esp_bms_gps.h"
+#endif
+
+#if ESP_BMS_FEATURE_NETWORK
+#include "esp_bms_network.h"
 #endif
 
 esp_err_t esp_bms_module_registry_init(esp_bms_idf_runtime_t *runtime)
@@ -51,6 +56,12 @@ esp_err_t esp_bms_module_registry_init(esp_bms_idf_runtime_t *runtime)
     }
 #else
     (void)runtime;
+#endif
+#if ESP_BMS_FEATURE_NETWORK
+    const esp_err_t network_ret = esp_bms_network_init(runtime);
+    if (first_error == ESP_OK) {
+        first_error = network_ret;
+    }
 #endif
     return first_error;
 }
@@ -94,6 +105,36 @@ void esp_bms_module_registry_stop(esp_bms_idf_runtime_t *runtime)
     esp_bms_gps_stop(runtime);
 #else
     (void)runtime;
+#endif
+}
+
+esp_err_t esp_bms_module_registry_start_setup_ap(esp_bms_idf_runtime_t *runtime)
+{
+#if ESP_BMS_FEATURE_NETWORK
+    return esp_bms_idf_runtime_start_setup_ap(runtime);
+#else
+    (void)runtime;
+    return ESP_ERR_NOT_SUPPORTED;
+#endif
+}
+
+esp_err_t esp_bms_module_registry_start_http_server(esp_bms_idf_runtime_t *runtime)
+{
+#if ESP_BMS_FEATURE_NETWORK
+    return esp_bms_idf_runtime_start_http_server(runtime);
+#else
+    (void)runtime;
+    return ESP_ERR_NOT_SUPPORTED;
+#endif
+}
+
+esp_err_t esp_bms_module_registry_stop_setup_services(esp_bms_idf_runtime_t *runtime)
+{
+#if ESP_BMS_FEATURE_NETWORK
+    return esp_bms_idf_runtime_stop_setup_services(runtime);
+#else
+    (void)runtime;
+    return ESP_ERR_NOT_SUPPORTED;
 #endif
 }
 

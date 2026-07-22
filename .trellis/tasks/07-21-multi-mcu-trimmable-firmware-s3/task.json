@@ -25,7 +25,8 @@
     "07-21-multi-mcu-s3-board-support",
     "07-21-display-input-drivers",
     "07-21-bms-ble-protocol-suite",
-    "07-21-build-cloud-verification"
+    "07-21-build-cloud-verification",
+    "07-21-modular-firmware-chinese-build"
   ],
   "parent": null,
   "relatedFiles": [],
