@@ -16,7 +16,7 @@
 <table align="center">
   <tr>
     <th>设备设置首页</th>
-    <th>BMS 数据</th>
+    <th>实时 BMS 数据</th>
   </tr>
   <tr>
     <td align="center">
@@ -24,7 +24,7 @@
       <sub>系统设置、亮度、音量、调节条位置与屏幕校准</sub>
     </td>
     <td align="center">
-      <img src="./img/readme-bms-dashboard.png" alt="BMS 数据页面预览" width="320"><br>
+      <img src="./img/readme-bms-dashboard.png" alt="实时 BMS 数据页面预览" width="320"><br>
       <sub>74% SOC、81.8 V、0.0 A、单体电压与温度</sub>
     </td>
   </tr>
@@ -40,6 +40,15 @@
     <td align="center">
       <img src="./img/readme-controller-dashboard.png" alt="控制器数据显示页面预览" width="320"><br>
       <sub>72 km/h、3 挡、8.6 kW、3450 RPM 与温度</sub>
+    </td>
+  </tr>
+  <tr>
+    <th colspan="2">本田 Fireblade 风格仪表</th>
+  </tr>
+  <tr>
+    <td align="center" colspan="2">
+      <img src="./img/readme-fireblade-dashboard.png" alt="本田 Fireblade 风格仪表预览" width="320"><br>
+      <sub>88 km/h、76% SOC、3 挡、功率、温度与续航信息</sub>
     </td>
   </tr>
 </table>
@@ -105,9 +114,28 @@
 
 依赖版本、分区、诊断构建和各平台构建命令以[项目构建规范](./.trellis/spec/backend/hardware-build-flash.md)为准。
 
-## 🚀 如何烧录
+## 🚀 配置、构建与烧录
 
-首次使用可运行 `./start.sh install-idf` 并填写绝对 ASCII 安装目录；脚本会按当前系统安装前置工具和 ESP-IDF 6.0.2。也可使用 `./start.sh install-idf --dir /home/USER/esp/esp-idf-v6.0.2` 非交互安装。已保存的路径会被项目脚本自动加载并校验版本。
+`start.sh`（Linux/macOS）和 `start.cmd`（Windows）是统一固件配置器。先用 `doctor` 检查环境；无参数运行进入交互式配置。`--dashboards` 可选 `s1000rr`、`controller`、`fireblade`，`--modules` 只编入所需模块。
+
+Linux/macOS：
+
+```bash
+# 检查环境；首次安装 ESP-IDF 6.0.2 时使用 install-idf
+./start.sh doctor
+./start.sh install-idf --dir /home/USER/esp/esp-idf-v6.0.2
+
+# 交互式配置，或校验/保存火刃+BMS+控制器配置档
+./start.sh
+./start.sh validate --profile fireblade --modules bms,controller --dashboards fireblade
+./start.sh configure --profile fireblade --modules bms,controller --dashboards fireblade
+
+# 写入配置并在隔离目录中本地构建；云构建只触发工作流，不会推送
+./start.sh build-local --profile fireblade --modules bms,controller --dashboards fireblade
+./start.sh build-cloud --profile fireblade --modules bms,controller --dashboards fireblade
+```
+
+Windows 使用相同参数，将命令替换为 `.\start.cmd`，例如 `.\start.cmd doctor`、`.\start.cmd` 或 `.\start.cmd build-local --profile fireblade --modules bms,controller --dashboards fireblade`。首次安装可运行 `.\start.cmd install-idf --dir C:\esp\esp-idf-v6.0.2`。已保存的 ESP-IDF 路径会被项目脚本自动加载并校验版本。
 
 Linux 本地串口：
 
@@ -121,7 +149,7 @@ Windows 本地串口：
 .\scripts\flash.ps1 -Port COM3 -Monitor
 ```
 
-Windows 首次安装可运行 `./start.cmd install-idf`，或指定 `./start.cmd install-idf --dir C:\esp\esp-idf-v6.0.2`。编译后的交互烧录默认选择本地串口；远程 RFC2217 仅在明确选择后才输入地址。
+编译后的交互烧录默认选择本地串口；远程 RFC2217 仅在明确选择后才输入地址。
 
 如果设备此前使用其他分区表，首次切换时需要先擦除 Flash。详细的构建、擦除、诊断镜像、分区布局和故障排查见[固件硬件、构建与烧录规范](./.trellis/spec/backend/hardware-build-flash.md)。
 

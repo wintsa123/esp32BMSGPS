@@ -10,6 +10,48 @@ ESP32 smart dashboard firmware for electric motorcycles, e-bikes, and light vehi
 
 > The project is under active development and hardware validation. The core firmware and primary interaction paths are usable; OTA, track storage, and some hardware compatibility work are not complete.
 
+<h2 align="center">🖼️ UI Preview</h2>
+
+<table align="center">
+  <tr>
+    <th>Device Settings Home</th>
+    <th>Live BMS Data</th>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="./img/readme-settings-home.png" alt="Device settings home preview" width="320"><br>
+      <sub>System settings, brightness, volume, slider position, and screen calibration</sub>
+    </td>
+    <td align="center">
+      <img src="./img/readme-bms-dashboard.png" alt="Live BMS data preview" width="320"><br>
+      <sub>74% SOC, 81.8 V, 0.0 A, cell voltages, and temperatures</sub>
+    </td>
+  </tr>
+  <tr>
+    <th>BMW S1000RR Dashboard</th>
+    <th>Controller Data</th>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="./img/readme-s1000rr-dashboard.png" alt="BMW S1000RR dashboard preview" width="320"><br>
+      <sub>88 km/h, 28 Wh/km, gear 3, controller and motor temperatures</sub>
+    </td>
+    <td align="center">
+      <img src="./img/readme-controller-dashboard.png" alt="Controller data preview" width="320"><br>
+      <sub>72 km/h, gear 3, 8.6 kW, 3450 RPM, and temperatures</sub>
+    </td>
+  </tr>
+  <tr>
+    <th colspan="2">Honda Fireblade Dashboard</th>
+  </tr>
+  <tr>
+    <td align="center" colspan="2">
+      <img src="./img/readme-fireblade-dashboard.png" alt="Honda Fireblade dashboard preview" width="320"><br>
+      <sub>88 km/h, 76% SOC, gear 3, power, temperatures, and range information</sub>
+    </td>
+  </tr>
+</table>
+
 ## 🌐 Online Control Page
 
 <p align="center">
@@ -71,9 +113,28 @@ When a GPIO changes, update verified catalog data or an explicit profile overrid
 
 Dependency versions, partitions, diagnostic images, and platform build commands are defined in the [project build contract](./.trellis/spec/backend/hardware-build-flash.md).
 
-## 🚀 Flashing
+## 🚀 Configure, Build, and Flash
 
-For a first-time setup, run `./start.sh install-idf` and enter an absolute ASCII installation directory. It installs the platform prerequisites and ESP-IDF 6.0.2. Non-interactive setup is `./start.sh install-idf --dir /home/USER/esp/esp-idf-v6.0.2`. The project wrapper reloads and verifies the saved path automatically.
+`start.sh` (Linux/macOS) and `start.cmd` (Windows) are the unified firmware configurator. Run `doctor` first; running without arguments starts guided configuration. `--dashboards` accepts `s1000rr`, `controller`, or `fireblade`, and `--modules` includes only the modules you need.
+
+Linux/macOS:
+
+```bash
+# Check the environment; use install-idf for a first ESP-IDF 6.0.2 setup
+./start.sh doctor
+./start.sh install-idf --dir /home/USER/esp/esp-idf-v6.0.2
+
+# Guided configuration, or validate/save a Fireblade + BMS + controller profile
+./start.sh
+./start.sh validate --profile fireblade --modules bms,controller --dashboards fireblade
+./start.sh configure --profile fireblade --modules bms,controller --dashboards fireblade
+
+# Write the profile and build in an isolated directory; cloud builds only dispatch a workflow
+./start.sh build-local --profile fireblade --modules bms,controller --dashboards fireblade
+./start.sh build-cloud --profile fireblade --modules bms,controller --dashboards fireblade
+```
+
+On Windows, use the same arguments with `.\start.cmd`, for example `.\start.cmd doctor`, `.\start.cmd`, or `.\start.cmd build-local --profile fireblade --modules bms,controller --dashboards fireblade`. For a first setup, run `.\start.cmd install-idf --dir C:\esp\esp-idf-v6.0.2`. The project wrapper reloads and verifies the saved ESP-IDF path automatically.
 
 Linux local serial:
 
@@ -87,7 +148,7 @@ Windows local serial:
 .\scripts\flash.ps1 -Port COM3 -Monitor
 ```
 
-On Windows, run `./start.cmd install-idf`, or pass `./start.cmd install-idf --dir C:\esp\esp-idf-v6.0.2`. Interactive flashing defaults to a local serial port; remote RFC2217 requires an explicit selection and URL.
+Interactive flashing defaults to a local serial port; remote RFC2217 requires an explicit selection and URL.
 
 Erase Flash once when switching from a different partition table. See the [firmware hardware, build, and flash contract](./.trellis/spec/backend/hardware-build-flash.md) for build-only commands, erase flow, diagnostic images, partition layout, and troubleshooting.
 
@@ -101,6 +162,7 @@ vercel/                       Standalone Vercel control-page frontend
 scripts/                      Build, flash, serial bridge, and diagnostic tools
 tests/                        Host-runnable protocol and logic self-tests
 .trellis/spec/                Project engineering specifications and executable contracts
+img/                          Tracked README images
 preview/                      The only location for UI preview images
 ```
 
