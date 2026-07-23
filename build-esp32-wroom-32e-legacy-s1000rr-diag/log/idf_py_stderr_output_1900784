@@ -1,0 +1,21 @@
+Command: cmake -G Ninja -B /vol1/1000/项目/esp32BmsGps/build-esp32-wroom-32e-legacy-s1000rr-diag -DPYTHON_DEPS_CHECKED=1 -DPYTHON=/home/wintsa/.espressif/python_env/idf6.0_py3.11_env/bin/python -DESP_PLATFORM=1 -DESP_BMS_PROFILE_FILE=/vol1/1000/项目/esp32BmsGps/firmware-builds/esp32-wroom-32e-legacy-s1000rr-diag/generated/profile.cmake -DCCACHE_ENABLE=False /vol1/1000/项目/esp32BmsGps
+NOTE: /vol1/1000/项目/esp-idf/esp-idf-v6.0.2/components/bt/host/nimble/Kconfig.in:1421: BT_NIMBLE_MESH_PROVISIONER: 'default 0' is not a valid bool value (only 'y' and 'n' are allowed). Value is treated as 'n'.
+NOTE: /vol1/1000/项目/esp-idf/esp-idf-v6.0.2/components/bt/controller/esp32/Kconfig.in:177: BTDM_CTRL_LEGACY_AUTH_VENDOR_EVT_EFF: 'default 0' is not a valid bool value (only 'y' and 'n' are allowed). Value is treated as 'n'.
+Loading defaults file /vol1/1000/项目/esp32BmsGps/sdkconfig.defaults...
+NOTE: Kconfig parser version: 1
+NOTE: Kconfig defaults policy: use sdkconfig
+NOTE: Status: Finished with notifications
+NOTE: /vol1/1000/项目/esp-idf/esp-idf-v6.0.2/components/esp_hw_support/Kconfig:326: ESP_INTR_IN_IRAM has user-set value y from /vol1/1000/项目/esp32BmsGps/sdkconfig but is not visible (disabled dependency)
+NOTE: /vol1/1000/项目/esp-idf/esp-idf-v6.0.2/components/esp_libc/Kconfig:45: LIBC_MISC_IN_IRAM has user-set value y from /vol1/1000/项目/esp32BmsGps/sdkconfig but is not visible (disabled dependency)
+NOTE: /vol1/1000/项目/esp-idf/esp-idf-v6.0.2/components/esp_rom/Kconfig:3: ESP_ROM_PRINT_IN_IRAM has user-set value y from /vol1/1000/项目/esp32BmsGps/sdkconfig but is not visible (disabled dependency)
+NOTE: /vol1/1000/项目/esp-idf/esp-idf-v6.0.2/components/esp_stdio/Kconfig:150: ESP_CONSOLE_UART_BAUDRATE has user-set value 115200 from /vol1/1000/项目/esp32BmsGps/sdkconfig but is not visible (disabled dependency)
+NOTE: /vol1/1000/项目/esp-idf/esp-idf-v6.0.2/components/esp_system/Kconfig:12: ESP_SYSTEM_IN_IRAM has user-set value y from /vol1/1000/项目/esp32BmsGps/sdkconfig but is not visible (disabled dependency)
+NOTE: /vol1/1000/项目/esp-idf/esp-idf-v6.0.2/components/esp_timer/Kconfig:3: ESP_TIMER_IN_IRAM has user-set value y from /vol1/1000/项目/esp32BmsGps/sdkconfig but is not visible (disabled dependency)
+NOTE: /vol1/1000/项目/esp-idf/esp-idf-v6.0.2/components/log/Kconfig:55: LOG_IN_IRAM has user-set value y from /vol1/1000/项目/esp32BmsGps/sdkconfig but is not visible (disabled dependency)
+NOTE: /vol1/1000/项目/esp-idf/esp-idf-v6.0.2/components/spi_flash/Kconfig:178: SPI_FLASH_PLACE_FUNCTIONS_IN_IRAM has user-set value y from /vol1/1000/项目/esp32BmsGps/sdkconfig but is not visible (disabled dependency)
+HINT: Disabled symbols/choices are not written into sdkconfig file. Setting their user value has no effect.
+CMake Error at main/CMakeLists.txt:23 (message):
+  Build through start.sh/start.ps1 so the selected hardware profile is
+  generated
+
+

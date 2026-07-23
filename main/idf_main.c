@@ -151,7 +151,9 @@ void app_main(void)
                  esp_err_to_name(touch_calibration_load_ret));
     }
 
+    ESP_LOGI(TAG, "waiting for LVGL lock before UI creation");
     ESP_ERROR_CHECK(esp_bms_lvgl_bridge_lock(-1));
+    ESP_LOGI(TAG, "LVGL lock acquired; creating UI screen");
     ESP_ERROR_CHECK(esp_bms_lvgl_ui_init(esp_bms_lvgl_bridge_get_display()));
     ESP_ERROR_CHECK(esp_bms_lvgl_ui_boot_start(&runtime.snapshot));
     esp_bms_lvgl_bridge_unlock();

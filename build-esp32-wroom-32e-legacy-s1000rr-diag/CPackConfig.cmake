@@ -1,0 +1,72 @@
+# This file will be configured to contain variables for CPack. These variables
+# should be set in the CMake list file of the project before CPack module is
+# included. The list of available CPACK_xxx variables and their associated
+# documentation may be obtained using
+#  cpack --help-variable-list
+#
+# Some variables are common to all generators (e.g. CPACK_PACKAGE_NAME)
+# and some are specific to a generator
+# (e.g. CPACK_NSIS_EXTRA_INSTALL_COMMANDS). The generator specific variables
+# usually begin with CPACK_<GENNAME>_xxxx.
+
+
+set(CPACK_BUILD_SOURCE_DIRS "/vol1/1000/项目/esp32BmsGps;/vol1/1000/项目/esp32BmsGps/build-esp32-wroom-32e-legacy-s1000rr-diag")
+set(CPACK_CMAKE_GENERATOR "Ninja")
+set(CPACK_COMPONENT_HEADERS_DEPENDS "libraries")
+set(CPACK_COMPONENT_HEADERS_DESCRIPTION "C/C++ header files for use with FreeType")
+set(CPACK_COMPONENT_HEADERS_DISPLAY_NAME "C/C++ Headers")
+set(CPACK_COMPONENT_HEADERS_GROUP "Development")
+set(CPACK_COMPONENT_LIBRARIES_DESCRIPTION "Library used to build programs which use FreeType")
+set(CPACK_COMPONENT_LIBRARIES_DISPLAY_NAME "Libraries")
+set(CPACK_COMPONENT_LIBRARIES_GROUP "Development")
+set(CPACK_COMPONENT_UNSPECIFIED_HIDDEN "TRUE")
+set(CPACK_COMPONENT_UNSPECIFIED_REQUIRED "TRUE")
+set(CPACK_DEFAULT_PACKAGE_DESCRIPTION_FILE "/usr/share/cmake-3.25/Templates/CPack.GenericDescription.txt")
+set(CPACK_DEFAULT_PACKAGE_DESCRIPTION_SUMMARY "esp32_bms_gps_idf built using CMake")
+set(CPACK_GENERATOR "TGZ")
+set(CPACK_INSTALL_CMAKE_PROJECTS "/vol1/1000/项目/esp32BmsGps/build-esp32-wroom-32e-legacy-s1000rr-diag;esp32_bms_gps_idf;ALL;/")
+set(CPACK_INSTALL_PREFIX "/usr/local")
+set(CPACK_MODULE_PATH "/vol1/1000/项目/esp32BmsGps/managed_components/espressif__cmake_utilities;/vol1/1000/项目/esp-idf/esp-idf-v6.0.2/tools/cmake;/vol1/1000/项目/esp-idf/esp-idf-v6.0.2/tools/cmake/third_party;/vol1/1000/项目/esp32BmsGps/managed_components/espressif__freetype/freetype/builds/cmake")
+set(CPACK_NSIS_DISPLAY_NAME "esp32_bms_gps_idf 2.14.2")
+set(CPACK_NSIS_INSTALLER_ICON_CODE "")
+set(CPACK_NSIS_INSTALLER_MUI_ICON_CODE "")
+set(CPACK_NSIS_INSTALL_ROOT "$PROGRAMFILES")
+set(CPACK_NSIS_PACKAGE_NAME "esp32_bms_gps_idf 2.14.2")
+set(CPACK_NSIS_UNINSTALL_NAME "Uninstall")
+set(CPACK_OBJCOPY_EXECUTABLE "/home/wintsa/.espressif/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/xtensa-esp32-elf-objcopy")
+set(CPACK_OBJDUMP_EXECUTABLE "/home/wintsa/.espressif/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/xtensa-esp32-elf-objdump")
+set(CPACK_OUTPUT_CONFIG_FILE "/vol1/1000/项目/esp32BmsGps/build-esp32-wroom-32e-legacy-s1000rr-diag/CPackConfig.cmake")
+set(CPACK_PACKAGE_DEFAULT_LOCATION "/")
+set(CPACK_PACKAGE_DESCRIPTION_FILE "/vol1/1000/项目/esp32BmsGps/managed_components/espressif__freetype/freetype/README")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "The FreeType font rendering library.")
+set(CPACK_PACKAGE_FILE_NAME "esp32_bms_gps_idf-2.14.2-Generic")
+set(CPACK_PACKAGE_INSTALL_DIRECTORY "esp32_bms_gps_idf 2.14.2")
+set(CPACK_PACKAGE_INSTALL_REGISTRY_KEY "esp32_bms_gps_idf 2.14.2")
+set(CPACK_PACKAGE_NAME "esp32_bms_gps_idf")
+set(CPACK_PACKAGE_RELOCATABLE "true")
+set(CPACK_PACKAGE_VENDOR "Humanity")
+set(CPACK_PACKAGE_VERSION "2.14.2")
+set(CPACK_PACKAGE_VERSION_MAJOR "2")
+set(CPACK_PACKAGE_VERSION_MINOR "14")
+set(CPACK_PACKAGE_VERSION_PATCH "2")
+set(CPACK_READELF_EXECUTABLE "/home/wintsa/.espressif/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/xtensa-esp32-elf-readelf")
+set(CPACK_RESOURCE_FILE_LICENSE "/vol1/1000/项目/esp32BmsGps/managed_components/espressif__freetype/freetype/LICENSE.TXT")
+set(CPACK_RESOURCE_FILE_README "/usr/share/cmake-3.25/Templates/CPack.GenericDescription.txt")
+set(CPACK_RESOURCE_FILE_WELCOME "/usr/share/cmake-3.25/Templates/CPack.GenericWelcome.txt")
+set(CPACK_SET_DESTDIR "OFF")
+set(CPACK_SOURCE_7Z "ON")
+set(CPACK_SOURCE_GENERATOR "7Z;ZIP")
+set(CPACK_SOURCE_OUTPUT_CONFIG_FILE "/vol1/1000/项目/esp32BmsGps/build-esp32-wroom-32e-legacy-s1000rr-diag/CPackSourceConfig.cmake")
+set(CPACK_SOURCE_ZIP "ON")
+set(CPACK_SYSTEM_NAME "Generic")
+set(CPACK_THREADS "1")
+set(CPACK_TOPLEVEL_TAG "Generic")
+set(CPACK_WIX_SIZEOF_VOID_P "4")
+
+if(NOT CPACK_PROPERTIES_FILE)
+  set(CPACK_PROPERTIES_FILE "/vol1/1000/项目/esp32BmsGps/build-esp32-wroom-32e-legacy-s1000rr-diag/CPackProperties.cmake")
+endif()
+
+if(EXISTS ${CPACK_PROPERTIES_FILE})
+  include(${CPACK_PROPERTIES_FILE})
+endif()

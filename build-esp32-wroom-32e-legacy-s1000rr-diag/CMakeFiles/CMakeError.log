@@ -1,0 +1,170 @@
+Performing C SOURCE FILE Test CMAKE_HAVE_LIBC_PTHREAD failed with the following output:
+Change Dir: /vol1/1000/项目/esp32BmsGps/build-esp32-wroom-32e-legacy-s1000rr-diag/CMakeFiles/CMakeScratch/TryCompile-6kfNdS
+
+Run Build Command(s):/home/wintsa/.espressif/tools/ninja/1.12.1/ninja cmTC_903ab && [1/2] Building C object CMakeFiles/cmTC_903ab.dir/src.c.obj
+[2/2] Linking C executable cmTC_903ab
+FAILED: cmTC_903ab 
+: && /home/wintsa/.espressif/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/xtensa-esp32-elf-gcc @"/vol1/1000/项目/esp32BmsGps/build-esp32-wroom-32e-legacy-s1000rr-diag/toolchain/cflags" @"/vol1/1000/项目/esp32BmsGps/build-esp32-wroom-32e-legacy-s1000rr-diag/toolchain/ldflags" CMakeFiles/cmTC_903ab.dir/src.c.obj -o cmTC_903ab   && :
+/vol1/1000/项目/esp-idf-tools/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/../lib/gcc/xtensa-esp-elf/15.2.0/../../../../xtensa-esp-elf/bin/ld: warning: cannot find entry symbol _start; defaulting to 00400054
+/vol1/1000/项目/esp-idf-tools/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/../lib/gcc/xtensa-esp-elf/15.2.0/../../../../xtensa-esp-elf/bin/ld: CMakeFiles/cmTC_903ab.dir/src.c.obj:(.literal+0x4): undefined reference to `pthread_create'
+/vol1/1000/项目/esp-idf-tools/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/../lib/gcc/xtensa-esp-elf/15.2.0/../../../../xtensa-esp-elf/bin/ld: CMakeFiles/cmTC_903ab.dir/src.c.obj:(.literal+0x8): undefined reference to `pthread_detach'
+/vol1/1000/项目/esp-idf-tools/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/../lib/gcc/xtensa-esp-elf/15.2.0/../../../../xtensa-esp-elf/bin/ld: CMakeFiles/cmTC_903ab.dir/src.c.obj:(.literal+0xc): undefined reference to `pthread_cancel'
+/vol1/1000/项目/esp-idf-tools/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/../lib/gcc/xtensa-esp-elf/15.2.0/../../../../xtensa-esp-elf/bin/ld: CMakeFiles/cmTC_903ab.dir/src.c.obj:(.literal+0x10): undefined reference to `pthread_join'
+/vol1/1000/项目/esp-idf-tools/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/../lib/gcc/xtensa-esp-elf/15.2.0/../../../../xtensa-esp-elf/bin/ld: CMakeFiles/cmTC_903ab.dir/src.c.obj:(.literal+0x14): undefined reference to `pthread_atfork'
+/vol1/1000/项目/esp-idf-tools/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/../lib/gcc/xtensa-esp-elf/15.2.0/../../../../xtensa-esp-elf/bin/ld: CMakeFiles/cmTC_903ab.dir/src.c.obj:(.literal+0x18): undefined reference to `pthread_exit'
+/vol1/1000/项目/esp-idf-tools/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/../lib/gcc/xtensa-esp-elf/15.2.0/../../../../xtensa-esp-elf/bin/ld: CMakeFiles/cmTC_903ab.dir/src.c.obj: in function `main':
+src.c:(.text+0x20): undefined reference to `pthread_create'
+/vol1/1000/项目/esp-idf-tools/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/../lib/gcc/xtensa-esp-elf/15.2.0/../../../../xtensa-esp-elf/bin/ld: src.c:(.text+0x2a): undefined reference to `pthread_detach'
+/vol1/1000/项目/esp-idf-tools/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/../lib/gcc/xtensa-esp-elf/15.2.0/../../../../xtensa-esp-elf/bin/ld: src.c:(.text+0x34): undefined reference to `pthread_cancel'
+/vol1/1000/项目/esp-idf-tools/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/../lib/gcc/xtensa-esp-elf/15.2.0/../../../../xtensa-esp-elf/bin/ld: src.c:(.text+0x40): undefined reference to `pthread_join'
+/vol1/1000/项目/esp-idf-tools/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/../lib/gcc/xtensa-esp-elf/15.2.0/../../../../xtensa-esp-elf/bin/ld: src.c:(.text+0x4c): undefined reference to `pthread_atfork'
+/vol1/1000/项目/esp-idf-tools/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/../lib/gcc/xtensa-esp-elf/15.2.0/../../../../xtensa-esp-elf/bin/ld: src.c:(.text+0x54): undefined reference to `pthread_exit'
+collect2: error: ld returned 1 exit status
+ninja: build stopped: subcommand failed.
+
+
+Source file was:
+#include <pthread.h>
+
+static void* test_func(void* data)
+{
+  return data;
+}
+
+int main(void)
+{
+  pthread_t thread;
+  pthread_create(&thread, NULL, test_func, NULL);
+  pthread_detach(thread);
+  pthread_cancel(thread);
+  pthread_join(thread, NULL);
+  pthread_atfork(NULL, NULL, NULL);
+  pthread_exit(NULL);
+
+  return 0;
+}
+
+
+Determining if the function pthread_create exists in the pthreads failed with the following output:
+Change Dir: /vol1/1000/项目/esp32BmsGps/build-esp32-wroom-32e-legacy-s1000rr-diag/CMakeFiles/CMakeScratch/TryCompile-4eIJhr
+
+Run Build Command(s):/home/wintsa/.espressif/tools/ninja/1.12.1/ninja cmTC_9f127 && [1/2] Building C object CMakeFiles/cmTC_9f127.dir/CheckFunctionExists.c.obj
+[2/2] Linking C executable cmTC_9f127
+FAILED: cmTC_9f127 
+: && /home/wintsa/.espressif/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/xtensa-esp32-elf-gcc @"/vol1/1000/项目/esp32BmsGps/build-esp32-wroom-32e-legacy-s1000rr-diag/toolchain/cflags" -DCHECK_FUNCTION_EXISTS=pthread_create @"/vol1/1000/项目/esp32BmsGps/build-esp32-wroom-32e-legacy-s1000rr-diag/toolchain/ldflags" CMakeFiles/cmTC_9f127.dir/CheckFunctionExists.c.obj -o cmTC_9f127  -lpthreads && :
+/vol1/1000/项目/esp-idf-tools/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/../lib/gcc/xtensa-esp-elf/15.2.0/../../../../xtensa-esp-elf/bin/ld: cannot find -lpthreads: No such file or directory
+collect2: error: ld returned 1 exit status
+ninja: build stopped: subcommand failed.
+
+
+
+Determining if the function pthread_create exists in the pthread failed with the following output:
+Change Dir: /vol1/1000/项目/esp32BmsGps/build-esp32-wroom-32e-legacy-s1000rr-diag/CMakeFiles/CMakeScratch/TryCompile-orvOEU
+
+Run Build Command(s):/home/wintsa/.espressif/tools/ninja/1.12.1/ninja cmTC_23cf0 && [1/2] Building C object CMakeFiles/cmTC_23cf0.dir/CheckFunctionExists.c.obj
+[2/2] Linking C executable cmTC_23cf0
+FAILED: cmTC_23cf0 
+: && /home/wintsa/.espressif/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/xtensa-esp32-elf-gcc @"/vol1/1000/项目/esp32BmsGps/build-esp32-wroom-32e-legacy-s1000rr-diag/toolchain/cflags" -DCHECK_FUNCTION_EXISTS=pthread_create @"/vol1/1000/项目/esp32BmsGps/build-esp32-wroom-32e-legacy-s1000rr-diag/toolchain/ldflags" CMakeFiles/cmTC_23cf0.dir/CheckFunctionExists.c.obj -o cmTC_23cf0  -lpthread && :
+/vol1/1000/项目/esp-idf-tools/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/../lib/gcc/xtensa-esp-elf/15.2.0/../../../../xtensa-esp-elf/bin/ld: cannot find -lpthread: No such file or directory
+collect2: error: ld returned 1 exit status
+ninja: build stopped: subcommand failed.
+
+
+
+Determining if compiler accepts -pthread failed with the following output:
+Change Dir: /vol1/1000/项目/esp32BmsGps/build-esp32-wroom-32e-legacy-s1000rr-diag/CMakeFiles/CMakeScratch/TryCompile-PDe5WG
+
+Run Build Command(s):/home/wintsa/.espressif/tools/ninja/1.12.1/ninja cmTC_f3101 && [1/2] Building C object CMakeFiles/cmTC_f3101.dir/CheckForPthreads.c.obj
+[2/2] Linking C executable cmTC_f3101
+FAILED: cmTC_f3101 
+: && /home/wintsa/.espressif/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/xtensa-esp32-elf-gcc @"/vol1/1000/项目/esp32BmsGps/build-esp32-wroom-32e-legacy-s1000rr-diag/toolchain/cflags" @"/vol1/1000/项目/esp32BmsGps/build-esp32-wroom-32e-legacy-s1000rr-diag/toolchain/ldflags" CMakeFiles/cmTC_f3101.dir/CheckForPthreads.c.obj -o cmTC_f3101  -pthread && :
+xtensa-esp-elf-gcc: error: unrecognized command-line option '-pthread'; did you mean '-fpthread'?
+ninja: build stopped: subcommand failed.
+
+
+
+Performing C SOURCE FILE Test CMAKE_HAVE_LIBC_PTHREAD failed with the following output:
+Change Dir: /vol1/1000/项目/esp32BmsGps/build-esp32-wroom-32e-legacy-s1000rr-diag/CMakeFiles/CMakeScratch/TryCompile-6jQodw
+
+Run Build Command(s):/home/wintsa/.espressif/tools/ninja/1.12.1/ninja cmTC_6ae00 && [1/2] Building C object CMakeFiles/cmTC_6ae00.dir/src.c.obj
+[2/2] Linking C executable cmTC_6ae00
+FAILED: cmTC_6ae00 
+: && /home/wintsa/.espressif/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/xtensa-esp32-elf-gcc @"/vol1/1000/项目/esp32BmsGps/build-esp32-wroom-32e-legacy-s1000rr-diag/toolchain/cflags" @"/vol1/1000/项目/esp32BmsGps/build-esp32-wroom-32e-legacy-s1000rr-diag/toolchain/ldflags" CMakeFiles/cmTC_6ae00.dir/src.c.obj -o cmTC_6ae00   && :
+/vol1/1000/项目/esp-idf-tools/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/../lib/gcc/xtensa-esp-elf/15.2.0/../../../../xtensa-esp-elf/bin/ld: warning: cannot find entry symbol _start; defaulting to 00400054
+/vol1/1000/项目/esp-idf-tools/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/../lib/gcc/xtensa-esp-elf/15.2.0/../../../../xtensa-esp-elf/bin/ld: CMakeFiles/cmTC_6ae00.dir/src.c.obj:(.literal+0x4): undefined reference to `pthread_create'
+/vol1/1000/项目/esp-idf-tools/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/../lib/gcc/xtensa-esp-elf/15.2.0/../../../../xtensa-esp-elf/bin/ld: CMakeFiles/cmTC_6ae00.dir/src.c.obj:(.literal+0x8): undefined reference to `pthread_detach'
+/vol1/1000/项目/esp-idf-tools/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/../lib/gcc/xtensa-esp-elf/15.2.0/../../../../xtensa-esp-elf/bin/ld: CMakeFiles/cmTC_6ae00.dir/src.c.obj:(.literal+0xc): undefined reference to `pthread_cancel'
+/vol1/1000/项目/esp-idf-tools/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/../lib/gcc/xtensa-esp-elf/15.2.0/../../../../xtensa-esp-elf/bin/ld: CMakeFiles/cmTC_6ae00.dir/src.c.obj:(.literal+0x10): undefined reference to `pthread_join'
+/vol1/1000/项目/esp-idf-tools/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/../lib/gcc/xtensa-esp-elf/15.2.0/../../../../xtensa-esp-elf/bin/ld: CMakeFiles/cmTC_6ae00.dir/src.c.obj:(.literal+0x14): undefined reference to `pthread_atfork'
+/vol1/1000/项目/esp-idf-tools/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/../lib/gcc/xtensa-esp-elf/15.2.0/../../../../xtensa-esp-elf/bin/ld: CMakeFiles/cmTC_6ae00.dir/src.c.obj:(.literal+0x18): undefined reference to `pthread_exit'
+/vol1/1000/项目/esp-idf-tools/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/../lib/gcc/xtensa-esp-elf/15.2.0/../../../../xtensa-esp-elf/bin/ld: CMakeFiles/cmTC_6ae00.dir/src.c.obj: in function `main':
+src.c:(.text+0x20): undefined reference to `pthread_create'
+/vol1/1000/项目/esp-idf-tools/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/../lib/gcc/xtensa-esp-elf/15.2.0/../../../../xtensa-esp-elf/bin/ld: src.c:(.text+0x2a): undefined reference to `pthread_detach'
+/vol1/1000/项目/esp-idf-tools/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/../lib/gcc/xtensa-esp-elf/15.2.0/../../../../xtensa-esp-elf/bin/ld: src.c:(.text+0x34): undefined reference to `pthread_cancel'
+/vol1/1000/项目/esp-idf-tools/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/../lib/gcc/xtensa-esp-elf/15.2.0/../../../../xtensa-esp-elf/bin/ld: src.c:(.text+0x40): undefined reference to `pthread_join'
+/vol1/1000/项目/esp-idf-tools/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/../lib/gcc/xtensa-esp-elf/15.2.0/../../../../xtensa-esp-elf/bin/ld: src.c:(.text+0x4c): undefined reference to `pthread_atfork'
+/vol1/1000/项目/esp-idf-tools/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/../lib/gcc/xtensa-esp-elf/15.2.0/../../../../xtensa-esp-elf/bin/ld: src.c:(.text+0x54): undefined reference to `pthread_exit'
+collect2: error: ld returned 1 exit status
+ninja: build stopped: subcommand failed.
+
+
+Source file was:
+#include <pthread.h>
+
+static void* test_func(void* data)
+{
+  return data;
+}
+
+int main(void)
+{
+  pthread_t thread;
+  pthread_create(&thread, NULL, test_func, NULL);
+  pthread_detach(thread);
+  pthread_cancel(thread);
+  pthread_join(thread, NULL);
+  pthread_atfork(NULL, NULL, NULL);
+  pthread_exit(NULL);
+
+  return 0;
+}
+
+
+Determining if the function pthread_create exists in the pthreads failed with the following output:
+Change Dir: /vol1/1000/项目/esp32BmsGps/build-esp32-wroom-32e-legacy-s1000rr-diag/CMakeFiles/CMakeScratch/TryCompile-G5IvbA
+
+Run Build Command(s):/home/wintsa/.espressif/tools/ninja/1.12.1/ninja cmTC_37a6d && [1/2] Building C object CMakeFiles/cmTC_37a6d.dir/CheckFunctionExists.c.obj
+[2/2] Linking C executable cmTC_37a6d
+FAILED: cmTC_37a6d 
+: && /home/wintsa/.espressif/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/xtensa-esp32-elf-gcc @"/vol1/1000/项目/esp32BmsGps/build-esp32-wroom-32e-legacy-s1000rr-diag/toolchain/cflags" -DCHECK_FUNCTION_EXISTS=pthread_create @"/vol1/1000/项目/esp32BmsGps/build-esp32-wroom-32e-legacy-s1000rr-diag/toolchain/ldflags" CMakeFiles/cmTC_37a6d.dir/CheckFunctionExists.c.obj -o cmTC_37a6d  -lpthreads && :
+/vol1/1000/项目/esp-idf-tools/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/../lib/gcc/xtensa-esp-elf/15.2.0/../../../../xtensa-esp-elf/bin/ld: cannot find -lpthreads: No such file or directory
+collect2: error: ld returned 1 exit status
+ninja: build stopped: subcommand failed.
+
+
+
+Determining if the function pthread_create exists in the pthread failed with the following output:
+Change Dir: /vol1/1000/项目/esp32BmsGps/build-esp32-wroom-32e-legacy-s1000rr-diag/CMakeFiles/CMakeScratch/TryCompile-ngmcSI
+
+Run Build Command(s):/home/wintsa/.espressif/tools/ninja/1.12.1/ninja cmTC_9ae2a && [1/2] Building C object CMakeFiles/cmTC_9ae2a.dir/CheckFunctionExists.c.obj
+[2/2] Linking C executable cmTC_9ae2a
+FAILED: cmTC_9ae2a 
+: && /home/wintsa/.espressif/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/xtensa-esp32-elf-gcc @"/vol1/1000/项目/esp32BmsGps/build-esp32-wroom-32e-legacy-s1000rr-diag/toolchain/cflags" -DCHECK_FUNCTION_EXISTS=pthread_create @"/vol1/1000/项目/esp32BmsGps/build-esp32-wroom-32e-legacy-s1000rr-diag/toolchain/ldflags" CMakeFiles/cmTC_9ae2a.dir/CheckFunctionExists.c.obj -o cmTC_9ae2a  -lpthread && :
+/vol1/1000/项目/esp-idf-tools/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/../lib/gcc/xtensa-esp-elf/15.2.0/../../../../xtensa-esp-elf/bin/ld: cannot find -lpthread: No such file or directory
+collect2: error: ld returned 1 exit status
+ninja: build stopped: subcommand failed.
+
+
+
+Determining if compiler accepts -pthread failed with the following output:
+Change Dir: /vol1/1000/项目/esp32BmsGps/build-esp32-wroom-32e-legacy-s1000rr-diag/CMakeFiles/CMakeScratch/TryCompile-J7H1o8
+
+Run Build Command(s):/home/wintsa/.espressif/tools/ninja/1.12.1/ninja cmTC_e8ac2 && [1/2] Building C object CMakeFiles/cmTC_e8ac2.dir/CheckForPthreads.c.obj
+[2/2] Linking C executable cmTC_e8ac2
+FAILED: cmTC_e8ac2 
+: && /home/wintsa/.espressif/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/xtensa-esp32-elf-gcc @"/vol1/1000/项目/esp32BmsGps/build-esp32-wroom-32e-legacy-s1000rr-diag/toolchain/cflags" @"/vol1/1000/项目/esp32BmsGps/build-esp32-wroom-32e-legacy-s1000rr-diag/toolchain/ldflags" CMakeFiles/cmTC_e8ac2.dir/CheckForPthreads.c.obj -o cmTC_e8ac2  -pthread && :
+xtensa-esp-elf-gcc: error: unrecognized command-line option '-pthread'; did you mean '-fpthread'?
+ninja: build stopped: subcommand failed.
+
+
+
