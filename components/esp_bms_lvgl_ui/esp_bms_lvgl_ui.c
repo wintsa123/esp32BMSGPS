@@ -8569,17 +8569,11 @@ static void speed_page_sync(const esp_bms_dashboard_snapshot_t *snapshot)
     esp_bms_lvgl_page_t retained_page = s_ui.page;
 
     s_ui.speed_page_renderable = renderable;
-    set_obj_hidden(s_ui.gps_page, !renderable);
-    if (renderable) {
-        lv_obj_add_flag(s_ui.gps_page, LV_OBJ_FLAG_SNAPPABLE);
-    } else {
-        lv_obj_clear_flag(s_ui.gps_page, LV_OBJ_FLAG_SNAPPABLE);
-        if (retained_page == ESP_BMS_LVGL_PAGE_CONTROLLER ||
-            retained_page == ESP_BMS_LVGL_PAGE_GPS) {
-            retained_page = ESP_BMS_LVGL_PAGE_BATTERY;
-        }
+    if (!renderable &&
+        (retained_page == ESP_BMS_LVGL_PAGE_CONTROLLER ||
+         retained_page == ESP_BMS_LVGL_PAGE_GPS)) {
+        retained_page = ESP_BMS_LVGL_PAGE_BATTERY;
     }
-    lv_obj_set_x(s_ui.cast_page, s_ui.width * (renderable ? 2 : 1));
 
     if (changed && s_ui.pages) {
         move_to_page(retained_page, false);
@@ -8752,10 +8746,10 @@ static void invalidate_dashboard_viewport(void)
 static int32_t page_target_scroll_x(esp_bms_lvgl_page_t page)
 {
     if (page == ESP_BMS_LVGL_PAGE_CONTROLLER || page == ESP_BMS_LVGL_PAGE_GPS) {
-        return s_ui.speed_page_renderable ? s_ui.width : 0;
+        return s_ui.width;
     }
     if (page == ESP_BMS_LVGL_PAGE_CAST) {
-        return s_ui.width * (s_ui.speed_page_renderable ? 2 : 1);
+        return s_ui.width * 2;
     }
     return 0;
 }
