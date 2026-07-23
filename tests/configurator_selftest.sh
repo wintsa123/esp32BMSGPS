@@ -22,12 +22,13 @@ expect_fail() {
 }
 
 "${repo_root}/start.sh" validate --lang en --modules ota --profile module-auto >"${work_dir}/modules.out"
-grep -qx 'valid: profile=module-auto modules=network,ota dashboards=controller,fireblade,s1000rr' "${work_dir}/modules.out"
+grep -qx 'valid: profile=module-auto modules=network,ota dashboards=' "${work_dir}/modules.out"
 
 FIRMWARE_BUILD_ROOT="${work_dir}/dashboard-fireblade-build" "${repo_root}/start.sh" configure --lang en --profile dashboard-fireblade --dashboards fireblade >/dev/null
 rg -qx 'DASHBOARDS=fireblade' "${work_dir}/dashboard-fireblade-build/dashboard-fireblade/firmware.env"
 expect_fail 'select at least one dashboard UI' "${repo_root}/start.sh" validate --lang en --dashboards ''
 expect_fail 'missing file:' "${repo_root}/start.sh" validate --lang en --dashboards unknown
+expect_fail 'controller dashboard requires controller module' "${repo_root}/start.sh" validate --lang en --modules gps --dashboards controller --gpio GPS_RX=37 --gpio GPS_PPS=47 --gpio GPS_TX=48
 
 expect_fail 'dangerous' "${repo_root}/start.sh" validate --lang en --gpio TFT_DC=0
 "${repo_root}/start.sh" validate --lang en --gpio TFT_DC=0 --confirm-dangerous-gpio >/dev/null
@@ -47,12 +48,18 @@ FIRMWARE_BUILD_ROOT="${work_dir}/s3-gps-build" "${repo_root}/start.sh" configure
 rg -qx 'GPIO_GPS_RX=37' "${work_dir}/s3-gps-build/s3-gps/firmware.env"
 rg -qx 'GPIO_GPS_PPS=47' "${work_dir}/s3-gps-build/s3-gps/firmware.env"
 rg -qx 'GPIO_GPS_TX=48' "${work_dir}/s3-gps-build/s3-gps/firmware.env"
+rg -qx 'DASHBOARDS=fireblade,s1000rr' "${work_dir}/s3-gps-build/s3-gps/firmware.env"
 
 FIRMWARE_BUILD_ROOT="${work_dir}/audio-legacy-build" "${repo_root}/start.sh" configure --lang en --profile audio-legacy --mcu esp32 --board esp32-wroom-32e-legacy --display st7789-spi --input xpt2046-spi --modules audio >/dev/null
+rg -qx 'GPIO_TFT_BACKLIGHT=21' "${work_dir}/audio-legacy-build/audio-legacy/firmware.env"
 rg -qx 'GPIO_AUDIO_DAC=26' "${work_dir}/audio-legacy-build/audio-legacy/firmware.env"
 rg -qx 'GPIO_AUDIO_ENABLE=4' "${work_dir}/audio-legacy-build/audio-legacy/firmware.env"
 rg -qx 'GPIO_BATTERY_ADC=34' "${work_dir}/audio-legacy-build/audio-legacy/firmware.env"
 python3 "${repo_root}/scripts/generate-hardware-config.py" --catalog "${repo_root}/firmware/catalog" --firmware-env "${work_dir}/audio-legacy-build/audio-legacy/firmware.env" --output "${work_dir}/audio-legacy.h"
+rg -Fq '.pin_backlight = (gpio_num_t)21' "${work_dir}/audio-legacy.h"
+sed '/^GPIO_TFT_BACKLIGHT=/d' "${work_dir}/audio-legacy-build/audio-legacy/firmware.env" >"${work_dir}/no-backlight.env"
+python3 "${repo_root}/scripts/generate-hardware-config.py" --catalog "${repo_root}/firmware/catalog" --firmware-env "${work_dir}/no-backlight.env" --output "${work_dir}/no-backlight.h"
+rg -Fq '.pin_backlight = GPIO_NUM_NC' "${work_dir}/no-backlight.h"
 rg -Fx '#define ESP_BMS_PROFILE_BATTERY_ADC (gpio_num_t)34' "${work_dir}/audio-legacy.h"
 rg -Fx '#define ESP_BMS_PROFILE_AUDIO_BACKEND ESP_BMS_PROFILE_AUDIO_BACKEND_DAC' "${work_dir}/audio-legacy.h"
 
@@ -96,6 +103,7 @@ FIRMWARE_BUILD_ROOT="${work_dir}/no-audio-build" "${repo_root}/start.sh" configu
 rg -qx 'PROFILE=golden' "${work_dir}/bash-build/golden/firmware.env"
 rg -qx 'MODULES=network,ota' "${work_dir}/bash-build/golden/firmware.env"
 rg -qx 'MODULES=bms' "${work_dir}/no-audio-build/no-audio/firmware.env"
+rg -qx 'DASHBOARDS=' "${work_dir}/no-audio-build/no-audio/firmware.env"
 [[ "$(find "${work_dir}/bash-build/golden" -maxdepth 1 -type f | wc -l)" == 1 ]]
 
 saved_build_root="${work_dir}/saved-build"
@@ -233,7 +241,7 @@ expect_fail 'missing required output GPIO role GPS_TX' "${repo_root}/start.sh" v
 expect_fail 'missing configuration file' "${repo_root}/scripts/build-profile.sh" --lang en --config "${work_dir}/missing.env"
 
 "${repo_root}/start.sh" validate --modules ota --profile chinese-default >"${work_dir}/chinese.out"
-grep -qx '校验通过：配置档=chinese-default 模块=network,ota 仪表=controller,fireblade,s1000rr' "${work_dir}/chinese.out"
+grep -qx '校验通过：配置档=chinese-default 模块=network,ota 仪表=' "${work_dir}/chinese.out"
 "${repo_root}/start.sh" --lang zh help >"${work_dir}/chinese-help.out"
 rg -q '^用法：' "${work_dir}/chinese-help.out"
 expect_fail 'invalid language' "${repo_root}/start.sh" validate --lang en --lang ja
@@ -258,20 +266,21 @@ printf 'invalid\n2\n\n\n\n\n\n\n' | FIRMWARE_BUILD_ROOT="${work_dir}/interactive
 rg -q '^请输入 1、2、zh 或 en。 / Enter 1, 2, zh, or en\.$' "${work_dir}/interactive-retry.err"
 rg -q '^config: .*/interactive-retry-build/esp32s3-n16r8-st7796u-gt1151/firmware.env$' "${work_dir}/interactive-retry.out"
 
-printf '1\n2\n\n\n2,7\n\nn\n' | FIRMWARE_BUILD_ROOT="${work_dir}/interactive-cancel-build" "${repo_root}/start.sh" >"${work_dir}/interactive-cancel.out"
+printf '1\n2\n\n\n2,7\nn\n' | FIRMWARE_BUILD_ROOT="${work_dir}/interactive-cancel-build" "${repo_root}/start.sh" >"${work_dir}/interactive-cancel.out"
 rg -Fq '  1) ili9488-i80 ' "${work_dir}/interactive-cancel.out"
 rg -Fq '  1) ft6336u-i2c ' "${work_dir}/interactive-cancel.out"
 rg -q '^已取消生成配置。$' "${work_dir}/interactive-cancel.out"
 ! test -e "${work_dir}/interactive-cancel-build/esp32s3-n16r8-st7796u-gt1151/firmware.env"
 
 printf '%s\n' \
-    2 3 console-custom 1 '' '' '' panel '' '' touch '' gps fireblade \
+    2 3 console-custom 1 '' '' '' panel '' '' touch '' gps '1,2' \
     13 14 15 2 21 36 39 32 33 25 27 35 18 y y y |
     FIRMWARE_BUILD_ROOT="${work_dir}/interactive-custom-build" "${repo_root}/start.sh" >"${work_dir}/interactive-custom.out"
 rg -Fq '  3) custom ' "${work_dir}/interactive-custom.out"
 rg -qx 'PROFILE=console-custom' "${work_dir}/interactive-custom-build/console-custom/firmware.env"
 rg -qx 'BOARD=custom' "${work_dir}/interactive-custom-build/console-custom/firmware.env"
 rg -qx 'GPIO_GPS_RX=27' "${work_dir}/interactive-custom-build/console-custom/firmware.env"
+rg -qx 'DASHBOARDS=fireblade,s1000rr' "${work_dir}/interactive-custom-build/console-custom/firmware.env"
 
 cat >"${profile_dir}/profile.cmake" <<'EOF'
 set(ESP_BMS_FEATURE_AUDIO 0)
@@ -323,14 +332,30 @@ rg -Fq '$Translations = @(' "${repo_root}/start.ps1"
 ! rg -Fq "'Display' =" "${repo_root}/start.ps1"
 ! rg -Fq "'Input' =" "${repo_root}/start.ps1"
 rg -Fq 'function Select-ModuleOptionsWithKeyboard' "${repo_root}/start.ps1"
+rg -Fq 'function Select-CatalogOptionsWithKeyboard' "${repo_root}/start.ps1"
+rg -Fq 'choose_dashboard_options_with_keyboard' "${repo_root}/start.sh"
 rg -Fq 'Space to toggle, Enter to continue.' "${repo_root}/start.ps1"
 rg -Fq "'DISPLAY_DATA_WIDTH'" "${repo_root}/start.ps1"
 rg -Fq "'DATA_WIDTH'" "${repo_root}/start.ps1"
 ! rg -Fq 'scripts/esp-idf-env.sh' "${repo_root}/start.ps1"
-rg -Fq '. $IdfExport' "${repo_root}/start.ps1"
+rg -Fq '. ([string]$IdfExport)' "${repo_root}/start.ps1"
+! rg -Fq '. $IdfExport' "${repo_root}/start.ps1"
 rg -Fq '& idf.py @IdfArgs' "${repo_root}/start.ps1"
 rg -Fq 'Test-Path -LiteralPath Variable:global:LASTEXITCODE' "${repo_root}/start.ps1"
 rg -Fq 'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME' "${repo_root}/start.ps1"
+rg -Fq 'function Test-PythonExecutable' "${repo_root}/start.ps1"
+rg -Fq 'function Get-PythonExecutable' "${repo_root}/start.ps1"
+rg -Fq '& $PythonLauncher.Source -3 -c' "${repo_root}/start.ps1"
+rg -Fq "[Environment]::GetEnvironmentVariable('IDF_PATH', \$Scope)" "${repo_root}/start.ps1"
+rg -Fq "Join-Path \$Base 'esp-idf-v6.0.2'" "${repo_root}/start.ps1"
+rg -Fq "Join-Path \$env:USERPROFILE \$RelativePath" "${repo_root}/start.ps1"
+rg -Fq "Get-ChildItem -LiteralPath \$SearchRoot -Directory -Filter 'esp-idf*'" "${repo_root}/start.ps1"
+rg -Fq 'function Ensure-IdfExportScript' "${repo_root}/start.ps1"
+rg -Fq 'function Test-IdfExportScript' "${repo_root}/start.ps1"
+rg -Fq "\$IdfExport = Ensure-IdfExportScript" "${repo_root}/start.ps1"
+rg -Fq 'Install-EspIdf @() | Out-Host' "${repo_root}/start.ps1"
+rg -Fq "\$IdfExport = [string](Get-IdfExportScript | Select-Object -Last 1)" "${repo_root}/start.ps1"
+! rg -Fq '& python3 ' "${repo_root}/start.ps1"
 rg -Fq 'scripts/esp-idf-env.sh' "${repo_root}/start.sh"
 rg -Fq 'IDF_BUILD_ROOT="${ESP_BMS_IDF_BUILD_ROOT:-/tmp/esp32-bms-gps-idf-builds/$UID}"' "${repo_root}/start.sh"
 rg -Fq 'FIRMWARE_OUTPUT_ROOT="${FIRMWARE_OUTPUT_ROOT:-$ROOT/output}"' "${repo_root}/start.sh"

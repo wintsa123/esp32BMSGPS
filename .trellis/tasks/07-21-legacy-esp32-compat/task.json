@@ -18,7 +18,9 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [],
+  "children": [
+    "07-23-fix-legacy-esp32-black-screen"
+  ],
   "parent": "07-21-multi-mcu-trimmable-firmware-s3",
   "relatedFiles": [],
   "notes": "",

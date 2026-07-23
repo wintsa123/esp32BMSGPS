@@ -8,23 +8,34 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "esp-idf-version.ps1")
 
 function Initialize-IdfEnvironment {
-    $candidates = @()
-    if (Test-Path Env:IDF_PATH) {
-        $candidates += (Join-Path $env:IDF_PATH "export.ps1")
+    $idfRoots = @()
+    if (-not [string]::IsNullOrWhiteSpace($env:IDF_PATH)) {
+        $idfRoots += $env:IDF_PATH
     }
-    $candidates += (Join-Path $env:USERPROFILE "esp\esp-idf-v6.0.2\export.ps1")
+    foreach ($scope in @("User", "Machine")) {
+        $persistedIdfPath = [Environment]::GetEnvironmentVariable("IDF_PATH", $scope)
+        if (-not [string]::IsNullOrWhiteSpace($persistedIdfPath)) {
+            $idfRoots += $persistedIdfPath
+        }
+    }
+    $idfRoots += (Join-Path $env:USERPROFILE "esp\esp-idf-v6.0.2")
 
-    foreach ($candidate in $candidates) {
-        if (Test-Path $candidate) {
-            . $candidate
+    foreach ($idfRoot in ($idfRoots | Select-Object -Unique)) {
+        if (-not (Test-EspIdfV602Root $idfRoot)) { continue }
+        $candidate = Join-Path $idfRoot "export.ps1"
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+            . ([string]$candidate)
             return
         }
     }
+
+    throw "ESP-IDF v6.0.2 export.ps1 was not found. Set IDF_PATH to an ESP-IDF v6.0.2 installation or pass -IdfPythonEnv."
 }
 
-function Resolve-Rfc2217Server {
+function Find-Rfc2217Server {
     param([string]$PythonEnv)
 
     if ($PythonEnv) {
@@ -46,6 +57,14 @@ function Resolve-Rfc2217Server {
         return $discoveredServer.FullName
     }
 
+    return $null
+}
+
+function Resolve-Rfc2217Server {
+    param([string]$PythonEnv)
+
+    $server = Find-Rfc2217Server -PythonEnv $PythonEnv
+    if ($server) { return $server }
     throw "esp_rfc2217_server.exe was not found after loading ESP-IDF. Set IDF_PATH, install ESP-IDF 6.0.2 under $env:USERPROFILE\esp, or pass -IdfPythonEnv."
 }
 
@@ -68,8 +87,11 @@ function Test-FirewallRuleScope {
     }
 }
 
-Initialize-IdfEnvironment
-$server = Resolve-Rfc2217Server -PythonEnv $IdfPythonEnv
+$server = Find-Rfc2217Server -PythonEnv $IdfPythonEnv
+if (-not $server) {
+    Initialize-IdfEnvironment
+    $server = Resolve-Rfc2217Server -PythonEnv $IdfPythonEnv
+}
 Test-FirewallRuleScope -Port $ListenPort -RemoteIp $AllowedRemote
 
 $args = @("-p", [string]$ListenPort)

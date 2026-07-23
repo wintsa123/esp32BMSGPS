@@ -1060,7 +1060,6 @@ esp_err_t esp_bms_lvgl_bridge_init(const esp_bms_lvgl_bridge_config_t *config)
     ESP_RETURN_ON_FALSE(s_display, ESP_FAIL, TAG, "register adapter display failed");
 
     ESP_RETURN_ON_ERROR(init_touch(config, hres, vres), TAG, "init touch failed");
-    ESP_RETURN_ON_ERROR(esp_lv_adapter_start(), TAG, "start LVGL adapter failed");
     ESP_RETURN_ON_ERROR(set_backlight(config->pin_backlight, config->backlight_on_level),
                         TAG, "turn backlight on failed");
 
@@ -1069,6 +1068,12 @@ esp_err_t esp_bms_lvgl_bridge_init(const esp_bms_lvgl_bridge_config_t *config)
              use_psram_buffers ? "yes" : "no", (unsigned)psram_free, (unsigned)psram_largest);
     s_initialized = true;
     return ESP_OK;
+}
+
+esp_err_t esp_bms_lvgl_bridge_start(void)
+{
+    ESP_RETURN_ON_FALSE(s_initialized, ESP_ERR_INVALID_STATE, TAG, "bridge is not initialized");
+    return esp_lv_adapter_start();
 }
 
 esp_err_t esp_bms_lvgl_bridge_lock(int32_t timeout_ms)

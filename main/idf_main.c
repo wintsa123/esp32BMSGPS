@@ -155,6 +155,7 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_bms_lvgl_ui_init(esp_bms_lvgl_bridge_get_display()));
     ESP_ERROR_CHECK(esp_bms_lvgl_ui_boot_start(&runtime.snapshot));
     esp_bms_lvgl_bridge_unlock();
+    ESP_ERROR_CHECK(esp_bms_lvgl_bridge_start());
     log_heap_state("first_ui");
 
     ESP_LOGI(TAG, "display path initialized");

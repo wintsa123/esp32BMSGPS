@@ -405,7 +405,8 @@ set_defaults() {
     CFG[INPUT_GPIO]=''
     CFG[OUTPUT_GPIO]=''
     CFG[MODULES]=bms,controller,network,ota,cast
-    CFG[DASHBOARDS]=s1000rr,controller,fireblade
+    CFG[DASHBOARDS]=''
+    CFG[DASHBOARDS_AUTO]=YES
     CFG[CONFIRM_DANGEROUS_GPIO]=NO
 }
 
@@ -431,6 +432,7 @@ load_user_config() {
                 ;;
         esac
     done
+    [[ -z "${input[DASHBOARDS]+set}" ]] || CFG[DASHBOARDS_AUTO]=NO
 }
 
 parse_options() {
@@ -453,7 +455,7 @@ parse_options() {
                     --display) CFG[DISPLAY]="$value" ;;
                     --input) CFG[INPUT]="$value" ;;
                     --modules) CFG[MODULES]="$value" ;;
-                    --dashboards) CFG[DASHBOARDS]="$value" ;;
+                    --dashboards) CFG[DASHBOARDS]="$value"; CFG[DASHBOARDS_AUTO]=NO ;;
                     --board-name) CFG[BOARD_NAME]="$value" ;;
                     --display-name) CFG[DISPLAY_NAME]="$value" ;;
                     --input-name) CFG[INPUT_NAME]="$value" ;;
@@ -517,6 +519,7 @@ validate_dashboards() {
     local dashboard
     local -a dashboards=()
 
+    resolve_dashboard_selection
     IFS=, read -r -a dashboards <<< "${CFG[DASHBOARDS]}"
     SELECTED_DASHBOARDS=()
     for dashboard in "${dashboards[@]}"; do
@@ -524,10 +527,44 @@ validate_dashboards() {
         is_id "$dashboard" || die "invalid dashboard id: $dashboard"
         load_record dashboard "$dashboard"
         require_keys RECORD SCHEMA_VERSION ID
+        dashboard_is_available "$dashboard" || {
+            [[ "$dashboard" != controller ]] || die 'controller dashboard requires controller module'
+            die 'dashboard UIs require GPS or controller module'
+        }
         SELECTED_DASHBOARDS+=("$dashboard")
     done
     CFG[DASHBOARDS]="$(printf '%s\n' "${SELECTED_DASHBOARDS[@]}" | LC_ALL=C sort -u | paste -sd, -)"
-    [[ -n "${CFG[DASHBOARDS]}" ]] || die 'select at least one dashboard UI'
+    if [[ -z "${CFG[DASHBOARDS]}" ]] && dashboards_are_available; then
+        die 'select at least one dashboard UI'
+    fi
+    return 0
+}
+
+dashboards_are_available() {
+    csv_has "${CFG[MODULES]}" gps || csv_has "${CFG[MODULES]}" controller
+}
+
+dashboard_is_available() {
+    local dashboard="$1"
+
+    case "$dashboard" in
+        controller) csv_has "${CFG[MODULES]}" controller ;;
+        s1000rr|fireblade) dashboards_are_available ;;
+        *) return 1 ;;
+    esac
+}
+
+available_dashboard_ids() {
+    local dashboard
+    while IFS= read -r dashboard; do
+        dashboard_is_available "$dashboard" && printf '%s\n' "$dashboard"
+    done < <(catalog_ids dashboard)
+    return 0
+}
+
+resolve_dashboard_selection() {
+    [[ "${CFG[DASHBOARDS_AUTO]}" == YES ]] || return 0
+    CFG[DASHBOARDS]="$(available_dashboard_ids | LC_ALL=C sort -u | paste -sd, -)"
 }
 
 visit_module() {
@@ -613,6 +650,7 @@ collect_required_gpio_roles() {
     case "$BOARD_DISPLAY_BUS" in
         SPI)
             for role in TFT_MOSI TFT_SCLK TFT_CS TFT_DC; do require_gpio_role output "$role"; done
+            board_declares_gpio_role TFT_BACKLIGHT && require_gpio_role output TFT_BACKLIGHT
             ;;
         I80)
             for ((index = 0; index < BOARD_DISPLAY_DATA_WIDTH; index++)); do require_gpio_role output "TFT_D$index"; done
@@ -1376,16 +1414,20 @@ flash_built_firmware() {
     "$ROOT/scripts/esp-idf-env.sh" "${flash_args[@]}" flash
 }
 
-choose_module_options_with_keyboard() {
-    local key suffix option index pointer mark
+choose_catalog_options_with_keyboard() {
+    local kind="$1" default="$2" title key suffix option index pointer mark
+    shift 2
     local cursor=0
-    local -a choices=()
+    local -a choices=("$@")
     local -A selected=()
 
-    mapfile -t choices < <(catalog_ids module)
-    ((${#choices[@]} > 0)) || die 'no module catalog options'
+    case "$kind" in
+        module) title=Modules ;;
+        dashboard) title='Dashboard UIs' ;;
+        *) die "unsupported catalog menu: $kind" ;;
+    esac
     for option in "${choices[@]}"; do
-        if csv_has "${CFG[MODULES]}" "$option"; then
+        if csv_has "$default" "$option"; then
             selected["$option"]=1
         fi
     done
@@ -1393,14 +1435,14 @@ choose_module_options_with_keyboard() {
     while true; do
         printf '\033[2J\033[H'
         print_interactive_title
-        printf '\n%s\n' "$(message_text 'Modules')"
+        printf '\n%s\n' "$(message_text "$title")"
         for index in "${!choices[@]}"; do
             option="${choices[$index]}"
             pointer=' '
             (( index == cursor )) && pointer='>'
             mark='[ ]'
             [[ -n "${selected[$option]+x}" ]] && mark='[x]'
-            printf '  %s %s %d) %s — %s\n' "$pointer" "$mark" "$((index + 1))" "$option" "$(catalog_option_description module "$option")"
+            printf '  %s %s %d) %s — %s\n' "$pointer" "$mark" "$((index + 1))" "$option" "$(catalog_option_description "$kind" "$option")"
         done
         if [[ "$LANGUAGE" == en ]]; then
             printf '%s\n' 'Use Up/Down to move, Space to toggle, Enter to continue.'
@@ -1410,7 +1452,7 @@ choose_module_options_with_keyboard() {
 
         key=''
         IFS= read -rsn1 key || {
-            MENU_SELECTION="${CFG[MODULES]}"
+            MENU_SELECTION="$default"
             return
         }
         if [[ "$key" == $'\e' ]]; then
@@ -1439,6 +1481,28 @@ choose_module_options_with_keyboard() {
                 ;;
         esac
     done
+}
+
+choose_module_options_with_keyboard() {
+    local -a choices=()
+
+    mapfile -t choices < <(catalog_ids module)
+    ((${#choices[@]} > 0)) || die 'no module catalog options'
+    choose_catalog_options_with_keyboard module "${CFG[MODULES]}" "${choices[@]}"
+}
+
+choose_dashboard_options_with_keyboard() {
+    local -a choices=()
+
+    mapfile -t choices < <(available_dashboard_ids)
+    if ((${#choices[@]} == 0)); then
+        CFG[DASHBOARDS]=''
+        MENU_SELECTION=''
+        return
+    fi
+    resolve_dashboard_selection
+    choose_catalog_options_with_keyboard dashboard "${CFG[DASHBOARDS]}" "${choices[@]}"
+    CFG[DASHBOARDS_AUTO]=NO
 }
 
 choose_module_options() {
@@ -1491,9 +1555,18 @@ choose_module_options() {
 choose_dashboard_options() {
     local answer entry option candidate index
     local -a choices=() selected=() entries=()
+    if is_interactive_terminal; then
+        choose_dashboard_options_with_keyboard
+        return
+    fi
 
-    mapfile -t choices < <(catalog_ids dashboard)
-    ((${#choices[@]} > 0)) || die 'no dashboard catalog options'
+    mapfile -t choices < <(available_dashboard_ids)
+    if ((${#choices[@]} == 0)); then
+        CFG[DASHBOARDS]=''
+        MENU_SELECTION=''
+        return
+    fi
+    resolve_dashboard_selection
     while true; do
         printf '\n%s\n' "$(message_text 'Dashboard UIs')"
         for index in "${!choices[@]}"; do
@@ -1527,6 +1600,7 @@ choose_dashboard_options() {
         done
         ((${#selected[@]} > 0)) || continue
         MENU_SELECTION="$(printf '%s\n' "${selected[@]}" | LC_ALL=C sort -u | paste -sd, -)"
+        CFG[DASHBOARDS_AUTO]=NO
         return
     done
 }

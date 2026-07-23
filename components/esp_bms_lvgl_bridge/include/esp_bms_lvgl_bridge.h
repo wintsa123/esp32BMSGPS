@@ -87,6 +87,7 @@ typedef struct {
 } esp_bms_lvgl_bridge_config_t;
 
 esp_err_t esp_bms_lvgl_bridge_init(const esp_bms_lvgl_bridge_config_t *config);
+esp_err_t esp_bms_lvgl_bridge_start(void);
 esp_err_t esp_bms_lvgl_bridge_set_brightness(uint8_t percent);
 esp_err_t esp_bms_lvgl_bridge_set_rotation(esp_bms_display_rotation_t rotation);
 esp_err_t esp_bms_lvgl_bridge_load_touch_calibration(void);

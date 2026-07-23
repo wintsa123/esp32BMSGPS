@@ -29,6 +29,11 @@ README files link here instead of copying the full pin/build matrix.
 | Saved user selection and CLI GPIO overrides | `firmware-builds/<profile>/firmware.env` | reproducible local and cloud builds |
 | Generated CMake and C configuration | `firmware-builds/<profile>/generated/{profile.cmake,esp_bms_profile_hardware.h}` | `main`, runtime modules, audio, and LVGL bridge |
 
+Dashboard UI selection is offered only when the selected module closure includes
+`gps` or `controller`. The `controller` dashboard requires `controller`; the
+S1000RR and Fireblade dashboards require either `gps` or `controller`. A
+profile with neither module persists an empty `DASHBOARDS` value.
+
 The LVGL bridge accepts only the generated `ESP_BMS_PROFILE_LVGL_CONFIG`; it
 does not define a board, controller, GPIO, or display default. GPS, battery
 ADC, and audio likewise read generated profile roles. A disabled module must
@@ -419,11 +424,13 @@ scripts/dispatch-cloud-build.py --config firmware.env
   `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe` explicitly
   and, for a no-argument launch, pauses after a failure so double-click users
   can read the error.
-- The Windows local-build path must dot-source ESP-IDF `export.ps1` (first
-  from `$env:IDF_PATH`, then `%USERPROFILE%\\esp\\esp-idf-v6.0.2`) and invoke
-  `idf.py` directly in the repository root. It must never invoke the Unix-only
-  `scripts/esp-idf-env.sh`. Read `LASTEXITCODE` only after that native
-  `idf.py` invocation and only when the variable exists under strict mode.
+- The Windows local-build path must discover and dot-source ESP-IDF `export.ps1`
+  from the current or persisted `IDF_PATH`, project-adjacent directories, and
+  common v6.0.2 installation roots before invoking `idf.py` directly in the
+  repository root. On an interactive local build, if detection fails, it asks
+  to install ESP-IDF and collects the install directory. It must never invoke
+  the Unix-only `scripts/esp-idf-env.sh`. Read `LASTEXITCODE` only after that
+  native `idf.py` invocation and only when the variable exists under strict mode.
 - PowerShell localized-text mappings that can differ only by letter case (for
   example, `profile` and `Profile`) must be an ordered array of source/target
   pairs, not a hash literal: PowerShell hash keys are case-insensitive and

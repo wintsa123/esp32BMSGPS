@@ -317,6 +317,7 @@ _Static_assert(ESP_BMS_LVGL_ACTION_SET_BOOT_ANIMATION_STYLE == 32,
 typedef struct {
     lv_display_t *display;
     lv_obj_t *root;
+    lv_obj_t *staging_screen;
     lv_obj_t *header;
     lv_obj_t *pages;
     lv_obj_t *battery_page;
@@ -1357,6 +1358,9 @@ static void show_dashboard_view(void)
 static void show_settings_view(void)
 {
     finish_page_scroll_state(true);
+    if (lv_obj_get_parent(s_ui.settings_page) == s_ui.staging_screen) {
+        lv_obj_set_parent(s_ui.settings_page, s_ui.root);
+    }
     lv_obj_add_flag(s_ui.pages, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(s_ui.settings_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_ui.header, LV_OBJ_FLAG_HIDDEN);
@@ -2912,6 +2916,9 @@ static void settings_navigation_set_hidden(bool hidden, bool animated)
 
     if (!animated) {
         s_ui.settings_nav_hidden = hidden;
+        if (!settings_view_is_visible()) {
+            return;
+        }
         settings_navigation_apply_offset(target);
         return;
     }
@@ -3013,7 +3020,7 @@ static void settings_show_root(void)
     UI_SET_FLAG(SETTINGS_SWIPE_TRACKING, false);
     set_obj_hidden(s_ui.settings_detail, true);
     set_obj_hidden(s_ui.settings_root, false);
-    if (s_ui.settings_carousel) {
+    if (s_ui.settings_carousel && lv_obj_get_scroll_y(s_ui.settings_carousel) != 0) {
         lv_obj_scroll_to_y(s_ui.settings_carousel, 0, LV_ANIM_OFF);
     }
     settings_detail_chrome_show(SETTINGS_DETAIL_NONE);
@@ -5699,7 +5706,7 @@ static lv_obj_t *settings_option_card(lv_obj_t *parent,
     const int32_t title_y = total_text_h < h ? (h - total_text_h) / 2 : 0;
     lv_obj_t *title = label(box, text_x, title_y, w - text_x - 30, title_h, title_font);
     lv_label_set_text(title, option ? option->title : "");
-    lv_label_set_long_mode(title, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
+    lv_label_set_long_mode(title, LV_LABEL_LONG_MODE_CLIP);
     lv_obj_set_style_text_color(title, COLOR_SETTINGS_TEXT, LV_PART_MAIN);
 
     if (show_subtitle) {
@@ -5710,7 +5717,7 @@ static lv_obj_t *settings_option_card(lv_obj_t *parent,
                                    subtitle_h,
                                    subtitle_font);
         lv_label_set_text(subtitle, subtitle_text);
-        lv_label_set_long_mode(subtitle, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
+        lv_label_set_long_mode(subtitle, LV_LABEL_LONG_MODE_CLIP);
         lv_obj_set_style_text_color(subtitle, COLOR_SETTINGS_MUTED, LV_PART_MAIN);
     }
 
@@ -6941,7 +6948,7 @@ static void speed_dashboard_style_apply(const esp_bms_dashboard_snapshot_t *snap
 #if ESP_BMS_FEATURE_DASHBOARD_CONTROLLER
     if (controller_monitor && s_ui.controller_page) {
         lv_obj_move_foreground(s_ui.controller_page);
-    } else
+    }
 #endif
 #if ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
     if (honda_fireblade && s_ui.fireblade_page) {
@@ -8575,7 +8582,6 @@ static void speed_page_sync(const esp_bms_dashboard_snapshot_t *snapshot)
     lv_obj_set_x(s_ui.cast_page, s_ui.width * (renderable ? 2 : 1));
 
     if (changed && s_ui.pages) {
-        lv_obj_update_layout(s_ui.pages);
         move_to_page(retained_page, false);
         lv_obj_invalidate(s_ui.pages);
     }
@@ -9559,13 +9565,15 @@ static void create_screen(lv_display_t *display)
     lv_obj_set_style_text_color(s_ui.remaining_range_value, COLOR_WHITE, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_ui.remaining_range_unit, COLOR_ACCENT, LV_PART_MAIN);
 
-    s_ui.settings_page = lv_obj_create(screen);
+    s_ui.staging_screen = lv_obj_create(NULL);
+    s_ui.settings_page = lv_obj_create(s_ui.staging_screen);
     clear_style(s_ui.settings_page);
     lv_obj_set_pos(s_ui.settings_page, 0, settings_y);
     lv_obj_set_size(s_ui.settings_page, s_ui.width, settings_h);
     lv_obj_set_style_bg_color(s_ui.settings_page, COLOR_SETTINGS_BG, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_ui.settings_page, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_add_flag(s_ui.settings_page, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(s_ui.settings_page, LV_OBJ_FLAG_HIDDEN);
     settings_add_swipe_handlers(s_ui.settings_page);
 
     s_ui.settings_root = lv_obj_create(s_ui.settings_page);
@@ -9790,7 +9798,6 @@ static void create_screen(lv_display_t *display)
     s_ui.setup_ap_qr_ready = false;
     s_ui.setup_ap_qr_encode_attempted = false;
     settings_show_root();
-    lv_obj_add_flag(s_ui.settings_page, LV_OBJ_FLAG_HIDDEN);
 
     quick_panel_layout_t *quick_layout = quick_layout_ensure_current();
 
@@ -10145,6 +10152,10 @@ static esp_err_t rebuild_screen_if_needed(const esp_bms_dashboard_snapshot_t *sn
     if (s_ui.settings_swipe_indicator) {
         lv_obj_delete(s_ui.settings_swipe_indicator);
         s_ui.settings_swipe_indicator = NULL;
+    }
+    if (s_ui.staging_screen) {
+        lv_obj_delete(s_ui.staging_screen);
+        s_ui.staging_screen = NULL;
     }
     if (old_root) {
         lv_obj_delete(old_root);

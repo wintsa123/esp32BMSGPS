@@ -23,6 +23,7 @@ $SchemaVersion = '1'
 $script:Language = if ($env:FIRMWARE_LANG -in @('zh', 'en')) { $env:FIRMWARE_LANG } else { 'zh' }
 $script:BuildExitCode = 0
 $script:RequiredIdfVersion = 'ESP-IDF v6.0.2'
+. (Join-Path $Root 'scripts/esp-idf-version.ps1')
 
 function Convert-LocalizedText([string]$Text) {
     if ($script:Language -eq 'en') { return $Text }
@@ -54,14 +55,126 @@ function Write-LocalizedError([string]$Text) { Write-Error (Convert-LocalizedTex
 function Fail([string]$Message) { throw (Convert-LocalizedText "error: $Message") }
 
 function Get-IdfExportScript {
-    $Candidates = @()
+    $IdfRoots = [System.Collections.Generic.List[string]]::new()
     if (-not [string]::IsNullOrWhiteSpace($env:IDF_PATH)) {
-        $Candidates += (Join-Path $env:IDF_PATH 'export.ps1')
+        [void]$IdfRoots.Add($env:IDF_PATH)
+    }
+    foreach ($Scope in @('User', 'Machine')) {
+        $PersistedIdfPath = [Environment]::GetEnvironmentVariable('IDF_PATH', $Scope)
+        if (-not [string]::IsNullOrWhiteSpace($PersistedIdfPath)) { [void]$IdfRoots.Add($PersistedIdfPath) }
+    }
+
+    $RootParent = Split-Path -Parent $Root
+    foreach ($Base in @($Root, $RootParent)) {
+        [void]$IdfRoots.Add((Join-Path $Base 'esp-idf-v6.0.2'))
     }
     if (-not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
-        $Candidates += (Join-Path $env:USERPROFILE 'esp/esp-idf-v6.0.2/export.ps1')
+        foreach ($RelativePath in @('esp\esp-idf-v6.0.2', 'Desktop\esp-idf-v6.0.2')) {
+            [void]$IdfRoots.Add((Join-Path $env:USERPROFILE $RelativePath))
+        }
     }
-    return ($Candidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1)
+    if (-not [string]::IsNullOrWhiteSpace($env:SystemDrive)) {
+        [void]$IdfRoots.Add((Join-Path $env:SystemDrive 'esp\esp-idf-v6.0.2'))
+        [void]$IdfRoots.Add((Join-Path $env:SystemDrive 'Espressif\frameworks\esp-idf-v6.0.2'))
+    }
+    foreach ($Base in @($Root, $RootParent)) {
+        [void]$IdfRoots.Add((Join-Path $Base 'esp-idf'))
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
+        foreach ($RelativePath in @('esp\esp-idf', 'Desktop\esp-idf')) {
+            [void]$IdfRoots.Add((Join-Path $env:USERPROFILE $RelativePath))
+        }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:SystemDrive)) {
+        [void]$IdfRoots.Add((Join-Path $env:SystemDrive 'Espressif\frameworks\esp-idf'))
+    }
+    $IdfCommand = Get-Command idf.py -ErrorAction SilentlyContinue
+    if ($null -ne $IdfCommand -and -not [string]::IsNullOrWhiteSpace($IdfCommand.Source) -and (Test-Path -LiteralPath $IdfCommand.Source -PathType Leaf)) {
+        $IdfToolsDirectory = Split-Path -Parent $IdfCommand.Source
+        if ((Split-Path -Leaf $IdfToolsDirectory) -eq 'tools') { [void]$IdfRoots.Add((Split-Path -Parent $IdfToolsDirectory)) }
+    }
+
+    $SearchRoots = [System.Collections.Generic.List[string]]::new()
+    foreach ($SearchRoot in @($Root, $RootParent)) { [void]$SearchRoots.Add($SearchRoot) }
+    if (-not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
+        [void]$SearchRoots.Add((Join-Path $env:USERPROFILE 'Desktop'))
+        [void]$SearchRoots.Add((Join-Path $env:USERPROFILE 'esp'))
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:SystemDrive)) {
+        [void]$SearchRoots.Add($env:SystemDrive)
+        [void]$SearchRoots.Add((Join-Path $env:SystemDrive 'Espressif\frameworks'))
+    }
+    foreach ($SearchRoot in ($SearchRoots | Where-Object { Test-Path -LiteralPath $_ -PathType Container } | Select-Object -Unique)) {
+        foreach ($Candidate in (Get-ChildItem -LiteralPath $SearchRoot -Directory -Filter 'esp-idf*' -ErrorAction SilentlyContinue)) {
+            [void]$IdfRoots.Add($Candidate.FullName)
+        }
+    }
+
+    foreach ($IdfRoot in ($IdfRoots | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)) {
+        if (-not (Test-EspIdfV602Root $IdfRoot)) { continue }
+        $IdfExport = Join-Path $IdfRoot 'export.ps1'
+        if (Test-Path -LiteralPath $IdfExport -PathType Leaf) {
+            $env:IDF_PATH = [System.IO.Path]::GetFullPath($IdfRoot)
+            return $IdfExport
+        }
+    }
+    return $null
+}
+
+function Test-IdfExportScript([object]$Path) {
+    return ($Path -is [string] -and -not [string]::IsNullOrWhiteSpace([string]$Path) -and (Test-Path -LiteralPath $Path -PathType Leaf))
+}
+
+function Ensure-IdfExportScript {
+    $IdfExport = [string](Get-IdfExportScript | Select-Object -Last 1)
+    if (Test-IdfExportScript $IdfExport) { return ([string]$IdfExport) }
+    if (-not (Test-InteractiveTerminal)) { Fail 'missing ESP-IDF v6.0.2 export.ps1; set IDF_PATH or run start.cmd install-idf' }
+
+    $Answer = Read-Host $(if ($script:Language -eq 'en') { 'ESP-IDF v6.0.2 was not found. Install it now? [Y/n]' } else { '未检测到 ESP-IDF v6.0.2，现在安装吗？[Y/n]' })
+    if ($Answer -match '^[Nn]$') { Fail 'missing ESP-IDF v6.0.2 export.ps1; run start.cmd install-idf when ready' }
+    Install-EspIdf @() | Out-Host
+    $IdfExport = [string](Get-IdfExportScript | Select-Object -Last 1)
+    if (-not (Test-IdfExportScript $IdfExport)) { Fail 'ESP-IDF installation did not provide export.ps1' }
+    return ([string]$IdfExport)
+}
+
+function Test-PythonExecutable([string]$Path) {
+    try {
+        & $Path --version *> $null
+        return $?
+    } catch {
+        return $false
+    }
+}
+
+function Get-PythonExecutable {
+    $Python = Get-Command python -ErrorAction SilentlyContinue
+    if ($null -ne $Python) {
+        $PythonPath = if ([string]::IsNullOrWhiteSpace($Python.Source)) { $Python.Name } else { $Python.Source }
+        if (Test-PythonExecutable $PythonPath) { return $PythonPath }
+    }
+
+    $PythonLauncher = Get-Command py -ErrorAction SilentlyContinue
+    if ($null -ne $PythonLauncher) {
+        $PythonPath = @(& $PythonLauncher.Source -3 -c 'import sys; print(sys.executable)' 2>$null | Select-Object -First 1)
+        if ($LASTEXITCODE -eq 0 -and $PythonPath.Count -eq 1 -and (Test-PythonExecutable $PythonPath[0])) { return $PythonPath[0] }
+    }
+
+    $PythonEnvRoots = @()
+    if (-not [string]::IsNullOrWhiteSpace($env:APPDATA)) { $PythonEnvRoots += (Join-Path $env:APPDATA 'uv/python') }
+    if (-not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) { $PythonEnvRoots += (Join-Path $env:USERPROFILE '.espressif/python_env') }
+    foreach ($PythonEnvRoot in $PythonEnvRoots) {
+        if (Test-Path -LiteralPath $PythonEnvRoot -PathType Container) {
+            $Candidates = Get-ChildItem -LiteralPath $PythonEnvRoot -Recurse -Filter python.exe -File -ErrorAction SilentlyContinue |
+                Sort-Object FullName -Descending
+            foreach ($Candidate in $Candidates) {
+                if (Test-PythonExecutable $Candidate.FullName) { return $Candidate.FullName }
+            }
+        }
+    }
+
+    if ($script:Language -eq 'en') { Fail 'missing usable python; install it or run start.cmd install-idf' }
+    Fail '缺少可用的 python；请安装 Python 或运行 start.cmd install-idf'
 }
 
 function Assert-RequiredIdfVersion {
@@ -126,9 +239,9 @@ function Install-EspIdf([string[]]$Items) {
     if ($LASTEXITCODE -ne 0) { Fail 'ESP-IDF tool installation failed' }
     $env:IDF_PATH = $Directory
     [Environment]::SetEnvironmentVariable('IDF_PATH', $Directory, 'User')
-    $IdfExport = Get-IdfExportScript
-    if ($null -eq $IdfExport) { Fail 'ESP-IDF installation did not provide export.ps1' }
-    . $IdfExport
+    $IdfExport = [string](Get-IdfExportScript | Select-Object -Last 1)
+    if (-not (Test-IdfExportScript $IdfExport)) { Fail 'ESP-IDF installation did not provide export.ps1' }
+    . ([string]$IdfExport)
     Assert-RequiredIdfVersion
     Write-Host $(if ($script:Language -eq 'en') { "ESP-IDF v6.0.2 installed and IDF_PATH configured: $Directory" } else { "ESP-IDF v6.0.2 已安装，IDF_PATH 已配置：$Directory" })
 }
@@ -261,6 +374,21 @@ function Split-Csv([string]$Value) {
 function Test-CsvContains([string]$List, [string]$Value) { return (Split-Csv $List) -contains $Value }
 function ConvertTo-SortedCsv([string[]]$Values) { return (($Values | Where-Object { $_.Length -gt 0 } | Sort-Object -Unique) -join ',') }
 
+function Test-DashboardAvailable([System.Collections.IDictionary]$Config, [string]$Dashboard) {
+    if ($Dashboard -eq 'controller') { return Test-CsvContains $Config.MODULES 'controller' }
+    return ($Dashboard -in @('s1000rr', 'fireblade')) -and ((Test-CsvContains $Config.MODULES 'gps') -or (Test-CsvContains $Config.MODULES 'controller'))
+}
+
+function Get-AvailableDashboardIds([System.Collections.IDictionary]$Config) {
+    foreach ($Dashboard in @(Get-CatalogIds 'dashboard')) {
+        if (Test-DashboardAvailable $Config $Dashboard) { $Dashboard }
+    }
+}
+
+function Resolve-DashboardSelection([System.Collections.IDictionary]$Config) {
+    if ($Config.DASHBOARDS_AUTO -eq 'YES') { $Config.DASHBOARDS = ConvertTo-SortedCsv @(Get-AvailableDashboardIds $Config) }
+}
+
 function New-DefaultConfig {
     return [ordered]@{
         SCHEMA_VERSION = $SchemaVersion
@@ -280,7 +408,8 @@ function New-DefaultConfig {
         INPUT_GPIO = ''
         OUTPUT_GPIO = ''
         MODULES = 'bms,controller,network,ota,cast'
-        DASHBOARDS = 's1000rr,controller,fireblade'
+        DASHBOARDS = ''
+        DASHBOARDS_AUTO = 'YES'
         CONFIRM_DANGEROUS_GPIO = 'NO'
     }
 }
@@ -296,6 +425,7 @@ function Import-UserConfig([System.Collections.IDictionary]$Config, [string]$Pat
             Fail "unknown configuration key $Key"
         }
     }
+    if ($Input.Contains('DASHBOARDS')) { $Config.DASHBOARDS_AUTO = 'NO' }
 }
 
 function Parse-Options([System.Collections.IDictionary]$Config, [string[]]$Items) {
@@ -313,7 +443,7 @@ function Parse-Options([System.Collections.IDictionary]$Config, [string[]]$Items
             '--display' { if ($Index + 1 -ge $Items.Count) { Fail '--display requires a value' }; $Config.DISPLAY = $Items[$Index + 1]; $Index += 2 }
             '--input' { if ($Index + 1 -ge $Items.Count) { Fail '--input requires a value' }; $Config.INPUT = $Items[$Index + 1]; $Index += 2 }
             '--modules' { if ($Index + 1 -ge $Items.Count) { Fail '--modules requires a value' }; $Config.MODULES = $Items[$Index + 1]; $Index += 2 }
-            '--dashboards' { if ($Index + 1 -ge $Items.Count) { Fail '--dashboards requires a value' }; $Config.DASHBOARDS = $Items[$Index + 1]; $Index += 2 }
+            '--dashboards' { if ($Index + 1 -ge $Items.Count) { Fail '--dashboards requires a value' }; $Config.DASHBOARDS = $Items[$Index + 1]; $Config.DASHBOARDS_AUTO = 'NO'; $Index += 2 }
             '--board-name' { if ($Index + 1 -ge $Items.Count) { Fail '--board-name requires a value' }; $Config.BOARD_NAME = $Items[$Index + 1]; $Index += 2 }
             '--display-name' { if ($Index + 1 -ge $Items.Count) { Fail '--display-name requires a value' }; $Config.DISPLAY_NAME = $Items[$Index + 1]; $Index += 2 }
             '--input-name' { if ($Index + 1 -ge $Items.Count) { Fail '--input-name requires a value' }; $Config.INPUT_NAME = $Items[$Index + 1]; $Index += 2 }
@@ -407,7 +537,12 @@ function Set-RequiredGpioRoles([System.Collections.IDictionary]$Config) {
         return
     }
     switch ($script:BoardDisplayBus) {
-        'SPI' { foreach ($Role in @('TFT_MOSI', 'TFT_SCLK', 'TFT_CS', 'TFT_DC')) { Add-RequiredGpioRole 'output' $Role } }
+        'SPI' {
+            foreach ($Role in @('TFT_MOSI', 'TFT_SCLK', 'TFT_CS', 'TFT_DC')) { Add-RequiredGpioRole 'output' $Role }
+            if (Test-BoardDeclaresGpioRole 'TFT_BACKLIGHT' $Board.INPUT_GPIO $Board.OUTPUT_GPIO) {
+                Add-RequiredGpioRole 'output' 'TFT_BACKLIGHT'
+            }
+        }
         'I80' {
             for ($Index = 0; $Index -lt [int]$script:BoardDisplayDataWidth; $Index++) { Add-RequiredGpioRole 'output' "TFT_D$Index" }
             foreach ($Role in @('TFT_WR', 'TFT_CS', 'TFT_DC')) { Add-RequiredGpioRole 'output' $Role }
@@ -594,15 +729,21 @@ function Validate-Config([System.Collections.IDictionary]$Config) {
     $script:SelectedModules = @()
     foreach ($Module in Split-Csv $Config.MODULES) { Visit-Module $Module }
     $Config.MODULES = ConvertTo-SortedCsv $script:SelectedModules
+    Resolve-DashboardSelection $Config
+    $DashboardsAvailable = @(Get-AvailableDashboardIds $Config).Count -gt 0
     $SelectedDashboards = [System.Collections.Generic.List[string]]::new()
     foreach ($Dashboard in Split-Csv $Config.DASHBOARDS) {
         if (-not (Test-Id $Dashboard)) { Fail "invalid dashboard id: $Dashboard" }
         $DashboardRecord = Get-Record 'dashboard' $Dashboard
         Assert-Keys $DashboardRecord @('SCHEMA_VERSION', 'ID')
+        if (-not (Test-DashboardAvailable $Config $Dashboard)) {
+            if ($Dashboard -eq 'controller') { Fail 'controller dashboard requires controller module' }
+            Fail 'dashboard UIs require GPS or controller module'
+        }
         [void]$SelectedDashboards.Add($Dashboard)
     }
     $Config.DASHBOARDS = ConvertTo-SortedCsv $SelectedDashboards.ToArray()
-    if ([string]::IsNullOrEmpty($Config.DASHBOARDS)) { Fail 'select at least one dashboard UI' }
+    if ([string]::IsNullOrEmpty($Config.DASHBOARDS) -and $DashboardsAvailable) { Fail 'select at least one dashboard UI' }
     if ($Config.BOARD -eq 'custom') { Assert-CustomBoardGpioRoles $Config }
 }
 
@@ -625,7 +766,7 @@ function Write-Profile([System.Collections.IDictionary]$Config) {
     $FirmwareEnvContent = (($Lines -join "`n") + "`n")
     Write-Utf8NoBom $FirmwareEnv $FirmwareEnvContent
     Write-Utf8NoBom (Join-Path $Temp 'normalized.env') $FirmwareEnvContent
-    & python3 (Join-Path $Root 'scripts/generate-hardware-config.py') --catalog $CatalogDir --firmware-env $FirmwareEnv --output (Join-Path $Temp 'generated/esp_bms_profile_hardware.h')
+    & (Get-PythonExecutable) (Join-Path $Root 'scripts/generate-hardware-config.py') --catalog $CatalogDir --firmware-env $FirmwareEnv --output (Join-Path $Temp 'generated/esp_bms_profile_hardware.h')
     if ($LASTEXITCODE -ne 0) { throw 'hardware configuration generation failed' }
     $MainRequires = @('esp_bms_idf_runtime', 'esp_bms_lvgl_bridge', 'esp_bms_lvgl_ui', 'lvgl', 'esp_lvgl_adapter')
     $AudioFeature = 0
@@ -721,15 +862,10 @@ function Invoke-LocalBuild([System.Collections.IDictionary]$Config) {
     $ProfileDir = Join-Path $BuildRoot $Config.PROFILE
     $BuildDir = Join-Path (Join-Path $IdfBuildRoot $Config.PROFILE) 'idf-build'
     $env:ESP_BMS_PROFILE_FILE = Join-Path $ProfileDir 'generated/profile.cmake'
-    $IdfExport = Get-IdfExportScript
-    if ($null -eq $IdfExport) {
-        if ($script:Language -eq 'en') {
-            Fail 'missing ESP-IDF v6.0.2 export.ps1; set IDF_PATH or install ESP-IDF 6.0.2'
-        }
-        Fail '缺少 ESP-IDF v6.0.2 环境脚本 export.ps1；请设置 IDF_PATH 或安装 ESP-IDF 6.0.2'
-    }
+    $IdfExport = Ensure-IdfExportScript
 
-    . $IdfExport
+    if (-not (Test-IdfExportScript $IdfExport)) { Fail 'ESP-IDF export.ps1 path is invalid' }
+    . ([string]$IdfExport)
     if ($null -eq (Get-Command idf.py -ErrorAction SilentlyContinue)) {
         if ($script:Language -eq 'en') {
             Fail 'missing idf.py after ESP-IDF environment setup'
@@ -770,15 +906,11 @@ function Invoke-LocalBuild([System.Collections.IDictionary]$Config) {
 }
 
 function Get-FirmwareOtaCode([string]$FirmwarePath) {
-    $Python = Get-Command python -ErrorAction SilentlyContinue
-    if ($null -eq $Python) {
-        if ($script:Language -eq 'en') { Fail 'missing python needed to calculate the OTA code' }
-        Fail '缺少用于计算 OTA 密码的 python'
-    }
+    $Python = Get-PythonExecutable
 
     # Keep this byte-for-byte compatible with esp_bms_ota and scripts/build-firmware.py.
     $PythonCode = 'import functools,sys,zlib;firmware=open(sys.argv[1],"rb");crc=functools.reduce(lambda value,chunk:zlib.crc32(chunk,value),iter(lambda:firmware.read(65536),b""),0);print(f"{(crc & 0xffffffff) % 10000:04d}")'
-    $CodeLines = @(& $Python.Source -c $PythonCode $FirmwarePath)
+    $CodeLines = @(& $Python -c $PythonCode $FirmwarePath)
     if ($LASTEXITCODE -ne 0 -or $CodeLines.Count -ne 1 -or $CodeLines[0] -notmatch '^[0-9]{4}$') {
         if ($script:Language -eq 'en') { Fail 'failed to calculate the OTA code from the firmware' }
         Fail '无法根据固件计算 OTA 密码'
@@ -852,22 +984,30 @@ function Show-LocalBuildResult([System.Collections.IDictionary]$Config, [string]
 
 function Invoke-CloudBuild([System.Collections.IDictionary]$Config) {
     $env:FIRMWARE_LANG = $script:Language
-    & python (Join-Path $Root 'scripts/dispatch-cloud-build.py') --config (Join-Path (Join-Path $BuildRoot $Config.PROFILE) 'firmware.env')
+    & (Get-PythonExecutable) (Join-Path $Root 'scripts/dispatch-cloud-build.py') --config (Join-Path (Join-Path $BuildRoot $Config.PROFILE) 'firmware.env')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
 function Invoke-Doctor {
     $Missing = $false
     foreach ($Name in @('git', 'python')) {
+        if ($Name -eq 'python') {
+            $Python = Get-PythonExecutable
+            Write-LocalizedOutput "ok: python=$Python"
+            continue
+        }
         $CommandInfo = Get-Command $Name -ErrorAction SilentlyContinue
         if ($null -eq $CommandInfo) { Write-LocalizedError "missing: $Name"; $Missing = $true } else { Write-LocalizedOutput "ok: $Name=$($CommandInfo.Source)" }
     }
-    $IdfExport = Get-IdfExportScript
+    $IdfExport = [string](Get-IdfExportScript | Select-Object -Last 1)
     if ($null -eq $IdfExport) {
         Write-LocalizedError 'missing: ESP-IDF v6.0.2 export.ps1'
         $Missing = $true
+    } elseif (-not (Test-IdfExportScript $IdfExport)) {
+        Write-LocalizedError 'invalid ESP-IDF export.ps1 path'
+        $Missing = $true
     } else {
-        . $IdfExport
+        . ([string]$IdfExport)
         foreach ($Name in @('cmake', 'ninja', 'idf.py')) {
             $CommandInfo = Get-Command $Name -ErrorAction SilentlyContinue
             if ($null -eq $CommandInfo) { Write-LocalizedError "missing: $Name after ESP-IDF environment setup"; $Missing = $true } else { Write-LocalizedOutput "ok: $Name=$($CommandInfo.Source)" }
@@ -1043,8 +1183,9 @@ function Test-InteractiveTerminal {
     }
 }
 
-function Select-ModuleOptionsWithKeyboard([string]$Default, [string[]]$Options) {
-    if ($Options.Count -eq 0) { Fail 'no module catalog options' }
+function Select-CatalogOptionsWithKeyboard([string]$Kind, [string]$Default, [string[]]$Options) {
+    if ($Options.Count -eq 0) { Fail "no $Kind catalog options" }
+    $Title = if ($Kind -eq 'module') { 'Modules' } elseif ($Kind -eq 'dashboard') { 'Dashboard UIs' } else { Fail "unsupported catalog menu: $Kind" }
     $Selected = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
     foreach ($Option in (Split-Csv $Default)) {
         if ($Options -contains $Option) { [void]$Selected.Add($Option) }
@@ -1054,12 +1195,12 @@ function Select-ModuleOptionsWithKeyboard([string]$Default, [string[]]$Options) 
         Clear-Host
         Show-InteractiveTitle
         Write-Host ''
-        Write-Host (Convert-LocalizedText 'Modules')
+        Write-Host (Convert-LocalizedText $Title)
         for ($Index = 0; $Index -lt $Options.Count; $Index++) {
             $Option = $Options[$Index]
             $Pointer = if ($Index -eq $Cursor) { '>' } else { ' ' }
             $Mark = if ($Selected.Contains($Option)) { '[x]' } else { '[ ]' }
-            Write-Host ("  {0} {1} {2}) {3} — {4}" -f $Pointer, $Mark, ($Index + 1), $Option, (Get-CatalogOptionDescription 'module' $Option))
+            Write-Host ("  {0} {1} {2}) {3} — {4}" -f $Pointer, $Mark, ($Index + 1), $Option, (Get-CatalogOptionDescription $Kind $Option))
         }
         Write-Host $(if ($script:Language -eq 'en') { 'Use Up/Down to move, Space to toggle, Enter to continue.' } else { '使用 ↑/↓ 移动，空格切换，回车下一步。' })
 
@@ -1083,6 +1224,10 @@ function Select-ModuleOptionsWithKeyboard([string]$Default, [string[]]$Options) 
             return ConvertTo-SortedCsv $Values.ToArray()
         }
     }
+}
+
+function Select-ModuleOptionsWithKeyboard([string]$Default, [string[]]$Options) {
+    return (Select-CatalogOptionsWithKeyboard 'module' $Default $Options)
 }
 
 function Select-ModuleOptions([string]$Default) {
@@ -1119,9 +1264,18 @@ function Select-ModuleOptions([string]$Default) {
     }
 }
 
-function Select-DashboardOptions([string]$Default) {
-    $Options = @(Get-CatalogIds 'dashboard')
-    if ($Options.Count -eq 0) { Fail 'no dashboard catalog options' }
+function Select-DashboardOptions([System.Collections.IDictionary]$Config) {
+    $Options = @(Get-AvailableDashboardIds $Config)
+    if ($Options.Count -eq 0) {
+        $Config.DASHBOARDS = ''
+        return ''
+    }
+    Resolve-DashboardSelection $Config
+    $Default = $Config.DASHBOARDS
+    if (Test-InteractiveTerminal) {
+        $Config.DASHBOARDS_AUTO = 'NO'
+        return (Select-CatalogOptionsWithKeyboard 'dashboard' $Default $Options)
+    }
     while ($true) {
         Write-Host ''
         Write-Host (Convert-LocalizedText 'Dashboard UIs')
@@ -1146,7 +1300,10 @@ function Select-DashboardOptions([string]$Default) {
                 break
             }
         }
-        if ($Valid -and $Selected.Count -gt 0) { return ConvertTo-SortedCsv $Selected.ToArray() }
+        if ($Valid -and $Selected.Count -gt 0) {
+            $Config.DASHBOARDS_AUTO = 'NO'
+            return ConvertTo-SortedCsv $Selected.ToArray()
+        }
         [Console]::Error.WriteLine($(if ($script:Language -eq 'en') { 'Invalid dashboard selection; please try again.' } else { '无效仪表选择，请重新输入。' }))
     }
 }
@@ -1222,7 +1379,7 @@ function Set-CustomBoardConfig([System.Collections.IDictionary]$Config) {
     $script:BoardDisplayBus = $Config.DISPLAY_BUS
     $script:BoardInputBus = $Config.INPUT_BUS
     $Config.MODULES = Select-ModuleOptions $Config.MODULES
-    $Config.DASHBOARDS = Select-DashboardOptions $Config.DASHBOARDS
+    $Config.DASHBOARDS = Select-DashboardOptions $Config
     Set-CustomBoardGpio $Config
 }
 
@@ -1421,7 +1578,7 @@ function Invoke-Interactive {
         $Config.INPUT = Select-CatalogOption 'input' 'Input' $Config.INPUT $InputOptions
         if ($Config.INPUT -eq 'custom') { Read-CustomId $Config 'INPUT_NAME' '自定义输入设备名称（ASCII）' 'Custom input name (ASCII)' }
         $Config.MODULES = Select-ModuleOptions $Config.MODULES
-        $Config.DASHBOARDS = Select-DashboardOptions $Config.DASHBOARDS
+        $Config.DASHBOARDS = Select-DashboardOptions $Config
         Set-MissingBoardGpio $Config
     }
     Set-InteractiveProfileName $Config
@@ -1474,6 +1631,14 @@ try {
         default { Fail "unknown command: $Command" }
     }
 } catch {
-    Write-Error $_.Exception.Message
+    $ErrorDetails = [System.Collections.Generic.List[string]]::new()
+    [void]$ErrorDetails.Add($_.Exception.Message)
+    if (-not [string]::IsNullOrWhiteSpace($_.InvocationInfo.PositionMessage)) {
+        [void]$ErrorDetails.Add($_.InvocationInfo.PositionMessage.Trim())
+    }
+    if (-not [string]::IsNullOrWhiteSpace($_.ScriptStackTrace)) {
+        [void]$ErrorDetails.Add($_.ScriptStackTrace.Trim())
+    }
+    [Console]::Error.WriteLine(($ErrorDetails -join [Environment]::NewLine))
     exit 2
 }
