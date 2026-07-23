@@ -373,3 +373,36 @@ Added a primitive-drawn quick-panel lock icon, full-screen interaction guard, fr
 ### Next Steps
 
 - None - task complete
+
+
+## Session 12: 修复 ESP32 启动期 WDT
+
+**Date**: 2026-07-23
+**Task**: 修复 ESP32 启动期 WDT
+**Branch**: `main`
+
+### Summary
+
+移除 bluetoothon、wlanJZ、hotspoton 三个 LVGL 图标字体的自引用 fallback，避免缺字形查找在 esp_timer 中形成无限回退并饿死 CPU0 IDLE0。legacy profile 构建、配置器/主机自测、LVGL headless smoke 均通过；RFC2217 刷写校验成功，冷启动约 2.7 秒完成显示路径，140 秒监控窗口无 task_wdt、panic 或重启。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d4fca3d` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 11
-- **Last Active**: 2026-07-21
+- **Total Sessions**: 12
+- **Last Active**: 2026-07-23
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~375 | Active |
+| `journal-1.md` | ~408 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 12 | 2026-07-23 | 修复 ESP32 启动期 WDT | `d4fca3d` | `main` |
 | 11 | 2026-07-21 | 功能组件拆分与中文定制化编译脚本 | `c64a4c2` | `main` |
 | 10 | 2026-07-14 | 正式 UI 与剩余里程 | `e4f01f2`, `e67b356` | `main` |
 | 9 | 2026-07-14 | 优化 S1000RR 速度色带曲线 | `8092157` | `main` |
