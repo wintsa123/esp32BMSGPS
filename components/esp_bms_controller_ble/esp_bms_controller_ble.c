@@ -600,15 +600,25 @@ static esp_err_t controller_start_scan(esp_bms_idf_runtime_t *runtime)
         RUNTIME_SET_FLAG(runtime, CONTROLLER_SCAN_REQUESTED, true);
         return ESP_OK;
     }
+    if (RUNTIME_FLAG(runtime, CONTROLLER_SCAN_ACTIVE)) {
+        esp_bms_idf_runtime_project_controller_snapshot(runtime);
+        return ESP_OK;
+    }
+    if (ble_gap_disc_active()) {
+        /* NimBLE has one global discovery callback; hand ownership to controller. */
+        RUNTIME_SET_FLAG(runtime, BMS_SCAN_REQUESTED, false);
+        RUNTIME_SET_FLAG(runtime, CONTROLLER_SCAN_REQUESTED, true);
+        RUNTIME_SET_FLAG(runtime, CONTROLLER_SCAN_ACTIVE, false);
+        (void)ble_gap_disc_cancel();
+        ESP_LOGI(TAG, "BLE scan handoff requested: BMS -> controller");
+        esp_bms_idf_runtime_project_controller_snapshot(runtime);
+        return ESP_OK;
+    }
     runtime->controller_scan_candidate_count = 0U;
     memset(runtime->controller_scan_candidates, 0, sizeof(runtime->controller_scan_candidates));
     runtime->controller_scan_revision++;
     RUNTIME_SET_FLAG(runtime, CONTROLLER_SCAN_REQUESTED, false);
     RUNTIME_SET_FLAG(runtime, CONTROLLER_SCAN_ACTIVE, true);
-    if (ble_gap_disc_active()) {
-        esp_bms_idf_runtime_project_controller_snapshot(runtime);
-        return ESP_OK;
-    }
     uint8_t own_addr_type = 0U;
     if (ble_hs_id_infer_auto(0, &own_addr_type) != 0) {
         RUNTIME_SET_FLAG(runtime, CONTROLLER_SCAN_ACTIVE, false);
@@ -685,6 +695,11 @@ static bool controller_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_ms)
     if (!runtime) {
         return false;
     }
+    bool changed = false;
+    if (RUNTIME_FLAG(runtime, CONTROLLER_SCAN_REQUESTED) && !ble_gap_disc_active()) {
+        (void)controller_start_scan(runtime);
+        changed = true;
+    }
     if ((runtime->active_data_source == ESP_BMS_LVGL_DATA_SOURCE_CONTROLLER ||
          runtime->active_data_source == ESP_BMS_LVGL_DATA_SOURCE_SPEED_DASHBOARD) &&
         RUNTIME_FLAG(runtime, CONTROLLER_SUBSCRIBED)) {
@@ -693,7 +708,7 @@ static bool controller_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_ms)
             controller_send_gather(runtime);
         }
     }
-    return false;
+    return changed;
 }
 
 static const esp_bms_idf_runtime_controller_ble_driver_t s_controller_ble_driver = {

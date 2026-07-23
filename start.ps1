@@ -1238,10 +1238,10 @@ function Select-CatalogOptionsWithKeyboard([string]$Kind, [string]$Default, [str
             $Mark = if ($Selected.Contains($Option)) { '[x]' } else { '[ ]' }
             Write-Host ("  {0} {1} {2}) {3} — {4}" -f $Pointer, $Mark, ($Index + 1), $Option, (Get-CatalogOptionDescription $Kind $Option))
         }
-        Write-Host $(if ($script:Language -eq 'en') { 'Use Up/Down to move, Space to toggle, Enter to continue.' } else { '使用 ↑/↓ 移动，空格切换，回车下一步。' })
+        Write-Host $(if ($script:Language -eq 'en') { 'Use Up/Down/Left to move, Space to toggle, Enter to continue.' } else { '使用 ↑/↓/← 移动，空格切换，回车下一步。' })
 
         $Key = [Console]::ReadKey($true).Key
-        if ($Key -eq [ConsoleKey]::UpArrow) {
+        if ($Key -eq [ConsoleKey]::UpArrow -or $Key -eq [ConsoleKey]::LeftArrow) {
             $Cursor = if ($Cursor -eq 0) { $Options.Count - 1 } else { $Cursor - 1 }
             continue
         }

@@ -1485,9 +1485,9 @@ choose_catalog_options_with_keyboard() {
             printf '  %s %s %d) %s — %s\n' "$pointer" "$mark" "$((index + 1))" "$option" "$(catalog_option_description "$kind" "$option")"
         done
         if [[ "$LANGUAGE" == en ]]; then
-            printf '%s\n' 'Use Up/Down to move, Space to toggle, Enter to continue.'
+            printf '%s\n' 'Use Up/Down/Left to move, Space to toggle, Enter to continue.'
         else
-            printf '%s\n' '使用 ↑/↓ 移动，空格切换，回车下一步。'
+            printf '%s\n' '使用 ↑/↓/← 移动，空格切换，回车下一步。'
         fi
 
         key=''
@@ -1501,7 +1501,7 @@ choose_catalog_options_with_keyboard() {
             key+="$suffix"
         fi
         case "$key" in
-            $'\e[A'|$'\eOA')
+            $'\e[A'|$'\eOA'|$'\e[D'|$'\eOD')
                 if (( cursor == 0 )); then cursor=$((${#choices[@]} - 1)); else cursor=$((cursor - 1)); fi
                 ;;
             $'\e[B'|$'\eOB')

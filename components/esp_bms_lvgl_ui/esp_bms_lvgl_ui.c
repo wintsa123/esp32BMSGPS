@@ -3431,6 +3431,21 @@ static void settings_bms_ble_start_scan(void)
                                                     : ESP_BMS_LVGL_ACTION_START_CONTROLLER_BIND);
 }
 
+static bool settings_bms_ble_connection_in_progress(const esp_bms_dashboard_snapshot_t *snapshot,
+                                                    settings_ble_source_t source)
+{
+    if (!snapshot || source != SETTINGS_BLE_SOURCE_BMS ||
+        SNAPSHOT_FLAG(snapshot, BMS_ONLINE)) {
+        return false;
+    }
+    return strcmp(snapshot->bms_info_text, "BMS CONN") == 0 ||
+           strcmp(snapshot->bms_info_text, "BMS DISC") == 0 ||
+           strcmp(snapshot->bms_info_text, "BMS SVC") == 0 ||
+           strcmp(snapshot->bms_info_text, "BMS CHR") == 0 ||
+           strcmp(snapshot->bms_info_text, "BMS CCCD") == 0 ||
+           strcmp(snapshot->bms_info_text, "BMS SUB") == 0;
+}
+
 static void settings_show_bms_ble_popup(settings_ble_source_t source, bool start_scan)
 {
     const bool portrait = s_ui.width < s_ui.height;
@@ -5013,6 +5028,14 @@ static void settings_bms_ble_candidate_event_cb(lv_event_t *event)
 static void settings_bms_ble_refresh_event_cb(lv_event_t *event)
 {
     if (!settings_bms_popup_click_ready(event)) {
+        return;
+    }
+    const settings_ble_source_t source = (settings_ble_source_t)s_ui.settings_ble_source;
+    if (settings_bms_ble_connection_in_progress(settings_current_snapshot(), source)) {
+        label_set_text_if_changed(s_ui.settings_bms_ble_status, "已取消");
+        quick_toast_cancel();
+        queue_action(ESP_BMS_LVGL_ACTION_CANCEL_BMS_CONNECTION);
+        ESP_LOGI(TAG, "[ble-ui] cancel BMS connection from list page");
         return;
     }
     settings_bms_ble_start_scan();
@@ -8611,14 +8634,7 @@ static void speed_page_sync(const esp_bms_dashboard_snapshot_t *snapshot)
         return;
     }
 
-    const bool boot_requires_speed =
-        s_ui.boot_active &&
-        s_ui.boot_animation_style ==
-            (uint8_t)ESP_BMS_BOOT_ANIMATION_GAUGE_SWEEP;
-    const bool renderable =
-        boot_requires_speed ||
-        snapshot->gps_module_state == (uint8_t)ESP_BMS_GPS_MODULE_AVAILABLE ||
-        SNAPSHOT_FLAG(snapshot, CONTROLLER_ONLINE);
+    const bool renderable = ESP_BMS_FEATURE_GPS || ESP_BMS_FEATURE_CONTROLLER;
     const bool changed = s_ui.speed_page_renderable != renderable;
     esp_bms_lvgl_page_t retained_page = s_ui.page;
 

@@ -99,6 +99,7 @@ typedef struct {
     esp_err_t (*start_if_bound)(esp_bms_idf_runtime_t *runtime);
     esp_err_t (*start_for_bind)(esp_bms_idf_runtime_t *runtime);
     esp_err_t (*resume_scan)(esp_bms_idf_runtime_t *runtime);
+    bool (*stop)(esp_bms_idf_runtime_t *runtime);
     bool (*tick)(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_ms);
     void (*on_ble_reset)(esp_bms_idf_runtime_t *runtime);
 } esp_bms_idf_runtime_bms_ble_driver_t;

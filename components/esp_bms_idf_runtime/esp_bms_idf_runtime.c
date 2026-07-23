@@ -3584,6 +3584,7 @@ static bool runtime_action_feature_enabled(esp_bms_lvgl_action_t action)
     case ESP_BMS_LVGL_ACTION_ENABLE_WIFI_REPROVISIONING:
         return ESP_BMS_FEATURE_NETWORK;
     case ESP_BMS_LVGL_ACTION_START_BMS_BIND:
+    case ESP_BMS_LVGL_ACTION_CANCEL_BMS_CONNECTION:
     case ESP_BMS_LVGL_ACTION_SELECT_BMS_ANT:
     case ESP_BMS_LVGL_ACTION_SELECT_BMS_JK:
     case ESP_BMS_LVGL_ACTION_SELECT_BMS_JBD:
@@ -3886,6 +3887,10 @@ bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,
             ESP_LOGI(TAG, "[bms] BLE scan action queued");
         }
         return true;
+    case ESP_BMS_LVGL_ACTION_CANCEL_BMS_CONNECTION:
+        return runtime->bms_ble_driver && runtime->bms_ble_driver->stop
+                   ? runtime->bms_ble_driver->stop(runtime)
+                   : false;
     case ESP_BMS_LVGL_ACTION_ENABLE_BLUETOOTH_ADVERTISING:
         if (RUNTIME_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED) ||
             RUNTIME_FLAG(runtime, BLUETOOTH_ADVERTISING)) {
@@ -3978,6 +3983,8 @@ const char *esp_bms_idf_runtime_action_name(esp_bms_lvgl_action_t action)
         return "set-preset-range";
     case ESP_BMS_LVGL_ACTION_START_BMS_BIND:
         return "start-bms-bind";
+    case ESP_BMS_LVGL_ACTION_CANCEL_BMS_CONNECTION:
+        return "cancel-bms-connection";
     case ESP_BMS_LVGL_ACTION_ENABLE_BLUETOOTH_ADVERTISING:
         return "enable-bluetooth-advertising";
     case ESP_BMS_LVGL_ACTION_CYCLE_LEVEL_POSITION:

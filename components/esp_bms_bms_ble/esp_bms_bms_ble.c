@@ -839,11 +839,19 @@ static esp_err_t bms_start_scan(esp_bms_idf_runtime_t *runtime)
         }
         return ESP_ERR_INVALID_STATE;
     }
-    if (RUNTIME_FLAG(runtime, BMS_SCAN_ACTIVE) || ble_gap_disc_active()) {
+    if (RUNTIME_FLAG(runtime, BMS_SCAN_ACTIVE)) {
         RUNTIME_SET_FLAG(runtime, BMS_SCAN_REQUESTED, false);
-        RUNTIME_SET_FLAG(runtime, BMS_SCAN_ACTIVE, true);
-        runtime->bms_ble_phase = (uint8_t)BMS_BLE_PHASE_SCANNING;
-        bms_set_info(runtime, "BMS SCAN");
+        return ESP_OK;
+    }
+    if (ble_gap_disc_active()) {
+        /* NimBLE has one global discovery callback; hand ownership to BMS. */
+        RUNTIME_SET_FLAG(runtime, CONTROLLER_SCAN_REQUESTED, false);
+        RUNTIME_SET_FLAG(runtime, BMS_SCAN_REQUESTED, true);
+        RUNTIME_SET_FLAG(runtime, BMS_SCAN_ACTIVE, false);
+        runtime->bms_ble_phase = (uint8_t)BMS_BLE_PHASE_IDLE;
+        bms_set_info(runtime, "BMS WAIT");
+        (void)ble_gap_disc_cancel();
+        ESP_LOGI(TAG, "BLE scan handoff requested: controller -> BMS");
         return ESP_OK;
     }
     uint8_t own_addr_type = 0U;
@@ -915,6 +923,33 @@ static esp_err_t bms_resume_scan(esp_bms_idf_runtime_t *runtime)
     return bms_start_scan(runtime);
 }
 
+static bool bms_stop(esp_bms_idf_runtime_t *runtime)
+{
+    if (!runtime) {
+        return false;
+    }
+
+    const bool active = runtime->bms_ble_phase != (uint8_t)BMS_BLE_PHASE_IDLE ||
+                        RUNTIME_FLAG(runtime, BMS_SCAN_ACTIVE) ||
+                        RUNTIME_FLAG(runtime, BMS_SCAN_REQUESTED) ||
+                        RUNTIME_FLAG(runtime, BMS_BIND_ACTIVE);
+    RUNTIME_SET_FLAG(runtime, BMS_BIND_ACTIVE, false);
+    RUNTIME_SET_FLAG(runtime, BMS_SCAN_REQUESTED, false);
+    if (ble_gap_disc_active()) {
+        (void)ble_gap_disc_cancel();
+    }
+    if (runtime->bms_ble_phase == (uint8_t)BMS_BLE_PHASE_CONNECTING) {
+        (void)ble_gap_conn_cancel();
+    } else if (runtime->bms_conn_handle != 0xFFFFU) {
+        (void)ble_gap_terminate(runtime->bms_conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+    }
+    bms_reset_connection_state(runtime, BMS_BLE_PHASE_IDLE);
+    bms_clear_telemetry(runtime);
+    bms_set_info(runtime, "BMS OFF");
+    ESP_LOGI(TAG, "BMS connection cancelled");
+    return active;
+}
+
 static void bms_on_ble_reset(esp_bms_idf_runtime_t *runtime)
 {
     if (!runtime || !RUNTIME_FLAG(runtime, BMS_BIND_ACTIVE)) {
@@ -930,6 +965,12 @@ static bool bms_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_ms)
         return false;
     }
     bool changed = false;
+    if (RUNTIME_FLAG(runtime, BMS_SCAN_REQUESTED) &&
+        RUNTIME_FLAG(runtime, BMS_BLE_READY) &&
+        RUNTIME_FLAG(runtime, BMS_BLE_SYNCED) && !ble_gap_disc_active()) {
+        (void)bms_start_scan(runtime);
+        changed = true;
+    }
     if (RUNTIME_FLAG(runtime, BMS_SCAN_SNAPSHOT_DIRTY)) {
         RUNTIME_SET_FLAG(runtime, BMS_SCAN_SNAPSHOT_DIRTY, false);
         changed = esp_bms_idf_runtime_bms_scan_project_snapshot(runtime) || changed;
@@ -974,6 +1015,7 @@ static const esp_bms_idf_runtime_bms_ble_driver_t s_bms_ble_driver = {
     .start_if_bound = bms_start_if_bound,
     .start_for_bind = bms_start_for_bind,
     .resume_scan = bms_resume_scan,
+    .stop = bms_stop,
     .tick = bms_tick,
     .on_ble_reset = bms_on_ble_reset,
 };

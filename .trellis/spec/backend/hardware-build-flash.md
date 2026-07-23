@@ -309,6 +309,67 @@ RUN_TESTS=1 ./scripts/build-android-cast.sh
 
 ### 7. Wrong vs Correct
 
+## Scenario: Cancel an in-progress BMS BLE connection
+
+### 1. Scope / Trigger
+
+- Trigger: the LVGL BMS connection refresh control is pressed while the BMS
+  transport is connecting or discovering services.
+
+### 2. Signatures
+
+- `ESP_BMS_LVGL_ACTION_CANCEL_BMS_CONNECTION`
+- `bool (*stop)(esp_bms_idf_runtime_t *runtime)` in
+  `esp_bms_idf_runtime_bms_ble_driver_t`
+
+### 3. Contracts
+
+- The UI dispatches the cancel action only for BMS connection phases
+  (`BMS CONN`, `BMS DISC`, `BMS SVC`, `BMS CHR`, `BMS CCCD`, or `BMS SUB`).
+- The driver cancels discovery, pending GAP connection, or an established GAP
+  connection as applicable; it clears `BMS_BIND_ACTIVE` and
+  `BMS_SCAN_REQUESTED`, then publishes `BMS OFF`.
+- Cancelling does not erase the persisted BMS MAC. A later explicit refresh
+  can reconnect.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required response |
+| --- | --- |
+| Pending GAP connection | Call `ble_gap_conn_cancel()` |
+| Connected discovery stage | Call `ble_gap_terminate()` |
+| Discovery scan active | Call `ble_gap_disc_cancel()` |
+| No active BMS operation | Return unchanged; do not remove binding |
+
+### 5. Good / Base / Bad Cases
+
+- Good: refresh during `BMS DISC` immediately changes the snapshot to `BMS OFF`
+  and does not schedule reconnect.
+- Base: refresh while scanning keeps the original scan behavior.
+- Bad: only change the visible label while the NimBLE GAP operation continues.
+
+### 6. Tests Required
+
+- The simulator action dispatcher must map the cancel action to offline BMS
+  state.
+- Run the LVGL headless capability matrix and an ESP-IDF legacy profile build.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```c
+label_set_text_if_changed(status, "已取消");
+```
+
+#### Correct
+
+```c
+(void)ble_gap_conn_cancel();
+RUNTIME_SET_FLAG(runtime, BMS_BIND_ACTIVE, false);
+bms_set_info(runtime, "BMS OFF");
+```
+
 #### Wrong
 
 ```markdown

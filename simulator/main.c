@@ -492,6 +492,10 @@ static bool apply_action_event(host_app_t *app, const esp_bms_lvgl_action_event_
     case ESP_BMS_LVGL_ACTION_SELECT_BMS_DALY:
         snapshot->bms_type = (uint8_t)(event->action - ESP_BMS_LVGL_ACTION_SELECT_BMS_ANT);
         return true;
+    case ESP_BMS_LVGL_ACTION_CANCEL_BMS_CONNECTION:
+        snapshot_flag_set(snapshot, ESP_BMS_DASHBOARD_FLAG_BMS_ONLINE, false);
+        snprintf(snapshot->bms_info_text, sizeof(snapshot->bms_info_text), "BMS OFF");
+        return true;
     case ESP_BMS_LVGL_ACTION_SET_CONTROLLER_TIRE:
         snapshot->controller_tire_rim_inch = event->controller_tire_rim_inch;
         snapshot->controller_tire_aspect_percent = event->controller_tire_aspect_percent;
@@ -573,7 +577,7 @@ static bool run_capability_matrix(host_app_t *app)
         bool speed_page_expected;
     } cases[] = {
         { true, false, true },
-        { false, false, false },
+        { false, false, true },
         { false, true, true },
         { true, true, true },
     };
