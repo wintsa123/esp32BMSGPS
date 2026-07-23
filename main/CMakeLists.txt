@@ -46,6 +46,9 @@ endif()
 if(NOT DEFINED ESP_BMS_FEATURE_OTA)
     set(ESP_BMS_FEATURE_OTA 1)
 endif()
+if(NOT DEFINED ESP_BMS_FEATURE_CAST)
+    set(ESP_BMS_FEATURE_CAST 1)
+endif()
 
 configure_file(
     "${CMAKE_CURRENT_LIST_DIR}/esp_bms_module_registry.c.in"
@@ -58,3 +61,4 @@ idf_component_register(
     INCLUDE_DIRS "." ${ESP_BMS_PROFILE_GENERATED_DIR}
     REQUIRES ${ESP_BMS_MAIN_REQUIRES}
 )
+target_compile_definitions(${COMPONENT_LIB} PRIVATE ESP_BMS_FEATURE_CAST=${ESP_BMS_FEATURE_CAST})

@@ -128,7 +128,9 @@ install_host_prerequisites() {
 }
 
 install_idf() {
-    local install_dir='' default_dir config_dir answer
+    local install_dir='' default_dir config_dir answer clone_parent clone_dir clone_attempt
+    local clone_succeeded=0
+    local -a failed_clone_dirs=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --dir)
@@ -153,8 +155,32 @@ install_idf() {
     [[ ! -e "$install_dir" ]] || die "installation directory already exists: $install_dir"
 
     install_host_prerequisites
-    git clone --branch v6.0.2 --depth 1 --recursive --shallow-submodules \
-        https://github.com/espressif/esp-idf.git "$install_dir"
+    clone_parent="$(dirname "$install_dir")"
+    for ((clone_attempt = 1; clone_attempt <= 3; clone_attempt++)); do
+        # 在目标目录外克隆，网络中断不会占用最终安装路径。
+        clone_dir="${clone_parent}/.esp32-bms-idf-clone-$$-${RANDOM}-${clone_attempt}"
+        if git clone --branch v6.0.2 --depth 1 --recursive --shallow-submodules \
+            https://github.com/espressif/esp-idf.git "$clone_dir"; then
+            mv "$clone_dir" "$install_dir"
+            clone_succeeded=1
+            break
+        fi
+        [[ -e "$clone_dir" ]] && failed_clone_dirs+=("$clone_dir")
+        if (( clone_attempt < 3 )); then
+            if [[ "$LANGUAGE" == en ]]; then
+                printf 'ESP-IDF clone interrupted; retrying (%d/3)...\n' "$((clone_attempt + 1))"
+            else
+                printf 'ESP-IDF 克隆连接中断，正在重试（%d/3）...\n' "$((clone_attempt + 1))"
+            fi
+            sleep "$clone_attempt"
+        fi
+    done
+    if (( ! clone_succeeded )); then
+        if [[ "$LANGUAGE" == en ]]; then
+            die "failed to clone ESP-IDF v6.0.2 after 3 attempts; check the proxy or GitHub route and retry. Partial clones were retained: ${failed_clone_dirs[*]:-none}"
+        fi
+        die "ESP-IDF v6.0.2 克隆在 3 次尝试后仍失败；请检查代理或 GitHub 网络后重试。未完成的克隆目录已保留：${failed_clone_dirs[*]:-无}"
+    fi
     bash "$install_dir/install.sh" esp32 esp32s3
 
     config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/esp32-bms-gps"
@@ -891,7 +917,7 @@ validate_custom_board_gpio_roles() {
 write_profile() {
     local profile="${CFG[PROFILE]}"
     local profile_dir="$BUILD_ROOT/$profile"
-    local temporary backup partition_source sdkconfig_source role module main_requires audio_feature bms_feature controller_feature gps_feature network_feature ota_feature dashboard_s1000rr_feature dashboard_controller_feature dashboard_fireblade_feature trimming
+    local temporary backup partition_source sdkconfig_source role module main_requires audio_feature bms_feature controller_feature gps_feature network_feature ota_feature cast_feature dashboard_s1000rr_feature dashboard_controller_feature dashboard_fireblade_feature trimming
 
     mkdir -p "$BUILD_ROOT"
     temporary="$(mktemp -d "$BUILD_ROOT/.${profile}.tmp.XXXXXX")"
@@ -908,6 +934,7 @@ write_profile() {
     gps_feature=0
     network_feature=0
     ota_feature=0
+    cast_feature=0
     dashboard_s1000rr_feature=0
     dashboard_controller_feature=0
     dashboard_fireblade_feature=0
@@ -942,6 +969,9 @@ write_profile() {
         ota_feature=1
         trimming="ota-component-enabled;legacy-runtime-partially-untrimmed"
     fi
+    if csv_has "${CFG[MODULES]}" cast; then
+        cast_feature=1
+    fi
     csv_has "${CFG[DASHBOARDS]}" s1000rr && dashboard_s1000rr_feature=1
     csv_has "${CFG[DASHBOARDS]}" controller && dashboard_controller_feature=1
     csv_has "${CFG[DASHBOARDS]}" fireblade && dashboard_fireblade_feature=1
@@ -956,6 +986,7 @@ write_profile() {
         printf 'set(ESP_BMS_FEATURE_GPS %s CACHE BOOL "Firmware profile GPS feature" FORCE)\n' "$gps_feature"
         printf 'set(ESP_BMS_FEATURE_NETWORK %s CACHE BOOL "Firmware profile network feature" FORCE)\n' "$network_feature"
         printf 'set(ESP_BMS_FEATURE_OTA %s CACHE BOOL "Firmware profile OTA feature" FORCE)\n' "$ota_feature"
+        printf 'set(ESP_BMS_FEATURE_CAST %s CACHE BOOL "Firmware profile cast feature" FORCE)\n' "$cast_feature"
         printf 'set(ESP_BMS_FEATURE_DASHBOARD_S1000RR %s CACHE BOOL "Firmware profile S1000RR dashboard" FORCE)\n' "$dashboard_s1000rr_feature"
         printf 'set(ESP_BMS_FEATURE_DASHBOARD_CONTROLLER %s CACHE BOOL "Firmware profile controller dashboard" FORCE)\n' "$dashboard_controller_feature"
         printf 'set(ESP_BMS_FEATURE_DASHBOARD_FIREBLADE %s CACHE BOOL "Firmware profile Fireblade dashboard" FORCE)\n' "$dashboard_fireblade_feature"

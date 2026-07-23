@@ -217,7 +217,9 @@ void app_main(void)
     bool delayed_display_settings_save_pending = false;
     uint32_t delayed_display_settings_save_ms = 0;
     uint32_t setup_ap_idle_elapsed_ms = 0;
+#if ESP_BMS_FEATURE_CAST
     bool cast_ui_active = false;
+#endif
     setup_service_start_stage_t setup_service_start_stage = SETUP_SERVICE_START_IDLE;
 
     while (true) {
@@ -353,6 +355,7 @@ void app_main(void)
                 display_apply_failed = true;
             }
         }
+#if ESP_BMS_FEATURE_CAST
         if (!display_apply_failed && cast_ui_active != runtime.snapshot.cast_active) {
             ret = esp_bms_lvgl_ui_show_dashboard();
             if (ret == ESP_OK) {
@@ -374,6 +377,7 @@ void app_main(void)
                 display_apply_failed = true;
             }
         }
+#endif
         const bool action_committed =
             esp_bms_lvgl_action_event_flag_get(&action_event, ESP_BMS_LVGL_ACTION_EVENT_FLAG_COMMITTED);
         const bool controller_settings_save_requested =

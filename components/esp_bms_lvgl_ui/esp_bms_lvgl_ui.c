@@ -6479,6 +6479,10 @@ static void set_setup_ap(const esp_bms_dashboard_snapshot_t *snapshot)
 
 static void set_cast_page(const esp_bms_dashboard_snapshot_t *snapshot)
 {
+#if !ESP_BMS_FEATURE_CAST
+    (void)snapshot;
+    return;
+#else
     if (s_ui.cast_qr && snapshot->cast_active) {
         set_obj_hidden(s_ui.cast_qr, true);
         return;
@@ -6503,6 +6507,7 @@ static void set_cast_page(const esp_bms_dashboard_snapshot_t *snapshot)
             set_obj_hidden(s_ui.cast_qr, true);
         }
     }
+#endif
 #endif
 }
 
@@ -8602,7 +8607,7 @@ static void create_gps_dashboard(void)
 
 static void speed_page_sync(const esp_bms_dashboard_snapshot_t *snapshot)
 {
-    if (!snapshot || !s_ui.gps_page || !s_ui.cast_page) {
+    if (!snapshot || !s_ui.gps_page) {
         return;
     }
 
@@ -8797,8 +8802,8 @@ static int32_t page_target_scroll_x(esp_bms_lvgl_page_t page)
     if (page == ESP_BMS_LVGL_PAGE_CONTROLLER || page == ESP_BMS_LVGL_PAGE_GPS) {
         return s_ui.width;
     }
-    if (page == ESP_BMS_LVGL_PAGE_CAST) {
-        return s_ui.width * 2;
+    if (page == ESP_BMS_LVGL_PAGE_CAST && ESP_BMS_FEATURE_CAST) {
+        return s_ui.width * (s_ui.speed_page_renderable ? 2 : 1);
     }
     return 0;
 }
@@ -8810,12 +8815,15 @@ static esp_bms_lvgl_page_t page_from_scroll_x(int32_t scroll_x)
         return ESP_BMS_LVGL_PAGE_BATTERY;
     }
     if (!s_ui.speed_page_renderable) {
-        return ESP_BMS_LVGL_PAGE_CAST;
+        if (ESP_BMS_FEATURE_CAST) {
+            return ESP_BMS_LVGL_PAGE_CAST;
+        }
+        return ESP_BMS_LVGL_PAGE_BATTERY;
     }
     if (index == 1) {
         return ESP_BMS_LVGL_PAGE_GPS;
     }
-    return ESP_BMS_LVGL_PAGE_CAST;
+    return ESP_BMS_FEATURE_CAST ? ESP_BMS_LVGL_PAGE_CAST : ESP_BMS_LVGL_PAGE_BATTERY;
 }
 
 static void finish_page_scroll_state(bool flush_snapshot)
@@ -8845,6 +8853,9 @@ static void move_to_page(esp_bms_lvgl_page_t page, bool animated)
         page = ESP_BMS_LVGL_PAGE_GPS;
     }
     if (page == ESP_BMS_LVGL_PAGE_GPS && !s_ui.speed_page_renderable) {
+        page = ESP_BMS_LVGL_PAGE_BATTERY;
+    }
+    if (page == ESP_BMS_LVGL_PAGE_CAST && !ESP_BMS_FEATURE_CAST) {
         page = ESP_BMS_LVGL_PAGE_BATTERY;
     }
     lv_obj_stop_scroll_anim(s_ui.pages);
@@ -9248,7 +9259,9 @@ static void page_scroll_event_cb(lv_event_t *event)
                                                     ? s_ui.drag_start_page
                                                     : s_ui.page;
         const int32_t stable_x = page_target_scroll_x(stable_page);
-        const int32_t last_x = page_target_scroll_x(ESP_BMS_LVGL_PAGE_CAST);
+        const int32_t last_x = ESP_BMS_FEATURE_CAST
+                                   ? page_target_scroll_x(ESP_BMS_LVGL_PAGE_CAST)
+                                   : page_target_scroll_x(ESP_BMS_LVGL_PAGE_GPS);
         const esp_bms_lvgl_page_t raw_target = page_from_scroll_x(scroll_x);
         const int32_t raw_target_x = page_target_scroll_x(raw_target);
         int32_t target_x = raw_target_x;
@@ -9398,6 +9411,7 @@ static void create_screen(lv_display_t *display)
     memset(s_ui.speed_scale_buf, 0, sizeof(s_ui.speed_scale_buf));
     create_gps_dashboard();
 
+#if ESP_BMS_FEATURE_CAST
     s_ui.cast_page = lv_obj_create(s_ui.pages);
     clear_style(s_ui.cast_page);
     lv_obj_set_pos(s_ui.cast_page, s_ui.width * 2, 0);
@@ -9420,6 +9434,10 @@ static void create_screen(lv_display_t *display)
         lv_qrcode_set_quiet_zone(s_ui.cast_qr, true);
         lv_obj_align(s_ui.cast_qr, LV_ALIGN_CENTER, 0, portrait ? 55 : 44);
     }
+#endif
+#else
+    s_ui.cast_page = NULL;
+    s_ui.cast_qr = NULL;
 #endif
 
     if (portrait) {

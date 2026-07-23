@@ -141,6 +141,11 @@ RUN_TESTS=1 ./scripts/build-android-cast.sh
   install path in `$XDG_CONFIG_HOME/esp32-bms-gps/idf-path`. `start.ps1
   install-idf` uses `winget`, runs `install.ps1`, and persists `IDF_PATH` in
   the Windows user environment. Both accept `--dir` for non-interactive setup.
+- ESP-IDF cloning uses at most three attempts. Each attempt clones into a
+  unique hidden sibling directory and moves it to the requested installation
+  directory only after `git clone` succeeds. A failed attempt must retain its
+  partial directory and report its path; do not delete it automatically or
+  change global Git transport settings.
 - `scripts/esp-idf-env.sh` loads `$IDF_PATH/export.sh` when available, then the
   configured path, then `$HOME/esp/esp-idf-v6.0.2/export.sh`; it verifies the
   resolved version before forwarding arguments to `idf.py`.
@@ -198,6 +203,7 @@ RUN_TESTS=1 ./scripts/build-android-cast.sh
 | Condition | Required response |
 | --- | --- |
 | `idf.py` is missing | Set `IDF_PATH` or install ESP-IDF 6.0.2; do not substitute another build system |
+| ESP-IDF clone ends with RPC/early EOF or a Schannel close-notify error | Retry through the configured proxy up to three times. Keep every partial sibling clone, report those paths after the last failure, and leave the requested installation directory absent for a later retry. |
 | Managed-component download fails | Check the explicit proxy environment and `dependencies.lock` before changing dependency versions |
 | Direct build reports a missing module header from `esp_bms_module_registry.c` | Compare default `ESP_BMS_FEATURE_*` values, registry template includes, and `ESP_BMS_MAIN_REQUIRES_DEFAULT`; add the omitted owning component and a configurator self-test assertion |
 | RFC2217 TCP port is closed | Check the Windows bridge process, firewall scope, host IP, and port 4000 |
@@ -230,6 +236,9 @@ RUN_TESTS=1 ./scripts/build-android-cast.sh
   autorouter sees it by exporting DSN with a boundary, then constrain low-speed helper routing to an explicit net allowlist and
   Top/Bottom, create vias before tracks, then require zero target-net connection
   errors and zero clearance/keepout errors after save/reopen.
+- Good: when a GitHub pack transfer is interrupted, keep the existing proxy,
+  retry in a unique sibling clone directory, and move only the complete clone
+  into the requested installation path.
 - Base: change only README or Trellis/spec documentation, validate links and
   Markdown, and do not flash unchanged firmware.
 - Bad: copy a pin map into README, add a source-code GPIO fallback, accept a
@@ -244,6 +253,8 @@ RUN_TESTS=1 ./scripts/build-android-cast.sh
   autorouter has a board boundary, trust SES layer
   names without readback, create vias after their tracks, or connect a
   bottom-only test pad with a top-layer endpoint.
+- Bad: clone directly into the final ESP-IDF directory and then auto-delete a
+  failed clone before the user can inspect it.
 
 ### 6. Tests Required
 
@@ -259,6 +270,11 @@ node .gitnexus/run.cjs detect-changes -r esp32BMSGPS
   `./tests/configurator_selftest.sh`; it must prove both that a disabled
   profile excludes its component and that the unprofiled default closure
   contains `esp_bms_gps`.
+
+- When changing either `install-idf` implementation, run
+  `./tests/configurator_selftest.sh`; its fake Git scenario must fail once,
+  then succeed, and assert that the final installation directory contains the
+  completed clone after exactly two clone attempts.
 
 - Hardware-impacting changes: flash through the developer's local serial port
   by default. Use the fixed RFC2217 bridge only when remote hardware validation
@@ -305,6 +321,11 @@ GPS RX: GPIO3 at 9600 baud
 idf.py -p socket://192.168.2.10:4000 flash
 ```
 
+```bash
+# A network interruption leaves a partial final directory that blocks retry.
+git clone --branch v6.0.2 --depth 1 https://github.com/espressif/esp-idf.git "$install_dir"
+```
+
 #### Correct
 
 ```c
@@ -319,6 +340,13 @@ idf.py -p socket://192.168.2.10:4000 flash
 ./scripts/esp-idf-env.sh \
   -p "rfc2217://192.168.2.10:4000?ign_set_control" \
   -b 115200 flash
+```
+
+```bash
+# Each attempt keeps the final installation directory untouched until success.
+clone_dir="$(dirname "$install_dir")/.esp32-bms-idf-clone-$RANDOM"
+git clone --branch v6.0.2 --depth 1 --recursive --shallow-submodules \
+  https://github.com/espressif/esp-idf.git "$clone_dir" && mv "$clone_dir" "$install_dir"
 ```
 
 README links to this contract and the owning source files instead of repeating

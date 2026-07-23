@@ -275,15 +275,19 @@ static esp_err_t network_start_http_server(esp_bms_idf_runtime_t *runtime)
     const httpd_uri_t root = { .uri = "/", .method = HTTP_GET, .handler = network_root_handler, .user_ctx = runtime };
     const httpd_uri_t api = { .uri = "/api/*", .method = HTTP_ANY,
                               .handler = esp_bms_idf_runtime_http_api_handler, .user_ctx = runtime };
+#if ESP_BMS_FEATURE_CAST
     const httpd_uri_t cast = { .uri = "/cast", .method = HTTP_GET,
                                .handler = esp_bms_idf_runtime_http_cast_ws_handler,
                                .user_ctx = runtime, .is_websocket = true };
+#endif
     ret = httpd_register_uri_handler(s_http_server, &root);
     if (ret == ESP_OK) {
         ret = httpd_register_uri_handler(s_http_server, &api);
     }
     if (ret == ESP_OK) {
+#if ESP_BMS_FEATURE_CAST
         ret = httpd_register_uri_handler(s_http_server, &cast);
+#endif
     }
     if (ret != ESP_OK) {
         httpd_stop(s_http_server);
@@ -292,7 +296,8 @@ static esp_err_t network_start_http_server(esp_bms_idf_runtime_t *runtime)
     }
     RUNTIME_SET_FLAG(runtime, HTTP_SERVER_STARTED, true);
     network_set_error(runtime, "HTTP ON");
-    ESP_LOGI(TAG, "[http] server started: port=80 routes=/,/api/*,/cast");
+    ESP_LOGI(TAG, "[http] server started: port=80 routes=/,/api/*%s",
+             ESP_BMS_FEATURE_CAST ? ",/cast" : "");
     return ESP_OK;
 }
 

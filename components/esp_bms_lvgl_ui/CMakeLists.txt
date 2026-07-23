@@ -12,6 +12,9 @@ foreach(feature BMS CONTROLLER GPS NETWORK)
         set(ESP_BMS_FEATURE_${feature} 1)
     endif()
 endforeach()
+if(NOT DEFINED ESP_BMS_FEATURE_CAST)
+    set(ESP_BMS_FEATURE_CAST 1)
+endif()
 
 set(ESP_BMS_LVGL_UI_SRCS
     "esp_bms_lvgl_ui.c" "bluetoothon.c" "settings_zh_16.c" "settings_zh_13.c"
@@ -41,4 +44,5 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     ESP_BMS_FEATURE_CONTROLLER=${ESP_BMS_FEATURE_CONTROLLER}
     ESP_BMS_FEATURE_GPS=${ESP_BMS_FEATURE_GPS}
     ESP_BMS_FEATURE_NETWORK=${ESP_BMS_FEATURE_NETWORK}
+    ESP_BMS_FEATURE_CAST=${ESP_BMS_FEATURE_CAST}
 )

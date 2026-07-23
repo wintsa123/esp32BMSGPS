@@ -50,6 +50,9 @@ rg -qx 'GPIO_GPS_PPS=47' "${work_dir}/s3-gps-build/s3-gps/firmware.env"
 rg -qx 'GPIO_GPS_TX=48' "${work_dir}/s3-gps-build/s3-gps/firmware.env"
 rg -qx 'DASHBOARDS=fireblade,s1000rr' "${work_dir}/s3-gps-build/s3-gps/firmware.env"
 
+FIRMWARE_BUILD_ROOT="${work_dir}/no-cast-build" "${repo_root}/start.sh" configure --lang en --profile no-cast --mcu esp32 --board esp32-wroom-32e-legacy --display st7789-spi --input xpt2046-spi --modules audio,bms,controller,gps,network,ota --dashboards fireblade >/dev/null
+rg -qx 'MODULES=audio,bms,controller,gps,network,ota' "${work_dir}/no-cast-build/no-cast/firmware.env"
+
 FIRMWARE_BUILD_ROOT="${work_dir}/audio-legacy-build" "${repo_root}/start.sh" configure --lang en --profile audio-legacy --mcu esp32 --board esp32-wroom-32e-legacy --display st7789-spi --input xpt2046-spi --modules audio >/dev/null
 rg -qx 'GPIO_TFT_BACKLIGHT=21' "${work_dir}/audio-legacy-build/audio-legacy/firmware.env"
 rg -qx 'GPIO_AUDIO_DAC=26' "${work_dir}/audio-legacy-build/audio-legacy/firmware.env"
@@ -149,6 +152,11 @@ cat >"$fake_git_bin/git" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 [[ "${1:-}" == clone ]] || exit 2
+printf '%s\n' "$@" >>"${FAKE_GIT_ARGS:?}"
+if [[ -n "${FAKE_GIT_FAIL_ONCE_FILE:-}" && ! -e "$FAKE_GIT_FAIL_ONCE_FILE" ]]; then
+    : >"$FAKE_GIT_FAIL_ONCE_FILE"
+    exit 1
+fi
 destination="${!#}"
 mkdir -p "$destination/bin"
 cat >"$destination/export.sh" <<'EXPORT'
@@ -167,7 +175,6 @@ fi
 exit 2
 IDF
 chmod +x "$destination/install.sh" "$destination/bin/idf.py"
-printf '%s\n' "$@" >"${FAKE_GIT_ARGS:?}"
 EOF
 chmod +x "$fake_git_bin/git"
 
@@ -187,6 +194,17 @@ rg -Fx "$install_dir" "${work_dir}/install-config/esp32-bms-gps/idf-path"
 HOME="$install_home" XDG_CONFIG_HOME="$install_config" env -u IDF_PATH \
     "${repo_root}/scripts/esp-idf-env.sh" --version >"${work_dir}/configured-idf.out"
 rg -Fx 'ESP-IDF v6.0.2' "${work_dir}/configured-idf.out"
+
+retry_install_dir="${work_dir}/installed-esp-idf-retry"
+HOME="$install_home" \
+    XDG_CONFIG_HOME="$install_config" \
+    PATH="$fake_git_bin:$PATH" \
+    FAKE_GIT_ARGS="${work_dir}/retry-git.args" \
+    FAKE_GIT_FAIL_ONCE_FILE="${work_dir}/retry-git-failed-once" \
+    "${repo_root}/start.sh" install-idf --lang en --dir "$retry_install_dir" >"${work_dir}/retry-install-idf.out"
+rg -Fq 'clone interrupted; retrying (2/3)' "${work_dir}/retry-install-idf.out"
+[[ "$(rg -cx 'clone' "${work_dir}/retry-git.args")" == 2 ]]
+test -f "${retry_install_dir}/install.sh"
 
 IDF_PATH="$fake_idf_root" \
     FIRMWARE_BUILD_ROOT="${work_dir}/local-build" \
@@ -355,6 +373,8 @@ rg -Fq 'function Test-IdfExportScript' "${repo_root}/start.ps1"
 rg -Fq "\$IdfExport = Ensure-IdfExportScript" "${repo_root}/start.ps1"
 rg -Fq 'Install-EspIdf @() | Out-Host' "${repo_root}/start.ps1"
 rg -Fq "\$IdfExport = [string](Get-IdfExportScript | Select-Object -Last 1)" "${repo_root}/start.ps1"
+rg -Fq '\$CloneAttempts = 3' "${repo_root}/start.ps1"
+rg -Fq 'Move-Item -LiteralPath \$CloneDirectory -Destination \$Directory' "${repo_root}/start.ps1"
 ! rg -Fq '& python3 ' "${repo_root}/start.ps1"
 rg -Fq 'scripts/esp-idf-env.sh' "${repo_root}/start.sh"
 rg -Fq 'IDF_BUILD_ROOT="${ESP_BMS_IDF_BUILD_ROOT:-/tmp/esp32-bms-gps-idf-builds/$UID}"' "${repo_root}/start.sh"

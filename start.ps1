@@ -233,8 +233,35 @@ function Install-EspIdf([string[]]$Items) {
     $Directory = Get-IdfInstallDirectory $Items
     if (Test-Path -LiteralPath $Directory) { Fail "installation directory already exists: $Directory" }
     Install-HostPrerequisites
-    & git clone --branch v6.0.2 --depth 1 --recursive --shallow-submodules https://github.com/espressif/esp-idf.git $Directory
-    if ($LASTEXITCODE -ne 0) { Fail 'failed to clone ESP-IDF v6.0.2' }
+    $CloneParent = Split-Path -Parent $Directory
+    $CloneAttempts = 3
+    $FailedCloneDirectories = [System.Collections.Generic.List[string]]::new()
+    $CloneSucceeded = $false
+
+    for ($Attempt = 1; $Attempt -le $CloneAttempts; $Attempt++) {
+        # 在目标目录外克隆，网络中断不会占用最终安装路径。
+        $CloneDirectory = Join-Path $CloneParent ".esp32-bms-idf-clone-$([Guid]::NewGuid().ToString('N'))"
+        & git clone --branch v6.0.2 --depth 1 --recursive --shallow-submodules https://github.com/espressif/esp-idf.git $CloneDirectory
+        if ($LASTEXITCODE -eq 0) {
+            Move-Item -LiteralPath $CloneDirectory -Destination $Directory -ErrorAction Stop
+            $CloneSucceeded = $true
+            break
+        }
+
+        if (Test-Path -LiteralPath $CloneDirectory) { [void]$FailedCloneDirectories.Add($CloneDirectory) }
+        if ($Attempt -lt $CloneAttempts) {
+            Write-Host $(if ($script:Language -eq 'en') { "ESP-IDF clone interrupted; retrying ($($Attempt + 1)/$CloneAttempts)..." } else { "ESP-IDF 克隆连接中断，正在重试（$($Attempt + 1)/$CloneAttempts）..." })
+            Start-Sleep -Seconds $Attempt
+        }
+    }
+
+    if (-not $CloneSucceeded) {
+        $FailedPaths = if ($FailedCloneDirectories.Count -gt 0) { $FailedCloneDirectories -join '; ' } else { 'none' }
+        if ($script:Language -eq 'en') {
+            Fail "failed to clone ESP-IDF v6.0.2 after $CloneAttempts attempts; check the proxy or GitHub route and retry. Partial clones were retained: $FailedPaths"
+        }
+        Fail "ESP-IDF v6.0.2 克隆在 $CloneAttempts 次尝试后仍失败；请检查代理或 GitHub 网络后重试。未完成的克隆目录已保留：$FailedPaths"
+    }
     & (Join-Path $Directory 'install.ps1') esp32 esp32s3
     if ($LASTEXITCODE -ne 0) { Fail 'ESP-IDF tool installation failed' }
     $env:IDF_PATH = $Directory

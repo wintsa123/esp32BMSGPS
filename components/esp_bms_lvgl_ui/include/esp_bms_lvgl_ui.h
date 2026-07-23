@@ -37,6 +37,10 @@
 #define ESP_BMS_FEATURE_NETWORK 1
 #endif
 
+#ifndef ESP_BMS_FEATURE_CAST
+#define ESP_BMS_FEATURE_CAST 1
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
