@@ -3578,10 +3578,41 @@ uint8_t esp_bms_idf_runtime_take_connection_audio_events(esp_bms_idf_runtime_t *
     return runtime ? __atomic_exchange_n(&runtime->pending_audio_events, 0U, __ATOMIC_RELAXED) : 0U;
 }
 
+static bool runtime_action_feature_enabled(esp_bms_lvgl_action_t action)
+{
+    switch (action) {
+    case ESP_BMS_LVGL_ACTION_ENABLE_WIFI_REPROVISIONING:
+        return ESP_BMS_FEATURE_NETWORK;
+    case ESP_BMS_LVGL_ACTION_START_BMS_BIND:
+    case ESP_BMS_LVGL_ACTION_SELECT_BMS_ANT:
+    case ESP_BMS_LVGL_ACTION_SELECT_BMS_JK:
+    case ESP_BMS_LVGL_ACTION_SELECT_BMS_JBD:
+    case ESP_BMS_LVGL_ACTION_SELECT_BMS_DALY:
+    case ESP_BMS_LVGL_ACTION_SET_PRESET_RANGE:
+        return ESP_BMS_FEATURE_BMS;
+    case ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_CONNECTION:
+    case ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_PAGE:
+    case ESP_BMS_LVGL_ACTION_START_CONTROLLER_BIND:
+    case ESP_BMS_LVGL_ACTION_ADJUST_CONTROLLER_WHEEL:
+    case ESP_BMS_LVGL_ACTION_ADJUST_CONTROLLER_RATIO:
+    case ESP_BMS_LVGL_ACTION_SET_CONTROLLER_TIRE:
+    case ESP_BMS_LVGL_ACTION_SET_CONTROLLER_RATIO:
+        return ESP_BMS_FEATURE_CONTROLLER;
+    case ESP_BMS_LVGL_ACTION_ENABLE_BLUETOOTH_ADVERTISING:
+        return ESP_BMS_FEATURE_BMS || ESP_BMS_FEATURE_CONTROLLER;
+    case ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_UNIT:
+    case ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_SOURCE:
+        return ESP_BMS_FEATURE_GPS || ESP_BMS_FEATURE_CONTROLLER;
+    default:
+        return true;
+    }
+}
+
 bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,
                                             const esp_bms_lvgl_action_event_t *event)
 {
-    if (!runtime || !event || event->action == ESP_BMS_LVGL_ACTION_NONE) {
+    if (!runtime || !event || event->action == ESP_BMS_LVGL_ACTION_NONE ||
+        !runtime_action_feature_enabled(event->action)) {
         return false;
     }
 

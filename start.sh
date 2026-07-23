@@ -526,7 +526,7 @@ validate_dashboards() {
         [[ -n "$dashboard" ]] || continue
         is_id "$dashboard" || die "invalid dashboard id: $dashboard"
         load_record dashboard "$dashboard"
-        require_keys RECORD SCHEMA_VERSION ID
+        require_keys RECORD SCHEMA_VERSION ID REQUIRES_MODULES REQUIRES_MODULES_ANY
         dashboard_is_available "$dashboard" || {
             [[ "$dashboard" != controller ]] || die 'controller dashboard requires controller module'
             die 'dashboard UIs require GPS or controller module'
@@ -541,17 +541,26 @@ validate_dashboards() {
 }
 
 dashboards_are_available() {
-    csv_has "${CFG[MODULES]}" gps || csv_has "${CFG[MODULES]}" controller
+    local dashboard
+
+    dashboard="$(available_dashboard_ids | head -n 1)"
+    [[ -n "$dashboard" ]]
 }
 
 dashboard_is_available() {
-    local dashboard="$1"
+    local dashboard="$1" module has_any=false
 
-    case "$dashboard" in
-        controller) csv_has "${CFG[MODULES]}" controller ;;
-        s1000rr|fireblade) dashboards_are_available ;;
-        *) return 1 ;;
-    esac
+    load_record dashboard "$dashboard"
+    require_keys RECORD SCHEMA_VERSION ID REQUIRES_MODULES REQUIRES_MODULES_ANY
+    IFS=, read -r -a modules <<< "${RECORD[REQUIRES_MODULES]}"
+    for module in "${modules[@]}"; do
+        [[ -z "$module" ]] || csv_has "${CFG[MODULES]}" "$module" || return 1
+    done
+    IFS=, read -r -a modules <<< "${RECORD[REQUIRES_MODULES_ANY]}"
+    for module in "${modules[@]}"; do
+        [[ -z "$module" ]] || { csv_has "${CFG[MODULES]}" "$module" && has_any=true; }
+    done
+    [[ -z "${RECORD[REQUIRES_MODULES_ANY]}" || "$has_any" == true ]]
 }
 
 available_dashboard_ids() {

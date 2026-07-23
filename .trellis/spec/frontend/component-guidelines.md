@@ -164,12 +164,16 @@ Correct: keep the button/timer in production UI for simulator and device, guard 
 ### LVGL Settings Navigation
 
 - The settings root and all settings detail pages reuse one persistent top navigation object. The root title is `设置` and its back action returns to the dashboard; detail titles come from `SETTINGS_OPTIONS` and return to the settings root.
+- Feature-trim settings are a compile-time contract: `SETTINGS_OPTIONS` and `QUICK_PANEL_ITEMS` must exclude entries whose module feature is disabled (`network` for hotspot, `bms`/`controller` for Bluetooth, `bms` for BMS settings, and `gps`/`controller` for speed settings). Runtime action dispatch must reject the same dependency class as a stale-event guard.
+- Dashboard catalog dependencies are authoritative for dashboard availability. The generated profile must remove a dashboard whose `REQUIRES_MODULES` or `REQUIRES_MODULES_ANY` is unsatisfied; UI code may continue to consume the common snapshot ABI but must not call a disabled module's implementation.
 - LVGL event `user_data` must not retain pointers to function-local row/config structs. Pack small action/view values into `uintptr_t`, or store them in UI state whose lifetime covers the widget.
 - Vertical navigation collapse uses one offset animation. Apply the same offset to the header `y`, the root/detail scroll-container top padding, and the left-edge capture zone so content fills the released space without a blank strip.
 - Changing a scroll container's padding during that animation can make LVGL recalculate `scroll_y` and emit scroll events. Keep the navigation layout guard active for the whole animation, force the affected layout while guarded, refresh the scroll anchor from the active container, and release the guard only from the animation completion callback. Reset the guard when replacing or cancelling the animation; otherwise layout-generated events can reopen the header and cover the list bottom.
 - Browsing down past `SETTINGS_NAV_SCROLL_THRESHOLD` hides the bar; browsing back up or reaching scroll position `0` shows it. Direct vertical drags use the same threshold so pages whose content fits the viewport still behave consistently.
 - A recognized vertical navigation drag must set `SETTINGS_SWIPE_CONSUMED` to prevent the release from triggering the row under the finger. Horizontal left-edge back tracking remains dominant when horizontal movement is larger.
 - Dynamic settings cards must calculate their visible row count before calling `settings_list_card()`. Create the card at its final height and place rows with a compact `visible_index`; do not create a maximum-height card and then hide rows or shrink it after child creation, because LVGL can retain stale scroll geometry or visible blank slots.
+
+Feature-trim validation must cover each module-disabled matrix, assert the visible settings/dashboard choices, inspect generated `ESP_BMS_PROFILE_MAIN_REQUIRES`, and verify the disabled component name is absent from the ESP-IDF build graph.
 
 ### LVGL Full-Screen Interaction Guards
 

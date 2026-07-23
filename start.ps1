@@ -375,8 +375,17 @@ function Test-CsvContains([string]$List, [string]$Value) { return (Split-Csv $Li
 function ConvertTo-SortedCsv([string[]]$Values) { return (($Values | Where-Object { $_.Length -gt 0 } | Sort-Object -Unique) -join ',') }
 
 function Test-DashboardAvailable([System.Collections.IDictionary]$Config, [string]$Dashboard) {
-    if ($Dashboard -eq 'controller') { return Test-CsvContains $Config.MODULES 'controller' }
-    return ($Dashboard -in @('s1000rr', 'fireblade')) -and ((Test-CsvContains $Config.MODULES 'gps') -or (Test-CsvContains $Config.MODULES 'controller'))
+    $Record = Get-Record 'dashboard' $Dashboard
+    Assert-Keys $Record @('SCHEMA_VERSION', 'ID', 'REQUIRES_MODULES', 'REQUIRES_MODULES_ANY')
+    foreach ($Module in Split-Csv $Record.REQUIRES_MODULES) {
+        if (-not (Test-CsvContains $Config.MODULES $Module)) { return $false }
+    }
+    $AnyModules = @(Split-Csv $Record.REQUIRES_MODULES_ANY)
+    if ($AnyModules.Count -eq 0) { return $true }
+    foreach ($Module in $AnyModules) {
+        if (Test-CsvContains $Config.MODULES $Module) { return $true }
+    }
+    return $false
 }
 
 function Get-AvailableDashboardIds([System.Collections.IDictionary]$Config) {
@@ -735,7 +744,7 @@ function Validate-Config([System.Collections.IDictionary]$Config) {
     foreach ($Dashboard in Split-Csv $Config.DASHBOARDS) {
         if (-not (Test-Id $Dashboard)) { Fail "invalid dashboard id: $Dashboard" }
         $DashboardRecord = Get-Record 'dashboard' $Dashboard
-        Assert-Keys $DashboardRecord @('SCHEMA_VERSION', 'ID')
+        Assert-Keys $DashboardRecord @('SCHEMA_VERSION', 'ID', 'REQUIRES_MODULES', 'REQUIRES_MODULES_ANY')
         if (-not (Test-DashboardAvailable $Config $Dashboard)) {
             if ($Dashboard -eq 'controller') { Fail 'controller dashboard requires controller module' }
             Fail 'dashboard UIs require GPS or controller module'

@@ -30,13 +30,15 @@ LV_FONT_DECLARE(settings_zh_10);
 LV_FONT_DECLARE(settings_zh_13);
 LV_FONT_DECLARE(settings_zh_16);
 
-#define QUICK_PANEL_BUTTON_COUNT 6
+#define QUICK_PANEL_BUTTON_COUNT \
+    (3 + ((ESP_BMS_FEATURE_BMS || ESP_BMS_FEATURE_CONTROLLER) ? 1 : 0) + \
+     (ESP_BMS_FEATURE_NETWORK ? 1 : 0) + \
+     ((ESP_BMS_FEATURE_GPS || ESP_BMS_FEATURE_CONTROLLER) ? 1 : 0))
 #define QUICK_PANEL_GRID_COLS 4
 #define QUICK_PANEL_GRID_ROWS 2
 #define QUICK_PANEL_GRID_SLOT_COUNT (QUICK_PANEL_GRID_COLS * QUICK_PANEL_GRID_ROWS)
 #define QUICK_PANEL_CONTROL_COUNT (QUICK_PANEL_BUTTON_COUNT + 2)
 #define QUICK_EDIT_BUTTON_SIZE 28
-#define SETTINGS_OPTION_COUNT 6
 #define ARRAY_SIZE(array) (sizeof(array) / sizeof((array)[0]))
 #define QUICK_BLUETOOTH_SYMBOL "\xee\x9c\xa8"
 #define QUICK_HOTSPOT_SYMBOL "\xee\x98\xab"
@@ -1182,35 +1184,26 @@ static void quick_layout_find_drop_target(quick_panel_layout_t *layout,
     quick_drag_target_kind_t best_kind = QUICK_DRAG_TARGET_BRIGHTNESS;
     uint8_t best_index = 0;
     int32_t best_distance = INT32_MAX;
-    const quick_drag_target_kind_t kinds[QUICK_PANEL_CONTROL_COUNT] = {
-        QUICK_DRAG_TARGET_BRIGHTNESS,
-        QUICK_DRAG_TARGET_VOLUME,
-        QUICK_DRAG_TARGET_ITEM,
-        QUICK_DRAG_TARGET_ITEM,
-        QUICK_DRAG_TARGET_ITEM,
-        QUICK_DRAG_TARGET_ITEM,
-        QUICK_DRAG_TARGET_ITEM,
-        QUICK_DRAG_TARGET_ITEM,
-    };
-    const uint8_t indexes[QUICK_PANEL_CONTROL_COUNT] = {
-        0, 0, 0, 1, 2, 3, 4, 5,
-    };
 
     for (uint32_t slot = 0; slot < QUICK_PANEL_CONTROL_COUNT; ++slot) {
-        quick_tile_rect_t *rect = quick_layout_rect_for_target(layout, kinds[slot], indexes[slot]);
+        const quick_drag_target_kind_t kind =
+            slot == 0U ? QUICK_DRAG_TARGET_BRIGHTNESS :
+            slot == 1U ? QUICK_DRAG_TARGET_VOLUME : QUICK_DRAG_TARGET_ITEM;
+        const uint8_t index = slot < 2U ? 0U : (uint8_t)(slot - 2U);
+        quick_tile_rect_t *rect = quick_layout_rect_for_target(layout, kind, index);
         if (!rect) {
             continue;
         }
         if (quick_rect_contains_point(rect, x, y)) {
-            best_kind = kinds[slot];
-            best_index = indexes[slot];
+            best_kind = kind;
+            best_index = index;
             break;
         }
         const int32_t distance = quick_rect_center_distance_sq(rect, x, y);
         if (distance < best_distance) {
             best_distance = distance;
-            best_kind = kinds[slot];
-            best_index = indexes[slot];
+            best_kind = kind;
+            best_index = index;
         }
     }
 
@@ -2282,25 +2275,39 @@ static void settings_boot_preview_button_event_cb(lv_event_t *event);
 static void settings_boot_preview_timer_cancel(void);
 
 static const quick_panel_item_t QUICK_PANEL_ITEMS[QUICK_PANEL_BUTTON_COUNT] = {
+#if ESP_BMS_FEATURE_BMS || ESP_BMS_FEATURE_CONTROLLER
     { QUICK_ITEM_BLUETOOTH, QUICK_BLUETOOTH_SYMBOL, ESP_BMS_LVGL_ACTION_SHOW_SETTINGS,
       "蓝牙设置", false },
+#endif
+#if ESP_BMS_FEATURE_NETWORK
     { QUICK_ITEM_HOTSPOT, NULL, ESP_BMS_LVGL_ACTION_SHOW_SETTINGS,
       "热点设置", true },
+#endif
     { QUICK_ITEM_ROTATE, LV_SYMBOL_LOOP, ESP_BMS_LVGL_ACTION_ROTATE_DISPLAY,
       "旋转屏幕", false },
+#if ESP_BMS_FEATURE_GPS || ESP_BMS_FEATURE_CONTROLLER
     { QUICK_ITEM_SPEED, LV_SYMBOL_GPS, ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_UNIT,
       "点击切换", false },
+#endif
     { QUICK_ITEM_SETTINGS, LV_SYMBOL_SETTINGS, ESP_BMS_LVGL_ACTION_SHOW_SETTINGS,
       "设备设置", false },
     { QUICK_ITEM_LOCK, NULL, ESP_BMS_LVGL_ACTION_NONE,
       "LOCK", false },
 };
 
-static const settings_option_t SETTINGS_OPTIONS[SETTINGS_OPTION_COUNT] = {
+static const settings_option_t SETTINGS_OPTIONS[] = {
+#if ESP_BMS_FEATURE_NETWORK
     { SETTINGS_DETAIL_HOTSPOT, "热点共享", "Setup AP", QUICK_HOTSPOT_SYMBOL, &wlanJZ },
+#endif
+#if ESP_BMS_FEATURE_BMS || ESP_BMS_FEATURE_CONTROLLER
     { SETTINGS_DETAIL_BLUETOOTH, "蓝牙", "附近可见", QUICK_BLUETOOTH_SYMBOL, &bluetoothon },
+#endif
+#if ESP_BMS_FEATURE_BMS
     { SETTINGS_DETAIL_BMS, "保护板设置", "扫描绑定", LV_SYMBOL_CHARGE, &lv_font_montserrat_24 },
+#endif
+#if ESP_BMS_FEATURE_CONTROLLER || ESP_BMS_FEATURE_GPS
     { SETTINGS_DETAIL_CONTROLLER, "速度仪表", "GPS / FarDriver", "C", &lv_font_montserrat_24 },
+#endif
     { SETTINGS_DETAIL_SYSTEM, "系统", "显示与控制", LV_SYMBOL_SETTINGS, &lv_font_montserrat_24 },
     { SETTINGS_DETAIL_ABOUT, "关于本机", "设备信息", "i", &lv_font_montserrat_24 },
 };
@@ -3024,6 +3031,16 @@ static void settings_show_root(void)
         lv_obj_scroll_to_y(s_ui.settings_carousel, 0, LV_ANIM_OFF);
     }
     settings_detail_chrome_show(SETTINGS_DETAIL_NONE);
+}
+
+static bool settings_detail_is_enabled(settings_detail_id_t detail_id)
+{
+    for (size_t index = 0; index < ARRAY_SIZE(SETTINGS_OPTIONS); ++index) {
+        if (SETTINGS_OPTIONS[index].detail_id == detail_id) {
+            return true;
+        }
+    }
+    return false;
 }
 
 static const char *settings_detail_title_text(settings_detail_id_t detail_id)
@@ -4488,6 +4505,37 @@ static void settings_show_controller_detail(void)
     label_set_text_if_changed(s_ui.settings_detail_title, "速度仪表");
     lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
 
+#if !ESP_BMS_FEATURE_CONTROLLER
+    const settings_detail_row_t gps_status_row = {
+        "速度来源",
+        snapshot->gps_module_state == (uint8_t)ESP_BMS_GPS_MODULE_AVAILABLE ? "GPS"
+                                                                          : "GPS 未检测到",
+        ESP_BMS_LVGL_ACTION_NONE,
+        SETTINGS_SYSTEM_VIEW_ROOT,
+    };
+    lv_obj_t *card = settings_list_card(s_ui.settings_detail,
+                                        card_x,
+                                        12,
+                                        card_w,
+                                        row_h,
+                                        3U);
+    settings_detail_row(card, 0, 0, card_w, row_h, &gps_status_row);
+    settings_controller_style_row(card,
+                                  row_h,
+                                  card_w,
+                                  row_h,
+                                  settings_dashboard_style_label(
+                                      speed_dashboard_style_from_snapshot(snapshot)));
+    settings_speed_unit_row(card,
+                            row_h * 2,
+                            card_w,
+                            row_h,
+                            snapshot->speed_unit == ESP_BMS_SPEED_UNIT_MPH ? "mph" : "km/h");
+    lv_obj_update_layout(s_ui.settings_detail);
+    lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
+    return;
+#else
+
     settings_bms_ble_format_status(ble_status,
                                    sizeof(ble_status),
                                    snapshot,
@@ -4611,6 +4659,7 @@ static void settings_show_controller_detail(void)
     settings_detail_row(type_card, 0, 0, card_w, row_h, &type_row);
     lv_obj_update_layout(s_ui.settings_detail);
     lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
+#endif
 }
 
 static bool settings_detail_action_uses_switch(esp_bms_lvgl_action_t action)
@@ -5576,7 +5625,7 @@ static void settings_show_system_view(settings_system_view_t view)
 
 static void settings_show_detail(settings_detail_id_t detail_id)
 {
-    if (!s_ui.settings_detail) {
+    if (!s_ui.settings_detail || !settings_detail_is_enabled(detail_id)) {
         return;
     }
 
@@ -9615,8 +9664,8 @@ static void create_screen(lv_display_t *display)
                                              SETTINGS_LIST_PAD_Y,
                                              list_w,
                                              row_h,
-                                             SETTINGS_OPTION_COUNT);
-    for (uint32_t index = 0; index < SETTINGS_OPTION_COUNT; ++index) {
+                                             ARRAY_SIZE(SETTINGS_OPTIONS));
+    for (uint32_t index = 0; index < ARRAY_SIZE(SETTINGS_OPTIONS); ++index) {
         settings_option_card(list_card,
                              0,
                              (int32_t)index * row_h,

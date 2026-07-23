@@ -2239,4 +2239,3 @@ lv_font_t settings_zh_13 = {
 
 
 #endif /*#if SETTINGS_ZH_13*/
-

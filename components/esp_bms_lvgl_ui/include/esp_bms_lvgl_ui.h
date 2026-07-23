@@ -21,6 +21,22 @@
 #define ESP_BMS_FEATURE_DASHBOARD_FIREBLADE 1
 #endif
 
+#ifndef ESP_BMS_FEATURE_BMS
+#define ESP_BMS_FEATURE_BMS 1
+#endif
+
+#ifndef ESP_BMS_FEATURE_CONTROLLER
+#define ESP_BMS_FEATURE_CONTROLLER 1
+#endif
+
+#ifndef ESP_BMS_FEATURE_GPS
+#define ESP_BMS_FEATURE_GPS 1
+#endif
+
+#ifndef ESP_BMS_FEATURE_NETWORK
+#define ESP_BMS_FEATURE_NETWORK 1
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
