@@ -98,9 +98,6 @@ lv_font_t hotspoton = {
     .underline_thickness = 0,
 #endif
     .dsc = &font_dsc,
-#if LV_VERSION_CHECK(8, 2, 0) || LVGL_VERSION_MAJOR >= 9
-    .fallback = &hotspoton,
-#endif
     .user_data = NULL,
 };
 

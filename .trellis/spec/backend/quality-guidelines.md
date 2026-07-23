@@ -1493,3 +1493,16 @@ if (controller_tuple_changed && controller_tuple_is_selectable) {
   setup AP, Web UI load at `192.168.4.1`, GPS UART1 GPIO27/GPIO18 plus GPIO35
   PPS, GPIO34 ADC scaling, BLE
   BMS, and OTA slot switching.
+
+## LVGL Font Fallback Contract
+
+Custom icon fonts must not set `lv_font_t.fallback` to their own descriptor.
+An icon-only font should leave fallback `NULL` unless it deliberately points to
+a different, terminating text font. A self-reference makes missing-glyph lookup
+cycle indefinitely inside LVGL timer/render work and can starve CPU0 `IDLE0`,
+causing a task WDT report.
+
+Before a firmware build, scan all local font sources for `.fallback = &<font>`
+where `<font>` is the descriptor defined in the same file. The scan must return
+no self-references; the legacy profile build and a cold-boot WDT observation are
+required after changing generated or hand-maintained font descriptors.
