@@ -733,3 +733,75 @@ build-cloud -> write firmware.env -> exit 3 with a future-workflow message
 build-cloud -> validate generated firmware.env -> verify pushed GitHub branch
 -> workflow_dispatch(ref, firmware_env_base64) -> HTTP 204 means queued
 ```
+
+## Scenario: Firmware version and shared BLE scan ownership
+
+### 1. Scope / Trigger
+
+- Trigger: changing a saved firmware profile, generated hardware header, runtime
+  status snapshot, BMS/controller BLE scan path, or either Bluetooth settings list.
+
+### 2. Signatures
+
+```text
+./start.sh configure --firmware-version VALUE ...
+.\\start.ps1 configure --firmware-version VALUE ...
+FIRMWARE_VERSION=VALUE
+ESP_BMS_PROFILE_FIRMWARE_VERSION
+esp_bms_idf_runtime_start_{bms,controller}_scan(runtime)
+```
+
+### 3. Contracts
+
+- `FIRMWARE_VERSION` is required, non-empty ASCII `KEY=VALUE` data in every
+  saved `firmware.env`; configurators default it to `dev` and accept
+  `--firmware-version VALUE`. The generator emits the escaped C string macro
+  `ESP_BMS_PROFILE_FIRMWARE_VERSION`, and `idf_main` copies it to the runtime
+  snapshot. `/api/status.version` and the About-device row use that snapshot,
+  never a source-code version literal.
+- NimBLE has one active GAP discovery callback. Starting a BMS scan while a
+  controller scan is active, or the reverse, must cancel the active discovery,
+  preserve the requested source as pending, and start it on a later runtime
+  tick. The initiating source owns only its own active flag, revision, and
+  candidate array; do not reuse BMS candidate data for the controller list.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required response |
+| --- | --- |
+| Missing or invalid `FIRMWARE_VERSION` | Configurator/generator exits before writing a buildable profile |
+| Legacy profile has no version | Regenerate or explicitly set it; do not silently compile a blank runtime value |
+| A second scan begins during GAP discovery | Cancel discovery, log the source handoff, defer the new source, and publish no false active state |
+| Controller scan returns advertisements | Update `controller_scan_candidates` and its revision so the controller list refreshes |
+
+### 5. Good / Base / Bad Cases
+
+- Good: `FIRMWARE_VERSION=v1.2.3` produces the same value in the generated
+  header, About page, and `/api/status` JSON.
+- Base: a single BMS or controller scan runs normally and populates only that
+  source's list.
+- Bad: hard-code `0.1.0`, leave a controller scan marked active after its
+  callback was displaced, or display BMS candidates in the controller UI.
+
+### 6. Tests Required
+
+- `tests/configurator_selftest.sh` must assert `FIRMWARE_VERSION` persistence
+  and `ESP_BMS_PROFILE_FIRMWARE_VERSION` generation.
+- Run the legacy profile build and check the device boot/status output.
+- On hardware, open both BLE list pages in succession and verify the log shows
+  a handoff and the second page receives its own candidates.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```c
+snprintf(json, sizeof(json), "{\\\"version\\\":\\\"0.1.0\\\"}");
+```
+
+#### Correct
+
+```c
+snprintf(json, sizeof(json), "{\\\"version\\\":\\\"%s\\\"}",
+         runtime->snapshot.firmware_version);
+```

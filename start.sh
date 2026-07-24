@@ -17,6 +17,7 @@ declare -a FILTERED_ARGS
 # The UI language is deliberately process-local.  Catalogs and generated
 # KEY=VALUE/CMake files remain ASCII machine interfaces.
 LANGUAGE="${FIRMWARE_LANG:-zh}"
+MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST=NO
 
 message_text() {
     local text="$1"
@@ -215,6 +216,7 @@ Options:
   --lang zh|en                 Language for this invocation (default: zh)
   --config FILE                KEY=VALUE configuration file
   --profile ID                 Profile name (default: legacy)
+  --firmware-version VALUE    Firmware version shown on the device
   --mcu ID                     esp32 or esp32s3
   --board ID                   Catalog board identifier
   --display ID                 Catalog display identifier
@@ -260,6 +262,7 @@ ESP32 BMS GPS 固件定制器
   --lang zh|en                 本次调用的语言（默认：zh）
   --config FILE                KEY=VALUE 配置文件
   --profile ID                 配置档名称（默认：legacy）
+  --firmware-version VALUE    在设备上显示的固件版本
   --mcu ID                     esp32 或 esp32s3
   --board ID                   catalog 开发板标识
   --display ID                 catalog 显示屏标识
@@ -416,6 +419,7 @@ set_defaults() {
     CFG=()
     CFG[SCHEMA_VERSION]="$SCHEMA_VERSION"
     CFG[PROFILE]=esp32s3-n16r8-st7796u-gt1151
+    CFG[FIRMWARE_VERSION]=dev
     CFG[MCU]=esp32s3
     CFG[BOARD]=esp32s3-n16r8-st7796u-gt1151
     CFG[DISPLAY]=st7796u-i80
@@ -430,7 +434,7 @@ set_defaults() {
     CFG[PARTITIONS]=''
     CFG[INPUT_GPIO]=''
     CFG[OUTPUT_GPIO]=''
-    CFG[MODULES]=bms,controller,network,ota,cast
+    CFG[MODULES]=bms,controller,network,ota
     CFG[DASHBOARDS]=''
     CFG[DASHBOARDS_AUTO]=YES
     CFG[CONFIRM_DANGEROUS_GPIO]=NO
@@ -446,7 +450,7 @@ load_user_config() {
     [[ "${input[SCHEMA_VERSION]}" == "$SCHEMA_VERSION" ]] || die "unsupported configuration schema"
     for key in "${!input[@]}"; do
         case "$key" in
-            SCHEMA_VERSION|PROFILE|MCU|BOARD|DISPLAY|INPUT|MODULES|DASHBOARDS|CONFIRM_DANGEROUS_GPIO|BOARD_NAME|DISPLAY_NAME|INPUT_NAME|DISPLAY_BUS|INPUT_BUS|FLASH_MB|PSRAM_MB|PARTITIONS|INPUT_GPIO|OUTPUT_GPIO)
+            SCHEMA_VERSION|PROFILE|FIRMWARE_VERSION|MCU|BOARD|DISPLAY|INPUT|MODULES|DASHBOARDS|CONFIRM_DANGEROUS_GPIO|BOARD_NAME|DISPLAY_NAME|INPUT_NAME|DISPLAY_BUS|INPUT_BUS|FLASH_MB|PSRAM_MB|PARTITIONS|INPUT_GPIO|OUTPUT_GPIO)
                 CFG["$key"]="${input[$key]}"
                 ;;
             GPIO_*)
@@ -471,11 +475,12 @@ parse_options() {
                 load_user_config "$2"
                 shift 2
                 ;;
-            --profile|--mcu|--board|--display|--input|--modules|--dashboards|--board-name|--display-name|--input-name|--display-bus|--input-bus|--flash-mb|--psram-mb|--partitions)
+            --profile|--firmware-version|--mcu|--board|--display|--input|--modules|--dashboards|--board-name|--display-name|--input-name|--display-bus|--input-bus|--flash-mb|--psram-mb|--partitions)
                 [[ $# -ge 2 ]] || die "$option requires a value"
                 value="$2"
                 case "$option" in
                     --profile) CFG[PROFILE]="$value" ;;
+                    --firmware-version) CFG[FIRMWARE_VERSION]="$value" ;;
                     --mcu) CFG[MCU]="$value" ;;
                     --board) CFG[BOARD]="$value" ;;
                     --display) CFG[DISPLAY]="$value" ;;
@@ -805,6 +810,7 @@ validate_config() {
     is_id "${CFG[BOARD]}" || die "invalid board id"
     is_id "${CFG[DISPLAY]}" || die "invalid display id"
     is_id "${CFG[INPUT]}" || die "invalid input id"
+    is_value "${CFG[FIRMWARE_VERSION]}" && [[ -n "${CFG[FIRMWARE_VERSION]}" ]] || die "invalid firmware version"
     [[ "${CFG[CONFIRM_DANGEROUS_GPIO]}" == YES || "${CFG[CONFIRM_DANGEROUS_GPIO]}" == NO ]] || die "CONFIRM_DANGEROUS_GPIO must be YES or NO"
 
     read_kv_file "$CATALOG_DIR/schema.env" RECORD
@@ -1010,6 +1016,7 @@ write_profile() {
     cp "$partition_source" "$temporary/partitions.csv"
     {
         printf 'PROFILE=%s\n' "$profile"
+        printf 'FIRMWARE_VERSION=%s\n' "${CFG[FIRMWARE_VERSION]}"
         printf 'MCU=%s\n' "${CFG[MCU]}"
         printf 'BOARD=%s\n' "${CFG[BOARD]}"
         printf 'BUILD_READY=%s\n' "$BOARD_BUILD_READY"
@@ -1032,6 +1039,7 @@ write_firmware_env() {
     {
         printf 'SCHEMA_VERSION=%s\n' "$SCHEMA_VERSION"
         printf 'PROFILE=%s\n' "$profile"
+        printf 'FIRMWARE_VERSION=%s\n' "${CFG[FIRMWARE_VERSION]}"
         printf 'MCU=%s\n' "${CFG[MCU]}"
         printf 'BOARD=%s\n' "${CFG[BOARD]}"
         printf 'DISPLAY=%s\n' "${CFG[DISPLAY]}"
@@ -1181,6 +1189,10 @@ catalog_ids() {
     done | LC_ALL=C sort -u
 }
 
+catalog_module_ids() {
+    catalog_ids module | awk '$0 != "cast" { print } $0 == "cast" { found = 1 } END { if (found) print "cast" }'
+}
+
 catalog_ids_matching() {
     local kind="$1" key="$2" expected="$3" file id
     local -A record=()
@@ -1214,6 +1226,10 @@ choose_catalog_option() {
     shift 3
     local -a choices=("$@")
     ((${#choices[@]} > 0)) || die "no compatible $kind catalog options"
+    if is_interactive_terminal; then
+        choose_catalog_option_with_keyboard "$kind" "$title" "$default" "${choices[@]}"
+        return
+    fi
     while true; do
         printf '\n%s\n' "$(message_text "$title")"
         for index in "${!choices[@]}"; do
@@ -1237,6 +1253,42 @@ choose_catalog_option() {
             fi
         done
         [[ "$LANGUAGE" == en ]] && printf '%s\n' 'Invalid selection; please try again.' >&2 || printf '%s\n' '无效选择，请重新输入。' >&2
+    done
+}
+
+choose_catalog_option_with_keyboard() {
+    local kind="$1" title="$2" default="$3" key suffix option index pointer mark
+    shift 3
+    local cursor=0
+    local -a choices=("$@")
+
+    MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST=NO
+    while true; do
+        printf '\033[2J\033[H'
+        print_interactive_title
+        printf '\n%s\n' "$(message_text "$title")"
+        for index in "${!choices[@]}"; do
+            option="${choices[$index]}"
+            pointer=' '
+            (( index == cursor )) && pointer='>'
+            mark=' '
+            [[ "$option" == "$default" ]] && mark='*'
+            printf '  %s %s %d) %s — %s\n' "$pointer" "$mark" "$((index + 1))" "$option" "$(catalog_option_description "$kind" "$option")"
+        done
+        [[ "$LANGUAGE" == en ]] && printf '%s\n' 'Use Up/Down to move, Left to return, Enter to continue.' || printf '%s\n' '使用 ↑/↓ 移动，← 返回上一级，回车继续。'
+        key=''
+        IFS= read -rsn1 key || { MENU_SELECTION="$default"; return; }
+        if [[ "$key" == $'\e' ]]; then
+            suffix=''
+            IFS= read -rsn2 -t 0.1 suffix || true
+            key+="$suffix"
+        fi
+        case "$key" in
+            $'\e[A'|$'\eOA') (( cursor == 0 )) && cursor=$((${#choices[@]} - 1)) || cursor=$((cursor - 1)) ;;
+            $'\e[B'|$'\eOB') cursor=$(((cursor + 1) % ${#choices[@]})) ;;
+            ''|$'\r') MENU_SELECTION="${choices[$cursor]}"; return ;;
+            $'\e[D'|$'\eOD') MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST=YES; MENU_SELECTION="$default"; return ;;
+        esac
     done
 }
 
@@ -1408,10 +1460,14 @@ configure_custom_board() {
     fi
     BOARD_DISPLAY_BUS="${CFG[DISPLAY_BUS]}"
     BOARD_INPUT_BUS="${CFG[INPUT_BUS]}"
-    choose_module_options
-    CFG[MODULES]="$MENU_SELECTION"
-    choose_dashboard_options
-    CFG[DASHBOARDS]="$MENU_SELECTION"
+    while true; do
+        choose_module_options
+        CFG[MODULES]="$MENU_SELECTION"
+        choose_dashboard_options
+        [[ "$MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST" == YES ]] && continue
+        CFG[DASHBOARDS]="$MENU_SELECTION"
+        break
+    done
     configure_custom_board_gpio
 }
 
@@ -1461,6 +1517,8 @@ choose_catalog_options_with_keyboard() {
     local -a choices=("$@")
     local -A selected=()
 
+    MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST=NO
+
     case "$kind" in
         module) title=Modules ;;
         dashboard) title='Dashboard UIs' ;;
@@ -1485,9 +1543,9 @@ choose_catalog_options_with_keyboard() {
             printf '  %s %s %d) %s — %s\n' "$pointer" "$mark" "$((index + 1))" "$option" "$(catalog_option_description "$kind" "$option")"
         done
         if [[ "$LANGUAGE" == en ]]; then
-            printf '%s\n' 'Use Up/Down/Left to move, Space to toggle, Enter to continue.'
+            printf '%s\n' 'Use Up/Down to move, Left to return to the previous feature list, Space to toggle, Enter to continue.'
         else
-            printf '%s\n' '使用 ↑/↓/← 移动，空格切换，回车下一步。'
+            printf '%s\n' '使用 ↑/↓ 移动，← 返回上一个功能清单，空格切换，回车下一步。'
         fi
 
         key=''
@@ -1501,7 +1559,7 @@ choose_catalog_options_with_keyboard() {
             key+="$suffix"
         fi
         case "$key" in
-            $'\e[A'|$'\eOA'|$'\e[D'|$'\eOD')
+            $'\e[A'|$'\eOA')
                 if (( cursor == 0 )); then cursor=$((${#choices[@]} - 1)); else cursor=$((cursor - 1)); fi
                 ;;
             $'\e[B'|$'\eOB')
@@ -1519,6 +1577,11 @@ choose_catalog_options_with_keyboard() {
                 fi
                 return
                 ;;
+            $'\e[D'|$'\eOD')
+                MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST=YES
+                MENU_SELECTION="$default"
+                return
+                ;;
         esac
     done
 }
@@ -1526,7 +1589,7 @@ choose_catalog_options_with_keyboard() {
 choose_module_options_with_keyboard() {
     local -a choices=()
 
-    mapfile -t choices < <(catalog_ids module)
+    mapfile -t choices < <(catalog_module_ids)
     ((${#choices[@]} > 0)) || die 'no module catalog options'
     choose_catalog_options_with_keyboard module "${CFG[MODULES]}" "${choices[@]}"
 }
@@ -1542,7 +1605,7 @@ choose_dashboard_options_with_keyboard() {
     fi
     resolve_dashboard_selection
     choose_catalog_options_with_keyboard dashboard "${CFG[DASHBOARDS]}" "${choices[@]}"
-    CFG[DASHBOARDS_AUTO]=NO
+    [[ "$MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST" == YES ]] || CFG[DASHBOARDS_AUTO]=NO
 }
 
 choose_module_options() {
@@ -1552,7 +1615,7 @@ choose_module_options() {
         choose_module_options_with_keyboard
         return
     fi
-    mapfile -t choices < <(catalog_ids module)
+    mapfile -t choices < <(catalog_module_ids)
     while true; do
         printf '\n%s\n' "$(message_text 'Modules')"
         printf '  0) %s\n' "$([[ "$LANGUAGE" == en ]] && printf 'No optional modules' || printf '不启用可选功能')"
@@ -1741,6 +1804,10 @@ choose_board_or_saved_profile() {
     mapfile -t saved < <(saved_profile_paths)
     choices=("${boards[@]}")
     for option in "${saved[@]}"; do choices+=("saved:$option"); done
+    if is_interactive_terminal; then
+        choose_catalog_option_with_keyboard board 'Board' "${CFG[BOARD]}" "${choices[@]}"
+        return
+    fi
     while true; do
         printf '\n%s\n' "$(message_text 'Board')"
         for index in "${!choices[@]}"; do
@@ -1815,9 +1882,11 @@ select_post_config_action() {
 
 run_interactive() {
     local -a choices=()
+    local stage
     choose_interactive_language
     set_defaults
     print_interactive_title
+    while true; do
     choose_board_or_saved_profile
     if [[ "$MENU_SELECTION" == saved:* ]]; then
         local saved_profile="${MENU_SELECTION#saved:}"
@@ -1835,24 +1904,47 @@ run_interactive() {
         CFG[MCU]="${RECORD[MCU]}"
         CFG[DISPLAY_BUS]="${RECORD[DISPLAY_BUS]}"
         CFG[INPUT_BUS]="${RECORD[INPUT_BUS]}"
-        mapfile -t choices < <(catalog_ids_matching display BUS "${RECORD[DISPLAY_BUS]}")
-        choices+=(custom)
-        [[ " ${choices[*]} " == *" ${CFG[DISPLAY]} "* ]] || CFG[DISPLAY]="${choices[0]}"
-        choose_catalog_option display 'Display' "${CFG[DISPLAY]}" "${choices[@]}"
-        CFG[DISPLAY]="$MENU_SELECTION"
-        [[ "${CFG[DISPLAY]}" != custom ]] || prompt_custom_id DISPLAY_NAME '自定义显示屏名称（ASCII）' 'Custom display name (ASCII)'
-        mapfile -t choices < <(catalog_ids_matching input BUS "${RECORD[INPUT_BUS]}")
-        choices+=(custom)
-        [[ " ${choices[*]} " == *" ${CFG[INPUT]} "* ]] || CFG[INPUT]="${choices[0]}"
-        choose_catalog_option input 'Input' "${CFG[INPUT]}" "${choices[@]}"
-        CFG[INPUT]="$MENU_SELECTION"
-        [[ "${CFG[INPUT]}" != custom ]] || prompt_custom_id INPUT_NAME '自定义输入设备名称（ASCII）' 'Custom input name (ASCII)'
-        choose_module_options
-        CFG[MODULES]="$MENU_SELECTION"
-        choose_dashboard_options
-        CFG[DASHBOARDS]="$MENU_SELECTION"
+        stage=display
+        while true; do
+            case "$stage" in
+                display)
+                    mapfile -t choices < <(catalog_ids_matching display BUS "${RECORD[DISPLAY_BUS]}")
+                    choices+=(custom)
+                    [[ " ${choices[*]} " == *" ${CFG[DISPLAY]} "* ]] || CFG[DISPLAY]="${choices[0]}"
+                    choose_catalog_option display 'Display' "${CFG[DISPLAY]}" "${choices[@]}"
+                    [[ "$MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST" == YES ]] && continue 2
+                    CFG[DISPLAY]="$MENU_SELECTION"
+                    [[ "${CFG[DISPLAY]}" != custom ]] || prompt_custom_id DISPLAY_NAME '自定义显示屏名称（ASCII）' 'Custom display name (ASCII)'
+                    stage=input
+                    ;;
+                input)
+                    mapfile -t choices < <(catalog_ids_matching input BUS "${RECORD[INPUT_BUS]}")
+                    choices+=(custom)
+                    [[ " ${choices[*]} " == *" ${CFG[INPUT]} "* ]] || CFG[INPUT]="${choices[0]}"
+                    choose_catalog_option input 'Input' "${CFG[INPUT]}" "${choices[@]}"
+                    [[ "$MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST" == YES ]] && { stage=display; continue; }
+                    CFG[INPUT]="$MENU_SELECTION"
+                    [[ "${CFG[INPUT]}" != custom ]] || prompt_custom_id INPUT_NAME '自定义输入设备名称（ASCII）' 'Custom input name (ASCII)'
+                    stage=module
+                    ;;
+                module)
+                    choose_module_options
+                    [[ "$MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST" == YES ]] && { stage=input; continue; }
+                    CFG[MODULES]="$MENU_SELECTION"
+                    stage=dashboard
+                    ;;
+                dashboard)
+                    choose_dashboard_options
+                    [[ "$MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST" == YES ]] && { stage=module; continue; }
+                    CFG[DASHBOARDS]="$MENU_SELECTION"
+                    break
+                    ;;
+            esac
+        done
         configure_missing_board_gpio
     fi
+    break
+    done
     set_interactive_profile_name
     validate_config
     show_interactive_summary

@@ -201,6 +201,63 @@ static void interaction_timeout_cb(lv_timer_t *timer)
 
 Validation must cover: tap versus horizontal swipe classification, below-threshold release, timeout while idle and while dragging, unlock cleanup, root rebuild while locked, and restoration of the quick-pull gesture after unlock.
 
+## Scenario: Speed-source detail selection
+
+### 1. Scope / Trigger
+
+- Trigger: changing the speed-dashboard settings page, its action dispatcher,
+  or the persisted GPS/controller speed-source preference.
+
+### 2. Signatures
+
+```c
+ESP_BMS_LVGL_ACTION_SET_SPEED_SOURCE
+queue_action_with_commit(ESP_BMS_LVGL_ACTION_SET_SPEED_SOURCE, source_is_controller)
+```
+
+### 3. Contracts
+
+- The speed-source row is navigational and opens a dedicated detail subview;
+  it is not an inline switch. The detail page presents the available GPS and
+  controller sources and marks the current source.
+- Selecting a row dispatches the explicit desired boolean through
+  `ESP_BMS_LVGL_ACTION_SET_SPEED_SOURCE`. Refreshes/rebuilds of the active
+  page must reflect the snapshot, not invert it.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required response |
+| --- | --- |
+| GPS/controller feature is trimmed | Omit the unavailable choice and reject stale actions in runtime |
+| Selected source already equals snapshot | Keep the value unchanged; the action is idempotent |
+| Snapshot updates while detail page is open | Redraw the check mark without leaving the detail page |
+
+### 5. Good / Base / Bad Cases
+
+- Good: choosing controller sets controller speed; choosing GPS sets GPS speed.
+- Base: reopening the page preserves the selected source.
+- Bad: use a toggle action so tapping an already selected row switches source.
+
+### 6. Tests Required
+
+- Run both LVGL headless orientations and assert settings rebuilds complete.
+- Exercise each source choice and assert the action parameter and resulting
+  snapshot source match.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```c
+queue_action_with_commit(ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_SOURCE, true);
+```
+
+#### Correct
+
+```c
+queue_action_with_commit(ESP_BMS_LVGL_ACTION_SET_SPEED_SOURCE, source_is_controller);
+```
+
 ---
 
 ## Accessibility

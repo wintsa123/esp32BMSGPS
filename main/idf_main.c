@@ -48,6 +48,7 @@ static bool action_should_save_display_settings(esp_bms_lvgl_action_t action)
            action == ESP_BMS_LVGL_ACTION_ROTATE_DISPLAY ||
            action == ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_UNIT ||
            action == ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_SOURCE ||
+           action == ESP_BMS_LVGL_ACTION_SET_SPEED_SOURCE ||
            action == ESP_BMS_LVGL_ACTION_TOGGLE_LANGUAGE ||
            action == ESP_BMS_LVGL_ACTION_SELECT_BMS_ANT ||
            action == ESP_BMS_LVGL_ACTION_SELECT_BMS_JK ||

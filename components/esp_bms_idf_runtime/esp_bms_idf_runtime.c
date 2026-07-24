@@ -1995,13 +1995,14 @@ static esp_err_t runtime_http_status_handler(httpd_req_t *req, esp_bms_idf_runti
     char json[HTTP_JSON_MAX_LEN] = { 0 };
     const int written = snprintf(json,
                                  sizeof(json),
-                                 "{\"version\":\"0.1.0\",\"speed\":\"%s\",\"speed_unit\":\"%s\","
+                                 "{\"version\":\"%s\",\"speed\":\"%s\",\"speed_unit\":\"%s\","
                                  "\"gps_fix\":%s,\"bms\":\"%s\",\"pack_voltage_mv\":%s,"
                                  "\"current_deci_amps\":%s,\"soc_percent\":%s,"
                                  "\"local_battery_mv\":%s,\"bms_info\":\"%s\","
                                  "\"bms_protections\":%s,\"bms_warnings\":%s,"
                                  "\"bms_temperatures_c\":%s,\"wifi\":\"%s\","
                                  "\"setup_ap_enabled\":%s}",
+                                 runtime->snapshot.firmware_version,
                                  speed,
                                  runtime_speed_unit_config_text(runtime->snapshot.speed_unit),
                                  RUNTIME_SNAPSHOT_FLAG(runtime, GPS_FIX_VALID) ? "true" : "false",
@@ -3330,6 +3331,10 @@ void esp_bms_idf_runtime_init(esp_bms_idf_runtime_t *runtime)
     }
 
     memset(runtime, 0, sizeof(*runtime));
+    (void)snprintf(runtime->snapshot.firmware_version,
+                   sizeof(runtime->snapshot.firmware_version),
+                   "%s",
+                   ESP_BMS_PROFILE_FIRMWARE_VERSION);
     runtime->cast_socket_fd = -1;
     runtime->http_pending_lock = xSemaphoreCreateMutex();
     if (!runtime->http_pending_lock) {
@@ -3603,6 +3608,7 @@ static bool runtime_action_feature_enabled(esp_bms_lvgl_action_t action)
         return ESP_BMS_FEATURE_BMS || ESP_BMS_FEATURE_CONTROLLER;
     case ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_UNIT:
     case ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_SOURCE:
+    case ESP_BMS_LVGL_ACTION_SET_SPEED_SOURCE:
         return ESP_BMS_FEATURE_GPS || ESP_BMS_FEATURE_CONTROLLER;
     default:
         return true;
@@ -3744,6 +3750,31 @@ bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,
                 runtime->snapshot.gps_module_state !=
                     (uint8_t)ESP_BMS_GPS_MODULE_AVAILABLE) {
                 runtime_set_error(runtime, "GPS OFFLINE");
+                return false;
+            }
+            runtime->snapshot.speed_source = target;
+        }
+        if (runtime->snapshot.speed_source == ESP_BMS_SPEED_SOURCE_CONTROLLER &&
+            runtime->controller_connection_enabled) {
+            (void)esp_bms_idf_runtime_start_controller_ble_if_enabled(runtime);
+        }
+        runtime_project_controller_snapshot(runtime);
+        return true;
+    case ESP_BMS_LVGL_ACTION_SET_SPEED_SOURCE:
+        if (!ACTION_EVENT_FLAG(event, NUMERIC_DELTA_VALID) ||
+            (event->numeric_delta != (int16_t)ESP_BMS_SPEED_SOURCE_GPS &&
+             event->numeric_delta != (int16_t)ESP_BMS_SPEED_SOURCE_CONTROLLER)) {
+            return false;
+        }
+        {
+            const esp_bms_speed_source_t target = (esp_bms_speed_source_t)event->numeric_delta;
+            if (target == ESP_BMS_SPEED_SOURCE_GPS &&
+                runtime->snapshot.gps_module_state !=
+                    (uint8_t)ESP_BMS_GPS_MODULE_AVAILABLE) {
+                runtime_set_error(runtime, "GPS OFFLINE");
+                return false;
+            }
+            if (runtime->snapshot.speed_source == target) {
                 return false;
             }
             runtime->snapshot.speed_source = target;
@@ -3969,6 +4000,8 @@ const char *esp_bms_idf_runtime_action_name(esp_bms_lvgl_action_t action)
         return "set-boot-animation-style";
     case ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_SOURCE:
         return "toggle-speed-source";
+    case ESP_BMS_LVGL_ACTION_SET_SPEED_SOURCE:
+        return "set-speed-source";
     case ESP_BMS_LVGL_ACTION_START_CONTROLLER_BIND:
         return "start-controller-bind";
     case ESP_BMS_LVGL_ACTION_ADJUST_CONTROLLER_WHEEL:

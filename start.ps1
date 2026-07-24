@@ -22,6 +22,7 @@ $FirmwareOutputRoot = if ($env:FIRMWARE_OUTPUT_ROOT) { $env:FIRMWARE_OUTPUT_ROOT
 $SchemaVersion = '1'
 $script:Language = if ($env:FIRMWARE_LANG -in @('zh', 'en')) { $env:FIRMWARE_LANG } else { 'zh' }
 $script:BuildExitCode = 0
+$script:ReturnToPreviousFunctionList = $false
 $script:RequiredIdfVersion = 'ESP-IDF v6.0.2'
 . (Join-Path $Root 'scripts/esp-idf-version.ps1')
 
@@ -335,7 +336,7 @@ ESP32 BMS GPS 固件定制器
   build-local  生成配置档，并在隔离目录中构建。
   build-cloud  校验并触发云端构建；不会推送。
 
-选项：--lang zh|en --config FILE --profile ID --mcu ID --board ID --display ID --input ID
+选项：--lang zh|en --config FILE --profile ID --firmware-version VALUE --mcu ID --board ID --display ID --input ID
        --board-name ID --display-name ID --input-name ID --display-bus SPI|I80 --input-bus SPI|I2C|NONE
        --flash-mb N --psram-mb N --partitions PATH --modules ID[,ID...] --dashboards ID[,ID...] --gpio ROLE=PIN
        --input-gpio ROLE=PIN --output-gpio ROLE=PIN --confirm-dangerous-gpio
@@ -429,6 +430,7 @@ function New-DefaultConfig {
     return [ordered]@{
         SCHEMA_VERSION = $SchemaVersion
         PROFILE = 'esp32s3-n16r8-st7796u-gt1151'
+        FIRMWARE_VERSION = 'dev'
         MCU = 'esp32s3'
         BOARD = 'esp32s3-n16r8-st7796u-gt1151'
         DISPLAY = 'st7796u-i80'
@@ -443,7 +445,7 @@ function New-DefaultConfig {
         PARTITIONS = ''
         INPUT_GPIO = ''
         OUTPUT_GPIO = ''
-        MODULES = 'bms,controller,network,ota,cast'
+        MODULES = 'bms,controller,network,ota'
         DASHBOARDS = ''
         DASHBOARDS_AUTO = 'YES'
         CONFIRM_DANGEROUS_GPIO = 'NO'
@@ -455,7 +457,7 @@ function Import-UserConfig([System.Collections.IDictionary]$Config, [string]$Pat
     Require-Key $Input 'SCHEMA_VERSION'
     if ($Input.SCHEMA_VERSION -ne $SchemaVersion) { Fail 'unsupported configuration schema' }
     foreach ($Key in $Input.Keys) {
-        if ($Key -in @('SCHEMA_VERSION', 'PROFILE', 'MCU', 'BOARD', 'DISPLAY', 'INPUT', 'MODULES', 'DASHBOARDS', 'CONFIRM_DANGEROUS_GPIO', 'BOARD_NAME', 'DISPLAY_NAME', 'INPUT_NAME', 'DISPLAY_BUS', 'INPUT_BUS', 'FLASH_MB', 'PSRAM_MB', 'PARTITIONS', 'INPUT_GPIO', 'OUTPUT_GPIO') -or $Key -match '^GPIO_[A-Z][A-Z0-9_]*$') {
+        if ($Key -in @('SCHEMA_VERSION', 'PROFILE', 'FIRMWARE_VERSION', 'MCU', 'BOARD', 'DISPLAY', 'INPUT', 'MODULES', 'DASHBOARDS', 'CONFIRM_DANGEROUS_GPIO', 'BOARD_NAME', 'DISPLAY_NAME', 'INPUT_NAME', 'DISPLAY_BUS', 'INPUT_BUS', 'FLASH_MB', 'PSRAM_MB', 'PARTITIONS', 'INPUT_GPIO', 'OUTPUT_GPIO') -or $Key -match '^GPIO_[A-Z][A-Z0-9_]*$') {
             $Config[$Key] = $Input[$Key]
         } else {
             Fail "unknown configuration key $Key"
@@ -474,6 +476,7 @@ function Parse-Options([System.Collections.IDictionary]$Config, [string[]]$Items
                 $Index += 2
             }
             '--profile' { if ($Index + 1 -ge $Items.Count) { Fail '--profile requires a value' }; $Config.PROFILE = $Items[$Index + 1]; $Index += 2 }
+            '--firmware-version' { if ($Index + 1 -ge $Items.Count) { Fail '--firmware-version requires a value' }; $Config.FIRMWARE_VERSION = $Items[$Index + 1]; $Index += 2 }
             '--mcu' { if ($Index + 1 -ge $Items.Count) { Fail '--mcu requires a value' }; $Config.MCU = $Items[$Index + 1]; $Index += 2 }
             '--board' { if ($Index + 1 -ge $Items.Count) { Fail '--board requires a value' }; $Config.BOARD = $Items[$Index + 1]; $Index += 2 }
             '--display' { if ($Index + 1 -ge $Items.Count) { Fail '--display requires a value' }; $Config.DISPLAY = $Items[$Index + 1]; $Index += 2 }
@@ -656,6 +659,7 @@ function Assert-CustomBoardGpioRoles([System.Collections.IDictionary]$Config) {
 
 function Validate-Config([System.Collections.IDictionary]$Config) {
     foreach ($Key in @('PROFILE', 'MCU', 'BOARD', 'DISPLAY', 'INPUT')) { if (-not (Test-Id $Config[$Key])) { Fail "invalid $Key" } }
+    if ([string]::IsNullOrEmpty($Config.FIRMWARE_VERSION) -or -not (Test-Value $Config.FIRMWARE_VERSION)) { Fail 'invalid firmware version' }
     if ($Config.CONFIRM_DANGEROUS_GPIO -notin @('YES', 'NO')) { Fail 'CONFIRM_DANGEROUS_GPIO must be YES or NO' }
     $Schema = Read-KeyValue (Join-Path $CatalogDir 'schema.env')
     if ($Schema.SCHEMA_VERSION -ne $SchemaVersion) { Fail 'unsupported catalog schema' }
@@ -793,7 +797,7 @@ function Write-Profile([System.Collections.IDictionary]$Config) {
     $Temp = Join-Path $BuildRoot ".${Profile}.tmp.$([guid]::NewGuid().ToString('N'))"
     $ProfileDir = Join-Path $BuildRoot $Profile
     New-Item -ItemType Directory -Path (Join-Path $Temp 'generated') -Force | Out-Null
-    $Lines = @("SCHEMA_VERSION=$SchemaVersion", "PROFILE=$Profile", "MCU=$($Config.MCU)", "BOARD=$($Config.BOARD)", "DISPLAY=$($Config.DISPLAY)", "INPUT=$($Config.INPUT)", "MODULES=$($Config.MODULES)", "DASHBOARDS=$($Config.DASHBOARDS)", "CONFIRM_DANGEROUS_GPIO=$($Config.CONFIRM_DANGEROUS_GPIO)")
+    $Lines = @("SCHEMA_VERSION=$SchemaVersion", "PROFILE=$Profile", "FIRMWARE_VERSION=$($Config.FIRMWARE_VERSION)", "MCU=$($Config.MCU)", "BOARD=$($Config.BOARD)", "DISPLAY=$($Config.DISPLAY)", "INPUT=$($Config.INPUT)", "MODULES=$($Config.MODULES)", "DASHBOARDS=$($Config.DASHBOARDS)", "CONFIRM_DANGEROUS_GPIO=$($Config.CONFIRM_DANGEROUS_GPIO)")
     foreach ($Key in @('BOARD_NAME', 'DISPLAY_NAME', 'INPUT_NAME', 'DISPLAY_BUS', 'INPUT_BUS', 'FLASH_MB', 'PSRAM_MB', 'PARTITIONS', 'INPUT_GPIO', 'OUTPUT_GPIO')) {
         if (-not [string]::IsNullOrEmpty($Config[$Key])) { $Lines += "$Key=$($Config[$Key])" }
     }
@@ -1157,6 +1161,29 @@ function Get-CatalogOptionDescription([string]$Kind, [string]$Id) {
 
 function Select-CatalogOption([string]$Kind, [string]$Title, [string]$Default, [string[]]$Options) {
     if ($Options.Count -eq 0) { Fail "no compatible $Kind catalog options" }
+    $script:ReturnToPreviousFunctionList = $false
+    if (Test-InteractiveTerminal) {
+        $Cursor = [Math]::Max(0, [Array]::IndexOf($Options, $Default))
+        while ($true) {
+            Clear-Host
+            Show-InteractiveTitle
+            Write-Host ''
+            Write-Host (Convert-LocalizedText $Title)
+            for ($Index = 0; $Index -lt $Options.Count; $Index++) {
+                $Option = $Options[$Index]
+                $Pointer = if ($Index -eq $Cursor) { '>' } else { ' ' }
+                $Mark = if ($Option -eq $Default) { '*' } else { ' ' }
+                Write-Host ("  {0} {1} {2}) {3} — {4}" -f $Pointer, $Mark, ($Index + 1), $Option, (Get-CatalogOptionDescription $Kind $Option))
+            }
+            Write-Host $(if ($script:Language -eq 'en') { 'Use Up/Down to move, Left to return, Enter to continue.' } else { '使用 ↑/↓ 移动，← 返回上一级，回车继续。' })
+            switch ([Console]::ReadKey($true).Key) {
+                ([ConsoleKey]::UpArrow) { $Cursor = if ($Cursor -eq 0) { $Options.Count - 1 } else { $Cursor - 1 } }
+                ([ConsoleKey]::DownArrow) { $Cursor = ($Cursor + 1) % $Options.Count }
+                ([ConsoleKey]::Enter) { return $Options[$Cursor] }
+                ([ConsoleKey]::LeftArrow) { $script:ReturnToPreviousFunctionList = $true; return $Default }
+            }
+        }
+    }
     while ($true) {
         Write-Host ''
         Write-Host (Convert-LocalizedText $Title)
@@ -1223,6 +1250,7 @@ function Select-CatalogOptionsWithKeyboard([string]$Kind, [string]$Default, [str
     if ($Options.Count -eq 0) { Fail "no $Kind catalog options" }
     $Title = if ($Kind -eq 'module') { 'Modules' } elseif ($Kind -eq 'dashboard') { 'Dashboard UIs' } else { Fail "unsupported catalog menu: $Kind" }
     $Selected = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    $script:ReturnToPreviousFunctionList = $false
     foreach ($Option in (Split-Csv $Default)) {
         if ($Options -contains $Option) { [void]$Selected.Add($Option) }
     }
@@ -1238,10 +1266,10 @@ function Select-CatalogOptionsWithKeyboard([string]$Kind, [string]$Default, [str
             $Mark = if ($Selected.Contains($Option)) { '[x]' } else { '[ ]' }
             Write-Host ("  {0} {1} {2}) {3} — {4}" -f $Pointer, $Mark, ($Index + 1), $Option, (Get-CatalogOptionDescription $Kind $Option))
         }
-        Write-Host $(if ($script:Language -eq 'en') { 'Use Up/Down/Left to move, Space to toggle, Enter to continue.' } else { '使用 ↑/↓/← 移动，空格切换，回车下一步。' })
+        Write-Host $(if ($script:Language -eq 'en') { 'Use Up/Down to move, Left to return to the previous feature list, Space to toggle, Enter to continue.' } else { '使用 ↑/↓ 移动，← 返回上一个功能清单，空格切换，回车下一步。' })
 
         $Key = [Console]::ReadKey($true).Key
-        if ($Key -eq [ConsoleKey]::UpArrow -or $Key -eq [ConsoleKey]::LeftArrow) {
+        if ($Key -eq [ConsoleKey]::UpArrow) {
             $Cursor = if ($Cursor -eq 0) { $Options.Count - 1 } else { $Cursor - 1 }
             continue
         }
@@ -1259,6 +1287,10 @@ function Select-CatalogOptionsWithKeyboard([string]$Kind, [string]$Default, [str
             foreach ($Option in $Selected) { [void]$Values.Add($Option) }
             return ConvertTo-SortedCsv $Values.ToArray()
         }
+        if ($Key -eq [ConsoleKey]::LeftArrow) {
+            $script:ReturnToPreviousFunctionList = $true
+            return $Default
+        }
     }
 }
 
@@ -1267,7 +1299,7 @@ function Select-ModuleOptionsWithKeyboard([string]$Default, [string[]]$Options) 
 }
 
 function Select-ModuleOptions([string]$Default) {
-    $Options = @(Get-CatalogIds 'module')
+    $Options = @((Get-CatalogIds 'module' | Where-Object { $_ -ne 'cast' }) + (Get-CatalogIds 'module' | Where-Object { $_ -eq 'cast' }))
     if (Test-InteractiveTerminal) { return (Select-ModuleOptionsWithKeyboard $Default $Options) }
     while ($true) {
         Write-Host ''
@@ -1309,8 +1341,9 @@ function Select-DashboardOptions([System.Collections.IDictionary]$Config) {
     Resolve-DashboardSelection $Config
     $Default = $Config.DASHBOARDS
     if (Test-InteractiveTerminal) {
-        $Config.DASHBOARDS_AUTO = 'NO'
-        return (Select-CatalogOptionsWithKeyboard 'dashboard' $Default $Options)
+        $Result = Select-CatalogOptionsWithKeyboard 'dashboard' $Default $Options
+        if (-not $script:ReturnToPreviousFunctionList) { $Config.DASHBOARDS_AUTO = 'NO' }
+        return $Result
     }
     while ($true) {
         Write-Host ''
@@ -1414,8 +1447,10 @@ function Set-CustomBoardConfig([System.Collections.IDictionary]$Config) {
     }
     $script:BoardDisplayBus = $Config.DISPLAY_BUS
     $script:BoardInputBus = $Config.INPUT_BUS
-    $Config.MODULES = Select-ModuleOptions $Config.MODULES
-    $Config.DASHBOARDS = Select-DashboardOptions $Config
+    do {
+        $Config.MODULES = Select-ModuleOptions $Config.MODULES
+        $Config.DASHBOARDS = Select-DashboardOptions $Config
+    } while ($script:ReturnToPreviousFunctionList)
     Set-CustomBoardGpio $Config
 }
 
@@ -1498,6 +1533,7 @@ function Select-BoardOrSavedProfile([string]$Default) {
     $Options = [System.Collections.Generic.List[string]]::new()
     foreach ($Board in @(Get-CatalogIds 'board') + @('custom')) { [void]$Options.Add($Board) }
     foreach ($Profile in Get-SavedProfileIds) { [void]$Options.Add("saved:$Profile") }
+    if (Test-InteractiveTerminal) { return (Select-CatalogOption 'board' 'Board' $Default $Options.ToArray()) }
     while ($true) {
         Write-Host ''
         Write-Host (Convert-LocalizedText 'Board')
@@ -1587,6 +1623,7 @@ function Invoke-Interactive {
     $Config = New-DefaultConfig
     Select-InteractiveLanguage
     Show-InteractiveTitle
+    while ($true) {
     $Config.BOARD = Select-BoardOrSavedProfile $Config.BOARD
     if ($Config.BOARD.StartsWith('saved:')) {
         $SavedProfile = $Config.BOARD.Substring(6)
@@ -1605,17 +1642,40 @@ function Invoke-Interactive {
         $Config.MCU = $Board.MCU
         $Config.DISPLAY_BUS = $Board.DISPLAY_BUS
         $Config.INPUT_BUS = $Board.INPUT_BUS
-        $DisplayOptions = @(Get-CatalogIdsMatching 'display' 'BUS' $Board.DISPLAY_BUS) + 'custom'
-        if ($DisplayOptions -notcontains $Config.DISPLAY) { $Config.DISPLAY = $DisplayOptions[0] }
-        $Config.DISPLAY = Select-CatalogOption 'display' 'Display' $Config.DISPLAY $DisplayOptions
-        if ($Config.DISPLAY -eq 'custom') { Read-CustomId $Config 'DISPLAY_NAME' '自定义显示屏名称（ASCII）' 'Custom display name (ASCII)' }
-        $InputOptions = @(Get-CatalogIdsMatching 'input' 'BUS' $Board.INPUT_BUS) + 'custom'
-        if ($InputOptions -notcontains $Config.INPUT) { $Config.INPUT = $InputOptions[0] }
-        $Config.INPUT = Select-CatalogOption 'input' 'Input' $Config.INPUT $InputOptions
-        if ($Config.INPUT -eq 'custom') { Read-CustomId $Config 'INPUT_NAME' '自定义输入设备名称（ASCII）' 'Custom input name (ASCII)' }
-        $Config.MODULES = Select-ModuleOptions $Config.MODULES
-        $Config.DASHBOARDS = Select-DashboardOptions $Config
+        $Stage = 'display'
+        while ($true) {
+            switch ($Stage) {
+                'display' {
+                    $DisplayOptions = @(Get-CatalogIdsMatching 'display' 'BUS' $Board.DISPLAY_BUS) + 'custom'
+                    if ($DisplayOptions -notcontains $Config.DISPLAY) { $Config.DISPLAY = $DisplayOptions[0] }
+                    $Config.DISPLAY = Select-CatalogOption 'display' 'Display' $Config.DISPLAY $DisplayOptions
+                    if ($script:ReturnToPreviousFunctionList) { continue 2 }
+                    if ($Config.DISPLAY -eq 'custom') { Read-CustomId $Config 'DISPLAY_NAME' '自定义显示屏名称（ASCII）' 'Custom display name (ASCII)' }
+                    $Stage = 'input'
+                }
+                'input' {
+                    $InputOptions = @(Get-CatalogIdsMatching 'input' 'BUS' $Board.INPUT_BUS) + 'custom'
+                    if ($InputOptions -notcontains $Config.INPUT) { $Config.INPUT = $InputOptions[0] }
+                    $Config.INPUT = Select-CatalogOption 'input' 'Input' $Config.INPUT $InputOptions
+                    if ($script:ReturnToPreviousFunctionList) { $Stage = 'display'; continue }
+                    if ($Config.INPUT -eq 'custom') { Read-CustomId $Config 'INPUT_NAME' '自定义输入设备名称（ASCII）' 'Custom input name (ASCII)' }
+                    $Stage = 'module'
+                }
+                'module' {
+                    $Config.MODULES = Select-ModuleOptions $Config.MODULES
+                    if ($script:ReturnToPreviousFunctionList) { $Stage = 'input'; continue }
+                    $Stage = 'dashboard'
+                }
+                'dashboard' {
+                    $Config.DASHBOARDS = Select-DashboardOptions $Config
+                    if ($script:ReturnToPreviousFunctionList) { $Stage = 'module'; continue }
+                    break
+                }
+            }
+        }
         Set-MissingBoardGpio $Config
+    }
+    break
     }
     Set-InteractiveProfileName $Config
     Validate-Config $Config

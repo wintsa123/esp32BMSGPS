@@ -53,6 +53,11 @@ rg -qx 'DASHBOARDS=fireblade,s1000rr' "${work_dir}/s3-gps-build/s3-gps/firmware.
 FIRMWARE_BUILD_ROOT="${work_dir}/no-cast-build" "${repo_root}/start.sh" configure --lang en --profile no-cast --mcu esp32 --board esp32-wroom-32e-legacy --display st7789-spi --input xpt2046-spi --modules audio,bms,controller,gps,network,ota --dashboards fireblade >/dev/null
 rg -qx 'MODULES=audio,bms,controller,gps,network,ota' "${work_dir}/no-cast-build/no-cast/firmware.env"
 
+FIRMWARE_BUILD_ROOT="${work_dir}/version-build" "${repo_root}/start.sh" configure --lang en --profile version-test --firmware-version v1.2.3 >/dev/null
+rg -qx 'FIRMWARE_VERSION=v1.2.3' "${work_dir}/version-build/version-test/firmware.env"
+python3 "${repo_root}/scripts/generate-hardware-config.py" --catalog "${repo_root}/firmware/catalog" --firmware-env "${work_dir}/version-build/version-test/firmware.env" --output "${work_dir}/version-test.h"
+rg -Fx '#define ESP_BMS_PROFILE_FIRMWARE_VERSION "v1.2.3"' "${work_dir}/version-test.h"
+
 FIRMWARE_BUILD_ROOT="${work_dir}/audio-legacy-build" "${repo_root}/start.sh" configure --lang en --profile audio-legacy --mcu esp32 --board esp32-wroom-32e-legacy --display st7789-spi --input xpt2046-spi --modules audio >/dev/null
 rg -qx 'GPIO_TFT_BACKLIGHT=21' "${work_dir}/audio-legacy-build/audio-legacy/firmware.env"
 rg -qx 'GPIO_AUDIO_DAC=26' "${work_dir}/audio-legacy-build/audio-legacy/firmware.env"
@@ -352,8 +357,11 @@ rg -Fq '$Translations = @(' "${repo_root}/start.ps1"
 rg -Fq 'function Select-ModuleOptionsWithKeyboard' "${repo_root}/start.ps1"
 rg -Fq 'function Select-CatalogOptionsWithKeyboard' "${repo_root}/start.ps1"
 rg -Fq 'choose_dashboard_options_with_keyboard' "${repo_root}/start.sh"
-rg -Fq 'Use Up/Down/Left to move, Space to toggle, Enter to continue.' "${repo_root}/start.ps1"
-rg -Fq "\$'\\e[D'|\$'\\eOD'" "${repo_root}/start.sh"
+rg -Fq 'choose_catalog_option_with_keyboard' "${repo_root}/start.sh"
+rg -Fq 'Left to return to the previous feature list' "${repo_root}/start.ps1"
+rg -Fq 'Left to return, Enter to continue.' "${repo_root}/start.ps1"
+rg -Fq '← 返回上一个功能清单' "${repo_root}/start.sh"
+rg -Fq 'MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST=YES' "${repo_root}/start.sh"
 rg -Fq '[ConsoleKey]::LeftArrow' "${repo_root}/start.ps1"
 rg -Fq "'DISPLAY_DATA_WIDTH'" "${repo_root}/start.ps1"
 rg -Fq "'DATA_WIDTH'" "${repo_root}/start.ps1"

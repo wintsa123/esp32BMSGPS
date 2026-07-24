@@ -78,6 +78,9 @@ def bool_value(values: dict[str, str], key: str, source: Path) -> str:
 def config_macro(profile: dict[str, str], board: dict[str, str], board_path: Path,
                  display: dict[str, str], display_path: Path,
                  touch: dict[str, str], touch_path: Path) -> str:
+    firmware_version = profile.get("FIRMWARE_VERSION")
+    if not firmware_version:
+        raise ValueError("firmware.env: missing FIRMWARE_VERSION")
     panel = enum_value(require(display, "DRIVER", display_path), {
         "ST7789": "ESP_BMS_LVGL_PANEL_ST7789",
         "ST7796": "ESP_BMS_LVGL_PANEL_ST7796",
@@ -191,6 +194,7 @@ def config_macro(profile: dict[str, str], board: dict[str, str], board_path: Pat
         "power_on_delay_ms": str(integer(display, "POWER_ON_DELAY_MS", display_path)),
     }
     lines = ["#pragma once", "", "/* Generated from firmware.env and the selected catalog records. */",
+             f"#define ESP_BMS_PROFILE_FIRMWARE_VERSION \"{firmware_version}\"",
              f"#define ESP_BMS_PROFILE_GPS_RX {gpio(profile, 'GPS_RX', False)}",
              f"#define ESP_BMS_PROFILE_GPS_TX {gpio(profile, 'GPS_TX', False)}",
              f"#define ESP_BMS_PROFILE_GPS_PPS {gpio(profile, 'GPS_PPS', False)}",

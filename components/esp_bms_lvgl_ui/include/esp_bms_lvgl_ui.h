@@ -95,6 +95,7 @@ typedef enum {
     ESP_BMS_LVGL_ACTION_SET_SPEED_DASHBOARD_STYLE = 31,
     ESP_BMS_LVGL_ACTION_SET_BOOT_ANIMATION_STYLE = 32,
     ESP_BMS_LVGL_ACTION_CANCEL_BMS_CONNECTION = 33,
+    ESP_BMS_LVGL_ACTION_SET_SPEED_SOURCE = 34,
 } esp_bms_lvgl_action_t;
 
 #define ESP_BMS_LVGL_ACTION_EVENT_FLAG_COMMITTED (UINT8_C(1) << 0)
@@ -338,6 +339,7 @@ typedef struct {
     bool average_consumption_valid;
     bool remaining_range_valid;
     bool cast_active;
+    char firmware_version[32];
 } esp_bms_dashboard_snapshot_t;
 
 static inline bool esp_bms_dashboard_snapshot_flag_get(const esp_bms_dashboard_snapshot_t *snapshot,

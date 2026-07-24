@@ -184,6 +184,7 @@ typedef enum {
     SETTINGS_CONTROLLER_VIEW_ROOT = 0,
     SETTINGS_CONTROLLER_VIEW_STYLE_LIST,
     SETTINGS_CONTROLLER_VIEW_SPEED_UNIT_LIST,
+    SETTINGS_CONTROLLER_VIEW_SPEED_SOURCE_LIST,
     SETTINGS_CONTROLLER_VIEW_BLE_LIST,
     SETTINGS_CONTROLLER_VIEW_TIRE_EDIT,
     SETTINGS_CONTROLLER_VIEW_RATIO_EDIT,
@@ -257,7 +258,7 @@ _Static_assert(sizeof(esp_bms_boot_animation_style_t) == 4 &&
                    ESP_BMS_BOOT_ANIMATION_CHARGE == 0 &&
                    ESP_BMS_BOOT_ANIMATION_GAUGE_SWEEP == 1,
                "esp_bms_boot_animation_style_t ABI changed; update runtime consumers too");
-_Static_assert(sizeof(esp_bms_dashboard_snapshot_t) == 1048,
+_Static_assert(sizeof(esp_bms_dashboard_snapshot_t) == 1080,
                "dashboard snapshot ABI size changed; update all C consumers too");
 _Static_assert(ESP_BMS_LVGL_ACTION_NONE == 0,
                "esp_bms_lvgl_action_t value changed; update C action consumers too");
@@ -2269,6 +2270,7 @@ static void settings_show_bms_detail(void);
 static void settings_show_preset_range_edit(void);
 static void settings_show_controller_detail(void);
 static void settings_show_speed_unit_picker(void);
+static void settings_show_speed_source_picker(void);
 static void settings_show_system_view(settings_system_view_t view);
 static void set_setup_ap(const esp_bms_dashboard_snapshot_t *snapshot);
 static void settings_boot_preview_button_event_cb(lv_event_t *event);
@@ -2362,7 +2364,7 @@ static const settings_detail_row_t SETTINGS_SYSTEM_ROWS[] = {
 
 static const settings_detail_row_t SETTINGS_ABOUT_ROWS[] = {
     { "设备", "ESP32 BMS GPS", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
-    { "固件版本", "本地构建", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
+    { "固件版本", "--", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
     { "屏幕", "ST7789", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
 };
 
@@ -4353,6 +4355,11 @@ static const char *const SETTINGS_SPEED_UNIT_LABELS[] = {
     "mph",
 };
 
+static const char *const SETTINGS_SPEED_SOURCE_LABELS[] = {
+    "GPS",
+    "控制器",
+};
+
 static void settings_speed_unit_button_event_cb(lv_event_t *event)
 {
     if (lv_event_get_code(event) != LV_EVENT_CLICKED || UI_FLAG(SETTINGS_SWIPE_CONSUMED)) {
@@ -4444,6 +4451,91 @@ static void settings_show_speed_unit_picker(void)
     }
 }
 
+static void settings_speed_source_button_event_cb(lv_event_t *event)
+{
+    if (lv_event_get_code(event) != LV_EVENT_CLICKED || UI_FLAG(SETTINGS_SWIPE_CONSUMED)) {
+        return;
+    }
+    settings_show_speed_source_picker();
+}
+
+static void settings_speed_source_option_event_cb(lv_event_t *event)
+{
+    if (!settings_bms_popup_click_ready(event)) {
+        return;
+    }
+    const size_t selected = (size_t)(uintptr_t)lv_event_get_user_data(event);
+    if (selected >= ARRAY_SIZE(SETTINGS_SPEED_SOURCE_LABELS) ||
+        selected == (size_t)settings_current_snapshot()->speed_source) {
+        return;
+    }
+    queue_action_with_commit(ESP_BMS_LVGL_ACTION_SET_SPEED_SOURCE, true);
+    s_ui.pending_event.numeric_delta = (int16_t)selected;
+    ACTION_EVENT_SET_FLAG(&s_ui.pending_event, NUMERIC_DELTA_VALID, true);
+    lv_indev_wait_release(lv_indev_active());
+}
+
+static void settings_show_speed_source_picker(void)
+{
+    const bool portrait = s_ui.width < s_ui.height;
+    const int32_t card_x = SETTINGS_LIST_MARGIN_X;
+    const int32_t card_w = s_ui.width - (SETTINGS_LIST_MARGIN_X * 2);
+    const int32_t row_h = portrait ? SETTINGS_CHOICE_ROW_H_PORTRAIT :
+                                     SETTINGS_CHOICE_ROW_H_LANDSCAPE;
+    const int32_t gap = portrait ? 8 : 6;
+    const esp_bms_dashboard_snapshot_t *snapshot = settings_current_snapshot();
+    const size_t current = snapshot->speed_source == ESP_BMS_SPEED_SOURCE_CONTROLLER ? 1U : 0U;
+
+    s_ui.settings_controller_view = (uint8_t)SETTINGS_CONTROLLER_VIEW_SPEED_SOURCE_LIST;
+    s_ui.settings_bms_ble_status = NULL;
+    lv_obj_clean(s_ui.settings_detail);
+    label_set_text_if_changed(s_ui.settings_detail_title, "速度来源");
+    settings_navigation_set_hidden(false, false);
+    lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
+
+    for (size_t index = 0; index < ARRAY_SIZE(SETTINGS_SPEED_SOURCE_LABELS); ++index) {
+        const bool active = index == current;
+        const bool available = index == (size_t)ESP_BMS_SPEED_SOURCE_CONTROLLER ||
+                               snapshot->gps_module_state ==
+                                   (uint8_t)ESP_BMS_GPS_MODULE_AVAILABLE;
+        lv_obj_t *row = panel(s_ui.settings_detail,
+                              card_x,
+                              12 + ((int32_t)index * (row_h + gap)),
+                              card_w,
+                              row_h,
+                              COLOR_SETTINGS_CARD);
+        lv_obj_set_style_radius(row, 8, LV_PART_MAIN);
+        lv_obj_set_style_border_width(row, active ? 2 : 1, LV_PART_MAIN);
+        lv_obj_set_style_border_color(row,
+                                      active ? COLOR_SWITCH_ACTIVE : COLOR_SETTINGS_BORDER,
+                                      LV_PART_MAIN);
+        lv_obj_set_style_pad_all(row, 0, LV_PART_MAIN);
+        if (available) {
+            lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
+            settings_add_swipe_handlers(row);
+            lv_obj_add_event_cb(row,
+                                settings_speed_source_option_event_cb,
+                                LV_EVENT_CLICKED,
+                                (void *)(uintptr_t)index);
+        } else {
+            lv_obj_set_style_opa(row, LV_OPA_50, LV_PART_MAIN);
+        }
+        const int32_t text_h = (int32_t)settings_zh_16.line_height + 4;
+        lv_obj_t *text = label(row, 12, (row_h - text_h) / 2, card_w - 52, text_h, &settings_zh_16);
+        lv_label_set_text(text, SETTINGS_SPEED_SOURCE_LABELS[index]);
+        lv_obj_set_style_text_color(text,
+                                    active ? COLOR_SWITCH_ACTIVE : COLOR_SETTINGS_TEXT,
+                                    LV_PART_MAIN);
+        if (active) {
+            lv_obj_t *check = label(row, card_w - 38, (row_h - 20) / 2, 26, 20,
+                                    &lv_font_montserrat_14);
+            lv_label_set_text(check, LV_SYMBOL_OK);
+            lv_obj_set_style_text_align(check, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+            lv_obj_set_style_text_color(check, COLOR_SWITCH_ACTIVE, LV_PART_MAIN);
+        }
+    }
+}
+
 static lv_obj_t *settings_speed_unit_row(lv_obj_t *parent,
                                          int32_t y,
                                          int32_t w,
@@ -4461,6 +4553,25 @@ static lv_obj_t *settings_speed_unit_row(lv_obj_t *parent,
                         settings_speed_unit_button_event_cb,
                         LV_EVENT_CLICKED,
                         NULL);
+    lv_obj_t *arrow = label(box, w - 26, 0, 16, 18, &settings_zh_16);
+    lv_label_set_text(arrow, ">");
+    lv_obj_align(arrow, LV_ALIGN_RIGHT_MID, -10, 0);
+    lv_obj_set_style_text_align(arrow, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(arrow, COLOR_SETTINGS_ACCENT, LV_PART_MAIN);
+    return box;
+}
+
+static lv_obj_t *settings_speed_source_row(lv_obj_t *parent,
+                                           int32_t y,
+                                           int32_t w,
+                                           int32_t h,
+                                           const char *value)
+{
+    const settings_detail_row_t descriptor = {
+        "速度来源", value, ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT,
+    };
+    lv_obj_t *box = settings_detail_row(parent, 0, y, w, h, &descriptor);
+    lv_obj_add_event_cb(box, settings_speed_source_button_event_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *arrow = label(box, w - 26, 0, 16, 18, &settings_zh_16);
     lv_label_set_text(arrow, ">");
     lv_obj_align(arrow, LV_ALIGN_RIGHT_MID, -10, 0);
@@ -4566,14 +4677,6 @@ static void settings_show_controller_detail(void)
     } else {
         (void)snprintf(speed_source, sizeof(speed_source), "GPS");
     }
-    const bool speed_source_can_toggle =
-        snapshot->speed_source == ESP_BMS_SPEED_SOURCE_GPS || gps_available;
-    const settings_detail_row_t speed_source_row = {
-        "速度来源", speed_source,
-        speed_source_can_toggle ? ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_SOURCE
-                                : ESP_BMS_LVGL_ACTION_NONE,
-        SETTINGS_SYSTEM_VIEW_ROOT,
-    };
     const settings_detail_row_t rows[] = {
         { "控制器连接", ble_status,
           ESP_BMS_LVGL_ACTION_START_CONTROLLER_BIND, SETTINGS_SYSTEM_VIEW_ROOT },
@@ -4589,19 +4692,11 @@ static void settings_show_controller_detail(void)
                                         row_h,
                                         main_row_count);
     size_t visible_index = 0U;
-    lv_obj_t *speed_source_box = settings_detail_row(card,
-                                                     0,
-                                                     (int32_t)visible_index++ * row_h,
-                                                     card_w,
-                                                     row_h,
-                                                     &speed_source_row);
-    if (!speed_source_can_toggle) {
-        lv_obj_clear_flag(speed_source_box, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_add_state(speed_source_box, LV_STATE_DISABLED);
-        lv_obj_set_style_opa(speed_source_box,
-                             LV_OPA_50,
-                             LV_PART_MAIN | LV_STATE_DISABLED);
-    }
+    settings_speed_source_row(card,
+                              (int32_t)visible_index++ * row_h,
+                              card_w,
+                              row_h,
+                              speed_source);
     settings_controller_style_row(card,
                                   (int32_t)visible_index++ * row_h,
                                   card_w,
@@ -5725,12 +5820,18 @@ static void settings_show_detail(settings_detail_id_t detail_id)
                                                     row_h,
                                                     row_count) : NULL;
     for (size_t index = 0; rows && index < row_count; ++index) {
+        settings_detail_row_t row = rows[index];
+        if (detail_id == SETTINGS_DETAIL_ABOUT && index == 1U) {
+            row.subtitle = settings_current_snapshot()->firmware_version[0] != '\0'
+                               ? settings_current_snapshot()->firmware_version
+                               : "--";
+        }
         settings_detail_row(list_card,
                             0,
                             (int32_t)index * row_h,
                             card_w,
                             row_h,
-                            &rows[index]);
+                            &row);
     }
 }
 
@@ -8761,6 +8862,9 @@ static void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapsho
         } else if (s_ui.settings_controller_view ==
                        (uint8_t)SETTINGS_CONTROLLER_VIEW_SPEED_UNIT_LIST) {
             settings_show_speed_unit_picker();
+        } else if (s_ui.settings_controller_view ==
+                       (uint8_t)SETTINGS_CONTROLLER_VIEW_SPEED_SOURCE_LIST) {
+            settings_show_speed_source_picker();
         } else if (s_ui.settings_controller_view ==
                        (uint8_t)SETTINGS_CONTROLLER_VIEW_BLE_LIST &&
                    controller_ble_changed) {
