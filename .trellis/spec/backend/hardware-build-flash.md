@@ -137,8 +137,9 @@ RUN_TESTS=1 ./scripts/build-android-cast.sh
 - `main/idf_component.yml` requires ESP-IDF `>=6.0.2, <6.1.0`; the current
   project helper and development environment target ESP-IDF `6.0.2`.
 - `start.sh install-idf` installs Linux/macOS prerequisites through the detected
-  package manager, clones ESP-IDF `v6.0.2`, and records an absolute ASCII
-  install path in `$XDG_CONFIG_HOME/esp32-bms-gps/idf-path`. `start.ps1
+  package manager, clones ESP-IDF `v6.0.2` into the project root as
+  `esp-idf-v6.0.2/`, installs its host tools into `esp-idf-tools/`, and records
+  the install path in `$XDG_CONFIG_HOME/esp32-bms-gps/idf-path`. `start.ps1
   install-idf` uses `winget`, runs `install.ps1`, and persists `IDF_PATH` in
   the Windows user environment. Both accept `--dir` for non-interactive setup.
 - ESP-IDF cloning uses at most three attempts. Each attempt clones into a
@@ -146,9 +147,11 @@ RUN_TESTS=1 ./scripts/build-android-cast.sh
   directory only after `git clone` succeeds. A failed attempt must retain its
   partial directory and report its path; do not delete it automatically or
   change global Git transport settings.
-- `scripts/esp-idf-env.sh` loads `$IDF_PATH/export.sh` when available, then the
-  configured path, then `$HOME/esp/esp-idf-v6.0.2/export.sh`; it verifies the
-  resolved version before forwarding arguments to `idf.py`.
+- `scripts/esp-idf-env.sh` loads `$IDF_PATH/export.sh` when explicitly set,
+  then the configured path, then the project-root `esp-idf-v6.0.2/export.sh`,
+  and finally `$HOME/esp/esp-idf-v6.0.2/export.sh`; it pairs the project IDF
+  with the project-root `esp-idf-tools/` when `IDF_TOOLS_PATH` is unset and
+  verifies the resolved version before forwarding arguments to `idf.py`.
 - The helper supplies localhost proxy defaults when the corresponding proxy
   variables are unset. Override `http_proxy`, `https_proxy`, and `all_proxy`
   explicitly on hosts that use a different proxy path.

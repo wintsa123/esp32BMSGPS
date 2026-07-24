@@ -599,6 +599,7 @@ LV_DRAW_BUF_DEFINE_STATIC(s_dashboard_cell_key_3_draw_buf,
                           DASHBOARD_CELL_KEY_BITMAP_H,
                           LV_COLOR_FORMAT_ARGB8888);
 static uint8_t s_dashboard_cell_key_draw_buf_initialized_flags;
+static int32_t s_dashboard_battery_inner_w;
 
 static void finish_page_scroll_state(bool flush_snapshot);
 static void move_to_page(esp_bms_lvgl_page_t page, bool animated);
@@ -787,7 +788,8 @@ static void dashboard_battery_icon(lv_obj_t *parent,
     lv_obj_set_pos(body, x, y);
     lv_obj_set_size(body, w, h);
     lv_obj_set_style_radius(body, 3, LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(body, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(body, COLOR_DASHBOARD_PANEL, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(body, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_border_width(body, 2, LV_PART_MAIN);
     lv_obj_set_style_border_color(body, COLOR_WHITE, LV_PART_MAIN);
     lv_obj_set_style_border_opa(body, LV_OPA_COVER, LV_PART_MAIN);
@@ -796,7 +798,8 @@ static void dashboard_battery_icon(lv_obj_t *parent,
     s_ui.soc_battery_level = lv_obj_create(body);
     clear_style(s_ui.soc_battery_level);
     lv_obj_set_pos(s_ui.soc_battery_level, 2, 2);
-    lv_obj_set_size(s_ui.soc_battery_level, 0, h - 4);
+    lv_obj_set_size(s_ui.soc_battery_level, w - 4, h - 4);
+    s_dashboard_battery_inner_w = w - 4;
     lv_obj_set_style_radius(s_ui.soc_battery_level, 1, LV_PART_MAIN);
     lv_obj_set_style_bg_color(s_ui.soc_battery_level, COLOR_WHITE, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_ui.soc_battery_level, LV_OPA_COVER, LV_PART_MAIN);
@@ -822,8 +825,7 @@ static void update_dashboard_battery_icon(uint8_t soc_percent, bool valid, bool 
         return;
     }
 
-    lv_obj_t *body = lv_obj_get_parent(s_ui.soc_battery_level);
-    const int32_t inner_w = lv_obj_get_width(body) - 4;
+    const int32_t inner_w = s_dashboard_battery_inner_w;
     const uint8_t soc = valid ? (soc_percent > 100U ? 100U : soc_percent) : 0U;
     lv_obj_set_width(s_ui.soc_battery_level, (inner_w * (int32_t)soc) / 100);
     lv_obj_set_style_bg_color(s_ui.soc_battery_level,

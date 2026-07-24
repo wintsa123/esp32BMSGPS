@@ -106,7 +106,7 @@ Linux/macOS：
 ```bash
 # 检查环境；首次安装 ESP-IDF 6.0.2 时使用 install-idf
 ./start.sh doctor
-./start.sh install-idf --dir /home/USER/esp/esp-idf-v6.0.2
+./start.sh install-idf --dir "$PWD/esp-idf-v6.0.2"
 
 # 交互式配置，或校验/保存火刃+BMS+控制器配置档
 ./start.sh
@@ -118,7 +118,7 @@ Linux/macOS：
 ./start.sh build-cloud --profile fireblade --modules bms,controller --dashboards fireblade
 ```
 
-Windows 使用相同参数，将命令替换为 `.\start.cmd`，例如 `.\start.cmd doctor`、`.\start.cmd` 或 `.\start.cmd build-local --profile fireblade --modules bms,controller --dashboards fireblade`。首次安装可运行 `.\start.cmd install-idf --dir C:\esp\esp-idf-v6.0.2`。已保存的 ESP-IDF 路径会被项目脚本自动加载并校验版本。
+Windows 使用相同参数，将命令替换为 `.\start.cmd`，例如 `.\start.cmd doctor`、`.\start.cmd` 或 `.\start.cmd build-local --profile fireblade --modules bms,controller --dashboards fireblade`。Windows 首次安装可运行 `.\start.cmd install-idf --dir C:\esp\esp-idf-v6.0.2`；Linux/macOS 会把 ESP-IDF 源码和工具包默认放在项目根目录的 `esp-idf-v6.0.2/` 与 `esp-idf-tools/`。
 
 Linux 本地串口：
 

@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CATALOG_DIR="${FIRMWARE_CATALOG_DIR:-$ROOT/firmware/catalog}"
 BUILD_ROOT="${FIRMWARE_BUILD_ROOT:-$ROOT/firmware-builds}"
+PROJECT_IDF_PATH="${ESP_BMS_IDF_PATH:-$ROOT/esp-idf-v6.0.2}"
+PROJECT_TOOLS_PATH="${ESP_BMS_IDF_TOOLS_PATH:-$ROOT/esp-idf-tools}"
 # ESP-IDF's Xtensa toolchain cannot parse non-ASCII paths in generated specs.
 # Keep its CMake tree on the ASCII volume, then publish only the firmware here.
 IDF_BUILD_ROOT="${ESP_BMS_IDF_BUILD_ROOT:-/tmp/esp32-bms-gps-idf-builds/$UID}"
@@ -85,7 +87,7 @@ die() {
 }
 
 is_ascii_install_dir() {
-    [[ "$1" =~ ^/[A-Za-z0-9._/-]+$ ]]
+    [[ "$1" == "$PROJECT_IDF_PATH" || "$1" =~ ^/[A-Za-z0-9._/-]+$ ]]
 }
 
 install_host_prerequisites() {
@@ -142,7 +144,7 @@ install_idf() {
             *) die "install-idf does not accept option: $1" ;;
         esac
     done
-    default_dir="$HOME/esp/esp-idf-v6.0.2"
+    default_dir="$PROJECT_IDF_PATH"
     if [[ -z "$install_dir" ]]; then
         is_interactive_terminal || die 'install-idf requires --dir outside an interactive terminal'
         if [[ "$LANGUAGE" == en ]]; then
@@ -182,7 +184,12 @@ install_idf() {
         fi
         die "ESP-IDF v6.0.2 克隆在 3 次尝试后仍失败；请检查代理或 GitHub 网络后重试。未完成的克隆目录已保留：${failed_clone_dirs[*]:-无}"
     fi
-    bash "$install_dir/install.sh" esp32 esp32s3
+    if [[ "$install_dir" == "$PROJECT_IDF_PATH" ]]; then
+        IDF_TOOLS_PATH="$PROJECT_TOOLS_PATH" bash "$install_dir/install.sh" esp32 esp32s3
+        export IDF_TOOLS_PATH="$PROJECT_TOOLS_PATH"
+    else
+        bash "$install_dir/install.sh" esp32 esp32s3
+    fi
 
     config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/esp32-bms-gps"
     mkdir -p "$config_dir"
@@ -1082,7 +1089,7 @@ run_doctor() {
             missing=1
         fi
     done
-    tools_root="${IDF_TOOLS_PATH:-$HOME/.espressif}/tools"
+    tools_root="${IDF_TOOLS_PATH:-$PROJECT_TOOLS_PATH}/tools"
     for command in cmake ninja; do
         tool_path="$(command -v "$command" || true)"
         if [[ -z "$tool_path" ]]; then

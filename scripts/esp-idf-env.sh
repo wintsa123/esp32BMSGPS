@@ -6,6 +6,9 @@ export http_proxy="${http_proxy:-http://127.0.0.1:7897}"
 export all_proxy="${all_proxy:-socks5://127.0.0.1:7897}"
 
 readonly ESP_IDF_REQUIRED_VERSION="ESP-IDF v6.0.2"
+readonly PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly PROJECT_IDF_PATH="$PROJECT_ROOT/esp-idf-v6.0.2"
+readonly PROJECT_TOOLS_PATH="$PROJECT_ROOT/esp-idf-tools"
 configured_idf_path=''
 idf_path_config="${XDG_CONFIG_HOME:-$HOME/.config}/esp32-bms-gps/idf-path"
 
@@ -13,18 +16,23 @@ if [[ -z "${IDF_PATH:-}" && -r "$idf_path_config" ]]; then
     IFS= read -r configured_idf_path < "$idf_path_config" || true
 fi
 
+if [[ -z "${IDF_PATH:-}" && -f "$configured_idf_path/export.sh" ]]; then
+    export IDF_PATH="$configured_idf_path"
+elif [[ -z "${IDF_PATH:-}" && -f "$PROJECT_IDF_PATH/export.sh" ]]; then
+    export IDF_PATH="$PROJECT_IDF_PATH"
+elif [[ -z "${IDF_PATH:-}" && -f "$HOME/esp/esp-idf-v6.0.2/export.sh" ]]; then
+    export IDF_PATH="$HOME/esp/esp-idf-v6.0.2"
+fi
+
+if [[ -z "${IDF_TOOLS_PATH:-}" && "$IDF_PATH" == "$PROJECT_IDF_PATH" && -d "$PROJECT_TOOLS_PATH" ]]; then
+    export IDF_TOOLS_PATH="$PROJECT_TOOLS_PATH"
+fi
+
 if [[ -f "${IDF_PATH:-}/export.sh" ]]; then
     # shellcheck source=/dev/null
     source "$IDF_PATH/export.sh"
-elif [[ -f "$configured_idf_path/export.sh" ]]; then
-    export IDF_PATH="$configured_idf_path"
-    # shellcheck source=/dev/null
-    source "$IDF_PATH/export.sh"
-elif [[ -f "$HOME/esp/esp-idf-v6.0.2/export.sh" ]]; then
-    # shellcheck source=/dev/null
-    source "$HOME/esp/esp-idf-v6.0.2/export.sh"
 else
-    printf 'missing ESP-IDF v6.0.2 export.sh; set IDF_PATH, run ./start.sh install-idf, or install it under %s/esp/esp-idf-v6.0.2\n' "$HOME" >&2
+    printf 'missing ESP-IDF v6.0.2 export.sh; set IDF_PATH, run ./start.sh install-idf, or keep esp-idf-v6.0.2 in the project root\n' >&2
     exit 127
 fi
 
