@@ -23,8 +23,8 @@ ESP32 smart dashboard firmware for electric motorcycles, e-bikes, and light vehi
       <sub>System settings, brightness, volume, slider position, and screen calibration</sub>
     </td>
     <td align="center">
-      <img src="./img/readme-bms-dashboard.png" alt="Live BMS data preview" width="320"><br>
-      <sub>74% SOC, 81.8 V, 0.0 A, cell voltages, and temperatures</sub>
+      <img src="./preview/readme-bms-dashboard.png" alt="Live BMS data preview" width="320"><br>
+      <sub>76% SOC, 72.8 V, -12.6 A, remaining range, and cell voltages</sub>
     </td>
   </tr>
   <tr>
@@ -33,12 +33,12 @@ ESP32 smart dashboard firmware for electric motorcycles, e-bikes, and light vehi
   </tr>
   <tr>
     <td align="center">
-      <img src="./img/readme-s1000rr-dashboard.png" alt="BMW S1000RR dashboard preview" width="320"><br>
-      <sub>88 km/h, 28 Wh/km, gear 3, controller and motor temperatures</sub>
+      <img src="./preview/readme-s1000rr-dashboard.png" alt="BMW S1000RR dashboard preview" width="320"><br>
+      <sub>88 km/h, 24 Wh/km, gear 3, controller and motor temperatures</sub>
     </td>
     <td align="center">
-      <img src="./img/readme-controller-dashboard.png" alt="Controller data preview" width="320"><br>
-      <sub>72 km/h, gear 3, 8.6 kW, 3450 RPM, and temperatures</sub>
+      <img src="./preview/readme-controller-dashboard.png" alt="Controller data preview" width="320"><br>
+      <sub>86 km/h, gear 3, 3.8 kW, 4280 RPM, and temperatures</sub>
     </td>
   </tr>
   <tr>
@@ -162,8 +162,8 @@ vercel/                       Standalone Vercel control-page frontend
 scripts/                      Build, flash, serial bridge, and diagnostic tools
 tests/                        Host-runnable protocol and logic self-tests
 .trellis/spec/                Project engineering specifications and executable contracts
-img/                          Tracked README images
-preview/                      The only location for UI preview images
+img/                          Other README images
+preview/                      UI preview scripts and current tracked README screenshots
 ```
 
 `main/idf_main.c` owns boot orchestration only. Hardware, protocol, state, and UI logic belong in focused ESP-IDF components.

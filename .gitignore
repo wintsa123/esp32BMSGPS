@@ -23,7 +23,10 @@
 /release-images/
 /ota-images/
 /logs/
-/preview/
+/preview/*
+!/preview/readme-bms-dashboard.png
+!/preview/readme-s1000rr-dashboard.png
+!/preview/readme-controller-dashboard.png
 /docs/hardware/
 /gpt_image2_call.py
 /.gpt_image2_api_key

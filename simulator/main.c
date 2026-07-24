@@ -523,7 +523,9 @@ static bool process_ui_action(host_app_t *app)
 static void print_help(const char *program)
 {
     printf("用法: %s [--portrait] [--headless] [--screenshot FILE.bmp] "
-           "[--boot charge|gauge] [--boot-progress 0..100]\n",
+           "[--page battery|controller|gps|cast] "
+           "[--style s1000rr|controller|fireblade] [--boot charge|gauge] "
+           "[--boot-progress 0..100]\n",
            program);
     puts("快捷键: 上/下=速度  1/2/3/4=页面  f=GPS定位  g=GPS模块  b=BMS  c=控制器  u=单位  e=电耗  r=旋转  q=退出");
 }
@@ -752,6 +754,9 @@ int main(int argc, char **argv)
     bool run_ok = true;
     int preview_boot_style = -1;
     uint8_t preview_boot_progress = 50U;
+    esp_bms_lvgl_page_t preview_page = ESP_BMS_LVGL_PAGE_GPS;
+    esp_bms_speed_dashboard_style_t preview_dashboard_style =
+        ESP_BMS_SPEED_DASHBOARD_STYLE_HONDA_FIREBLADE;
     const char *screenshot_path = NULL;
     for (int index = 1; index < argc; ++index) {
         if (strcmp(argv[index], "--portrait") == 0) {
@@ -760,6 +765,32 @@ int main(int argc, char **argv)
             headless = true;
         } else if (strcmp(argv[index], "--screenshot") == 0 && index + 1 < argc) {
             screenshot_path = argv[++index];
+        } else if (strcmp(argv[index], "--page") == 0 && index + 1 < argc) {
+            const char *page = argv[++index];
+            if (strcmp(page, "battery") == 0) {
+                preview_page = ESP_BMS_LVGL_PAGE_BATTERY;
+            } else if (strcmp(page, "controller") == 0) {
+                preview_page = ESP_BMS_LVGL_PAGE_CONTROLLER;
+            } else if (strcmp(page, "gps") == 0) {
+                preview_page = ESP_BMS_LVGL_PAGE_GPS;
+            } else if (strcmp(page, "cast") == 0) {
+                preview_page = ESP_BMS_LVGL_PAGE_CAST;
+            } else {
+                fprintf(stderr, "未知页面: %s\n", page);
+                return 2;
+            }
+        } else if (strcmp(argv[index], "--style") == 0 && index + 1 < argc) {
+            const char *style = argv[++index];
+            if (strcmp(style, "s1000rr") == 0) {
+                preview_dashboard_style = ESP_BMS_SPEED_DASHBOARD_STYLE_S1000RR;
+            } else if (strcmp(style, "controller") == 0) {
+                preview_dashboard_style = ESP_BMS_SPEED_DASHBOARD_STYLE_CONTROLLER;
+            } else if (strcmp(style, "fireblade") == 0) {
+                preview_dashboard_style = ESP_BMS_SPEED_DASHBOARD_STYLE_HONDA_FIREBLADE;
+            } else {
+                fprintf(stderr, "未知仪表风格: %s\n", style);
+                return 2;
+            }
         } else if (strcmp(argv[index], "--boot") == 0 && index + 1 < argc) {
             const char *style = argv[++index];
             if (strcmp(style, "charge") == 0) {
@@ -797,6 +828,8 @@ int main(int argc, char **argv)
         .running = true,
     };
     init_snapshot(&app);
+    app.snapshot.speed_dashboard_style = preview_dashboard_style;
+    refresh_speed_snapshot(&app);
 
     lv_init();
     app.display = lv_sdl_window_create(portrait ? 240 : 320, portrait ? 320 : 240);
@@ -836,8 +869,8 @@ int main(int argc, char **argv)
             return 1;
         }
         boot_preview_active = true;
-    } else if (esp_bms_lvgl_ui_set_page(ESP_BMS_LVGL_PAGE_GPS, false) != ESP_OK) {
-        fputs("速度页面初始化失败\n", stderr);
+    } else if (esp_bms_lvgl_ui_set_page(preview_page, false) != ESP_OK) {
+        fputs("页面初始化失败\n", stderr);
         SDL_DelEventWatch(sdl_event_watch, &app);
         lv_deinit();
         return 1;
