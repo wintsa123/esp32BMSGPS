@@ -863,7 +863,7 @@ validate_config() {
         *) die "unsupported audio backend: $BOARD_AUDIO_BACKEND" ;;
     esac
     [[ "$BOARD_AUDIO_ENABLE_ACTIVE_LEVEL" == 0 || "$BOARD_AUDIO_ENABLE_ACTIVE_LEVEL" == 1 ]] || die "AUDIO_ENABLE_ACTIVE_LEVEL must be 0 or 1"
-    [[ "$BOARD_PARTITIONS" == partitions.csv || "$BOARD_PARTITIONS" == firmware/partitions/* ]] || die "unsupported partition path: $BOARD_PARTITIONS"
+    [[ "$BOARD_PARTITIONS" == firmware/partitions/* ]] || die "unsupported partition path: $BOARD_PARTITIONS"
     [[ "$BOARD_PARTITIONS" != *..* ]] || die "partition path traversal is not allowed"
     path="$ROOT/$BOARD_PARTITIONS"
     [[ -f "$path" ]] || die "board partition file is missing: $BOARD_PARTITIONS"
@@ -1435,7 +1435,7 @@ configure_custom_board() {
     MCU_DANGEROUS_GPIO="${RECORD[DANGEROUS_GPIO]}"
     prompt_custom_number FLASH_MB 4 'Flash 容量（MB）' 'Flash size (MB)'
     prompt_custom_number PSRAM_MB 0 'PSRAM 容量（MB）' 'PSRAM size (MB)'
-    CFG[PARTITIONS]=partitions.csv
+    CFG[PARTITIONS]=firmware/partitions/esp32-wroom-32e-legacy.csv
 
     mapfile -t choices < <(catalog_display_ids_supported_by_mcu "${CFG[MCU]}")
     choices+=(custom)

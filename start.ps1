@@ -710,7 +710,7 @@ function Validate-Config([System.Collections.IDictionary]$Config) {
     if ($script:BoardAudioBackend -in @('I2S', 'NONE') -and $script:BoardAudioDacChannel -ne '0') { Fail "$script:BoardAudioBackend board requires AUDIO_DAC_CHANNEL 0" }
     if ($script:BoardAudioBackend -notin @('DAC', 'I2S', 'NONE')) { Fail "unsupported audio backend: $script:BoardAudioBackend" }
     if ($script:BoardAudioEnableActiveLevel -notin @('0', '1')) { Fail 'AUDIO_ENABLE_ACTIVE_LEVEL must be 0 or 1' }
-    if ($script:BoardPartitions -ne 'partitions.csv' -and -not $script:BoardPartitions.StartsWith('firmware/partitions/')) { Fail "unsupported partition path: $($script:BoardPartitions)" }
+    if (-not $script:BoardPartitions.StartsWith('firmware/partitions/')) { Fail "unsupported partition path: $($script:BoardPartitions)" }
     if ($script:BoardPartitions.Contains('..')) { Fail 'partition path traversal is not allowed' }
     if (-not (Test-Path -LiteralPath (Join-Path $Root $script:BoardPartitions) -PathType Leaf)) { Fail "board partition file is missing: $($script:BoardPartitions)" }
 
@@ -1436,7 +1436,7 @@ function Set-CustomBoardConfig([System.Collections.IDictionary]$Config) {
     $script:MCUDangerous = $Mcu.DANGEROUS_GPIO
     Read-CustomNumber $Config 'FLASH_MB' '4' 'Flash 容量（MB）' 'Flash size (MB)'
     Read-CustomNumber $Config 'PSRAM_MB' '0' 'PSRAM 容量（MB）' 'PSRAM size (MB)'
-    $Config.PARTITIONS = 'partitions.csv'
+    $Config.PARTITIONS = 'firmware/partitions/esp32-wroom-32e-legacy.csv'
 
     $DisplayOptions = @(Get-CatalogDisplayIdsSupportedByMcu $Config.MCU) + 'custom'
     $Config.DISPLAY = Select-CatalogOption 'display' 'Display' 'custom' $DisplayOptions

@@ -35,7 +35,7 @@ set(ESP_BMS_SIMULATOR_SRCS
     "${REPO_ROOT}/components/esp_bms_lvgl_ui/settings_zh_10.c"
     "${REPO_ROOT}/components/esp_bms_lvgl_ui/settings_zh_13.c"
     "${REPO_ROOT}/components/esp_bms_lvgl_ui/settings_zh_16.c"
-    "${REPO_ROOT}/wlanJZ.c"
+    "${REPO_ROOT}/components/esp_bms_lvgl_ui/wlanJZ.c"
 )
 if(ESP_BMS_FEATURE_DASHBOARD_CONTROLLER)
     list(APPEND ESP_BMS_SIMULATOR_SRCS
