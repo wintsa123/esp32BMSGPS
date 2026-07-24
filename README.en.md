@@ -23,7 +23,7 @@ ESP32 smart dashboard firmware for electric motorcycles, e-bikes, and light vehi
       <sub>System settings, brightness, volume, slider position, and screen calibration</sub>
     </td>
     <td align="center">
-      <img src="./preview/readme-bms-dashboard.png" alt="Live BMS data preview" width="320"><br>
+      <img src="./img/readme-bms-dashboard.png" alt="Live BMS data preview" width="320"><br>
       <sub>76% SOC, 72.8 V, -12.6 A, remaining range, and cell voltages</sub>
     </td>
   </tr>
@@ -33,11 +33,11 @@ ESP32 smart dashboard firmware for electric motorcycles, e-bikes, and light vehi
   </tr>
   <tr>
     <td align="center">
-      <img src="./preview/readme-s1000rr-dashboard.png" alt="BMW S1000RR dashboard preview" width="320"><br>
+      <img src="./img/readme-s1000rr-dashboard.png" alt="BMW S1000RR dashboard preview" width="320"><br>
       <sub>88 km/h, 24 Wh/km, gear 3, controller and motor temperatures</sub>
     </td>
     <td align="center">
-      <img src="./preview/readme-controller-dashboard.png" alt="Controller data preview" width="320"><br>
+      <img src="./img/readme-controller-dashboard.png" alt="Controller data preview" width="320"><br>
       <sub>86 km/h, gear 3, 3.8 kW, 4280 RPM, and temperatures</sub>
     </td>
   </tr>
@@ -81,23 +81,6 @@ The control page is Chinese-first and can switch to English. The hotspot HTTP AP
 | 🔄 Complete the OTA, TF-card recording, track history, and map workflow | OTA does not yet provide a complete upgrade loop; TF-card recording, track history, and maps are planned for later phases | ⏳ Pending |
 
 “Implemented” means the code path exists; it does not mean every target hardware combination has completed long-duration validation.
-
-## 🧩 Target Hardware and GPIO Configuration
-
-- Classic ESP32: ESP32-WROOM-32E, 4 MB Flash, no PSRAM, with optional ST7789/XPT2046 and DAC audio.
-- ESP32-S3: I80 ILI9488/FT6336U and I80 ST7796U/GT1151 profiles, each with its own Flash, PSRAM, and GPIO contract.
-- GPS: 336H UART NMEA plus PPS; its GPIO roles are generated and validated only when the GPS module is selected.
-- BMS: ANT BMS BLE has been hardware-tested; boards from other two-wheel platforms await adaptation and validation. The controller protocol is FarDriver BLE.
-
-Hardware and GPIO assignments are not duplicated in the README or C source. The configuration chain is:
-
-- Board, display, touch, and module facts: [`firmware/catalog`](./firmware/catalog)
-- Saved selection and GPIO overrides: `firmware-builds/<profile>/firmware.env`
-- Generated C/CMake configuration: `firmware-builds/<profile>/generated/`
-- Generic display bridge, GPS, ADC, and audio components consume only generated configuration
-- Full pin map, conflicts, and build contract: [`hardware-build-flash.md`](./.trellis/spec/backend/hardware-build-flash.md)
-
-When a GPIO changes, update verified catalog data or an explicit profile override and regenerate. Do not update the README alone or add a source-code fallback pin.
 
 ## 🛠️ Development Stack
 
@@ -157,16 +140,21 @@ Erase Flash once when switching from a different partition table. See the [firmw
 ```text
 main/                         Boot entry point and embedded Web UI
 components/                   Runtime, display bridge, LVGL UI, protocol, and audio components
+config/                       ESP-IDF sdkconfig templates and build configuration
+firmware/                     Firmware profiles and partition tables
 android-cast/                 Android low-latency casting app
 vercel/                       Standalone Vercel control-page frontend
+simulator/                    Host-runnable LVGL simulator
 scripts/                      Build, flash, serial bridge, and diagnostic tools
 tests/                        Host-runnable protocol and logic self-tests
+preview/                      Local UI preview scripts and ignored preview assets
+img/                          README image assets
+.github/                      GitHub Actions cloud-build workflow
 .trellis/spec/                Project engineering specifications and executable contracts
-img/                          Other README images
-preview/                      UI preview scripts and current tracked README screenshots
 ```
 
 `main/idf_main.c` owns boot orchestration only. Hardware, protocol, state, and UI logic belong in focused ESP-IDF components.
+`build/`, `firmware-builds/`, and `output/` are local build or generated-output directories and are not part of the source layout.
 
 ## 📄 License
 

@@ -661,7 +661,6 @@ static const lv_color_t COLOR_FIREBLADE_DANGER_BG = LV_COLOR_MAKE(0xff, 0xcf, 0x
 static const lv_color_t COLOR_FIREBLADE_GREEN = LV_COLOR_MAKE(0x08, 0xa8, 0x13);
 static const lv_color_t COLOR_FIREBLADE_GEAR_BORDER = LV_COLOR_MAKE(0xc8, 0xc8, 0xc8);
 #endif
-static const lv_color_t COLOR_DASHBOARD_BATTERY_LEVEL = LV_COLOR_MAKE(0x66, 0xbf, 0xf2);
 static const lv_color_t COLOR_SETTINGS_BG = LV_COLOR_MAKE(0x00, 0x00, 0x00);
 static const lv_color_t COLOR_SETTINGS_CARD = LV_COLOR_MAKE(0x00, 0x00, 0x00);
 static const lv_color_t COLOR_SETTINGS_LIST = LV_COLOR_MAKE(0x24, 0x24, 0x24);
@@ -828,7 +827,7 @@ static void update_dashboard_battery_icon(uint8_t soc_percent, bool valid, bool 
     const uint8_t soc = valid ? (soc_percent > 100U ? 100U : soc_percent) : 0U;
     lv_obj_set_width(s_ui.soc_battery_level, (inner_w * (int32_t)soc) / 100);
     lv_obj_set_style_bg_color(s_ui.soc_battery_level,
-                              valid ? COLOR_DASHBOARD_BATTERY_LEVEL : COLOR_MUTED,
+                              valid ? COLOR_WHITE : COLOR_MUTED,
                               LV_PART_MAIN);
 }
 

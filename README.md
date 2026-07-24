@@ -24,7 +24,7 @@
       <sub>系统设置、亮度、音量、调节条位置与屏幕校准</sub>
     </td>
     <td align="center">
-      <img src="./preview/readme-bms-dashboard.png" alt="实时 BMS 数据页面预览" width="320"><br>
+      <img src="./img/readme-bms-dashboard.png" alt="实时 BMS 数据页面预览" width="320"><br>
       <sub>76% SOC、72.8 V、-12.6 A、剩余里程与单体电压</sub>
     </td>
   </tr>
@@ -34,11 +34,11 @@
   </tr>
   <tr>
     <td align="center">
-      <img src="./preview/readme-s1000rr-dashboard.png" alt="BMW S1000RR 风格仪表预览" width="320"><br>
+      <img src="./img/readme-s1000rr-dashboard.png" alt="BMW S1000RR 风格仪表预览" width="320"><br>
       <sub>88 km/h、24 Wh/km、3 挡、控制器与电机温度</sub>
     </td>
     <td align="center">
-      <img src="./preview/readme-controller-dashboard.png" alt="控制器数据显示页面预览" width="320"><br>
+      <img src="./img/readme-controller-dashboard.png" alt="控制器数据显示页面预览" width="320"><br>
       <sub>86 km/h、3 挡、3.8 kW、4280 RPM 与温度</sub>
     </td>
   </tr>
@@ -82,23 +82,6 @@
 | 🔄 建立 OTA、TF 卡记录、历史轨迹和地图的完整闭环 | OTA API 尚未形成完整升级闭环，TF 卡记录、历史轨迹和地图属于后续阶段 | ⏳ 待实现 |
 
 “已实现”表示代码路径已经接入，不等同于所有目标硬件组合都已完成长期验证。
-
-## 🧩 目标硬件与 GPIO 配置位置
-
-- 经典 ESP32：ESP32-WROOM-32E、4 MB Flash、无 PSRAM，可选 ST7789/XPT2046 与 DAC 音频。
-- ESP32-S3：支持 I80 ILI9488/FT6336U 与 I80 ST7796U/GT1151 profile，使用各自的 Flash、PSRAM 和 GPIO 合同。
-- GPS：336H UART NMEA + PPS，仅在选择 GPS 模块时生成和校验相应 GPIO。
-- BMS：已实测 ANT BMS BLE；其他两轮平台保护板待适配验证；控制器协议为远驱 BLE。
-
-硬件和 GPIO 不在 README 或 C 源码中重复维护，配置链如下：
-
-- 板、显示、触摸和模块事实：[`firmware/catalog`](./firmware/catalog)
-- 用户保存的选择与 GPIO 覆盖：`firmware-builds/<profile>/firmware.env`
-- 构建时生成的 C/CMake 配置：`firmware-builds/<profile>/generated/`
-- 通用显示 bridge、GPS、ADC 和音频组件只消费生成配置
-- 完整引脚表、冲突说明与构建约定：[`hardware-build-flash.md`](./.trellis/spec/backend/hardware-build-flash.md)
-
-修改 GPIO 时必须更新已验证的 catalog 或 profile 覆盖并重新生成；不能只改 README，也不能新增代码默认引脚。
 
 ## 🛠️ 开发栈
 
@@ -158,16 +141,21 @@ Windows 本地串口：
 ```text
 main/                         启动入口与嵌入式 Web UI
 components/                   运行时、显示桥接、LVGL UI、协议与音频组件
+config/                       ESP-IDF sdkconfig 模板与构建配置
+firmware/                     固件配置档与分区表
 android-cast/                 Android 低延迟投屏应用
 vercel/                       独立的 Vercel 控制站前端
+simulator/                    可在主机运行的 LVGL 模拟器
 scripts/                      构建、烧录、串口桥接与诊断脚本
 tests/                        可在主机运行的协议/逻辑自测
+preview/                      本地 UI 预览脚本与未纳入版本控制的预览素材
+img/                          README 图片资源
+.github/                      GitHub Actions 云构建工作流
 .trellis/spec/                项目工程规范与可执行约定
-img/                          其他 README 图片
-preview/                      UI 预览脚本与随仓库提交的最新 README 截图
 ```
 
 `main/idf_main.c` 只负责启动编排；硬件、协议、状态和 UI 逻辑应放在对应 ESP-IDF 组件中。
+`build/`、`firmware-builds/`、`output/` 等目录是本地构建或生成产物，不纳入源码目录结构。
 
 ## 📄 许可
 
