@@ -1524,6 +1524,15 @@ flash_built_firmware() {
     "$ROOT/scripts/esp-idf-env.sh" "${flash_args[@]}" flash
 }
 
+cleanup_idf_build_dir() {
+    local build_dir="$1" profile_root
+    [[ -n "$build_dir" && "$build_dir" == "$IDF_BUILD_ROOT"/*/idf-build ]] || die "refusing to remove unexpected IDF build path: $build_dir"
+    [[ -d "$build_dir" ]] || return 0
+    rm -rf -- "$build_dir"
+    profile_root="${build_dir%/idf-build}"
+    rmdir -- "$profile_root" 2>/dev/null || true
+}
+
 choose_catalog_options_with_keyboard() {
     local kind="$1" default="$2" title key suffix option index pointer mark
     shift 2
@@ -2062,6 +2071,7 @@ main() {
                     fi
                     [[ "$answer" =~ ^[Yy]$ ]] && flash_built_firmware "$build_dir"
                 fi
+                cleanup_idf_build_dir "$build_dir"
             elif [[ "$command" == build-cloud ]]; then
                 write_config
                 dispatch_cloud_build "$BUILD_ROOT/${CFG[PROFILE]}/firmware.env"

@@ -221,6 +221,7 @@ rg -Fq 'Build completed' "${work_dir}/local-build.out"
 rg -Fx -- '-B' "${work_dir}/local-idf.args"
 rg -Fx "${work_dir}/ascii-idf-build/golden/idf-build" "${work_dir}/local-idf.args"
 test -f "${work_dir}/output/golden/golden.bin"
+test ! -d "${work_dir}/ascii-idf-build/golden/idf-build"
 
 printf '2\nsaved-s3\n' | \
     IDF_PATH="$fake_idf_root" \

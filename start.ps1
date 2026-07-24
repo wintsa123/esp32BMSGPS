@@ -942,6 +942,16 @@ function Invoke-LocalBuild([System.Collections.IDictionary]$Config) {
 
     if ($script:BuildExitCode -eq 0) {
         Show-LocalBuildResult $Config $BuildDir
+        $ExpectedPrefix = [IO.Path]::GetFullPath($IdfBuildRoot).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+        $ResolvedBuildDir = [IO.Path]::GetFullPath((Resolve-Path -LiteralPath $BuildDir).Path)
+        if (-not $ResolvedBuildDir.StartsWith($ExpectedPrefix, [StringComparison]::OrdinalIgnoreCase) -or -not $ResolvedBuildDir.EndsWith([IO.Path]::DirectorySeparatorChar + 'idf-build', [StringComparison]::OrdinalIgnoreCase)) {
+            Fail "refusing to remove unexpected IDF build path: $ResolvedBuildDir"
+        }
+        Remove-Item -LiteralPath $ResolvedBuildDir -Recurse -Force
+        $ProfileBuildRoot = Split-Path -Parent $ResolvedBuildDir
+        if ((Get-ChildItem -LiteralPath $ProfileBuildRoot -Force -ErrorAction SilentlyContinue | Measure-Object).Count -eq 0) {
+            Remove-Item -LiteralPath $ProfileBuildRoot -Force
+        }
     }
 }
 
