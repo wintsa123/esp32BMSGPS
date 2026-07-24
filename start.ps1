@@ -875,8 +875,8 @@ function Write-Profile([System.Collections.IDictionary]$Config) {
         $ModuleLines += "MODULE_$Module`_COMPONENTS=$($Record.COMPONENTS)"
     }
     Write-Utf8NoBom (Join-Path $Temp 'generated/modules.env') (($ModuleLines -join "`n") + "`n")
-    $SdkconfigDefaults = Join-Path $Root "sdkconfig.defaults.$($Config.MCU)"
-    if (-not (Test-Path -LiteralPath $SdkconfigDefaults -PathType Leaf)) { $SdkconfigDefaults = Join-Path $Root 'sdkconfig.defaults' }
+    $SdkconfigDefaults = Join-Path $Root "config/sdkconfig/sdkconfig.defaults.$($Config.MCU)"
+    if (-not (Test-Path -LiteralPath $SdkconfigDefaults -PathType Leaf)) { $SdkconfigDefaults = Join-Path $Root 'config/sdkconfig/sdkconfig.defaults' }
     $ProfilePartitionTable = Join-Path $ProfileDir 'partitions.csv'
     $SdkconfigLines = @(
         Get-Content -LiteralPath $SdkconfigDefaults |

@@ -1006,8 +1006,8 @@ write_profile() {
             printf 'MODULE_%s_COMPONENTS=%s\n' "$module" "${RECORD[COMPONENTS]}"
         done
     } > "$temporary/generated/modules.env"
-    sdkconfig_source="$ROOT/sdkconfig.defaults.${CFG[MCU]}"
-    [[ -f "$sdkconfig_source" ]] || sdkconfig_source="$ROOT/sdkconfig.defaults"
+    sdkconfig_source="$ROOT/config/sdkconfig/sdkconfig.defaults.${CFG[MCU]}"
+    [[ -f "$sdkconfig_source" ]] || sdkconfig_source="$ROOT/config/sdkconfig/sdkconfig.defaults"
     {
         sed '/^CONFIG_PARTITION_TABLE_CUSTOM_FILENAME=/d' "$sdkconfig_source"
         printf 'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="%s"\n' "$profile_dir/partitions.csv"

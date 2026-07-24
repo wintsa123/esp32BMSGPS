@@ -86,18 +86,18 @@ fi
 
 if [[ -z "$sdkconfig_path" ]]; then
     if [[ "$double_buffer" == true ]]; then
-        sdkconfig_path="sdkconfig.dragdiag-db"
+        sdkconfig_path="config/sdkconfig/sdkconfig.dragdiag-db"
     else
-        sdkconfig_path="sdkconfig.dragdiag"
+        sdkconfig_path="config/sdkconfig/sdkconfig.dragdiag"
     fi
 fi
 
-sdkconfig_defaults="sdkconfig.defaults;sdkconfig.defaults.dragdiag"
+sdkconfig_defaults="config/sdkconfig/sdkconfig.defaults;config/sdkconfig/sdkconfig.defaults.dragdiag"
 if [[ "$full_invalidate" == false ]]; then
-    sdkconfig_defaults="${sdkconfig_defaults};sdkconfig.defaults.dragdiag-no-full-invalidate"
+    sdkconfig_defaults="${sdkconfig_defaults};config/sdkconfig/sdkconfig.defaults.dragdiag-no-full-invalidate"
 fi
 if [[ "$double_buffer" == true ]]; then
-    sdkconfig_defaults="${sdkconfig_defaults};sdkconfig.defaults.dragdiag-double-buffer"
+    sdkconfig_defaults="${sdkconfig_defaults};config/sdkconfig/sdkconfig.defaults.dragdiag-double-buffer"
 fi
 
 cd "$repo_root"

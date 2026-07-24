@@ -14,6 +14,8 @@
 /sdkconfig.dragdiag.old
 /sdkconfig.dragdiag-db
 /sdkconfig.dragdiag-db.old
+/config/sdkconfig/sdkconfig
+/config/sdkconfig/sdkconfig.dragdiag*
 /firmware-images/
 /firmware-packages/
 /firmware-builds/
