@@ -969,7 +969,7 @@ function Show-LocalBuildResult([System.Collections.IDictionary]$Config, [string]
     $BuildDir = (Resolve-Path -LiteralPath $BuildDir).Path
     $OutputDirectory = Join-Path $FirmwareOutputRoot $Config.PROFILE
     [void](New-Item -ItemType Directory -Path $OutputDirectory -Force)
-    $OutputFirmwarePath = Join-Path $OutputDirectory 'esp32_bms_gps_idf.bin'
+    $OutputFirmwarePath = Join-Path $OutputDirectory "$($Config.PROFILE).bin"
     Copy-Item -LiteralPath $FirmwarePath -Destination $OutputFirmwarePath -Force
     $FirmwarePath = (Resolve-Path -LiteralPath $OutputFirmwarePath).Path
     $FlashCommand = ".\scripts\flash.ps1 -Port COMx -BuildDir `"$BuildDir`""

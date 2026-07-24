@@ -2046,7 +2046,7 @@ main() {
                 local build_dir="$IDF_BUILD_ROOT/${CFG[PROFILE]}/idf-build" firmware_path output_firmware_path answer
                 firmware_path="$build_dir/esp32_bms_gps_idf.bin"
                 [[ -f "$firmware_path" ]] || die "build completed but firmware is missing: $firmware_path"
-                output_firmware_path="$FIRMWARE_OUTPUT_ROOT/${CFG[PROFILE]}/esp32_bms_gps_idf.bin"
+                output_firmware_path="$FIRMWARE_OUTPUT_ROOT/${CFG[PROFILE]}/${CFG[PROFILE]}.bin"
                 mkdir -p "${output_firmware_path%/*}"
                 cp "$firmware_path" "$output_firmware_path"
                 if [[ "$LANGUAGE" == en ]]; then

@@ -220,7 +220,7 @@ IDF_PATH="$fake_idf_root" \
 rg -Fq 'Build completed' "${work_dir}/local-build.out"
 rg -Fx -- '-B' "${work_dir}/local-idf.args"
 rg -Fx "${work_dir}/ascii-idf-build/golden/idf-build" "${work_dir}/local-idf.args"
-test -f "${work_dir}/output/golden/esp32_bms_gps_idf.bin"
+test -f "${work_dir}/output/golden/golden.bin"
 
 printf '2\nsaved-s3\n' | \
     IDF_PATH="$fake_idf_root" \
