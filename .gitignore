@@ -19,7 +19,10 @@
 /output/
 /release-images/
 /ota-images/
+/build-esp32-wroom-32e-legacy-s1000rr-diag/log/
+/build-esp32-wroom-32e-legacy-s1000rr-diag/esp-idf/log/
 /preview/
+/docs/hardware/
 /gpt_image2_call.py
 /.gpt_image2_api_key
 /vercel/
