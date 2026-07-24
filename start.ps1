@@ -1238,6 +1238,16 @@ function Read-CustomNumber([System.Collections.IDictionary]$Config, [string]$Key
     }
 }
 
+function Read-FirmwareVersion([System.Collections.IDictionary]$Config) {
+    while ($true) {
+        $Prompt = if ($script:Language -eq 'en') { "Firmware version shown on the device [$($Config.FIRMWARE_VERSION)]" } else { "设备显示的固件版本 [$($Config.FIRMWARE_VERSION)]" }
+        $Answer = Read-Host $Prompt
+        if ([string]::IsNullOrWhiteSpace($Answer)) { $Answer = $Config.FIRMWARE_VERSION }
+        if (Test-Value $Answer) { $Config.FIRMWARE_VERSION = $Answer; return }
+        [Console]::Error.WriteLine($(if ($script:Language -eq 'en') { 'Use printable ASCII without spaces.' } else { '请输入不含空格的可打印 ASCII 版本号。' }))
+    }
+}
+
 function Test-InteractiveTerminal {
     try {
         return (-not [Console]::IsInputRedirected) -and (-not [Console]::IsOutputRedirected)
@@ -1562,6 +1572,8 @@ function Show-InteractiveSummary([System.Collections.IDictionary]$Config) {
     $Modules = if ([string]::IsNullOrEmpty($Config.MODULES)) { if ($script:Language -eq 'en') { '(none)' } else { '（无）' } } else { $Config.MODULES }
     if ($script:Language -eq 'en') {
         Write-Host "`nBuild plan"
+        Write-Host "  Configuration name: $($Config.PROFILE)"
+        Write-Host "  Firmware version: $($Config.FIRMWARE_VERSION)"
         Write-Host "  Board: $($Config.BOARD)"
         Write-Host "  MCU: $($Config.MCU)"
         Write-Host "  Display: $($Config.DISPLAY)"
@@ -1571,6 +1583,8 @@ function Show-InteractiveSummary([System.Collections.IDictionary]$Config) {
         Write-Host "  Output: firmware-builds/$($Config.PROFILE)/"
     } else {
         Write-Host "`n构建方案"
+        Write-Host "  配置名称：$($Config.PROFILE)"
+        Write-Host "  固件版本：$($Config.FIRMWARE_VERSION)"
         Write-Host "  开发板：$($Config.BOARD)"
         Write-Host "  MCU：$($Config.MCU)"
         Write-Host "  显示屏：$($Config.DISPLAY)"
@@ -1677,7 +1691,8 @@ function Invoke-Interactive {
     }
     break
     }
-    Set-InteractiveProfileName $Config
+    Set-InteractiveProfileName $Config -Prompt
+    Read-FirmwareVersion $Config
     Validate-Config $Config
     Show-InteractiveSummary $Config
     if (-not (Confirm-InteractivePlan)) {

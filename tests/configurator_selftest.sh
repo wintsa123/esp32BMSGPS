@@ -410,6 +410,8 @@ rg -Fq -- '"-DIDF_TARGET=$($Config.MCU)"' "${repo_root}/start.ps1"
 ! rg -Fq 'esp-idf-v5.5.4' "${repo_root}/start.sh"
 ! rg -Fq 'esp-idf-v5.5.4' "${repo_root}/start.ps1"
 rg -Fq 'DISPLAY_DATA_WIDTH' "${repo_root}/start.sh"
+rg -Fq 'prompt_firmware_version' "${repo_root}/start.sh"
+rg -Fq 'function Read-FirmwareVersion' "${repo_root}/start.ps1"
 rg -Fq 'DATA_WIDTH' "${repo_root}/start.sh"
 
 echo 'firmware configurator self-test passed'

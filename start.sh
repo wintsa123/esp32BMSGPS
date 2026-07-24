@@ -1347,6 +1347,20 @@ prompt_custom_number() {
     done
 }
 
+prompt_firmware_version() {
+    local answer
+    while true; do
+        if [[ "$LANGUAGE" == en ]]; then
+            read -r -p "Firmware version shown on the device [${CFG[FIRMWARE_VERSION]}]: " answer
+        else
+            read -r -p "设备显示的固件版本 [${CFG[FIRMWARE_VERSION]}]：" answer
+        fi
+        [[ -n "$answer" ]] || answer="${CFG[FIRMWARE_VERSION]}"
+        is_value "$answer" && { CFG[FIRMWARE_VERSION]="$answer"; return; }
+        [[ "$LANGUAGE" == en ]] && printf '%s\n' 'Use printable ASCII without spaces.' >&2 || printf '%s\n' '请输入不含空格的可打印 ASCII 版本号。' >&2
+    done
+}
+
 custom_board_gpio_requirements() {
     local module
     CUSTOM_MODULE_ROLE_STATE=()
@@ -1837,11 +1851,11 @@ choose_board_or_saved_profile() {
 
 show_interactive_summary() {
     if [[ "$LANGUAGE" == en ]]; then
-        printf '\nBuild plan\n  Board: %s\n  MCU: %s\n  Display: %s\n  Input: %s\n  Modules: %s\n  Dashboard UIs: %s\n  Output: firmware-builds/%s/\n' \
-            "${CFG[BOARD]}" "${CFG[MCU]}" "${CFG[DISPLAY]}" "${CFG[INPUT]}" "${CFG[MODULES]:-(none)}" "${CFG[DASHBOARDS]}" "${CFG[PROFILE]}"
+        printf '\nBuild plan\n  Configuration name: %s\n  Firmware version: %s\n  Board: %s\n  MCU: %s\n  Display: %s\n  Input: %s\n  Modules: %s\n  Dashboard UIs: %s\n  Output: firmware-builds/%s/\n' \
+            "${CFG[PROFILE]}" "${CFG[FIRMWARE_VERSION]}" "${CFG[BOARD]}" "${CFG[MCU]}" "${CFG[DISPLAY]}" "${CFG[INPUT]}" "${CFG[MODULES]:-(none)}" "${CFG[DASHBOARDS]}" "${CFG[PROFILE]}"
     else
-        printf '\n构建方案\n  开发板：%s\n  MCU：%s\n  显示屏：%s\n  输入设备：%s\n  功能模块：%s\n  仪表界面：%s\n  输出目录：firmware-builds/%s/\n' \
-            "${CFG[BOARD]}" "${CFG[MCU]}" "${CFG[DISPLAY]}" "${CFG[INPUT]}" "${CFG[MODULES]:-（无）}" "${CFG[DASHBOARDS]}" "${CFG[PROFILE]}"
+        printf '\n构建方案\n  配置名称：%s\n  固件版本：%s\n  开发板：%s\n  MCU：%s\n  显示屏：%s\n  输入设备：%s\n  功能模块：%s\n  仪表界面：%s\n  输出目录：firmware-builds/%s/\n' \
+            "${CFG[PROFILE]}" "${CFG[FIRMWARE_VERSION]}" "${CFG[BOARD]}" "${CFG[MCU]}" "${CFG[DISPLAY]}" "${CFG[INPUT]}" "${CFG[MODULES]:-（无）}" "${CFG[DASHBOARDS]}" "${CFG[PROFILE]}"
     fi
 }
 
@@ -1945,7 +1959,8 @@ run_interactive() {
     fi
     break
     done
-    set_interactive_profile_name
+    set_interactive_profile_name prompt
+    prompt_firmware_version
     validate_config
     show_interactive_summary
     if ! confirm_interactive_plan; then
