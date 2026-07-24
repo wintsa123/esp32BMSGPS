@@ -522,12 +522,39 @@ static bool process_ui_action(host_app_t *app)
 
 static void print_help(const char *program)
 {
-    printf("用法: %s [--portrait] [--headless] [--screenshot FILE.bmp] "
+    printf("用法: %s [--portrait] [--resolution WIDTHxHEIGHT] [--headless] [--screenshot FILE.bmp] "
            "[--page battery|controller|gps|cast] "
            "[--style s1000rr|controller|fireblade] [--boot charge|gauge] "
            "[--boot-progress 0..100]\n",
            program);
     puts("快捷键: 上/下=速度  1/2/3/4=页面  f=GPS定位  g=GPS模块  b=BMS  c=控制器  u=单位  e=电耗  r=旋转  q=退出");
+}
+
+static bool parse_resolution(const char *text, int32_t *width, int32_t *height)
+{
+    char *separator = NULL;
+    char *end = NULL;
+    long parsed_width;
+    long parsed_height;
+
+    separator = strchr(text, 'x');
+    if (!separator) {
+        separator = strchr(text, 'X');
+    }
+    if (!separator || separator == text || separator[1] == '\0') {
+        return false;
+    }
+    parsed_width = strtol(text, &end, 10);
+    if (end != separator || parsed_width < 64L || parsed_width > 1920L) {
+        return false;
+    }
+    parsed_height = strtol(separator + 1, &end, 10);
+    if (*end != '\0' || parsed_height < 64L || parsed_height > 1920L) {
+        return false;
+    }
+    *width = (int32_t)parsed_width;
+    *height = (int32_t)parsed_height;
+    return true;
 }
 
 static bool save_screenshot(lv_display_t *display, const char *path)
@@ -751,6 +778,8 @@ int main(int argc, char **argv)
 {
     bool portrait = false;
     bool headless = false;
+    int32_t display_width = 320;
+    int32_t display_height = 240;
     bool run_ok = true;
     int preview_boot_style = -1;
     uint8_t preview_boot_progress = 50U;
@@ -761,6 +790,14 @@ int main(int argc, char **argv)
     for (int index = 1; index < argc; ++index) {
         if (strcmp(argv[index], "--portrait") == 0) {
             portrait = true;
+            display_width = 240;
+            display_height = 320;
+        } else if (strcmp(argv[index], "--resolution") == 0 && index + 1 < argc) {
+            if (!parse_resolution(argv[++index], &display_width, &display_height)) {
+                fputs("--resolution 必须为 64..1920 范围内的 WIDTHxHEIGHT\n", stderr);
+                return 2;
+            }
+            portrait = display_width < display_height;
         } else if (strcmp(argv[index], "--headless") == 0) {
             headless = true;
         } else if (strcmp(argv[index], "--screenshot") == 0 && index + 1 < argc) {
@@ -832,7 +869,7 @@ int main(int argc, char **argv)
     refresh_speed_snapshot(&app);
 
     lv_init();
-    app.display = lv_sdl_window_create(portrait ? 240 : 320, portrait ? 320 : 240);
+    app.display = lv_sdl_window_create(display_width, display_height);
     if (!app.display) {
         fprintf(stderr, "SDL display creation failed: %s\n", SDL_GetError());
         lv_deinit();

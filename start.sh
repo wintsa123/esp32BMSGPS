@@ -185,10 +185,10 @@ install_idf() {
         die "ESP-IDF v6.0.2 克隆在 3 次尝试后仍失败；请检查代理或 GitHub 网络后重试。未完成的克隆目录已保留：${failed_clone_dirs[*]:-无}"
     fi
     if [[ "$install_dir" == "$PROJECT_IDF_PATH" ]]; then
-        IDF_TOOLS_PATH="$PROJECT_TOOLS_PATH" bash "$install_dir/install.sh" esp32 esp32s3
+        IDF_TOOLS_PATH="$PROJECT_TOOLS_PATH" bash "$install_dir/install.sh" esp32 esp32c3 esp32s3 esp32p4
         export IDF_TOOLS_PATH="$PROJECT_TOOLS_PATH"
     else
-        bash "$install_dir/install.sh" esp32 esp32s3
+        bash "$install_dir/install.sh" esp32 esp32c3 esp32s3 esp32p4
     fi
 
     config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/esp32-bms-gps"
@@ -224,7 +224,7 @@ Options:
   --config FILE                KEY=VALUE configuration file
   --profile ID                 Profile name (default: legacy)
   --firmware-version VALUE    Firmware version shown on the device
-  --mcu ID                     esp32 or esp32s3
+  --mcu ID                     Catalog MCU (esp32, esp32c3, esp32s3, esp32p4)
   --board ID                   Catalog board identifier
   --display ID                 Catalog display identifier
   --input ID                   Catalog input identifier
@@ -270,7 +270,7 @@ ESP32 BMS GPS 固件定制器
   --config FILE                KEY=VALUE 配置文件
   --profile ID                 配置档名称（默认：legacy）
   --firmware-version VALUE    在设备上显示的固件版本
-  --mcu ID                     esp32 或 esp32s3
+  --mcu ID                     主控清单项（esp32、esp32c3、esp32s3、esp32p4）
   --board ID                   catalog 开发板标识
   --display ID                 catalog 显示屏标识
   --input ID                   catalog 输入设备标识
@@ -823,7 +823,7 @@ validate_config() {
     read_kv_file "$CATALOG_DIR/schema.env" RECORD
     [[ "${RECORD[SCHEMA_VERSION]:-}" == "$SCHEMA_VERSION" ]] || die "unsupported catalog schema"
     load_record mcu "${CFG[MCU]}"
-    require_keys RECORD SCHEMA_VERSION ID CAPABILITIES DISPLAY_BUSES INPUT_BUSES GPIO_MAX INPUT_ONLY DANGEROUS_GPIO
+    require_keys RECORD SCHEMA_VERSION ID CAPABILITIES COMMUNICATION_COPROCESSOR DISPLAY_BUSES INPUT_BUSES GPIO_MAX INPUT_ONLY DANGEROUS_GPIO
     MCU_CAPABILITIES="${RECORD[CAPABILITIES]}"
     MCU_DISPLAY_BUSES="${RECORD[DISPLAY_BUSES]}"
     MCU_INPUT_BUSES="${RECORD[INPUT_BUSES]}"
@@ -862,9 +862,16 @@ validate_config() {
     fi
     display_bus="$BOARD_DISPLAY_BUS"
     input_bus="$BOARD_INPUT_BUS"
-    [[ -n "$display_bus" ]] || die "custom board requires DISPLAY_BUS"
-    csv_has "$MCU_DISPLAY_BUSES" "$display_bus" || die "${CFG[MCU]} does not support display bus $display_bus"
-    [[ "$input_bus" == SPI || "$input_bus" == I2C || "$input_bus" == NONE ]] || die "unsupported input bus: $input_bus"
+    if [[ -n "$display_bus" ]]; then
+        csv_has "$MCU_DISPLAY_BUSES" "$display_bus" || die "${CFG[MCU]} does not support display bus $display_bus"
+    elif [[ "${CFG[BOARD]}" != custom ]]; then
+        die "board requires DISPLAY_BUS"
+    fi
+    if [[ -n "$input_bus" ]]; then
+        [[ "$input_bus" == SPI || "$input_bus" == I2C || "$input_bus" == NONE ]] || die "unsupported input bus: $input_bus"
+    elif [[ "${CFG[BOARD]}" != custom ]]; then
+        die "board requires INPUT_BUS"
+    fi
     case "$BOARD_AUDIO_BACKEND" in
         DAC) [[ "$BOARD_AUDIO_DAC_CHANNEL" == 1 || "$BOARD_AUDIO_DAC_CHANNEL" == 2 ]] || die "DAC board requires AUDIO_DAC_CHANNEL 1 or 2" ;;
         I2S|NONE) [[ "$BOARD_AUDIO_DAC_CHANNEL" == 0 ]] || die "$BOARD_AUDIO_BACKEND board requires AUDIO_DAC_CHANNEL 0" ;;
@@ -878,8 +885,11 @@ validate_config() {
 
     [[ "${CFG[DISPLAY]}" != custom ]] || die 'custom display names are no longer supported; select a catalog display'
     load_record display "${CFG[DISPLAY]}"
-    require_keys RECORD SCHEMA_VERSION ID TARGETS BUS DATA_WIDTH DRIVER COMPONENT VERSION CMAKE_COMPONENT HEADER INIT REQUIRES_INPUT_GPIO REQUIRES_OUTPUT_GPIO WIDTH HEIGHT PIXEL_CLOCK_HZ ROTATION RGB_ORDER INVERT_COLOR SPI_MODE I80_SWAP_COLOR_BYTES I80_PCLK_ACTIVE_NEG I80_PCLK_IDLE_LOW BACKLIGHT_ON_LEVEL POWER_ON_DELAY_MS
+    require_keys RECORD SCHEMA_VERSION ID TARGETS BUS DATA_WIDTH DRIVER SIZE_INCH COMPONENT VERSION CMAKE_COMPONENT HEADER INIT REQUIRES_INPUT_GPIO REQUIRES_OUTPUT_GPIO WIDTH HEIGHT PIXEL_CLOCK_HZ ROTATION RGB_ORDER INVERT_COLOR SPI_MODE I80_SWAP_COLOR_BYTES I80_PCLK_ACTIVE_NEG I80_PCLK_IDLE_LOW BACKLIGHT_ON_LEVEL POWER_ON_DELAY_MS
     csv_has "${RECORD[TARGETS]}" "${CFG[MCU]}" || die "display ${CFG[DISPLAY]} is unavailable on ${CFG[MCU]}"
+    if [[ "${CFG[BOARD]}" == custom && -z "$BOARD_DISPLAY_BUS" ]]; then
+        BOARD_DISPLAY_BUS="${RECORD[BUS]}"
+    fi
     [[ "${RECORD[BUS]}" == "$BOARD_DISPLAY_BUS" ]] || die "display ${CFG[DISPLAY]} does not match board bus $BOARD_DISPLAY_BUS"
     if [[ "${CFG[BOARD]}" == custom ]]; then
         BOARD_DISPLAY_DATA_WIDTH="${RECORD[DATA_WIDTH]}"
@@ -955,13 +965,15 @@ write_profile_component_manifest() {
 write_profile() {
     local profile="${CFG[PROFILE]}"
     local profile_dir="$BUILD_ROOT/$profile"
-    local temporary backup partition_source sdkconfig_source role module main_requires profile_driver_requires display_cmake_component touch_cmake_component trimming
-    local audio_feature bms_feature controller_feature gps_feature network_feature ota_feature cast_feature dashboard_s1000rr_feature dashboard_controller_feature dashboard_fireblade_feature
+    local temporary backup partition_source sdkconfig_source role module main_requires profile_driver_requires display_cmake_component touch_cmake_component trimming communication_coprocessor
+    local audio_feature ble_feature bms_feature controller_feature gps_feature network_feature ota_feature cast_feature dashboard_s1000rr_feature dashboard_controller_feature dashboard_fireblade_feature
 
     mkdir -p "$BUILD_ROOT"
     temporary="$(mktemp -d "$BUILD_ROOT/.${profile}.tmp.XXXXXX")"
     mkdir -p "$temporary/generated"
     write_firmware_env "$temporary/firmware.env"
+    load_record mcu "${CFG[MCU]}"
+    communication_coprocessor="${RECORD[COMMUNICATION_COPROCESSOR]}"
     python3 "$ROOT/scripts/generate-hardware-config.py" \
         --catalog "$CATALOG_DIR" \
         --firmware-env "$temporary/firmware.env" \
@@ -970,12 +982,19 @@ write_profile() {
     display_cmake_component="${RECORD[CMAKE_COMPONENT]}"
     load_record input "${CFG[INPUT]}"
     touch_cmake_component="${RECORD[CMAKE_COMPONENT]}"
+    local display_driver="${RECORD[DRIVER]}" touch_driver
+    load_record display "${CFG[DISPLAY]}"
+    display_driver="${RECORD[DRIVER]}"
+    load_record input "${CFG[INPUT]}"
+    touch_driver="${RECORD[DRIVER]}"
     profile_driver_requires=''
     [[ -n "$display_cmake_component" && "$display_cmake_component" != esp_lcd ]] && profile_driver_requires="$display_cmake_component"
     [[ -n "$touch_cmake_component" ]] && profile_driver_requires="${profile_driver_requires:+${profile_driver_requires};}${touch_cmake_component}"
     write_profile_component_manifest "$temporary/generated/idf_component.yml"
     main_requires="esp_bms_idf_runtime;esp_bms_lvgl_bridge;esp_bms_lvgl_ui;lvgl;esp_lvgl_adapter"
     audio_feature=0
+    ble_feature=0
+    csv_has "$MCU_CAPABILITIES" BLE && ble_feature=1
     bms_feature=0
     controller_feature=0
     gps_feature=0
@@ -1026,8 +1045,10 @@ write_profile() {
         printf 'set(ESP_BMS_PROFILE_ID "%s")\n' "$profile"
         printf 'set(ESP_BMS_SELECTED_MODULES "%s")\n' "${CFG[MODULES]}"
         printf 'set(ESP_BMS_SELECTED_DASHBOARDS "%s")\n' "${CFG[DASHBOARDS]}"
+        printf 'set(ESP_BMS_PROFILE_COMMUNICATION_COPROCESSOR "%s" CACHE STRING "Firmware profile radio coprocessor" FORCE)\n' "$communication_coprocessor"
         printf 'set(ESP_BMS_PROFILE_TRIMMING_READY FALSE)\n'
         printf 'set(ESP_BMS_FEATURE_AUDIO %s CACHE BOOL "Firmware profile audio feature" FORCE)\n' "$audio_feature"
+        printf 'set(ESP_BMS_FEATURE_BLE %s CACHE BOOL "Firmware profile BLE capability" FORCE)\n' "$ble_feature"
         printf 'set(ESP_BMS_FEATURE_BMS %s CACHE BOOL "Firmware profile BMS feature" FORCE)\n' "$bms_feature"
         printf 'set(ESP_BMS_FEATURE_CONTROLLER %s CACHE BOOL "Firmware profile controller feature" FORCE)\n' "$controller_feature"
         printf 'set(ESP_BMS_FEATURE_GPS %s CACHE BOOL "Firmware profile GPS feature" FORCE)\n' "$gps_feature"
@@ -1039,6 +1060,8 @@ write_profile() {
         printf 'set(ESP_BMS_FEATURE_DASHBOARD_FIREBLADE %s CACHE BOOL "Firmware profile Fireblade dashboard" FORCE)\n' "$dashboard_fireblade_feature"
         printf 'set(ESP_BMS_PROFILE_MAIN_REQUIRES "%s" CACHE STRING "Firmware profile component closure" FORCE)\n' "$main_requires"
         printf 'set(ESP_BMS_PROFILE_DRIVER_REQUIRES "%s" CACHE STRING "Firmware profile display and touch components" FORCE)\n' "$profile_driver_requires"
+        printf 'set(ESP_BMS_PROFILE_DISPLAY_DRIVER "%s" CACHE STRING "Firmware profile display driver" FORCE)\n' "$display_driver"
+        printf 'set(ESP_BMS_PROFILE_TOUCH_DRIVER "%s" CACHE STRING "Firmware profile touch driver" FORCE)\n' "$touch_driver"
     } > "$temporary/generated/profile.cmake"
     {
         printf 'MODULES=%s\n' "${CFG[MODULES]}"
@@ -1062,10 +1085,11 @@ write_profile() {
         printf 'MCU=%s\n' "${CFG[MCU]}"
         printf 'BOARD=%s\n' "${CFG[BOARD]}"
         printf 'BUILD_READY=%s\n' "$BOARD_BUILD_READY"
+        printf 'COMMUNICATION_COPROCESSOR=%s\n' "$communication_coprocessor"
         printf 'MODULES=%s\n' "${CFG[MODULES]}"
         printf 'DASHBOARDS=%s\n' "${CFG[DASHBOARDS]}"
         printf 'TRIMMING=%s\n' "$trimming"
-        printf 'NOTE=Generated selection will become the component closure after runtime extraction.\n'
+        printf 'NOTE=Component dependencies are fixed by the selected display and touch catalog records.\n'
     } > "$temporary/report.txt"
     if [[ -e "$profile_dir" ]]; then
         backup="$BUILD_ROOT/.${profile}.previous.$(date +%s)"
@@ -1193,17 +1217,23 @@ catalog_option_description() {
     local kind="$1" id="$2" zh en
     case "$kind:$id" in
         mcu:esp32) zh='ESP32，最多 39 路 GPIO，支持 SPI 显示'; en='ESP32, up to GPIO39, SPI display support' ;;
+        mcu:esp32c3) zh='ESP32-C3，最多 21 路 GPIO，支持 SPI 显示'; en='ESP32-C3, up to GPIO21, SPI display support' ;;
         mcu:esp32s3) zh='ESP32-S3，最多 48 路 GPIO，支持 SPI / I80 显示'; en='ESP32-S3, up to GPIO48, SPI / I80 display support' ;;
+        mcu:esp32p4) zh='ESP32-P4，最多 54 路 GPIO，支持 SPI / I80 显示；默认 ESP32-C6 通信协处理器，所有 IO 自定义'; en='ESP32-P4, up to GPIO54, SPI / I80 display support; default ESP32-C6 radio coprocessor, all IO is custom' ;;
         board:esp32-wroom-32e-legacy) zh='ESP32-WROOM-32E，4MB Flash，可本地构建（推荐）'; en='ESP32-WROOM-32E, 4MB Flash, build-ready (recommended)' ;;
         board:esp32s3-n16r8-st7796u-gt1151) zh='慧勤智远 ESP32-S3 N16R8，ST7796U / GT1151，16MB Flash / 8MB PSRAM，可本地构建'; en='Huiqin Zhiyuan ESP32-S3 N16R8, ST7796U / GT1151, 16MB Flash / 8MB PSRAM, build-ready' ;;
         board:custom) zh='自定义开发板：从清单选择主控、显示屏和触摸屏，再填写 GPIO'; en='Custom board: select MCU, display, and touch from the catalog, then enter GPIO pins' ;;
-        display:st7789-spi) zh='ST7789 SPI 显示屏'; en='ST7789 SPI display' ;;
-        display:ili9488-i80) zh='ILI9488 8080 并行显示屏'; en='ILI9488 I80 parallel display' ;;
-        display:st7796u-i80) zh='ST7796U 16 位 8080 并行显示屏（320 × 480）'; en='ST7796U 16-bit I80 parallel display (320 × 480)' ;;
         display:custom) zh='自定义显示屏：填写名称并选择总线'; en='Custom display: name it and choose its bus' ;;
+        display:*)
+            load_record display "$id"
+            zh="${RECORD[DRIVER]} ${RECORD[SIZE_INCH]} 英寸，${RECORD[WIDTH]} × ${RECORD[HEIGHT]}，${RECORD[BUS]}"
+            en="${RECORD[DRIVER]} ${RECORD[SIZE_INCH]} inch, ${RECORD[WIDTH]} x ${RECORD[HEIGHT]}, ${RECORD[BUS]}"
+            ;;
         input:xpt2046-spi) zh='XPT2046 SPI 触摸屏'; en='XPT2046 SPI touch input' ;;
         input:ft6336u-i2c) zh='FT6336U I2C 触摸屏'; en='FT6336U I2C touch input' ;;
         input:gt1151-i2c) zh='GT1151 I2C 电容触摸屏'; en='GT1151 I2C capacitive touch input' ;;
+        input:gt911-i2c) zh='GT911 I2C 电容触摸屏'; en='GT911 I2C capacitive touch input' ;;
+        input:cst816s-i2c) zh='CST816S I2C 电容触摸屏'; en='CST816S I2C capacitive touch input' ;;
         input:custom) zh='自定义输入设备：填写名称并选择总线'; en='Custom input: name it and choose its bus' ;;
         input:none) zh='不使用输入设备'; en='No input device' ;;
         module:bms) zh='BMS 蓝牙连接'; en='BMS Bluetooth connection' ;;
@@ -1328,7 +1358,7 @@ choose_catalog_option() {
 }
 
 choose_catalog_option_with_keyboard() {
-    local kind="$1" title="$2" default="$3" key suffix option index pointer mark
+    local kind="$1" title="$2" default="$3" key suffix option index pointer mark previous_cursor old_mark new_mark
     shift 3
     local cursor=0
     local -a choices=("$@")
@@ -1341,19 +1371,19 @@ choose_catalog_option_with_keyboard() {
     done
 
     MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST=NO
+    printf '\033[2J\033[H'
+    print_interactive_title
+    printf '\n%s\n' "$(message_text "$title")"
+    for index in "${!choices[@]}"; do
+        option="${choices[$index]}"
+        pointer=' '
+        (( index == cursor )) && pointer='>'
+        mark=' '
+        [[ "$option" == "$default" ]] && mark='*'
+        printf '  %s %s %d) %s — %s\n' "$pointer" "$mark" "$((index + 1))" "$option" "$(catalog_option_description "$kind" "$option")"
+    done
+    [[ "$LANGUAGE" == en ]] && printf '%s\n' 'Use Up/Down to move, Left to return, Enter to continue.' || printf '%s\n' '使用 ↑/↓ 移动，← 返回上一级，回车继续。'
     while true; do
-        printf '\033[2J\033[H'
-        print_interactive_title
-        printf '\n%s\n' "$(message_text "$title")"
-        for index in "${!choices[@]}"; do
-            option="${choices[$index]}"
-            pointer=' '
-            (( index == cursor )) && pointer='>'
-            mark=' '
-            [[ "$option" == "$default" ]] && mark='*'
-            printf '  %s %s %d) %s — %s\n' "$pointer" "$mark" "$((index + 1))" "$option" "$(catalog_option_description "$kind" "$option")"
-        done
-        [[ "$LANGUAGE" == en ]] && printf '%s\n' 'Use Up/Down to move, Left to return, Enter to continue.' || printf '%s\n' '使用 ↑/↓ 移动，← 返回上一级，回车继续。'
         key=''
         IFS= read -rsn1 key || { MENU_SELECTION="$default"; return; }
         if [[ "$key" == $'\e' ]]; then
@@ -1361,12 +1391,26 @@ choose_catalog_option_with_keyboard() {
             IFS= read -rsn2 -t 0.1 suffix || true
             key+="$suffix"
         fi
+        previous_cursor="$cursor"
         case "$key" in
             $'\e[A'|$'\eOA') (( cursor == 0 )) && cursor=$((${#choices[@]} - 1)) || cursor=$((cursor - 1)) ;;
             $'\e[B'|$'\eOB') cursor=$(((cursor + 1) % ${#choices[@]})) ;;
             ''|$'\r') MENU_SELECTION="${choices[$cursor]}"; return ;;
             $'\e[D'|$'\eOD') MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST=YES; MENU_SELECTION="$default"; return ;;
         esac
+        if (( cursor != previous_cursor )); then
+            old_mark=' '
+            new_mark=' '
+            [[ "${choices[$previous_cursor]}" == "$default" ]] && old_mark='*'
+            [[ "${choices[$cursor]}" == "$default" ]] && new_mark='*'
+            printf '\033[%dA\r    %s' "$(( ${#choices[@]} + 1 - previous_cursor ))" "$old_mark"
+            if (( cursor > previous_cursor )); then
+                printf '\033[%dB' "$((cursor - previous_cursor))"
+            else
+                printf '\033[%dA' "$((previous_cursor - cursor))"
+            fi
+            printf '\r  > %s\033[%dB\r' "$new_mark" "$(( ${#choices[@]} + 1 - cursor ))"
+        fi
     done
 }
 
@@ -1512,27 +1556,35 @@ configure_custom_board() {
     local -a choices=()
     CFG[BOARD]=custom
     prompt_custom_id BOARD_NAME '自定义开发板名称（ASCII）' 'Custom board name (ASCII)'
-    mapfile -t choices < <(catalog_ids mcu)
-    choose_catalog_option mcu 'MCU' "${CFG[MCU]}" "${choices[@]}"
-    CFG[MCU]="$MENU_SELECTION"
-    load_record mcu "${CFG[MCU]}"
-    MCU_DISPLAY_BUSES="${RECORD[DISPLAY_BUSES]}"
-    MCU_GPIO_MAX="${RECORD[GPIO_MAX]}"
-    MCU_DANGEROUS_GPIO="${RECORD[DANGEROUS_GPIO]}"
-    prompt_custom_number FLASH_MB 4 'Flash 容量（MB）' 'Flash size (MB)'
-    prompt_custom_number PSRAM_MB 0 'PSRAM 容量（MB）' 'PSRAM size (MB)'
-    CFG[PARTITIONS]=firmware/partitions/esp32-wroom-32e-legacy.csv
+    while true; do
+        mapfile -t choices < <(catalog_ids mcu)
+        while true; do
+            choose_catalog_option mcu 'MCU' "${CFG[MCU]}" "${choices[@]}"
+            [[ "$MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST" == YES ]] && continue
+            CFG[MCU]="$MENU_SELECTION"
+            break
+        done
+        load_record mcu "${CFG[MCU]}"
+        MCU_DISPLAY_BUSES="${RECORD[DISPLAY_BUSES]}"
+        MCU_GPIO_MAX="${RECORD[GPIO_MAX]}"
+        MCU_DANGEROUS_GPIO="${RECORD[DANGEROUS_GPIO]}"
+        prompt_custom_number FLASH_MB 4 'Flash 容量（MB）' 'Flash size (MB)'
+        prompt_custom_number PSRAM_MB 0 'PSRAM 容量（MB）' 'PSRAM size (MB)'
+        CFG[PARTITIONS]=firmware/partitions/esp32-wroom-32e-legacy.csv
 
-    mapfile -t choices < <(catalog_display_ids_supported_by_mcu "${CFG[MCU]}")
-    default_option="${choices[0]}"
-    for option in "${choices[@]}"; do
-        [[ "$option" == "${CFG[DISPLAY]}" ]] && default_option="$option"
+        mapfile -t choices < <(catalog_display_ids_supported_by_mcu "${CFG[MCU]}")
+        default_option="${choices[0]}"
+        for option in "${choices[@]}"; do
+            [[ "$option" == "${CFG[DISPLAY]}" ]] && default_option="$option"
+        done
+        choose_catalog_option display 'Display' "$default_option" "${choices[@]}"
+        [[ "$MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST" == YES ]] && continue
+        CFG[DISPLAY]="$MENU_SELECTION"
+        load_record display "${CFG[DISPLAY]}"
+        CFG[DISPLAY_BUS]="${RECORD[BUS]}"
+        BOARD_DISPLAY_DATA_WIDTH="${RECORD[DATA_WIDTH]}"
+        break
     done
-    choose_catalog_option display 'Display' "$default_option" "${choices[@]}"
-    CFG[DISPLAY]="$MENU_SELECTION"
-    load_record display "${CFG[DISPLAY]}"
-    CFG[DISPLAY_BUS]="${RECORD[BUS]}"
-    BOARD_DISPLAY_DATA_WIDTH="${RECORD[DATA_WIDTH]}"
 
     mapfile -t choices < <(catalog_input_ids_supported_by_mcu_and_bus "${CFG[MCU]}")
     default_option="${choices[0]}"
@@ -1612,9 +1664,11 @@ prepare_profile_idf_project() {
     local profile_dir="$1" project_dir="$2"
     rm -rf -- "$project_dir"
     mkdir -p "$project_dir/main"
+    cp -a "$ROOT/main/." "$project_dir/main/"
     {
         printf 'cmake_minimum_required(VERSION 3.16)\n'
         printf 'set(EXTRA_COMPONENT_DIRS "%s/components")\n' "$ROOT"
+        printf 'set(COMPONENTS main)\n'
         printf 'include("$ENV{IDF_PATH}/tools/cmake/project.cmake")\n'
         printf 'project(esp32_bms_gps_idf)\n'
     } > "$project_dir/CMakeLists.txt"
@@ -1623,7 +1677,7 @@ prepare_profile_idf_project() {
 }
 
 choose_catalog_options_with_keyboard() {
-    local kind="$1" default="$2" title key suffix option index pointer mark
+    local kind="$1" default="$2" title key suffix option index pointer mark previous_cursor old_mark new_mark
     shift 2
     local cursor=0
     local -a choices=("$@")
@@ -1642,24 +1696,24 @@ choose_catalog_options_with_keyboard() {
         fi
     done
 
-    while true; do
-        printf '\033[2J\033[H'
-        print_interactive_title
-        printf '\n%s\n' "$(message_text "$title")"
-        for index in "${!choices[@]}"; do
-            option="${choices[$index]}"
-            pointer=' '
-            (( index == cursor )) && pointer='>'
-            mark='[ ]'
-            [[ -n "${selected[$option]+x}" ]] && mark='[x]'
-            printf '  %s %s %d) %s — %s\n' "$pointer" "$mark" "$((index + 1))" "$option" "$(catalog_option_description "$kind" "$option")"
-        done
-        if [[ "$LANGUAGE" == en ]]; then
-            printf '%s\n' 'Use Up/Down to move, Left to return to the previous feature list, Space to toggle, Enter to continue.'
-        else
-            printf '%s\n' '使用 ↑/↓ 移动，← 返回上一个功能清单，空格切换，回车下一步。'
-        fi
+    printf '\033[2J\033[H'
+    print_interactive_title
+    printf '\n%s\n' "$(message_text "$title")"
+    for index in "${!choices[@]}"; do
+        option="${choices[$index]}"
+        pointer=' '
+        (( index == cursor )) && pointer='>'
+        mark='[ ]'
+        [[ -n "${selected[$option]+x}" ]] && mark='[x]'
+        printf '  %s %s %d) %s — %s\n' "$pointer" "$mark" "$((index + 1))" "$option" "$(catalog_option_description "$kind" "$option")"
+    done
+    if [[ "$LANGUAGE" == en ]]; then
+        printf '%s\n' 'Use Up/Down to move, Left to return to the previous feature list, Space to toggle, Enter to continue.'
+    else
+        printf '%s\n' '使用 ↑/↓ 移动，← 返回上一个功能清单，空格切换，回车下一步。'
+    fi
 
+    while true; do
         key=''
         IFS= read -rsn1 key || {
             MENU_SELECTION="$default"
@@ -1670,6 +1724,9 @@ choose_catalog_options_with_keyboard() {
             IFS= read -rsn2 -t 0.1 suffix || true
             key+="$suffix"
         fi
+        previous_cursor="$cursor"
+        old_mark='[ ]'
+        [[ -n "${selected[${choices[$cursor]}]+x}" ]] && old_mark='[x]'
         case "$key" in
             $'\e[A'|$'\eOA')
                 if (( cursor == 0 )); then cursor=$((${#choices[@]} - 1)); else cursor=$((cursor - 1)); fi
@@ -1695,6 +1752,21 @@ choose_catalog_options_with_keyboard() {
                 return
                 ;;
         esac
+        new_mark='[ ]'
+        [[ -n "${selected[${choices[$cursor]}]+x}" ]] && new_mark='[x]'
+        if (( cursor != previous_cursor )); then
+            old_mark='[ ]'
+            [[ -n "${selected[${choices[$previous_cursor]}]+x}" ]] && old_mark='[x]'
+            printf '\033[%dA\r    %s' "$(( ${#choices[@]} + 1 - previous_cursor ))" "$old_mark"
+            if (( cursor > previous_cursor )); then
+                printf '\033[%dB' "$((cursor - previous_cursor))"
+            else
+                printf '\033[%dA' "$((previous_cursor - cursor))"
+            fi
+            printf '\r  > %s\033[%dB\r' "$new_mark" "$(( ${#choices[@]} + 1 - cursor ))"
+        elif [[ "$key" == ' ' ]]; then
+            printf '\033[%dA\r  > %s\033[%dB\r' "$(( ${#choices[@]} + 1 - cursor ))" "$new_mark" "$(( ${#choices[@]} + 1 - cursor ))"
+        fi
     done
 }
 
@@ -2000,6 +2072,7 @@ run_interactive() {
     print_interactive_title
     while true; do
     choose_board_or_saved_profile
+    [[ "$MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST" == YES ]] && continue
     if [[ "$MENU_SELECTION" == saved:* ]]; then
         local saved_profile="${MENU_SELECTION#saved:}"
         set_defaults
@@ -2125,7 +2198,7 @@ main() {
                 return
             fi
             if [[ "$command" == configure ]]; then
-                write_config
+                write_profile
             elif [[ "$command" == build-local ]]; then
                 write_config
                 exec env FIRMWARE_LANG="$LANGUAGE" "$ROOT/scripts/build-profile.sh" --config "$BUILD_ROOT/${CFG[PROFILE]}/firmware.env"

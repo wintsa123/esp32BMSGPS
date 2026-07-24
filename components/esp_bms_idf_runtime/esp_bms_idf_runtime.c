@@ -16,6 +16,7 @@
 #include "esp_timer.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#if ESP_BMS_FEATURE_BLE
 #include "host/ble_gap.h"
 #include "host/ble_gatt.h"
 #include "host/ble_hs.h"
@@ -27,11 +28,16 @@
 #include "host/util/util.h"
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
+#endif
 #include "nvs.h"
 #include "nvs_flash.h"
+#if ESP_BMS_FEATURE_BLE
 #include "os/os_mbuf.h"
+#endif
 #include "sdkconfig.h"
+#if ESP_BMS_FEATURE_BLE
 #include "services/gap/ble_svc_gap.h"
+#endif
 
 #include <ctype.h>
 #include <stdio.h>
@@ -153,7 +159,9 @@ static void runtime_log_heap_state(const char *stage)
              (unsigned)heap_caps_get_largest_free_block(psram_caps));
 }
 
+#if ESP_BMS_FEATURE_BLE
 void ble_store_config_init(void);
+#endif
 
 /* Controller compatibility still uses this numeric phase representation. */
 typedef enum {
@@ -177,9 +185,11 @@ static bms_scan_name_cache_entry_t s_bms_scan_name_cache[ESP_BMS_IDF_BMS_SCAN_MA
 static uint8_t s_bms_scan_name_cache_count;
 static uint8_t s_bms_scan_name_cache_next;
 
+#if ESP_BMS_FEATURE_BLE
 static int runtime_bluetooth_gap_event(struct ble_gap_event *event, void *arg);
 static esp_err_t runtime_bluetooth_start_advertising_now(esp_bms_idf_runtime_t *runtime);
 static esp_err_t runtime_init_ble_host(esp_bms_idf_runtime_t *runtime);
+#endif
 static void runtime_copy_snapshot_text(char *out, size_t out_len, const char *text);
 static esp_err_t runtime_save_bms_binding(esp_bms_idf_runtime_t *runtime);
 static esp_err_t runtime_save_setup_ap_credentials(const esp_bms_idf_runtime_t *runtime);
@@ -199,7 +209,9 @@ static void runtime_update_snapshot_speed(esp_bms_idf_runtime_t *runtime);
 #define ACTION_EVENT_FLAG(event, name) \
     esp_bms_lvgl_action_event_flag_get((event), ESP_BMS_LVGL_ACTION_EVENT_FLAG_##name)
 
+#if ESP_BMS_FEATURE_BLE
 static esp_bms_idf_runtime_t *s_ble_host_runtime;
+#endif
 
 static bool runtime_controller_tire_matches_policy(uint8_t rim_inch,
                                                    uint8_t aspect_percent,
@@ -2949,6 +2961,7 @@ static void runtime_ensure_setup_ap_credentials(esp_bms_idf_runtime_t *runtime)
     }
 }
 
+#if ESP_BMS_FEATURE_BLE
 static int runtime_bluetooth_gap_event(struct ble_gap_event *event, void *arg)
 {
     esp_bms_idf_runtime_t *runtime = (esp_bms_idf_runtime_t *)arg;
@@ -3255,6 +3268,12 @@ esp_err_t esp_bms_idf_runtime_ensure_ble_host(esp_bms_idf_runtime_t *runtime)
     }
     return runtime_init_ble_host(runtime);
 }
+#else
+esp_err_t esp_bms_idf_runtime_ensure_ble_host(esp_bms_idf_runtime_t *runtime)
+{
+    return runtime ? ESP_ERR_NOT_SUPPORTED : ESP_ERR_INVALID_ARG;
+}
+#endif
 
 void esp_bms_idf_runtime_register_bms_frame_handler(
     esp_bms_idf_runtime_t *runtime,
@@ -3386,6 +3405,12 @@ esp_err_t esp_bms_idf_runtime_start_bluetooth_advertising(esp_bms_idf_runtime_t 
     if (!runtime) {
         return ESP_ERR_INVALID_ARG;
     }
+#if !ESP_BMS_FEATURE_BLE
+    RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, false);
+    runtime_project_bluetooth_snapshot(runtime);
+    runtime_set_error(runtime, "BT N/A");
+    return ESP_ERR_NOT_SUPPORTED;
+#else
 
     if (runtime->bluetooth_name[0] == '\0') {
         runtime_copy_snapshot_text(runtime->bluetooth_name,
@@ -3418,6 +3443,7 @@ esp_err_t esp_bms_idf_runtime_start_bluetooth_advertising(esp_bms_idf_runtime_t 
         runtime_set_error(runtime, "BT FAIL");
     }
     return ret;
+#endif
 }
 
 esp_err_t esp_bms_idf_runtime_start_controller_ble_if_enabled(esp_bms_idf_runtime_t *runtime)
@@ -3463,6 +3489,7 @@ static esp_err_t runtime_bluetooth_stop_advertising(esp_bms_idf_runtime_t *runti
     }
 
     RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, false);
+#if ESP_BMS_FEATURE_BLE
     if (runtime->bluetooth_conn_handle != 0xFFFFU) {
         (void)ble_gap_terminate(runtime->bluetooth_conn_handle,
                                 BLE_ERR_REM_USER_CONN_TERM);
@@ -3477,6 +3504,7 @@ static esp_err_t runtime_bluetooth_stop_advertising(esp_bms_idf_runtime_t *runti
             return ESP_FAIL;
         }
     }
+#endif
     RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISING, false);
     runtime_project_bluetooth_snapshot(runtime);
     runtime_set_error(runtime, "BT HIDE");
@@ -3821,8 +3849,10 @@ bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,
             runtime->controller_connection_enabled = true;
             if (binding_changed && runtime->controller_conn_handle != 0xFFFFU) {
                 RUNTIME_SET_FLAG(runtime, CONTROLLER_SCAN_REQUESTED, true);
+#if ESP_BMS_FEATURE_BLE
                 (void)ble_gap_terminate(runtime->controller_conn_handle,
                                         BLE_ERR_REM_USER_CONN_TERM);
+#endif
             } else {
                 (void)esp_bms_idf_runtime_start_controller_ble_if_enabled(runtime);
             }

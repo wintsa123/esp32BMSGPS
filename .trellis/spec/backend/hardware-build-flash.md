@@ -158,6 +158,20 @@ RUN_TESTS=1 ./scripts/build-android-cast.sh
 - Declare direct managed-component requirements in `main/idf_component.yml`.
   Treat `dependencies.lock` as the resolved version authority; do not maintain
   a second dependency-version list in README.
+- Profile builds generate `firmware-builds/<profile>/generated/idf_component.yml`
+  from the selected display and touch catalog records. The generated manifest
+  contains the common LVGL dependencies plus only the selected external driver
+  packages; `none` contributes no touch package.
+- Profile builds must copy the repository `main/` sources into the temporary
+  ESP-IDF project before replacing its `CMakeLists.txt` and manifest. The
+  temporary top-level CMake must set `COMPONENTS main` and use
+  `EXTRA_COMPONENT_DIRS` for the repository components. Without the source copy,
+  CMake cannot find `idf_main.c`; without `COMPONENTS main`, every local
+  component is scanned and disabled modules can still fail the build.
+- Component Manager resolves the manifest and writes
+  `<profile-idf-project>/dependencies.lock`; a successful build copies that
+  file to `firmware-builds/<profile>/generated/dependencies.lock`. Never copy the
+  profile manifest or lock into the repository root.
 - The root `CMakeLists.txt` intentionally sets `COMPONENTS main`; component
   reachability comes from `main/CMakeLists.txt` and component `REQUIRES`.
 - `main/CMakeLists.txt` has two component-closure inputs: a generated
@@ -208,6 +222,9 @@ RUN_TESTS=1 ./scripts/build-android-cast.sh
 | `idf.py` is missing | Set `IDF_PATH` or install ESP-IDF 6.0.2; do not substitute another build system |
 | ESP-IDF clone ends with RPC/early EOF or a Schannel close-notify error | Retry through the configured proxy up to three times. Keep every partial sibling clone, report those paths after the last failure, and leave the requested installation directory absent for a later retry. |
 | Managed-component download fails | Check the explicit proxy environment and `dependencies.lock` before changing dependency versions |
+| Profile CMake cannot find `main/idf_main.c` | Recreate the temporary project with a copy of repository `main/` sources before writing the wrapper CMake |
+| Profile build compiles a disabled local module | Confirm the temporary top-level CMake contains `set(COMPONENTS main)` and that the generated main closure excludes the module |
+| Profile lock is missing after a successful build | Inspect the temporary profile project first; do not fall back to or overwrite the repository root `dependencies.lock` |
 | Direct build reports a missing module header from `esp_bms_module_registry.c` | Compare default `ESP_BMS_FEATURE_*` values, registry template includes, and `ESP_BMS_MAIN_REQUIRES_DEFAULT`; add the omitted owning component and a configurator self-test assertion |
 | RFC2217 TCP port is closed | Check the Windows bridge process, firewall scope, host IP, and port 4000 |
 | RFC2217 connects but flash sync fails | Close other clients, confirm the server is RFC2217 rather than raw TCP, and keep `-b 115200` |
@@ -242,6 +259,9 @@ RUN_TESTS=1 ./scripts/build-android-cast.sh
 - Good: when a GitHub pack transfer is interrupted, keep the existing proxy,
   retry in a unique sibling clone directory, and move only the complete clone
   into the requested installation path.
+- Good: generate a profile manifest, build from an isolated project containing
+  copied `main/` sources and `COMPONENTS main`, then retain the resolved lock
+  under that profile's `generated/` directory.
 - Base: change only README or Trellis/spec documentation, validate links and
   Markdown, and do not flash unchanged firmware.
 - Bad: copy a pin map into README, add a source-code GPIO fallback, accept a
@@ -249,6 +269,13 @@ RUN_TESTS=1 ./scripts/build-android-cast.sh
 - Bad: make a module default-enabled in the registry template but rely on a
   profile-only `REQUIRES` list; unprofiled `idf.py build` then cannot resolve
   the component header.
+- Bad: create a profile project with only a wrapper `main/CMakeLists.txt`, or
+  omit `set(COMPONENTS main)` from its top-level CMake. The first fails on a
+  missing `idf_main.c`; the second builds unselected local modules and can fail
+  on GPIO defaults that the profile intentionally omitted.
+- Bad: use the repository root `idf_component.yml` or `dependencies.lock` as a
+  write target for a profile build; concurrent profiles will overwrite each
+  other's dependency state.
 - Bad: leave imported components below the board outline, check only component
   origins, or accept an autorouter result whose duration is zero and whose
   copper-line/via counts did not change.
@@ -268,6 +295,12 @@ RUN_TESTS=1 ./scripts/build-android-cast.sh
 ./scripts/esp-idf-env.sh build
 node .gitnexus/run.cjs detect-changes -r esp32BMSGPS
 ```
+
+- Profile dependency and temporary-project changes additionally require one
+  build for a cached existing driver profile and one build for a newly selected
+  driver package. Assert that the generated manifest and lock are profile-local,
+  that the component list contains only the selected external display/touch
+  drivers, and that the firmware binary is produced.
 
 - When changing the module registry or its CMake dependency closure, also run
   `./tests/configurator_selftest.sh`; it must prove both that a disabled

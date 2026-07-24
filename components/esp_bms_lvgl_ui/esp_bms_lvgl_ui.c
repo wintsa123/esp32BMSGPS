@@ -8111,6 +8111,24 @@ static uint32_t speed_dashboard_smooth_step(uint32_t index)
                       UINT64_C(1048576));
 }
 
+static int32_t speed_dashboard_scaled_x(const lv_area_t *coords,
+                                        bool portrait,
+                                        int32_t coordinate)
+{
+    const int32_t base_width = portrait ? 240 : 320;
+    return coords->x1 +
+           (int32_t)((int64_t)coordinate * lv_area_get_width(coords) / base_width);
+}
+
+static int32_t speed_dashboard_scaled_y(const lv_area_t *coords,
+                                        bool portrait,
+                                        int32_t coordinate)
+{
+    const int32_t base_height = portrait ? 320 : 240;
+    return coords->y1 +
+           (int32_t)((int64_t)coordinate * lv_area_get_height(coords) / base_height);
+}
+
 static void speed_dashboard_geometry(bool portrait,
                                      const lv_area_t *coords,
                                      lv_point_t *outer,
@@ -8120,18 +8138,38 @@ static void speed_dashboard_geometry(bool portrait,
         const uint32_t smooth = speed_dashboard_smooth_step(index);
         if (portrait) {
             outer[index] = speed_dashboard_point(
-                coords->x1 + 28 + (int32_t)(180U * smooth / 1024U),
-                coords->y1 + 292 - (int32_t)(228U * index / SPEED_DASHBOARD_SEGMENT_COUNT));
+                speed_dashboard_scaled_x(coords,
+                                         true,
+                                         28 + (int32_t)(180U * smooth / 1024U)),
+                speed_dashboard_scaled_y(coords,
+                                         true,
+                                         292 - (int32_t)(228U * index /
+                                                         SPEED_DASHBOARD_SEGMENT_COUNT)));
             inner[index] = speed_dashboard_point(
-                coords->x1 + 86 + (int32_t)(126U * smooth / 1024U),
-                coords->y1 + 292 - (int32_t)(175U * index / SPEED_DASHBOARD_SEGMENT_COUNT));
+                speed_dashboard_scaled_x(coords,
+                                         true,
+                                         86 + (int32_t)(126U * smooth / 1024U)),
+                speed_dashboard_scaled_y(coords,
+                                         true,
+                                         292 - (int32_t)(175U * index /
+                                                         SPEED_DASHBOARD_SEGMENT_COUNT)));
         } else {
             outer[index] = speed_dashboard_point(
-                coords->x1 + 14 + (int32_t)(292U * index / SPEED_DASHBOARD_SEGMENT_COUNT),
-                coords->y1 + 185 - (int32_t)(88U * smooth / 1024U));
+                speed_dashboard_scaled_x(coords,
+                                         false,
+                                         14 + (int32_t)(292U * index /
+                                                        SPEED_DASHBOARD_SEGMENT_COUNT)),
+                speed_dashboard_scaled_y(coords,
+                                         false,
+                                         185 - (int32_t)(88U * smooth / 1024U)));
             inner[index] = speed_dashboard_point(
-                coords->x1 + 14 + (int32_t)(286U * index / SPEED_DASHBOARD_SEGMENT_COUNT),
-                coords->y1 + 222 - (int32_t)(78U * smooth / 1024U));
+                speed_dashboard_scaled_x(coords,
+                                         false,
+                                         14 + (int32_t)(286U * index /
+                                                        SPEED_DASHBOARD_SEGMENT_COUNT)),
+                speed_dashboard_scaled_y(coords,
+                                         false,
+                                         222 - (int32_t)(78U * smooth / 1024U)));
         }
     }
 }
@@ -8244,15 +8282,19 @@ static void speed_dashboard_draw_battery(lv_layer_t *layer,
     if (!SNAPSHOT_FLAG(snapshot, BMS_ONLINE)) {
         return;
     }
-    const int32_t x = coords->x1 + 8;
-    const int32_t y = coords->y1 + (portrait ? 6 : 8);
+    const int32_t x = speed_dashboard_scaled_x(coords, portrait, 8);
+    const int32_t y = speed_dashboard_scaled_y(coords, portrait, portrait ? 6 : 8);
+    const int32_t width = speed_dashboard_scaled_x(coords, portrait, 1) - coords->x1;
+    const int32_t height = speed_dashboard_scaled_y(coords, portrait, 1) - coords->y1;
+    const int32_t battery_width = width > 0 ? width : 1;
+    const int32_t battery_height = height > 0 ? height : 1;
     speed_dashboard_draw_rect(layer,
-                              (lv_area_t){ x, y + 1, x + 6, y + 16 },
+                              (lv_area_t){ x, y + battery_height, x + 6 * battery_width, y + 16 * battery_height },
                               COLOR_WHITE,
                               true,
                               1);
     speed_dashboard_draw_rect(layer,
-                              (lv_area_t){ x + 2, y, x + 4, y + 1 },
+                              (lv_area_t){ x + 2 * battery_width, y, x + 4 * battery_width, y + battery_height },
                               COLOR_WHITE,
                               true,
                               0);
@@ -8261,14 +8303,15 @@ static void speed_dashboard_draw_battery(lv_layer_t *layer,
         return;
     }
     const uint32_t active = speed_dashboard_battery_active_segments(snapshot);
-    const int32_t start_x = x + 11;
-    const int32_t segment_y = y + 1;
+    const int32_t start_x = x + 11 * battery_width;
+    const int32_t segment_y = y + battery_height;
     for (uint32_t index = 0U; index < active; ++index) {
-        const int32_t left = start_x + (int32_t)(index * 4U);
-        const lv_point_t p0 = speed_dashboard_point(left + 1, segment_y);
-        const lv_point_t p1 = speed_dashboard_point(left + 4, segment_y);
-        const lv_point_t p2 = speed_dashboard_point(left + 3, segment_y + 15);
-        const lv_point_t p3 = speed_dashboard_point(left, segment_y + 15);
+        const int32_t left = start_x + (int32_t)(index * 4U * battery_width);
+        const lv_point_t p0 = speed_dashboard_point(left + battery_width, segment_y);
+        const lv_point_t p1 = speed_dashboard_point(left + 4 * battery_width, segment_y);
+        const lv_point_t p2 = speed_dashboard_point(left + 3 * battery_width,
+                                                     segment_y + 15 * battery_height);
+        const lv_point_t p3 = speed_dashboard_point(left, segment_y + 15 * battery_height);
         speed_dashboard_draw_triangle(layer, p0, p1, p2, COLOR_WHITE);
         speed_dashboard_draw_triangle(layer, p0, p2, p3, COLOR_WHITE);
     }
@@ -8279,34 +8322,39 @@ static void speed_dashboard_draw_satellite(lv_layer_t *layer,
                                            bool portrait,
                                            bool gps_fix_valid)
 {
-    const int32_t x = coords->x1 + (portrait ? 35 : 145);
-    const int32_t y = coords->y1 + (portrait ? 29 : 8);
-    const lv_point_t top = speed_dashboard_point(x + 7, y + 2);
-    const lv_point_t right = speed_dashboard_point(x + 12, y + 7);
-    const lv_point_t bottom = speed_dashboard_point(x + 7, y + 12);
-    const lv_point_t left = speed_dashboard_point(x + 2, y + 7);
+    const int32_t x = speed_dashboard_scaled_x(coords, portrait, portrait ? 35 : 145);
+    const int32_t y = speed_dashboard_scaled_y(coords, portrait, portrait ? 29 : 8);
+    const int32_t width = speed_dashboard_scaled_x(coords, portrait, 1) - coords->x1;
+    const int32_t height = speed_dashboard_scaled_y(coords, portrait, 1) - coords->y1;
+    const int32_t icon_width = width > 0 ? width : 1;
+    const int32_t icon_height = height > 0 ? height : 1;
+    const lv_point_t top = speed_dashboard_point(x + 7 * icon_width, y + 2 * icon_height);
+    const lv_point_t right = speed_dashboard_point(x + 12 * icon_width, y + 7 * icon_height);
+    const lv_point_t bottom = speed_dashboard_point(x + 7 * icon_width, y + 12 * icon_height);
+    const lv_point_t left = speed_dashboard_point(x + 2 * icon_width, y + 7 * icon_height);
     speed_dashboard_draw_triangle(layer, top, right, bottom, COLOR_WHITE);
     speed_dashboard_draw_triangle(layer, top, bottom, left, COLOR_WHITE);
     speed_dashboard_draw_line(layer,
-                              speed_dashboard_point(x + 1, y + 1),
-                              speed_dashboard_point(x + 5, y + 5),
+                              speed_dashboard_point(x + icon_width, y + icon_height),
+                              speed_dashboard_point(x + 5 * icon_width, y + 5 * icon_height),
                               COLOR_WHITE,
                               3,
                               false);
     speed_dashboard_draw_line(layer,
-                              speed_dashboard_point(x + 9, y + 9),
-                              speed_dashboard_point(x + 14, y + 14),
+                              speed_dashboard_point(x + 9 * icon_width, y + 9 * icon_height),
+                              speed_dashboard_point(x + 14 * icon_width, y + 14 * icon_height),
                               COLOR_WHITE,
                               3,
                               false);
     speed_dashboard_draw_line(layer,
-                              speed_dashboard_point(x + 7, y + 12),
-                              speed_dashboard_point(x + 3, y + 16),
+                              speed_dashboard_point(x + 7 * icon_width, y + 12 * icon_height),
+                              speed_dashboard_point(x + 3 * icon_width, y + 16 * icon_height),
                               COLOR_WHITE,
                               1,
                               false);
     speed_dashboard_draw_rect(layer,
-                              (lv_area_t){ x + 15, y + 1, x + 20, y + 6 },
+                              (lv_area_t){ x + 15 * icon_width, y + icon_height,
+                                           x + 20 * icon_width, y + 6 * icon_height },
                               gps_fix_valid ? COLOR_SPEED_GPS_OK : COLOR_WARN,
                               true,
                               LV_RADIUS_CIRCLE);
@@ -8401,18 +8449,27 @@ static void speed_dashboard_draw_event_cb(lv_event_t *event)
                                   false);
     }
 
-    const int32_t divider_y = coords.y1 + (portrait ? 47 : 31);
+    const int32_t divider_y = speed_dashboard_scaled_y(&coords,
+                                                        portrait,
+                                                        portrait ? 47 : 31);
     speed_dashboard_draw_line(layer,
-                              speed_dashboard_point(coords.x1 + 8, divider_y),
-                              speed_dashboard_point(coords.x2 - 8, divider_y),
+                              speed_dashboard_point(speed_dashboard_scaled_x(&coords, portrait, 8), divider_y),
+                              speed_dashboard_point(speed_dashboard_scaled_x(&coords,
+                                                                              portrait,
+                                                                              portrait ? 232 : 312),
+                                                    divider_y),
                               COLOR_SPEED_DIVIDER,
                               1,
                               false);
-    speed_dashboard_draw_battery(layer, &coords, portrait, snapshot);
-    speed_dashboard_draw_satellite(layer,
-                                   &coords,
-                                   portrait,
-                                   SNAPSHOT_FLAG(snapshot, GPS_FIX_VALID));
+    const bool compact = lv_area_get_width(&coords) < 180 ||
+                         lv_area_get_height(&coords) < 180;
+    if (!compact) {
+        speed_dashboard_draw_battery(layer, &coords, portrait, snapshot);
+        speed_dashboard_draw_satellite(layer,
+                                       &coords,
+                                       portrait,
+                                       SNAPSHOT_FLAG(snapshot, GPS_FIX_VALID));
+    }
     const bool controller_online = SNAPSHOT_FLAG(snapshot, CONTROLLER_ONLINE);
     const bool controller_temp_visible = controller_online &&
                                          SNAPSHOT_FLAG(snapshot, CONTROLLER_TEMP_VALID);
@@ -8424,23 +8481,23 @@ static void speed_dashboard_draw_event_cb(lv_event_t *event)
     prefix.color = COLOR_TEXT;
     prefix.opa = LV_OPA_COVER;
     prefix.text_static = 1;
-    if (controller_temp_visible) {
+    if (!compact && controller_temp_visible) {
         prefix.text = "控";
         const lv_area_t area = {
-            .x1 = coords.x1 + (portrait ? 96 : 188),
-            .y1 = coords.y1 + (portrait ? 32 : 11),
-            .x2 = coords.x1 + (portrait ? 111 : 203),
-            .y2 = coords.y1 + (portrait ? 46 : 25),
+            .x1 = speed_dashboard_scaled_x(&coords, portrait, portrait ? 96 : 188),
+            .y1 = speed_dashboard_scaled_y(&coords, portrait, portrait ? 32 : 11),
+            .x2 = speed_dashboard_scaled_x(&coords, portrait, portrait ? 111 : 203),
+            .y2 = speed_dashboard_scaled_y(&coords, portrait, portrait ? 46 : 25),
         };
         lv_draw_label(layer, &prefix, &area);
     }
-    if (motor_temp_visible) {
+    if (!compact && motor_temp_visible) {
         prefix.text = "电机";
         const lv_area_t area = {
-            .x1 = coords.x1 + (portrait ? 170 : 250),
-            .y1 = coords.y1 + (portrait ? 32 : 11),
-            .x2 = coords.x1 + (portrait ? 201 : 281),
-            .y2 = coords.y1 + (portrait ? 46 : 25),
+            .x1 = speed_dashboard_scaled_x(&coords, portrait, portrait ? 170 : 250),
+            .y1 = speed_dashboard_scaled_y(&coords, portrait, portrait ? 32 : 11),
+            .x2 = speed_dashboard_scaled_x(&coords, portrait, portrait ? 201 : 281),
+            .y2 = speed_dashboard_scaled_y(&coords, portrait, portrait ? 46 : 25),
         };
         lv_draw_label(layer, &prefix, &area);
     }
@@ -8460,77 +8517,96 @@ static void speed_dashboard_draw_event_cb(lv_event_t *event)
 static void speed_dashboard_apply_layout(void)
 {
     const bool portrait = s_ui.width < s_ui.height;
-    const int32_t status_y = portrait ? 5 : 7;
-    const int32_t status_height = 20;
+    const int32_t base_width = portrait ? 240 : 320;
+    const int32_t base_height = portrait ? 320 : 240;
+    const bool compact = s_ui.width < 180 || s_ui.height < 180;
+#define SPEED_X(value) ((int32_t)((int64_t)(value) * s_ui.width / base_width))
+#define SPEED_Y(value) ((int32_t)((int64_t)(value) * s_ui.height / base_height))
+    const int32_t status_y = SPEED_Y(portrait ? 5 : 7);
+    const int32_t status_height = SPEED_Y(20);
     const int32_t consumption_y = status_y + 1;
-    const int32_t temperature_y = portrait ? 30 : status_y + 2;
+    const int32_t temperature_y = SPEED_Y(portrait ? 30 : 9);
     lv_obj_set_pos(s_ui.speed_art, 0, 0);
     lv_obj_set_size(s_ui.speed_art, s_ui.width, s_ui.height);
     if (portrait) {
-        lv_obj_set_pos(s_ui.speed, 14, 58);
-        lv_obj_set_size(s_ui.speed, 104, 52);
-        lv_obj_set_pos(s_ui.gps_speed_unit, 20, 105);
-        lv_obj_set_size(s_ui.gps_speed_unit, 76, 26);
-        lv_obj_set_pos(s_ui.speed_soc, 90, status_y);
-        lv_obj_set_size(s_ui.speed_soc, 30, status_height);
-        lv_obj_set_pos(s_ui.speed_consumption, 58, consumption_y);
-        lv_obj_set_size(s_ui.speed_consumption, 174, status_height);
-        lv_obj_set_pos(s_ui.speed_controller_temp, 98, temperature_y);
-        lv_obj_set_size(s_ui.speed_controller_temp, 44, status_height);
-        lv_obj_set_pos(s_ui.speed_motor_temp, 184, temperature_y);
-        lv_obj_set_size(s_ui.speed_motor_temp, 48, status_height);
-        lv_obj_set_pos(s_ui.speed_gear, 167, 230);
-        lv_obj_set_size(s_ui.speed_gear, 40, 44);
-        lv_obj_set_pos(s_ui.gps_detail, 112, 278);
-        lv_obj_set_size(s_ui.gps_detail, 120, 34);
+        lv_obj_set_pos(s_ui.speed, SPEED_X(14), SPEED_Y(58));
+        lv_obj_set_size(s_ui.speed, SPEED_X(104), SPEED_Y(52));
+        lv_obj_set_pos(s_ui.gps_speed_unit, SPEED_X(20), SPEED_Y(105));
+        lv_obj_set_size(s_ui.gps_speed_unit, SPEED_X(76), SPEED_Y(26));
+        lv_obj_set_pos(s_ui.speed_soc, SPEED_X(90), status_y);
+        lv_obj_set_size(s_ui.speed_soc, SPEED_X(30), status_height);
+        lv_obj_set_pos(s_ui.speed_consumption, SPEED_X(58), consumption_y);
+        lv_obj_set_size(s_ui.speed_consumption, SPEED_X(174), status_height);
+        lv_obj_set_pos(s_ui.speed_controller_temp, SPEED_X(98), temperature_y);
+        lv_obj_set_size(s_ui.speed_controller_temp, SPEED_X(44), status_height);
+        lv_obj_set_pos(s_ui.speed_motor_temp, SPEED_X(184), temperature_y);
+        lv_obj_set_size(s_ui.speed_motor_temp, SPEED_X(48), status_height);
+        lv_obj_set_pos(s_ui.speed_gear, SPEED_X(167), SPEED_Y(230));
+        lv_obj_set_size(s_ui.speed_gear, SPEED_X(40), SPEED_Y(44));
+        lv_obj_set_pos(s_ui.gps_detail, SPEED_X(112), SPEED_Y(278));
+        lv_obj_set_size(s_ui.gps_detail, SPEED_X(120), SPEED_Y(34));
         static const int16_t positions[SPEED_DASHBOARD_SCALE_LABEL_COUNT][2] = {
             { 16, 264 }, { 56, 218 }, { 101, 160 }, { 139, 111 }, { 178, 67 }, { 207, 51 },
         };
         for (uint32_t index = 0U; index < SPEED_DASHBOARD_SCALE_LABEL_COUNT; ++index) {
-            lv_obj_set_pos(s_ui.speed_scale_labels[index], positions[index][0], positions[index][1]);
-            lv_obj_set_size(s_ui.speed_scale_labels[index], 34, 18);
+            lv_obj_set_pos(s_ui.speed_scale_labels[index], SPEED_X(positions[index][0]), SPEED_Y(positions[index][1]));
+            lv_obj_set_size(s_ui.speed_scale_labels[index], SPEED_X(34), SPEED_Y(18));
         }
     } else {
-        lv_obj_set_pos(s_ui.speed, 0, 56);
-        lv_obj_set_size(s_ui.speed, 94, 52);
-        lv_obj_set_pos(s_ui.gps_speed_unit, 98, 78);
-        lv_obj_set_size(s_ui.gps_speed_unit, 68, 26);
-        lv_obj_set_pos(s_ui.speed_soc, 90, status_y);
-        lv_obj_set_size(s_ui.speed_soc, 30, status_height);
-        lv_obj_set_pos(s_ui.speed_consumption, 54, consumption_y);
-        lv_obj_set_size(s_ui.speed_consumption, 86, status_height);
-        lv_obj_set_pos(s_ui.speed_controller_temp, 190, temperature_y);
-        lv_obj_set_size(s_ui.speed_controller_temp, 44, status_height);
-        lv_obj_set_pos(s_ui.speed_motor_temp, 270, temperature_y);
-        lv_obj_set_size(s_ui.speed_motor_temp, 42, status_height);
-        lv_obj_set_pos(s_ui.speed_gear, 269, 153);
-        lv_obj_set_size(s_ui.speed_gear, 38, 40);
-        lv_obj_set_pos(s_ui.gps_detail, 196, 195);
-        lv_obj_set_size(s_ui.gps_detail, 120, 34);
+        lv_obj_set_pos(s_ui.speed, 0, SPEED_Y(56));
+        lv_obj_set_size(s_ui.speed, SPEED_X(94), SPEED_Y(52));
+        lv_obj_set_pos(s_ui.gps_speed_unit, SPEED_X(98), SPEED_Y(78));
+        lv_obj_set_size(s_ui.gps_speed_unit, SPEED_X(68), SPEED_Y(26));
+        lv_obj_set_pos(s_ui.speed_soc, SPEED_X(90), status_y);
+        lv_obj_set_size(s_ui.speed_soc, SPEED_X(30), status_height);
+        lv_obj_set_pos(s_ui.speed_consumption, SPEED_X(54), consumption_y);
+        lv_obj_set_size(s_ui.speed_consumption, SPEED_X(86), status_height);
+        lv_obj_set_pos(s_ui.speed_controller_temp, SPEED_X(190), temperature_y);
+        lv_obj_set_size(s_ui.speed_controller_temp, SPEED_X(44), status_height);
+        lv_obj_set_pos(s_ui.speed_motor_temp, SPEED_X(270), temperature_y);
+        lv_obj_set_size(s_ui.speed_motor_temp, SPEED_X(42), status_height);
+        lv_obj_set_pos(s_ui.speed_gear, SPEED_X(269), SPEED_Y(153));
+        lv_obj_set_size(s_ui.speed_gear, SPEED_X(38), SPEED_Y(40));
+        lv_obj_set_pos(s_ui.gps_detail, SPEED_X(196), SPEED_Y(195));
+        lv_obj_set_size(s_ui.gps_detail, SPEED_X(120), SPEED_Y(34));
         static const int16_t positions[SPEED_DASHBOARD_SCALE_LABEL_COUNT][2] = {
             { 8, 168 }, { 53, 148 }, { 111, 124 }, { 174, 102 }, { 244, 84 }, { 286, 80 },
         };
         for (uint32_t index = 0U; index < SPEED_DASHBOARD_SCALE_LABEL_COUNT; ++index) {
-            lv_obj_set_pos(s_ui.speed_scale_labels[index], positions[index][0], positions[index][1]);
-            lv_obj_set_size(s_ui.speed_scale_labels[index], 34, 18);
+            lv_obj_set_pos(s_ui.speed_scale_labels[index], SPEED_X(positions[index][0]), SPEED_Y(positions[index][1]));
+            lv_obj_set_size(s_ui.speed_scale_labels[index], SPEED_X(34), SPEED_Y(18));
         }
     }
+    lv_obj_set_style_text_font(s_ui.speed,
+                               compact ? &lv_font_montserrat_28 : &lv_font_montserrat_48,
+                               LV_PART_MAIN);
+    lv_obj_set_style_text_font(s_ui.gps_speed_unit,
+                               compact ? &lv_font_montserrat_14 : &lv_font_montserrat_24,
+                               LV_PART_MAIN);
     lv_obj_set_style_text_font(s_ui.speed_soc, &settings_zh_16, LV_PART_MAIN);
     lv_obj_set_style_text_font(s_ui.speed_consumption, &settings_zh_16, LV_PART_MAIN);
     lv_obj_set_style_text_font(s_ui.speed_controller_temp, &settings_zh_16, LV_PART_MAIN);
     lv_obj_set_style_text_font(s_ui.speed_motor_temp, &settings_zh_16, LV_PART_MAIN);
     lv_obj_set_style_text_align(s_ui.speed_controller_temp, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
     lv_obj_set_style_text_align(s_ui.speed_motor_temp, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
-    const int32_t gear_height = portrait ? 44 : 40;
-    const int32_t gear_padding = (gear_height - (int32_t)lv_font_montserrat_28.line_height) / 2;
+    const int32_t gear_height = SPEED_Y(portrait ? 44 : 40);
+    const int32_t gear_font_height = compact ? (int32_t)lv_font_montserrat_24.line_height :
+                                               (int32_t)lv_font_montserrat_28.line_height;
+    const int32_t gear_padding = (gear_height - gear_font_height) / 2;
+    lv_obj_set_style_text_font(s_ui.speed_gear,
+                               compact ? &lv_font_montserrat_24 : &lv_font_montserrat_28,
+                               LV_PART_MAIN);
     lv_obj_set_style_text_align(s_ui.speed_gear, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_pad_top(s_ui.speed_gear, gear_padding, LV_PART_MAIN);
     lv_obj_set_style_pad_bottom(s_ui.speed_gear, gear_padding, LV_PART_MAIN);
+#undef SPEED_X
+#undef SPEED_Y
 }
 
 static void set_gps_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
 {
     char text[32];
+    const bool compact = s_ui.width < 180 || s_ui.height < 180;
     const bool bms_online = SNAPSHOT_FLAG(snapshot, BMS_ONLINE);
     if (SNAPSHOT_FLAG(snapshot, SPEED_VALID)) {
         snprintf(text,
@@ -8562,7 +8638,7 @@ static void set_gps_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
                   s_ui.speed_consumption_buf,
                   sizeof(s_ui.speed_consumption_buf),
                   text);
-    set_obj_hidden(s_ui.speed_consumption, !bms_online);
+    set_obj_hidden(s_ui.speed_consumption, compact || !bms_online);
 
     const bool controller_online = SNAPSHOT_FLAG(snapshot, CONTROLLER_ONLINE);
     const bool controller_temp_visible = controller_online &&
@@ -8589,8 +8665,8 @@ static void set_gps_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
                   s_ui.speed_gear_buf,
                   sizeof(s_ui.speed_gear_buf),
                   text);
-    set_obj_hidden(s_ui.speed_controller_temp, !controller_temp_visible);
-    set_obj_hidden(s_ui.speed_motor_temp, !motor_temp_visible);
+    set_obj_hidden(s_ui.speed_controller_temp, compact || !controller_temp_visible);
+    set_obj_hidden(s_ui.speed_motor_temp, compact || !motor_temp_visible);
     set_obj_hidden(s_ui.speed_gear, false);
 
     if (snapshot->gps_local_time_valid) {
@@ -8617,6 +8693,7 @@ static void set_gps_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
                       s_ui.speed_scale_buf[index],
                       sizeof(s_ui.speed_scale_buf[index]),
                       text);
+        set_obj_hidden(s_ui.speed_scale_labels[index], compact);
     }
     const esp_bms_speed_dashboard_style_t style =
         speed_dashboard_style_from_snapshot(snapshot);

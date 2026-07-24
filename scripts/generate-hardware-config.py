@@ -75,12 +75,22 @@ def bool_value(values: dict[str, str], key: str, source: Path) -> str:
     raise ValueError(f"{source}: {key} must be 0 or 1")
 
 
-def config_macro(profile: dict[str, str], board: dict[str, str], board_path: Path,
+def config_macro(profile: dict[str, str], mcu_record: dict[str, str], mcu_path: Path,
+                 board: dict[str, str], board_path: Path,
                  display: dict[str, str], display_path: Path,
                  touch: dict[str, str], touch_path: Path) -> str:
     firmware_version = profile.get("FIRMWARE_VERSION")
     if not firmware_version:
         raise ValueError("firmware.env: missing FIRMWARE_VERSION")
+    targets = require(display, "TARGETS", display_path)
+    mcu = require(profile, "MCU", Path("firmware.env"))
+    communication_coprocessor = require(mcu_record, "COMMUNICATION_COPROCESSOR", mcu_path)
+    if mcu not in targets.split(","):
+        raise ValueError(f"{display_path}: display does not support MCU {mcu}")
+    touch_targets = require(touch, "TARGETS", touch_path)
+    if mcu not in touch_targets.split(","):
+        raise ValueError(f"{touch_path}: touch controller does not support MCU {mcu}")
+    display_size_inch = require(display, "SIZE_INCH", display_path)
     panel = enum_value(require(display, "DRIVER", display_path), {
         "ST7789": "ESP_BMS_LVGL_PANEL_ST7789",
         "ST7796": "ESP_BMS_LVGL_PANEL_ST7796",
@@ -201,6 +211,8 @@ def config_macro(profile: dict[str, str], board: dict[str, str], board_path: Pat
     }
     lines = ["#pragma once", "", "/* Generated from firmware.env and the selected catalog records. */",
              f"#define ESP_BMS_PROFILE_FIRMWARE_VERSION \"{firmware_version}\"",
+             f"#define ESP_BMS_PROFILE_COMMUNICATION_COPROCESSOR \"{communication_coprocessor}\"",
+             f"#define ESP_BMS_PROFILE_DISPLAY_SIZE_INCH \"{display_size_inch}\"",
              f"#define ESP_BMS_PROFILE_GPS_RX {gpio(profile, 'GPS_RX', False)}",
              f"#define ESP_BMS_PROFILE_GPS_TX {gpio(profile, 'GPS_TX', False)}",
              f"#define ESP_BMS_PROFILE_GPS_PPS {gpio(profile, 'GPS_PPS', False)}",
@@ -243,8 +255,19 @@ def main() -> int:
         else:
             display_path = args.catalog / "display" / f"{display_id}.env"
             touch_path = args.catalog / "input" / f"{input_id}.env"
+            mcu_path = args.catalog / "mcu" / f"{profile['MCU']}.env"
             board_path = args.catalog / "board" / f"{board_id}.env"
-            content = config_macro(profile, read_env(board_path), board_path,
+            if board_id == "custom":
+                board_path = args.firmware_env
+                board = {
+                    "AUDIO_BACKEND": "NONE",
+                    "AUDIO_DAC_CHANNEL": "0",
+                    "AUDIO_ENABLE_ACTIVE_LEVEL": "0",
+                }
+            else:
+                board = read_env(board_path)
+            content = config_macro(profile, read_env(mcu_path), mcu_path,
+                                   board, board_path,
                                    read_env(display_path), display_path,
                                    read_env(touch_path), touch_path)
         args.output.parent.mkdir(parents=True, exist_ok=True)

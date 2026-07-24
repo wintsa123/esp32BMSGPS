@@ -35,6 +35,49 @@ expect_fail 'dangerous' "${repo_root}/start.sh" validate --lang en --gpio TFT_DC
 expect_fail 'assigned to both' "${repo_root}/start.sh" validate --lang en --gpio TFT_DC=4
 expect_fail 'missing file:' "${repo_root}/start.sh" validate --lang en --mcu esp32s3 --board esp32s3-wroom-1-n16r8-i80 --display ili9488-i80 --input ft6336u-i2c
 
+cat >"${work_dir}/c3-spi.env" <<'EOF'
+SCHEMA_VERSION=1
+PROFILE=c3-spi
+MCU=esp32c3
+BOARD=custom
+BOARD_NAME=c3-spi-board
+DISPLAY=st7789-1p8-spi
+INPUT=none
+MODULES=
+FLASH_MB=4
+PSRAM_MB=0
+PARTITIONS=firmware/partitions/esp32-wroom-32e-legacy.csv
+OUTPUT_GPIO=TFT_MOSI:3,TFT_SCLK:4,TFT_CS:5,TFT_DC:6
+EOF
+FIRMWARE_BUILD_ROOT="${work_dir}/c3-build" "${repo_root}/start.sh" configure --lang en --config "${work_dir}/c3-spi.env" >/dev/null
+rg -qx 'MCU=esp32c3' "${work_dir}/c3-build/c3-spi/firmware.env"
+rg -Fx '#define ESP_BMS_PROFILE_DISPLAY_SIZE_INCH "1.8"' "${work_dir}/c3-build/c3-spi/generated/esp_bms_profile_hardware.h"
+expect_fail 'display ili9488-8p0-i80 is unavailable on esp32c3' "${repo_root}/start.sh" validate --lang en --config "${work_dir}/c3-spi.env" --display ili9488-8p0-i80
+
+cat >"${work_dir}/p4-i80.env" <<'EOF'
+SCHEMA_VERSION=1
+PROFILE=p4-i80
+MCU=esp32p4
+BOARD=custom
+BOARD_NAME=p4-i80-board
+DISPLAY=ili9488-8p0-i80
+INPUT=none
+MODULES=
+FLASH_MB=16
+PSRAM_MB=0
+PARTITIONS=firmware/partitions/esp32-wroom-32e-legacy.csv
+OUTPUT_GPIO=TFT_D0:4,TFT_D1:5,TFT_D2:6,TFT_D3:7,TFT_D4:8,TFT_D5:9,TFT_D6:10,TFT_D7:11,TFT_WR:12,TFT_CS:13,TFT_DC:14
+EOF
+FIRMWARE_BUILD_ROOT="${work_dir}/p4-build" "${repo_root}/start.sh" configure --lang en --config "${work_dir}/p4-i80.env" >/dev/null
+rg -qx 'MCU=esp32p4' "${work_dir}/p4-build/p4-i80/firmware.env"
+rg -Fx '#define ESP_BMS_PROFILE_DISPLAY_SIZE_INCH "8.0"' "${work_dir}/p4-build/p4-i80/generated/esp_bms_profile_hardware.h"
+rg -Fx '#define ESP_BMS_PROFILE_COMMUNICATION_COPROCESSOR "ESP32C6"' "${work_dir}/p4-build/p4-i80/generated/esp_bms_profile_hardware.h"
+rg -Fx 'set(ESP_BMS_PROFILE_COMMUNICATION_COPROCESSOR "ESP32C6" CACHE STRING "Firmware profile radio coprocessor" FORCE)' "${work_dir}/p4-build/p4-i80/generated/profile.cmake"
+rg -Fx 'COMMUNICATION_COPROCESSOR=ESP32C6' "${work_dir}/p4-build/p4-i80/report.txt"
+rg -Fq 'atanisoft/esp_lcd_ili9488:' "${work_dir}/p4-build/p4-i80/generated/idf_component.yml"
+expect_fail 'bms requires capability BLE' "${repo_root}/start.sh" validate --lang en --config "${work_dir}/p4-i80.env" --modules bms
+expect_fail 'network requires capability WIFI' "${repo_root}/start.sh" validate --lang en --config "${work_dir}/p4-i80.env" --modules network
+
 FIRMWARE_BUILD_ROOT="${work_dir}/s3-default-build" "${repo_root}/start.sh" configure --profile s3-default >/dev/null
 rg -qx 'MCU=esp32s3' "${work_dir}/s3-default-build/s3-default/firmware.env"
 rg -qx 'BOARD=esp32s3-n16r8-st7796u-gt1151' "${work_dir}/s3-default-build/s3-default/firmware.env"
@@ -112,7 +155,8 @@ rg -qx 'PROFILE=golden' "${work_dir}/bash-build/golden/firmware.env"
 rg -qx 'MODULES=network,ota' "${work_dir}/bash-build/golden/firmware.env"
 rg -qx 'MODULES=bms' "${work_dir}/no-audio-build/no-audio/firmware.env"
 rg -qx 'DASHBOARDS=' "${work_dir}/no-audio-build/no-audio/firmware.env"
-[[ "$(find "${work_dir}/bash-build/golden" -maxdepth 1 -type f | wc -l)" == 1 ]]
+test -f "${work_dir}/bash-build/golden/generated/idf_component.yml"
+test -f "${work_dir}/bash-build/golden/generated/profile.cmake"
 
 saved_build_root="${work_dir}/saved-build"
 FIRMWARE_BUILD_ROOT="$saved_build_root" "${repo_root}/start.sh" configure --lang en --profile saved-s3 --modules gps --gpio GPS_RX=37 --gpio GPS_PPS=47 --gpio GPS_TX=48 >/dev/null
@@ -150,6 +194,11 @@ IDF_PATH="$fake_idf_root" \
 rg -Fx 'set(ESP_BMS_FEATURE_DASHBOARD_S1000RR 0 CACHE BOOL "Firmware profile S1000RR dashboard" FORCE)' "${work_dir}/dashboard-fireblade-build/dashboard-fireblade/generated/profile.cmake"
 rg -Fx 'set(ESP_BMS_FEATURE_DASHBOARD_CONTROLLER 0 CACHE BOOL "Firmware profile controller dashboard" FORCE)' "${work_dir}/dashboard-fireblade-build/dashboard-fireblade/generated/profile.cmake"
 rg -Fx 'set(ESP_BMS_FEATURE_DASHBOARD_FIREBLADE 1 CACHE BOOL "Firmware profile Fireblade dashboard" FORCE)' "${work_dir}/dashboard-fireblade-build/dashboard-fireblade/generated/profile.cmake"
+rg -Fq 'espressif/esp_lcd_st7796:' "${work_dir}/dashboard-fireblade-build/dashboard-fireblade/generated/idf_component.yml"
+rg -Fq 'espressif/esp_lcd_touch_gt1151:' "${work_dir}/dashboard-fireblade-build/dashboard-fireblade/generated/idf_component.yml"
+! rg -Fq 'atanisoft/esp_lcd_ili9488:' "${work_dir}/dashboard-fireblade-build/dashboard-fireblade/generated/idf_component.yml"
+! rg -Fq 'espressif/esp_lcd_ili9341:' "${work_dir}/dashboard-fireblade-build/dashboard-fireblade/generated/idf_component.yml"
+rg -Fx 'set(ESP_BMS_PROFILE_DRIVER_REQUIRES "esp_lcd_st7796;esp_lcd_touch_gt1151" CACHE STRING "Firmware profile display and touch components" FORCE)' "${work_dir}/dashboard-fireblade-build/dashboard-fireblade/generated/profile.cmake"
 
 fake_git_bin="${work_dir}/fake-git-bin"
 mkdir -p "$fake_git_bin"
@@ -241,17 +290,13 @@ PROFILE=custom-gps
 MCU=esp32
 BOARD=custom
 BOARD_NAME=my-esp32-board
-DISPLAY=custom
-DISPLAY_NAME=my-spi-panel
-INPUT=custom
-INPUT_NAME=my-touch
-DISPLAY_BUS=SPI
-INPUT_BUS=SPI
+DISPLAY=st7789-spi
+INPUT=ft6336u-i2c
 FLASH_MB=4
 PSRAM_MB=0
 PARTITIONS=firmware/partitions/esp32-wroom-32e-legacy.csv
-INPUT_GPIO=TOUCH_IRQ:36,TOUCH_MISO:39,GPS_RX:27,GPS_PPS:35
-OUTPUT_GPIO=TFT_MOSI:13,TFT_SCLK:14,TFT_CS:15,TFT_DC:2,TFT_BACKLIGHT:21,TOUCH_MOSI:32,TOUCH_CS:33,TOUCH_SCLK:25,GPS_TX:18
+INPUT_GPIO=TOUCH_INT:36,GPS_RX:27,GPS_PPS:35
+OUTPUT_GPIO=TFT_MOSI:13,TFT_SCLK:14,TFT_CS:15,TFT_DC:2,TFT_BACKLIGHT:21,TOUCH_SDA:32,TOUCH_SCL:33,GPS_TX:18
 MODULES=gps
 CONFIRM_DANGEROUS_GPIO=YES
 EOF
@@ -292,19 +337,19 @@ rg -q '^config: .*/interactive-retry-build/esp32s3-n16r8-st7796u-gt1151/firmware
 
 printf '1\n2\n\n\n2,7\n\nn\n' | FIRMWARE_BUILD_ROOT="${work_dir}/interactive-cancel-build" "${repo_root}/start.sh" >"${work_dir}/interactive-cancel.out"
 rg -Fq '  1) ili9488-i80 ' "${work_dir}/interactive-cancel.out"
-rg -Fq '  1) ft6336u-i2c ' "${work_dir}/interactive-cancel.out"
+rg -Fq '  1) cst816s-i2c ' "${work_dir}/interactive-cancel.out"
 rg -q '^已取消生成配置。$' "${work_dir}/interactive-cancel.out"
 ! test -e "${work_dir}/interactive-cancel-build/esp32s3-n16r8-st7796u-gt1151/firmware.env"
 
 printf '%s\n' \
-    2 3 console-custom 1 '' '' '' '' gps '1,2' \
-    13 14 15 2 21 36 32 33 27 35 18 y y y |
+    2 3 console-custom 1 '' '' 3 2 gps '1,2' \
+    13 14 15 2 36 32 33 27 35 18 y y '' '' y |
     FIRMWARE_BUILD_ROOT="${work_dir}/interactive-custom-build" "${repo_root}/start.sh" >"${work_dir}/interactive-custom.out"
 rg -Fq '  3) custom ' "${work_dir}/interactive-custom.out"
 rg -Fq 'MCU' "${work_dir}/interactive-custom.out"
 rg -Fq 'GPIO range: 0-39' "${work_dir}/interactive-custom.out"
 rg -Fq 'Selected MCU: esp32' "${work_dir}/interactive-custom.out"
-rg -Fq '  1) st7789-spi ' "${work_dir}/interactive-custom.out"
+rg -Fq '  3) st7789-spi ' "${work_dir}/interactive-custom.out"
 ! rg -Fq 'ili9488-i80' "${work_dir}/interactive-custom.out"
 [[ "$(rg -c '^[[:space:]]+[0-9]+\) none ' "${work_dir}/interactive-custom.out")" == 1 ]]
 rg -Fq 'Display' "${work_dir}/interactive-custom.out"
@@ -314,11 +359,25 @@ rg -Fq 'Touch' "${work_dir}/interactive-custom.out"
 rg -qx 'PROFILE=console-custom' "${work_dir}/interactive-custom-build/console-custom/firmware.env"
 rg -qx 'BOARD=custom' "${work_dir}/interactive-custom-build/console-custom/firmware.env"
 rg -qx 'DISPLAY=st7789-spi' "${work_dir}/interactive-custom-build/console-custom/firmware.env"
-rg -qx 'INPUT=gt1151-i2c' "${work_dir}/interactive-custom-build/console-custom/firmware.env"
+rg -qx 'INPUT=ft6336u-i2c' "${work_dir}/interactive-custom-build/console-custom/firmware.env"
 rg -qx 'GPIO_GPS_RX=27' "${work_dir}/interactive-custom-build/console-custom/firmware.env"
 rg -qx 'GPIO_TFT_MOSI=13' "${work_dir}/interactive-custom-build/console-custom/firmware.env"
 rg -qx 'GPIO_TOUCH_SDA=32' "${work_dir}/interactive-custom-build/console-custom/firmware.env"
 rg -qx 'DASHBOARDS=fireblade,s1000rr' "${work_dir}/interactive-custom-build/console-custom/firmware.env"
+
+cat >"${work_dir}/none-touch.env" <<'EOF'
+SCHEMA_VERSION=1
+PROFILE=none-touch
+MCU=esp32s3
+BOARD=esp32s3-n16r8-st7796u-gt1151
+DISPLAY=st7796u-i80
+INPUT=none
+MODULES=ota
+EOF
+FIRMWARE_BUILD_ROOT="${work_dir}/none-touch-build" "${repo_root}/start.sh" configure --lang en --config "${work_dir}/none-touch.env" >/dev/null
+! rg -q '^GPIO_TOUCH_' "${work_dir}/none-touch-build/none-touch/firmware.env"
+! rg -q '^  .*esp_lcd_touch_' "${work_dir}/none-touch-build/none-touch/generated/idf_component.yml"
+rg -Fx 'set(ESP_BMS_PROFILE_DRIVER_REQUIRES "esp_lcd_st7796" CACHE STRING "Firmware profile display and touch components" FORCE)' "${work_dir}/none-touch-build/none-touch/generated/profile.cmake"
 
 cat >"${profile_dir}/profile.cmake" <<'EOF'
 set(ESP_BMS_FEATURE_AUDIO 0)
@@ -371,13 +430,22 @@ rg -Fq '$Translations = @(' "${repo_root}/start.ps1"
 ! rg -Fq "'Input' =" "${repo_root}/start.ps1"
 rg -Fq 'function Select-ModuleOptionsWithKeyboard' "${repo_root}/start.ps1"
 rg -Fq 'function Select-CatalogOptionsWithKeyboard' "${repo_root}/start.ps1"
+rg -Fq 'IsNullOrEmpty($script:BoardDisplayBus)' "${repo_root}/start.ps1"
+rg -Fq 'board requires INPUT_BUS' "${repo_root}/start.ps1"
 rg -Fq 'choose_dashboard_options_with_keyboard' "${repo_root}/start.sh"
 rg -Fq 'choose_catalog_option_with_keyboard' "${repo_root}/start.sh"
+[[ "$(rg -F "printf '\\033[2J\\033[H'" "${repo_root}/start.sh" | wc -l | tr -d '[:space:]')" == 2 ]]
+rg -U -Fq $'choose_board_or_saved_profile\n    [[ "$MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST" == YES ]] && continue' "${repo_root}/start.sh"
+rg -U -Fq $'choose_catalog_option mcu \'MCU\' "${CFG[MCU]}" "${choices[@]}"\n        [[ "$MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST" == YES ]] && continue' "${repo_root}/start.sh"
+rg -U -Fq $'choose_catalog_option display \'Display\' "$default_option" "${choices[@]}"\n        [[ "$MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST" == YES ]] && continue' "${repo_root}/start.sh"
 rg -Fq 'Left to return to the previous feature list' "${repo_root}/start.ps1"
 rg -Fq 'Left to return, Enter to continue.' "${repo_root}/start.ps1"
 rg -Fq '← 返回上一个功能清单' "${repo_root}/start.sh"
 rg -Fq 'MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST=YES' "${repo_root}/start.sh"
 rg -Fq '[ConsoleKey]::LeftArrow' "${repo_root}/start.ps1"
+[[ "$(rg -F 'Clear-Host' "${repo_root}/start.ps1" | wc -l | tr -d '[:space:]')" == 2 ]]
+rg -Fq 'function Update-KeyboardMenuPrefixes' "${repo_root}/start.ps1"
+rg -U -Fq $"$Config.DISPLAY = Select-CatalogOption 'display' 'Display' $DisplayDefault $DisplayOptions\n        if ($script:ReturnToPreviousFunctionList) { continue }" "${repo_root}/start.ps1"
 rg -Fq "'DISPLAY_DATA_WIDTH'" "${repo_root}/start.ps1"
 rg -Fq "'DATA_WIDTH'" "${repo_root}/start.ps1"
 ! rg -Fq 'scripts/esp-idf-env.sh' "${repo_root}/start.ps1"

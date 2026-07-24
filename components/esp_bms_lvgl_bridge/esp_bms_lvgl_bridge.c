@@ -14,15 +14,33 @@
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_panel_vendor.h"
 #include "esp_lcd_touch.h"
+#if ESP_BMS_PROFILE_TOUCH_FT5X06
 #include "esp_lcd_touch_ft5x06.h"
+#endif
+#if ESP_BMS_PROFILE_TOUCH_GT1151
 #include "esp_lcd_touch_gt1151.h"
+#endif
+#if ESP_BMS_PROFILE_TOUCH_GT911
 #include "esp_lcd_touch_gt911.h"
+#endif
+#if ESP_BMS_PROFILE_TOUCH_CST816S
 #include "esp_lcd_touch_cst816s.h"
+#endif
+#if ESP_BMS_PROFILE_TOUCH_XPT2046
 #include "esp_lcd_touch_xpt2046.h"
+#endif
+#if ESP_BMS_PROFILE_PANEL_ILI9488
 #include "esp_lcd_ili9488.h"
+#endif
+#if ESP_BMS_PROFILE_PANEL_ILI9341
 #include "esp_lcd_ili9341.h"
+#endif
+#if ESP_BMS_PROFILE_PANEL_GC9A01
 #include "esp_lcd_gc9a01.h"
+#endif
+#if ESP_BMS_PROFILE_PANEL_ST7796
 #include "esp_lcd_st7796.h"
+#endif
 #include "esp_bms_lvgl_contract.h"
 #include "esp_lv_adapter.h"
 #include "esp_lv_adapter_input.h"
@@ -801,6 +819,7 @@ static esp_err_t register_touch(const esp_bms_lvgl_bridge_config_t *config)
     return ESP_OK;
 }
 
+#if ESP_BMS_PROFILE_TOUCH_XPT2046
 static esp_err_t init_touch_xpt2046(const esp_bms_lvgl_bridge_config_t *config,
                                     uint16_t hres,
                                     uint16_t vres)
@@ -830,6 +849,7 @@ static esp_err_t init_touch_xpt2046(const esp_bms_lvgl_bridge_config_t *config,
                         TAG, "create XPT2046 touch failed");
     return register_touch(config);
 }
+#endif
 
 static esp_err_t init_touch_i2c(const esp_bms_lvgl_bridge_config_t *config,
                                 uint16_t hres,
@@ -862,19 +882,31 @@ static esp_err_t init_touch_i2c(const esp_bms_lvgl_bridge_config_t *config,
     ESP_RETURN_ON_ERROR(esp_lcd_new_panel_io_i2c(s_touch_i2c_bus, &touch_io_config, &s_touch_io),
                         TAG, "create touch I2C panel IO failed");
     const esp_lcd_touch_config_t touch_config = make_touch_config(config, hres, vres);
+ #if ESP_BMS_PROFILE_TOUCH_FT5X06
     if (config->touch_driver == ESP_BMS_LVGL_TOUCH_FT5X06) {
         ESP_RETURN_ON_ERROR(esp_lcd_touch_new_i2c_ft5x06(s_touch_io, &touch_config, &s_touch),
                             TAG, "create FT5X06 touch failed");
-    } else if (config->touch_driver == ESP_BMS_LVGL_TOUCH_GT1151) {
+    } else
+ #endif
+ #if ESP_BMS_PROFILE_TOUCH_GT1151
+    if (config->touch_driver == ESP_BMS_LVGL_TOUCH_GT1151) {
         ESP_RETURN_ON_ERROR(esp_lcd_touch_new_i2c_gt1151(s_touch_io, &touch_config, &s_touch),
                             TAG, "create GT1151 touch failed");
-    } else if (config->touch_driver == ESP_BMS_LVGL_TOUCH_GT911) {
+    } else
+ #endif
+ #if ESP_BMS_PROFILE_TOUCH_GT911
+    if (config->touch_driver == ESP_BMS_LVGL_TOUCH_GT911) {
         ESP_RETURN_ON_ERROR(esp_lcd_touch_new_i2c_gt911(s_touch_io, &touch_config, &s_touch),
                             TAG, "create GT911 touch failed");
-    } else if (config->touch_driver == ESP_BMS_LVGL_TOUCH_CST816S) {
+    } else
+ #endif
+ #if ESP_BMS_PROFILE_TOUCH_CST816S
+    if (config->touch_driver == ESP_BMS_LVGL_TOUCH_CST816S) {
         ESP_RETURN_ON_ERROR(esp_lcd_touch_new_i2c_cst816s(s_touch_io, &touch_config, &s_touch),
                             TAG, "create CST816S touch failed");
-    } else {
+    } else
+ #endif
+    {
         return ESP_ERR_NOT_SUPPORTED;
     }
     return register_touch(config);
@@ -889,8 +921,10 @@ static esp_err_t init_touch(const esp_bms_lvgl_bridge_config_t *config, uint16_t
     ESP_RETURN_ON_FALSE(!config->touch_use_irq || config->pin_touch_irq != GPIO_NUM_NC,
                         ESP_ERR_INVALID_ARG, TAG, "touch IRQ is enabled without a GPIO");
     switch (config->touch_driver) {
+ #if ESP_BMS_PROFILE_TOUCH_XPT2046
     case ESP_BMS_LVGL_TOUCH_XPT2046:
         return init_touch_xpt2046(config, hres, vres);
+ #endif
     case ESP_BMS_LVGL_TOUCH_FT5X06:
     case ESP_BMS_LVGL_TOUCH_GT1151:
     case ESP_BMS_LVGL_TOUCH_GT911:
@@ -935,12 +969,16 @@ static esp_err_t init_panel_spi(const esp_bms_lvgl_bridge_config_t *config, int 
         .data_endian = LCD_RGB_DATA_ENDIAN_BIG,
         .bits_per_pixel = 16,
     };
+ #if ESP_BMS_PROFILE_PANEL_ILI9341
     if (config->panel_driver == ESP_BMS_LVGL_PANEL_ILI9341) {
         return esp_lcd_new_panel_ili9341(s_panel_io, &panel_config, &s_panel);
     }
+ #endif
+ #if ESP_BMS_PROFILE_PANEL_GC9A01
     if (config->panel_driver == ESP_BMS_LVGL_PANEL_GC9A01) {
         return esp_lcd_new_panel_gc9a01(s_panel_io, &panel_config, &s_panel);
     }
+ #endif
     return esp_lcd_new_panel_st7789(s_panel_io, &panel_config, &s_panel);
 }
 
@@ -989,12 +1027,16 @@ static esp_err_t init_panel_i80(const esp_bms_lvgl_bridge_config_t *config, int 
         .data_endian = LCD_RGB_DATA_ENDIAN_BIG,
         .bits_per_pixel = 16,
     };
+ #if ESP_BMS_PROFILE_PANEL_ST7796
     if (config->panel_driver == ESP_BMS_LVGL_PANEL_ST7796) {
         return esp_lcd_new_panel_st7796(s_panel_io, &panel_config, &s_panel);
     }
+ #endif
+ #if ESP_BMS_PROFILE_PANEL_ILI9488
     if (config->panel_driver == ESP_BMS_LVGL_PANEL_ILI9488) {
         return esp_lcd_new_panel_ili9488(s_panel_io, &panel_config, 0, &s_panel);
     }
+ #endif
     return ESP_ERR_NOT_SUPPORTED;
 #else
     (void)config;
