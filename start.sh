@@ -823,9 +823,10 @@ validate_config() {
     read_kv_file "$CATALOG_DIR/schema.env" RECORD
     [[ "${RECORD[SCHEMA_VERSION]:-}" == "$SCHEMA_VERSION" ]] || die "unsupported catalog schema"
     load_record mcu "${CFG[MCU]}"
-    require_keys RECORD SCHEMA_VERSION ID CAPABILITIES DISPLAY_BUSES GPIO_MAX INPUT_ONLY DANGEROUS_GPIO
+    require_keys RECORD SCHEMA_VERSION ID CAPABILITIES DISPLAY_BUSES INPUT_BUSES GPIO_MAX INPUT_ONLY DANGEROUS_GPIO
     MCU_CAPABILITIES="${RECORD[CAPABILITIES]}"
     MCU_DISPLAY_BUSES="${RECORD[DISPLAY_BUSES]}"
+    MCU_INPUT_BUSES="${RECORD[INPUT_BUSES]}"
     MCU_GPIO_MAX="${RECORD[GPIO_MAX]}"
     MCU_INPUT_ONLY="${RECORD[INPUT_ONLY]}"
     MCU_DANGEROUS_GPIO="${RECORD[DANGEROUS_GPIO]}"
@@ -875,27 +876,29 @@ validate_config() {
     path="$ROOT/$BOARD_PARTITIONS"
     [[ -f "$path" ]] || die "board partition file is missing: $BOARD_PARTITIONS"
 
-    if [[ "${CFG[DISPLAY]}" == custom ]]; then
-        is_id "${CFG[DISPLAY_NAME]}" || die "custom display requires a valid DISPLAY_NAME"
+    [[ "${CFG[DISPLAY]}" != custom ]] || die 'custom display names are no longer supported; select a catalog display'
+    load_record display "${CFG[DISPLAY]}"
+    require_keys RECORD SCHEMA_VERSION ID TARGETS BUS DATA_WIDTH DRIVER COMPONENT VERSION CMAKE_COMPONENT HEADER INIT REQUIRES_INPUT_GPIO REQUIRES_OUTPUT_GPIO WIDTH HEIGHT PIXEL_CLOCK_HZ ROTATION RGB_ORDER INVERT_COLOR SPI_MODE I80_SWAP_COLOR_BYTES I80_PCLK_ACTIVE_NEG I80_PCLK_IDLE_LOW BACKLIGHT_ON_LEVEL POWER_ON_DELAY_MS
+    csv_has "${RECORD[TARGETS]}" "${CFG[MCU]}" || die "display ${CFG[DISPLAY]} is unavailable on ${CFG[MCU]}"
+    [[ "${RECORD[BUS]}" == "$BOARD_DISPLAY_BUS" ]] || die "display ${CFG[DISPLAY]} does not match board bus $BOARD_DISPLAY_BUS"
+    if [[ "${CFG[BOARD]}" == custom ]]; then
+        BOARD_DISPLAY_DATA_WIDTH="${RECORD[DATA_WIDTH]}"
     else
-        load_record display "${CFG[DISPLAY]}"
-        require_keys RECORD SCHEMA_VERSION ID BUS DATA_WIDTH DRIVER WIDTH HEIGHT PIXEL_CLOCK_HZ ROTATION RGB_ORDER INVERT_COLOR SPI_MODE I80_SWAP_COLOR_BYTES I80_PCLK_ACTIVE_NEG I80_PCLK_IDLE_LOW BACKLIGHT_ON_LEVEL POWER_ON_DELAY_MS
-        [[ "${RECORD[BUS]}" == "$BOARD_DISPLAY_BUS" ]] || die "display ${CFG[DISPLAY]} does not match board bus $BOARD_DISPLAY_BUS"
-        if [[ "${CFG[BOARD]}" == custom ]]; then
-            BOARD_DISPLAY_DATA_WIDTH="${RECORD[DATA_WIDTH]}"
-        else
-            [[ "${RECORD[DATA_WIDTH]}" == "$BOARD_DISPLAY_DATA_WIDTH" ]] || die "display ${CFG[DISPLAY]} does not match board data width $BOARD_DISPLAY_DATA_WIDTH"
-        fi
+        [[ "${RECORD[DATA_WIDTH]}" == "$BOARD_DISPLAY_DATA_WIDTH" ]] || die "display ${CFG[DISPLAY]} does not match board data width $BOARD_DISPLAY_DATA_WIDTH"
     fi
 
-    if [[ "${CFG[INPUT]}" == custom ]]; then
-        is_id "${CFG[INPUT_NAME]}" || die "custom input requires a valid INPUT_NAME"
-    elif [[ "${CFG[INPUT]}" == none ]]; then
-        [[ "$BOARD_INPUT_BUS" == NONE ]] || die "input none requires board input bus NONE"
+    [[ "${CFG[INPUT]}" != custom ]] || die 'custom input names are no longer supported; select a catalog touch controller'
+    load_record input "${CFG[INPUT]}"
+    require_keys RECORD SCHEMA_VERSION ID TARGETS BUS DRIVER COMPONENT VERSION CMAKE_COMPONENT HEADER INIT REQUIRES_INPUT_GPIO REQUIRES_OUTPUT_GPIO USE_IRQ SWAP_XY MIRROR_X MIRROR_Y I2C_ADDRESS I2C_CLOCK_HZ I2C_CONTROL_PHASE_BYTES I2C_DC_BIT_OFFSET I2C_CMD_BITS I2C_PARAM_BITS I2C_DISABLE_CONTROL_PHASE I2C_INTERNAL_PULLUP RESET_LEVEL IRQ_LEVEL
+    csv_has "${RECORD[TARGETS]}" "${CFG[MCU]}" || die "input ${CFG[INPUT]} is unavailable on ${CFG[MCU]}"
+    if [[ "${CFG[INPUT]}" == none ]]; then
+        CFG[INPUT_BUS]=NONE
     else
-        load_record input "${CFG[INPUT]}"
-        require_keys RECORD SCHEMA_VERSION ID BUS DRIVER USE_IRQ SWAP_XY MIRROR_X MIRROR_Y I2C_ADDRESS I2C_CLOCK_HZ I2C_CONTROL_PHASE_BYTES I2C_DC_BIT_OFFSET I2C_CMD_BITS I2C_PARAM_BITS I2C_DISABLE_CONTROL_PHASE I2C_INTERNAL_PULLUP RESET_LEVEL IRQ_LEVEL
-        [[ "${RECORD[BUS]}" == "$BOARD_INPUT_BUS" ]] || die "input ${CFG[INPUT]} does not match board bus $BOARD_INPUT_BUS"
+        csv_has "${MCU_INPUT_BUSES}" "${RECORD[BUS]}" || die "input bus ${RECORD[BUS]} is unavailable on ${CFG[MCU]}"
+        if [[ "${CFG[BOARD]}" != custom ]]; then
+            [[ "${RECORD[BUS]}" == "$BOARD_INPUT_BUS" ]] || die "input ${CFG[INPUT]} does not match board input bus $BOARD_INPUT_BUS"
+        fi
+        BOARD_INPUT_BUS="${RECORD[BUS]}"
     fi
 
     validate_gpio
@@ -927,10 +930,33 @@ validate_custom_board_gpio_roles() {
     done < <(custom_board_gpio_requirements)
 }
 
+write_profile_component_manifest() {
+    local output_file="$1" display_component display_version touch_component touch_version
+    load_record display "${CFG[DISPLAY]}"
+    display_component="${RECORD[COMPONENT]}"
+    display_version="${RECORD[VERSION]}"
+    load_record input "${CFG[INPUT]}"
+    touch_component="${RECORD[COMPONENT]}"
+    touch_version="${RECORD[VERSION]}"
+    {
+        printf 'dependencies:\n'
+        printf '  idf:\n    version: ">=6.0.2,<6.1.0"\n'
+        printf '  espressif/esp_lvgl_adapter:\n    version: "^0.6.2"\n'
+        printf '  lvgl/lvgl:\n    version: "9.5.0"\n'
+        if [[ -n "$display_component" && "$display_component" != esp_lcd ]]; then
+            printf '  %s:\n    version: "%s"\n' "$display_component" "$display_version"
+        fi
+        if [[ -n "$touch_component" ]]; then
+            printf '  %s:\n    version: "%s"\n' "$touch_component" "$touch_version"
+        fi
+    } > "$output_file"
+}
+
 write_profile() {
     local profile="${CFG[PROFILE]}"
     local profile_dir="$BUILD_ROOT/$profile"
-    local temporary backup partition_source sdkconfig_source role module main_requires audio_feature bms_feature controller_feature gps_feature network_feature ota_feature cast_feature dashboard_s1000rr_feature dashboard_controller_feature dashboard_fireblade_feature trimming
+    local temporary backup partition_source sdkconfig_source role module main_requires profile_driver_requires display_cmake_component touch_cmake_component trimming
+    local audio_feature bms_feature controller_feature gps_feature network_feature ota_feature cast_feature dashboard_s1000rr_feature dashboard_controller_feature dashboard_fireblade_feature
 
     mkdir -p "$BUILD_ROOT"
     temporary="$(mktemp -d "$BUILD_ROOT/.${profile}.tmp.XXXXXX")"
@@ -940,6 +966,14 @@ write_profile() {
         --catalog "$CATALOG_DIR" \
         --firmware-env "$temporary/firmware.env" \
         --output "$temporary/generated/esp_bms_profile_hardware.h"
+    load_record display "${CFG[DISPLAY]}"
+    display_cmake_component="${RECORD[CMAKE_COMPONENT]}"
+    load_record input "${CFG[INPUT]}"
+    touch_cmake_component="${RECORD[CMAKE_COMPONENT]}"
+    profile_driver_requires=''
+    [[ -n "$display_cmake_component" && "$display_cmake_component" != esp_lcd ]] && profile_driver_requires="$display_cmake_component"
+    [[ -n "$touch_cmake_component" ]] && profile_driver_requires="${profile_driver_requires:+${profile_driver_requires};}${touch_cmake_component}"
+    write_profile_component_manifest "$temporary/generated/idf_component.yml"
     main_requires="esp_bms_idf_runtime;esp_bms_lvgl_bridge;esp_bms_lvgl_ui;lvgl;esp_lvgl_adapter"
     audio_feature=0
     bms_feature=0
@@ -1004,6 +1038,7 @@ write_profile() {
         printf 'set(ESP_BMS_FEATURE_DASHBOARD_CONTROLLER %s CACHE BOOL "Firmware profile controller dashboard" FORCE)\n' "$dashboard_controller_feature"
         printf 'set(ESP_BMS_FEATURE_DASHBOARD_FIREBLADE %s CACHE BOOL "Firmware profile Fireblade dashboard" FORCE)\n' "$dashboard_fireblade_feature"
         printf 'set(ESP_BMS_PROFILE_MAIN_REQUIRES "%s" CACHE STRING "Firmware profile component closure" FORCE)\n' "$main_requires"
+        printf 'set(ESP_BMS_PROFILE_DRIVER_REQUIRES "%s" CACHE STRING "Firmware profile display and touch components" FORCE)\n' "$profile_driver_requires"
     } > "$temporary/generated/profile.cmake"
     {
         printf 'MODULES=%s\n' "${CFG[MODULES]}"
@@ -1161,7 +1196,7 @@ catalog_option_description() {
         mcu:esp32s3) zh='ESP32-S3，最多 48 路 GPIO，支持 SPI / I80 显示'; en='ESP32-S3, up to GPIO48, SPI / I80 display support' ;;
         board:esp32-wroom-32e-legacy) zh='ESP32-WROOM-32E，4MB Flash，可本地构建（推荐）'; en='ESP32-WROOM-32E, 4MB Flash, build-ready (recommended)' ;;
         board:esp32s3-n16r8-st7796u-gt1151) zh='慧勤智远 ESP32-S3 N16R8，ST7796U / GT1151，16MB Flash / 8MB PSRAM，可本地构建'; en='Huiqin Zhiyuan ESP32-S3 N16R8, ST7796U / GT1151, 16MB Flash / 8MB PSRAM, build-ready' ;;
-        board:custom) zh='自定义开发板：选择 MCU、显示屏并填写 GPIO'; en='Custom board: choose MCU, display, and GPIO pins' ;;
+        board:custom) zh='自定义开发板：从清单选择主控、显示屏和触摸屏，再填写 GPIO'; en='Custom board: select MCU, display, and touch from the catalog, then enter GPIO pins' ;;
         display:st7789-spi) zh='ST7789 SPI 显示屏'; en='ST7789 SPI display' ;;
         display:ili9488-i80) zh='ILI9488 8080 并行显示屏'; en='ILI9488 I80 parallel display' ;;
         display:st7796u-i80) zh='ST7796U 16 位 8080 并行显示屏（320 × 480）'; en='ST7796U 16-bit I80 parallel display (320 × 480)' ;;
@@ -1214,7 +1249,7 @@ catalog_ids_matching() {
 }
 
 catalog_display_ids_supported_by_mcu() {
-    local mcu="$1" file id bus mcu_display_buses
+    local mcu="$1" file id bus mcu_display_buses targets
     local -A display_record=()
     load_record mcu "$mcu"
     mcu_display_buses="${RECORD[DISPLAY_BUSES]}"
@@ -1224,8 +1259,37 @@ catalog_display_ids_supported_by_mcu() {
         id="${id%.env}"
         read_kv_file "$file" display_record
         bus="${display_record[BUS]:-}"
-        csv_has "$mcu_display_buses" "$bus" && printf '%s\n' "$id"
+        targets="${display_record[TARGETS]:-}"
+        csv_has "$targets" "$mcu" && csv_has "$mcu_display_buses" "$bus" && printf '%s\n' "$id"
     done | LC_ALL=C sort -u
+}
+
+catalog_display_ids_supported_by_mcu_and_bus() {
+    local mcu="$1" bus_filter="$2" id
+    while IFS= read -r id; do
+        load_record display "$id"
+        [[ "${RECORD[BUS]}" == "$bus_filter" ]] && printf '%s\n' "$id"
+    done < <(catalog_display_ids_supported_by_mcu "$mcu")
+}
+
+catalog_input_ids_supported_by_mcu_and_bus() {
+    local mcu="$1" bus_filter="${2:-}" file id bus targets mcu_input_buses
+    local -A input_record=()
+    load_record mcu "$mcu"
+    mcu_input_buses="${RECORD[INPUT_BUSES]}"
+    for file in "$CATALOG_DIR/input"/*.env; do
+        [[ -f "$file" ]] || continue
+        id="${file##*/}"
+        id="${id%.env}"
+        read_kv_file "$file" input_record
+        bus="${input_record[BUS]:-}"
+        targets="${input_record[TARGETS]:-}"
+        csv_has "$targets" "$mcu" || continue
+        [[ "$bus" == NONE ]] || csv_has "$mcu_input_buses" "$bus" || continue
+        [[ -z "$bus_filter" || "$bus" == NONE || "$bus" == "$bus_filter" ]] || continue
+        [[ "$id" != none ]] && printf '%s\n' "$id"
+    done | LC_ALL=C sort -u
+    [[ -f "$CATALOG_DIR/input/none.env" ]] && printf '%s\n' none
 }
 
 choose_catalog_option() {
@@ -1268,6 +1332,13 @@ choose_catalog_option_with_keyboard() {
     shift 3
     local cursor=0
     local -a choices=("$@")
+
+    for index in "${!choices[@]}"; do
+        if [[ "${choices[$index]}" == "$default" ]]; then
+            cursor="$index"
+            break
+        fi
+    done
 
     MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST=NO
     while true; do
@@ -1369,20 +1440,20 @@ prompt_firmware_version() {
 }
 
 custom_board_gpio_requirements() {
-    local module
+    local module role
     CUSTOM_MODULE_ROLE_STATE=()
-    case "$BOARD_DISPLAY_BUS" in
-        SPI) printf '%s\n' output:TFT_MOSI output:TFT_SCLK output:TFT_CS output:TFT_DC output:TFT_BACKLIGHT ;;
-        I80)
-            printf '%s\n' output:TFT_D0 output:TFT_D1 output:TFT_D2 output:TFT_D3 output:TFT_D4 output:TFT_D5 output:TFT_D6 output:TFT_D7
-            [[ "$BOARD_DISPLAY_DATA_WIDTH" != 16 ]] || printf '%s\n' output:TFT_D8 output:TFT_D9 output:TFT_D10 output:TFT_D11 output:TFT_D12 output:TFT_D13 output:TFT_D14 output:TFT_D15
-            printf '%s\n' output:TFT_WR output:TFT_RD output:TFT_CS output:TFT_DC output:TFT_RESET output:TFT_BACKLIGHT
-            ;;
-    esac
-    case "$BOARD_INPUT_BUS" in
-        SPI) printf '%s\n' input:TOUCH_IRQ input:TOUCH_MISO output:TOUCH_MOSI output:TOUCH_CS output:TOUCH_SCLK ;;
-        I2C) printf '%s\n' input:TOUCH_IRQ output:TOUCH_SDA output:TOUCH_SCL ;;
-    esac
+    load_record display "${CFG[DISPLAY]}"
+    IFS=, read -r -a items <<< "${RECORD[REQUIRES_INPUT_GPIO]}"
+    for role in "${items[@]}"; do [[ -z "$role" ]] || printf 'input:%s\n' "$role"; done
+    IFS=, read -r -a items <<< "${RECORD[REQUIRES_OUTPUT_GPIO]}"
+    for role in "${items[@]}"; do [[ -z "$role" ]] || printf 'output:%s\n' "$role"; done
+    if [[ "${CFG[INPUT]}" != none ]]; then
+        load_record input "${CFG[INPUT]}"
+        IFS=, read -r -a items <<< "${RECORD[REQUIRES_INPUT_GPIO]}"
+        for role in "${items[@]}"; do [[ -z "$role" ]] || printf 'input:%s\n' "$role"; done
+        IFS=, read -r -a items <<< "${RECORD[REQUIRES_OUTPUT_GPIO]}"
+        for role in "${items[@]}"; do [[ -z "$role" ]] || printf 'output:%s\n' "$role"; done
+    fi
     IFS=, read -r -a items <<< "${CFG[MODULES]}"
     for module in "${items[@]}"; do
         [[ -z "$module" ]] || custom_required_gpio_roles "$module"
@@ -1394,6 +1465,13 @@ configure_custom_board_gpio() {
     local -A seen=()
     CFG[INPUT_GPIO]=''
     CFG[OUTPUT_GPIO]=''
+    if [[ "$LANGUAGE" == en ]]; then
+        printf '\nSelected MCU: %s (GPIO range: 0-%s). Enter every GPIO for this custom board; no board preset is used.\n' \
+            "${CFG[MCU]}" "$MCU_GPIO_MAX"
+    else
+        printf '\n当前主控：%s（GPIO 范围：0–%s）。自定义开发板不使用预设引脚，请逐项填写所有 GPIO。\n' \
+            "${CFG[MCU]}" "$MCU_GPIO_MAX"
+    fi
     exec {input_fd}<&0
     while IFS= read -r entry; do
         [[ -n "$entry" ]] || continue
@@ -1430,6 +1508,7 @@ configure_custom_board_gpio() {
 }
 
 configure_custom_board() {
+    local default_option
     local -a choices=()
     CFG[BOARD]=custom
     prompt_custom_id BOARD_NAME '自定义开发板名称（ASCII）' 'Custom board name (ASCII)'
@@ -1445,35 +1524,24 @@ configure_custom_board() {
     CFG[PARTITIONS]=firmware/partitions/esp32-wroom-32e-legacy.csv
 
     mapfile -t choices < <(catalog_display_ids_supported_by_mcu "${CFG[MCU]}")
-    choices+=(custom)
-    choose_catalog_option display 'Display' custom "${choices[@]}"
+    default_option="${choices[0]}"
+    for option in "${choices[@]}"; do
+        [[ "$option" == "${CFG[DISPLAY]}" ]] && default_option="$option"
+    done
+    choose_catalog_option display 'Display' "$default_option" "${choices[@]}"
     CFG[DISPLAY]="$MENU_SELECTION"
-    if [[ "${CFG[DISPLAY]}" == custom ]]; then
-        prompt_custom_id DISPLAY_NAME '自定义显示屏名称（ASCII）' 'Custom display name (ASCII)'
-        read -r -a choices <<< "${MCU_DISPLAY_BUSES//,/ }"
-        choose_value_option 'Display bus' "${choices[0]}" "${choices[@]}"
-        CFG[DISPLAY_BUS]="$MENU_SELECTION"
-        if [[ "${CFG[DISPLAY_BUS]}" == I80 ]]; then
-            choose_value_option 'I80 data width' 8 8 16
-            BOARD_DISPLAY_DATA_WIDTH="$MENU_SELECTION"
-        else
-            BOARD_DISPLAY_DATA_WIDTH=0
-        fi
-    else
-        load_record display "${CFG[DISPLAY]}"
-        CFG[DISPLAY_BUS]="${RECORD[BUS]}"
-        BOARD_DISPLAY_DATA_WIDTH="${RECORD[DATA_WIDTH]}"
-    fi
+    load_record display "${CFG[DISPLAY]}"
+    CFG[DISPLAY_BUS]="${RECORD[BUS]}"
+    BOARD_DISPLAY_DATA_WIDTH="${RECORD[DATA_WIDTH]}"
 
-    mapfile -t choices < <(catalog_ids input)
-    choices+=(custom none)
-    choose_catalog_option input 'Input' custom "${choices[@]}"
+    mapfile -t choices < <(catalog_input_ids_supported_by_mcu_and_bus "${CFG[MCU]}")
+    default_option="${choices[0]}"
+    for option in "${choices[@]}"; do
+        [[ "$option" == "${CFG[INPUT]}" ]] && default_option="$option"
+    done
+    choose_catalog_option input 'Touch' "$default_option" "${choices[@]}"
     CFG[INPUT]="$MENU_SELECTION"
-    if [[ "${CFG[INPUT]}" == custom ]]; then
-        prompt_custom_id INPUT_NAME '自定义输入设备名称（ASCII）' 'Custom input name (ASCII)'
-        choose_value_option 'Input bus' SPI SPI I2C NONE
-        CFG[INPUT_BUS]="$MENU_SELECTION"
-    elif [[ "${CFG[INPUT]}" == none ]]; then
+    if [[ "${CFG[INPUT]}" == none ]]; then
         CFG[INPUT_BUS]=NONE
     else
         load_record input "${CFG[INPUT]}"
@@ -1538,6 +1606,20 @@ cleanup_idf_build_dir() {
     rm -rf -- "$build_dir"
     profile_root="${build_dir%/idf-build}"
     rmdir -- "$profile_root" 2>/dev/null || true
+}
+
+prepare_profile_idf_project() {
+    local profile_dir="$1" project_dir="$2"
+    rm -rf -- "$project_dir"
+    mkdir -p "$project_dir/main"
+    {
+        printf 'cmake_minimum_required(VERSION 3.16)\n'
+        printf 'set(EXTRA_COMPONENT_DIRS "%s/components")\n' "$ROOT"
+        printf 'include("$ENV{IDF_PATH}/tools/cmake/project.cmake")\n'
+        printf 'project(esp32_bms_gps_idf)\n'
+    } > "$project_dir/CMakeLists.txt"
+    printf 'include("%s/main/CMakeLists.txt")\n' "$ROOT" > "$project_dir/main/CMakeLists.txt"
+    cp "$profile_dir/generated/idf_component.yml" "$project_dir/main/idf_component.yml"
 }
 
 choose_catalog_options_with_keyboard() {
@@ -1938,23 +2020,20 @@ run_interactive() {
         while true; do
             case "$stage" in
                 display)
-                    mapfile -t choices < <(catalog_ids_matching display BUS "${RECORD[DISPLAY_BUS]}")
-                    choices+=(custom)
+                    mapfile -t choices < <(catalog_display_ids_supported_by_mcu_and_bus "${CFG[MCU]}" "${RECORD[DISPLAY_BUS]}")
                     [[ " ${choices[*]} " == *" ${CFG[DISPLAY]} "* ]] || CFG[DISPLAY]="${choices[0]}"
                     choose_catalog_option display 'Display' "${CFG[DISPLAY]}" "${choices[@]}"
                     [[ "$MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST" == YES ]] && continue 2
                     CFG[DISPLAY]="$MENU_SELECTION"
-                    [[ "${CFG[DISPLAY]}" != custom ]] || prompt_custom_id DISPLAY_NAME '自定义显示屏名称（ASCII）' 'Custom display name (ASCII)'
                     stage=input
                     ;;
                 input)
-                    mapfile -t choices < <(catalog_ids_matching input BUS "${RECORD[INPUT_BUS]}")
-                    choices+=(custom)
+                    mapfile -t choices < <(catalog_input_ids_supported_by_mcu_and_bus "${CFG[MCU]}" "${RECORD[INPUT_BUS]}")
                     [[ " ${choices[*]} " == *" ${CFG[INPUT]} "* ]] || CFG[INPUT]="${choices[0]}"
-                    choose_catalog_option input 'Input' "${CFG[INPUT]}" "${choices[@]}"
+                    choose_catalog_option input 'Touch' "${CFG[INPUT]}" "${choices[@]}"
                     [[ "$MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST" == YES ]] && { stage=display; continue; }
                     CFG[INPUT]="$MENU_SELECTION"
-                    [[ "${CFG[INPUT]}" != custom ]] || prompt_custom_id INPUT_NAME '自定义输入设备名称（ASCII）' 'Custom input name (ASCII)'
+                    [[ "${CFG[INPUT]}" != none ]] || CFG[INPUT_BUS]=NONE
                     stage=module
                     ;;
                 module)
@@ -2053,13 +2132,22 @@ main() {
             elif [[ "$command" == compile-local ]]; then
                 write_profile
                 [[ "$BOARD_BUILD_READY" == YES ]] || die "board ${CFG[BOARD]} is not build-ready yet"
-                ESP_BMS_PROFILE_FILE="$BUILD_ROOT/${CFG[PROFILE]}/generated/profile.cmake" \
-                    "$ROOT/scripts/esp-idf-env.sh" -B "$IDF_BUILD_ROOT/${CFG[PROFILE]}/idf-build" \
-                    -DIDF_TARGET="${CFG[MCU]}" \
-                    -DSDKCONFIG="$BUILD_ROOT/${CFG[PROFILE]}/sdkconfig" \
-                    -DSDKCONFIG_DEFAULTS="$BUILD_ROOT/${CFG[PROFILE]}/sdkconfig.defaults" \
-                    -DESP_BMS_PROFILE_FILE="$BUILD_ROOT/${CFG[PROFILE]}/generated/profile.cmake" build
-                local build_dir="$IDF_BUILD_ROOT/${CFG[PROFILE]}/idf-build" firmware_path output_firmware_path answer
+                local profile_dir="$BUILD_ROOT/${CFG[PROFILE]}" profile_project="$IDF_BUILD_ROOT/${CFG[PROFILE]}/idf-project" build_dir="$IDF_BUILD_ROOT/${CFG[PROFILE]}/idf-build"
+                prepare_profile_idf_project "$profile_dir" "$profile_project"
+                (
+                    cd "$profile_project"
+                    ESP_BMS_PROFILE_FILE="$profile_dir/generated/profile.cmake" \
+                    FIRMWARE_BUILD_ROOT="$BUILD_ROOT" \
+                        "$ROOT/scripts/esp-idf-env.sh" -B "$build_dir" \
+                        -DIDF_TARGET="${CFG[MCU]}" \
+                        -DSDKCONFIG="$profile_dir/sdkconfig" \
+                        -DSDKCONFIG_DEFAULTS="$profile_dir/sdkconfig.defaults" \
+                        -DESP_BMS_PROFILE_FILE="$profile_dir/generated/profile.cmake" build
+                )
+                if [[ -f "$profile_project/dependencies.lock" ]]; then
+                    cp "$profile_project/dependencies.lock" "$profile_dir/generated/dependencies.lock"
+                fi
+                local firmware_path output_firmware_path answer
                 firmware_path="$build_dir/esp32_bms_gps_idf.bin"
                 [[ -f "$firmware_path" ]] || die "build completed but firmware is missing: $firmware_path"
                 output_firmware_path="$FIRMWARE_OUTPUT_ROOT/${CFG[PROFILE]}/${CFG[PROFILE]}.bin"

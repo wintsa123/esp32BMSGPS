@@ -3,7 +3,7 @@
   "name": "display-input-drivers",
   "title": "显示与输入驱动矩阵",
   "description": "支持显示控制器、彩屏/OLED UI 和触摸按键编码器后端",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

@@ -27,6 +27,8 @@ typedef enum {
     ESP_BMS_LVGL_PANEL_ST7789 = 0,
     ESP_BMS_LVGL_PANEL_ST7796,
     ESP_BMS_LVGL_PANEL_ILI9488,
+    ESP_BMS_LVGL_PANEL_ILI9341,
+    ESP_BMS_LVGL_PANEL_GC9A01,
 } esp_bms_lvgl_panel_driver_t;
 
 typedef enum {
@@ -34,6 +36,8 @@ typedef enum {
     ESP_BMS_LVGL_TOUCH_XPT2046,
     ESP_BMS_LVGL_TOUCH_FT5X06,
     ESP_BMS_LVGL_TOUCH_GT1151,
+    ESP_BMS_LVGL_TOUCH_GT911,
+    ESP_BMS_LVGL_TOUCH_CST816S,
 } esp_bms_lvgl_touch_driver_t;
 
 typedef struct {

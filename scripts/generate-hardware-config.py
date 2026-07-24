@@ -85,6 +85,8 @@ def config_macro(profile: dict[str, str], board: dict[str, str], board_path: Pat
         "ST7789": "ESP_BMS_LVGL_PANEL_ST7789",
         "ST7796": "ESP_BMS_LVGL_PANEL_ST7796",
         "ILI9488": "ESP_BMS_LVGL_PANEL_ILI9488",
+        "ILI9341": "ESP_BMS_LVGL_PANEL_ILI9341",
+        "GC9A01": "ESP_BMS_LVGL_PANEL_GC9A01",
     }, "display driver", display_path)
     display_bus = enum_value(require(display, "BUS", display_path), {
         "SPI": "ESP_BMS_LVGL_DISPLAY_BUS_SPI",
@@ -95,6 +97,8 @@ def config_macro(profile: dict[str, str], board: dict[str, str], board_path: Pat
         "XPT2046": "ESP_BMS_LVGL_TOUCH_XPT2046",
         "FT5X06": "ESP_BMS_LVGL_TOUCH_FT5X06",
         "GT1151": "ESP_BMS_LVGL_TOUCH_GT1151",
+        "GT911": "ESP_BMS_LVGL_TOUCH_GT911",
+        "CST816S": "ESP_BMS_LVGL_TOUCH_CST816S",
     }, "touch driver", touch_path)
     rotation = enum_value(require(display, "ROTATION", display_path), {
         "PORTRAIT": "ESP_BMS_DISPLAY_ROTATION_PORTRAIT",
@@ -138,12 +142,14 @@ def config_macro(profile: dict[str, str], board: dict[str, str], board_path: Pat
     touch_bus = require(touch, "BUS", touch_path)
     if touch_driver == "ESP_BMS_LVGL_TOUCH_XPT2046" and touch_bus != "SPI":
         raise ValueError(f"{touch_path}: XPT2046 requires SPI")
-    if touch_driver in ("ESP_BMS_LVGL_TOUCH_FT5X06", "ESP_BMS_LVGL_TOUCH_GT1151") and touch_bus != "I2C":
+    if touch_driver in ("ESP_BMS_LVGL_TOUCH_FT5X06", "ESP_BMS_LVGL_TOUCH_GT1151",
+                        "ESP_BMS_LVGL_TOUCH_GT911", "ESP_BMS_LVGL_TOUCH_CST816S") and touch_bus != "I2C":
         raise ValueError(f"{touch_path}: I2C touch driver requires I2C")
 
     is_spi_display = display_bus == "ESP_BMS_LVGL_DISPLAY_BUS_SPI"
     is_xpt2046 = touch_driver == "ESP_BMS_LVGL_TOUCH_XPT2046"
-    is_i2c_touch = touch_driver in ("ESP_BMS_LVGL_TOUCH_FT5X06", "ESP_BMS_LVGL_TOUCH_GT1151")
+    is_i2c_touch = touch_driver in ("ESP_BMS_LVGL_TOUCH_FT5X06", "ESP_BMS_LVGL_TOUCH_GT1151",
+                                    "ESP_BMS_LVGL_TOUCH_GT911", "ESP_BMS_LVGL_TOUCH_CST816S")
     fields = {
         "display_bus": display_bus,
         "panel_driver": panel,

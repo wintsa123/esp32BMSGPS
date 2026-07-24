@@ -290,20 +290,34 @@ printf 'invalid\n2\n\n\n\n\n\n\n' | FIRMWARE_BUILD_ROOT="${work_dir}/interactive
 rg -q '^请输入 1、2、zh 或 en。 / Enter 1, 2, zh, or en\.$' "${work_dir}/interactive-retry.err"
 rg -q '^config: .*/interactive-retry-build/esp32s3-n16r8-st7796u-gt1151/firmware.env$' "${work_dir}/interactive-retry.out"
 
-printf '1\n2\n\n\n2,7\nn\n' | FIRMWARE_BUILD_ROOT="${work_dir}/interactive-cancel-build" "${repo_root}/start.sh" >"${work_dir}/interactive-cancel.out"
+printf '1\n2\n\n\n2,7\n\nn\n' | FIRMWARE_BUILD_ROOT="${work_dir}/interactive-cancel-build" "${repo_root}/start.sh" >"${work_dir}/interactive-cancel.out"
 rg -Fq '  1) ili9488-i80 ' "${work_dir}/interactive-cancel.out"
 rg -Fq '  1) ft6336u-i2c ' "${work_dir}/interactive-cancel.out"
 rg -q '^已取消生成配置。$' "${work_dir}/interactive-cancel.out"
 ! test -e "${work_dir}/interactive-cancel-build/esp32s3-n16r8-st7796u-gt1151/firmware.env"
 
 printf '%s\n' \
-    2 3 console-custom 1 '' '' '' panel '' '' touch '' gps '1,2' \
-    13 14 15 2 21 36 39 32 33 25 27 35 18 y y y |
+    2 3 console-custom 1 '' '' '' '' gps '1,2' \
+    13 14 15 2 21 36 32 33 27 35 18 y y y |
     FIRMWARE_BUILD_ROOT="${work_dir}/interactive-custom-build" "${repo_root}/start.sh" >"${work_dir}/interactive-custom.out"
 rg -Fq '  3) custom ' "${work_dir}/interactive-custom.out"
+rg -Fq 'MCU' "${work_dir}/interactive-custom.out"
+rg -Fq 'GPIO range: 0-39' "${work_dir}/interactive-custom.out"
+rg -Fq 'Selected MCU: esp32' "${work_dir}/interactive-custom.out"
+rg -Fq '  1) st7789-spi ' "${work_dir}/interactive-custom.out"
+! rg -Fq 'ili9488-i80' "${work_dir}/interactive-custom.out"
+[[ "$(rg -c '^[[:space:]]+[0-9]+\) none ' "${work_dir}/interactive-custom.out")" == 1 ]]
+rg -Fq 'Display' "${work_dir}/interactive-custom.out"
+rg -Fq 'Touch' "${work_dir}/interactive-custom.out"
+! rg -Fq 'Custom display name' "${work_dir}/interactive-custom.out"
+! rg -Fq 'Custom input name' "${work_dir}/interactive-custom.out"
 rg -qx 'PROFILE=console-custom' "${work_dir}/interactive-custom-build/console-custom/firmware.env"
 rg -qx 'BOARD=custom' "${work_dir}/interactive-custom-build/console-custom/firmware.env"
+rg -qx 'DISPLAY=st7789-spi' "${work_dir}/interactive-custom-build/console-custom/firmware.env"
+rg -qx 'INPUT=gt1151-i2c' "${work_dir}/interactive-custom-build/console-custom/firmware.env"
 rg -qx 'GPIO_GPS_RX=27' "${work_dir}/interactive-custom-build/console-custom/firmware.env"
+rg -qx 'GPIO_TFT_MOSI=13' "${work_dir}/interactive-custom-build/console-custom/firmware.env"
+rg -qx 'GPIO_TOUCH_SDA=32' "${work_dir}/interactive-custom-build/console-custom/firmware.env"
 rg -qx 'DASHBOARDS=fireblade,s1000rr' "${work_dir}/interactive-custom-build/console-custom/firmware.env"
 
 cat >"${profile_dir}/profile.cmake" <<'EOF'
@@ -384,8 +398,8 @@ rg -Fq 'function Test-IdfExportScript' "${repo_root}/start.ps1"
 rg -Fq "\$IdfExport = Ensure-IdfExportScript" "${repo_root}/start.ps1"
 rg -Fq 'Install-EspIdf @() | Out-Host' "${repo_root}/start.ps1"
 rg -Fq "\$IdfExport = [string](Get-IdfExportScript | Select-Object -Last 1)" "${repo_root}/start.ps1"
-rg -Fq '\$CloneAttempts = 3' "${repo_root}/start.ps1"
-rg -Fq 'Move-Item -LiteralPath \$CloneDirectory -Destination \$Directory' "${repo_root}/start.ps1"
+rg -Fq '$CloneAttempts = 3' "${repo_root}/start.ps1"
+rg -Fq "Move-Item -LiteralPath \$CloneDirectory -Destination \$Directory" "${repo_root}/start.ps1"
 ! rg -Fq '& python3 ' "${repo_root}/start.ps1"
 rg -Fq 'scripts/esp-idf-env.sh' "${repo_root}/start.sh"
 rg -Fq 'IDF_BUILD_ROOT="${ESP_BMS_IDF_BUILD_ROOT:-/tmp/esp32-bms-gps-idf-builds/$UID}"' "${repo_root}/start.sh"

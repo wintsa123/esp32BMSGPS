@@ -36,7 +36,7 @@ function Convert-LocalizedText([string]$Text) {
         'missing |||缺少 '; 'unknown |||未知 '; 'invalid |||无效的 '; 'unsupported |||不支持的 '
         'duplicate |||重复的 '; 'malformed |||格式错误的 '; 'configuration|||配置'; 'catalog|||目录'
         'schema|||模式'; 'record|||记录'; 'file|||文件'; 'key|||键'; 'value|||值'
-        'module|||模块'; 'capability|||能力'; 'board|||开发板'; 'display|||显示屏'; 'input|||输入'
+        'module|||模块'; 'capability|||能力'; 'board|||开发板'; 'display|||显示屏'; 'input|||输入'; 'MCU|||主控 MCU'; 'Touch|||触摸屏'
         'profile|||配置档'; 'option|||选项'; 'command|||命令'; 'partition|||分区'; 'path|||路径'
         'requires|||需要'; 'conflicts with|||与 '; 'assigned to both|||同时分配给 '
         'is unavailable on|||在以下芯片不可用：'; 'is input-only and cannot drive|||仅可输入，不能驱动 '
@@ -633,17 +633,13 @@ function Add-ModuleGpioRequirements([System.Collections.Generic.List[string]]$Re
 
 function Get-CustomBoardGpioRequirements([System.Collections.IDictionary]$Config) {
     $Requirements = [System.Collections.Generic.List[string]]::new()
-    switch ($script:BoardDisplayBus) {
-        'SPI' { foreach ($Role in @('TFT_MOSI', 'TFT_SCLK', 'TFT_CS', 'TFT_DC', 'TFT_BACKLIGHT')) { $Requirements.Add("output:$Role") } }
-        'I80' {
-            foreach ($Role in @('TFT_D0', 'TFT_D1', 'TFT_D2', 'TFT_D3', 'TFT_D4', 'TFT_D5', 'TFT_D6', 'TFT_D7')) { $Requirements.Add("output:$Role") }
-            if ($script:BoardDisplayDataWidth -eq '16') { foreach ($Role in @('TFT_D8', 'TFT_D9', 'TFT_D10', 'TFT_D11', 'TFT_D12', 'TFT_D13', 'TFT_D14', 'TFT_D15')) { $Requirements.Add("output:$Role") } }
-            foreach ($Role in @('TFT_WR', 'TFT_RD', 'TFT_CS', 'TFT_DC', 'TFT_RESET', 'TFT_BACKLIGHT')) { $Requirements.Add("output:$Role") }
-        }
-    }
-    switch ($script:BoardInputBus) {
-        'SPI' { foreach ($Role in @('TOUCH_IRQ', 'TOUCH_MISO')) { $Requirements.Add("input:$Role") }; foreach ($Role in @('TOUCH_MOSI', 'TOUCH_CS', 'TOUCH_SCLK')) { $Requirements.Add("output:$Role") } }
-        'I2C' { $Requirements.Add('input:TOUCH_IRQ'); foreach ($Role in @('TOUCH_SDA', 'TOUCH_SCL')) { $Requirements.Add("output:$Role") } }
+    $Display = Get-Record 'display' $Config.DISPLAY
+    foreach ($Role in Split-Csv $Display.REQUIRES_INPUT_GPIO) { $Requirements.Add("input:$Role") }
+    foreach ($Role in Split-Csv $Display.REQUIRES_OUTPUT_GPIO) { $Requirements.Add("output:$Role") }
+    if ($Config.INPUT -ne 'none') {
+        $Input = Get-Record 'input' $Config.INPUT
+        foreach ($Role in Split-Csv $Input.REQUIRES_INPUT_GPIO) { $Requirements.Add("input:$Role") }
+        foreach ($Role in Split-Csv $Input.REQUIRES_OUTPUT_GPIO) { $Requirements.Add("output:$Role") }
     }
     $Seen = @{}
     foreach ($Module in Split-Csv $Config.MODULES) { Add-ModuleGpioRequirements $Requirements $Seen $Module }
@@ -665,9 +661,10 @@ function Validate-Config([System.Collections.IDictionary]$Config) {
     if ($Schema.SCHEMA_VERSION -ne $SchemaVersion) { Fail 'unsupported catalog schema' }
 
     $Mcu = Get-Record 'mcu' $Config.MCU
-    Assert-Keys $Mcu @('SCHEMA_VERSION', 'ID', 'CAPABILITIES', 'DISPLAY_BUSES', 'GPIO_MAX', 'INPUT_ONLY', 'DANGEROUS_GPIO')
+    Assert-Keys $Mcu @('SCHEMA_VERSION', 'ID', 'CAPABILITIES', 'DISPLAY_BUSES', 'INPUT_BUSES', 'GPIO_MAX', 'INPUT_ONLY', 'DANGEROUS_GPIO')
     $script:MCUCapabilities = $Mcu.CAPABILITIES
     $script:MCUDisplayBuses = $Mcu.DISPLAY_BUSES
+    $script:MCUInputBuses = $Mcu.INPUT_BUSES
     $script:MCUGpioMax = [int]$Mcu.GPIO_MAX
     $script:MCUInputOnly = $Mcu.INPUT_ONLY
     $script:MCUDangerous = $Mcu.DANGEROUS_GPIO
@@ -714,26 +711,26 @@ function Validate-Config([System.Collections.IDictionary]$Config) {
     if ($script:BoardPartitions.Contains('..')) { Fail 'partition path traversal is not allowed' }
     if (-not (Test-Path -LiteralPath (Join-Path $Root $script:BoardPartitions) -PathType Leaf)) { Fail "board partition file is missing: $($script:BoardPartitions)" }
 
-    if ($Config.DISPLAY -eq 'custom') {
-        if (-not (Test-Id $Config.DISPLAY_NAME)) { Fail 'custom display requires a valid DISPLAY_NAME' }
-    } else {
-        $Display = Get-Record 'display' $Config.DISPLAY
-        Assert-Keys $Display @('SCHEMA_VERSION', 'ID', 'BUS', 'DATA_WIDTH', 'DRIVER', 'WIDTH', 'HEIGHT', 'PIXEL_CLOCK_HZ', 'ROTATION', 'RGB_ORDER', 'INVERT_COLOR', 'SPI_MODE', 'I80_SWAP_COLOR_BYTES', 'I80_PCLK_ACTIVE_NEG', 'I80_PCLK_IDLE_LOW', 'BACKLIGHT_ON_LEVEL', 'POWER_ON_DELAY_MS')
-        if ($Display.BUS -ne $script:BoardDisplayBus) { Fail 'display bus is incompatible' }
-        if ($Config.BOARD -eq 'custom') {
-            $script:BoardDisplayDataWidth = $Display.DATA_WIDTH
-        } elseif ($Display.DATA_WIDTH -ne $script:BoardDisplayDataWidth) {
-            Fail 'display data width is incompatible'
-        }
+    if ($Config.DISPLAY -eq 'custom') { Fail 'custom display names are no longer supported; select a catalog display' }
+    $Display = Get-Record 'display' $Config.DISPLAY
+    Assert-Keys $Display @('SCHEMA_VERSION', 'ID', 'TARGETS', 'BUS', 'DATA_WIDTH', 'DRIVER', 'COMPONENT', 'VERSION', 'CMAKE_COMPONENT', 'HEADER', 'INIT', 'REQUIRES_INPUT_GPIO', 'REQUIRES_OUTPUT_GPIO', 'WIDTH', 'HEIGHT', 'PIXEL_CLOCK_HZ', 'ROTATION', 'RGB_ORDER', 'INVERT_COLOR', 'SPI_MODE', 'I80_SWAP_COLOR_BYTES', 'I80_PCLK_ACTIVE_NEG', 'I80_PCLK_IDLE_LOW', 'BACKLIGHT_ON_LEVEL', 'POWER_ON_DELAY_MS')
+    if (-not (Test-CsvContains $Display.TARGETS $Config.MCU)) { Fail "display $($Config.DISPLAY) is unavailable on $($Config.MCU)" }
+    if ($Display.BUS -ne $script:BoardDisplayBus) { Fail 'display bus is incompatible' }
+    if ($Config.BOARD -eq 'custom') {
+        $script:BoardDisplayDataWidth = $Display.DATA_WIDTH
+    } elseif ($Display.DATA_WIDTH -ne $script:BoardDisplayDataWidth) {
+        Fail 'display data width is incompatible'
     }
-    if ($Config.INPUT -eq 'custom') {
-        if (-not (Test-Id $Config.INPUT_NAME)) { Fail 'custom input requires a valid INPUT_NAME' }
-    } elseif ($Config.INPUT -eq 'none') {
-        if ($script:BoardInputBus -ne 'NONE') { Fail 'input none requires board input bus NONE' }
+    if ($Config.INPUT -eq 'custom') { Fail 'custom input names are no longer supported; select a catalog touch controller' }
+    $Input = Get-Record 'input' $Config.INPUT
+    Assert-Keys $Input @('SCHEMA_VERSION', 'ID', 'TARGETS', 'BUS', 'DRIVER', 'COMPONENT', 'VERSION', 'CMAKE_COMPONENT', 'HEADER', 'INIT', 'REQUIRES_INPUT_GPIO', 'REQUIRES_OUTPUT_GPIO', 'USE_IRQ', 'SWAP_XY', 'MIRROR_X', 'MIRROR_Y', 'I2C_ADDRESS', 'I2C_CLOCK_HZ', 'I2C_CONTROL_PHASE_BYTES', 'I2C_DC_BIT_OFFSET', 'I2C_CMD_BITS', 'I2C_PARAM_BITS', 'I2C_DISABLE_CONTROL_PHASE', 'I2C_INTERNAL_PULLUP', 'RESET_LEVEL', 'IRQ_LEVEL')
+    if (-not (Test-CsvContains $Input.TARGETS $Config.MCU)) { Fail "input $($Config.INPUT) is unavailable on $($Config.MCU)" }
+    if ($Config.INPUT -eq 'none') {
+        $Config.INPUT_BUS = 'NONE'
     } else {
-        $Input = Get-Record 'input' $Config.INPUT
-        Assert-Keys $Input @('SCHEMA_VERSION', 'ID', 'BUS', 'DRIVER', 'USE_IRQ', 'SWAP_XY', 'MIRROR_X', 'MIRROR_Y', 'I2C_ADDRESS', 'I2C_CLOCK_HZ', 'I2C_CONTROL_PHASE_BYTES', 'I2C_DC_BIT_OFFSET', 'I2C_CMD_BITS', 'I2C_PARAM_BITS', 'I2C_DISABLE_CONTROL_PHASE', 'I2C_INTERNAL_PULLUP', 'RESET_LEVEL', 'IRQ_LEVEL')
-        if ($Input.BUS -ne $script:BoardInputBus) { Fail 'input bus is incompatible' }
+        if (-not (Test-CsvContains $script:MCUInputBuses $Input.BUS)) { Fail "input bus $($Input.BUS) is unavailable on $($Config.MCU)" }
+        if ($Config.BOARD -ne 'custom' -and $Input.BUS -ne $script:BoardInputBus) { Fail 'input bus is incompatible' }
+        $script:BoardInputBus = $Input.BUS
     }
 
     $script:GpioValues = @{}
@@ -808,6 +805,29 @@ function Write-Profile([System.Collections.IDictionary]$Config) {
     Write-Utf8NoBom (Join-Path $Temp 'normalized.env') $FirmwareEnvContent
     & (Get-PythonExecutable) (Join-Path $Root 'scripts/generate-hardware-config.py') --catalog $CatalogDir --firmware-env $FirmwareEnv --output (Join-Path $Temp 'generated/esp_bms_profile_hardware.h')
     if ($LASTEXITCODE -ne 0) { throw 'hardware configuration generation failed' }
+    $DisplayRecord = Get-Record 'display' $Config.DISPLAY
+    $InputRecord = Get-Record 'input' $Config.INPUT
+    $DriverRequires = [System.Collections.Generic.List[string]]::new()
+    if (-not [string]::IsNullOrEmpty($DisplayRecord.CMAKE_COMPONENT) -and $DisplayRecord.CMAKE_COMPONENT -ne 'esp_lcd') { [void]$DriverRequires.Add($DisplayRecord.CMAKE_COMPONENT) }
+    if (-not [string]::IsNullOrEmpty($InputRecord.CMAKE_COMPONENT)) { [void]$DriverRequires.Add($InputRecord.CMAKE_COMPONENT) }
+    $Manifest = @(
+        'dependencies:'
+        '  idf:'
+        '    version: ">=6.0.2,<6.1.0"'
+        '  espressif/esp_lvgl_adapter:'
+        '    version: "^0.6.2"'
+        '  lvgl/lvgl:'
+        '    version: "9.5.0"'
+    )
+    if (-not [string]::IsNullOrEmpty($DisplayRecord.COMPONENT) -and $DisplayRecord.COMPONENT -ne 'esp_lcd') {
+        $Manifest += "  $($DisplayRecord.COMPONENT):"
+        $Manifest += "    version: `"$($DisplayRecord.VERSION)`""
+    }
+    if (-not [string]::IsNullOrEmpty($InputRecord.COMPONENT)) {
+        $Manifest += "  $($InputRecord.COMPONENT):"
+        $Manifest += "    version: `"$($InputRecord.VERSION)`""
+    }
+    Write-Utf8NoBom (Join-Path $Temp 'generated/idf_component.yml') (($Manifest -join "`n") + "`n")
     $MainRequires = @('esp_bms_idf_runtime', 'esp_bms_lvgl_bridge', 'esp_bms_lvgl_ui', 'lvgl', 'esp_lvgl_adapter')
     $AudioFeature = 0
     $BmsFeature = 0
@@ -867,6 +887,7 @@ function Write-Profile([System.Collections.IDictionary]$Config) {
         "set(ESP_BMS_FEATURE_DASHBOARD_CONTROLLER $DashboardControllerFeature CACHE BOOL `"Firmware profile controller dashboard`" FORCE)"
         "set(ESP_BMS_FEATURE_DASHBOARD_FIREBLADE $DashboardFirebladeFeature CACHE BOOL `"Firmware profile Fireblade dashboard`" FORCE)"
         "set(ESP_BMS_PROFILE_MAIN_REQUIRES `"$($MainRequires -join ';')`" CACHE STRING `"Firmware profile component closure`" FORCE)"
+        "set(ESP_BMS_PROFILE_DRIVER_REQUIRES `"$($DriverRequires -join ';')`" CACHE STRING `"Firmware profile display and touch components`" FORCE)"
     )
     Write-Utf8NoBom (Join-Path $Temp 'generated/profile.cmake') (($Cmake -join "`n") + "`n")
     $ModuleLines = @("MODULES=$($Config.MODULES)", "DASHBOARDS=$($Config.DASHBOARDS)")
@@ -897,9 +918,18 @@ function Write-Profile([System.Collections.IDictionary]$Config) {
     Write-LocalizedOutput "normalized: $($ProfileDir.Substring($Root.Length + 1))/normalized.env"
 }
 
+function Prepare-ProfileIdfProject([string]$ProfileDir, [string]$ProjectDir) {
+    if (Test-Path -LiteralPath $ProjectDir) { Remove-Item -LiteralPath $ProjectDir -Recurse -Force }
+    New-Item -ItemType Directory -Path (Join-Path $ProjectDir 'main') -Force | Out-Null
+    Write-Utf8NoBom (Join-Path $ProjectDir 'CMakeLists.txt') @("cmake_minimum_required(VERSION 3.16)", "set(EXTRA_COMPONENT_DIRS `"$Root/components`")", 'include("$ENV{IDF_PATH}/tools/cmake/project.cmake")', 'project(esp32_bms_gps_idf)') -join "`n" + "`n"
+    Write-Utf8NoBom (Join-Path $ProjectDir 'main/CMakeLists.txt') "include(`"$Root/main/CMakeLists.txt`")`n"
+    Copy-Item -LiteralPath (Join-Path $ProfileDir 'generated/idf_component.yml') -Destination (Join-Path $ProjectDir 'main/idf_component.yml')
+}
+
 function Invoke-LocalBuild([System.Collections.IDictionary]$Config) {
     if ($script:BoardBuildReady -ne 'YES') { Fail "board $($Config.BOARD) is not build-ready yet" }
     $ProfileDir = Join-Path $BuildRoot $Config.PROFILE
+    $ProfileProject = Join-Path (Join-Path $IdfBuildRoot $Config.PROFILE) 'idf-project'
     $BuildDir = Join-Path (Join-Path $IdfBuildRoot $Config.PROFILE) 'idf-build'
     $env:ESP_BMS_PROFILE_FILE = Join-Path $ProfileDir 'generated/profile.cmake'
     $IdfExport = Ensure-IdfExportScript
@@ -916,7 +946,8 @@ function Invoke-LocalBuild([System.Collections.IDictionary]$Config) {
 
     $OriginalLocation = Get-Location
     try {
-        Push-Location $Root
+        Prepare-ProfileIdfProject $ProfileDir $ProfileProject
+        Push-Location $ProfileProject
         $IdfArgs = @(
             '-B', $BuildDir
             "-DIDF_TARGET=$($Config.MCU)"
@@ -938,6 +969,11 @@ function Invoke-LocalBuild([System.Collections.IDictionary]$Config) {
     }
     finally {
         Set-Location $OriginalLocation
+    }
+
+    $ProfileLock = Join-Path $ProfileProject 'dependencies.lock'
+    if ($script:BuildExitCode -eq 0 -and (Test-Path -LiteralPath $ProfileLock -PathType Leaf)) {
+        Copy-Item -LiteralPath $ProfileLock -Destination (Join-Path $ProfileDir 'generated/dependencies.lock') -Force
     }
 
     if ($script:BuildExitCode -eq 0) {
@@ -1131,9 +1167,21 @@ function Get-CatalogDisplayIdsSupportedByMcu([string]$McuId) {
     $Result = [System.Collections.Generic.List[string]]::new()
     foreach ($Id in (Get-CatalogIds 'display')) {
         $Display = Get-Record 'display' $Id
-        if (Test-CsvContains $Mcu.DISPLAY_BUSES $Display.BUS) { $Result.Add($Id) }
+        if ((Test-CsvContains $Mcu.DISPLAY_BUSES $Display.BUS) -and (Test-CsvContains $Display.TARGETS $McuId)) { $Result.Add($Id) }
     }
     return @($Result | Sort-Object -Unique)
+}
+
+function Get-CatalogInputIdsSupportedByMcuAndBus([string]$McuId, [string]$Bus) {
+    $Mcu = Get-Record 'mcu' $McuId
+    $Result = [System.Collections.Generic.List[string]]::new()
+    foreach ($Id in (Get-CatalogIds 'input')) {
+        $Input = Get-Record 'input' $Id
+        if ($Id -ne 'none' -and (Test-CsvContains $Input.TARGETS $McuId) -and (Test-CsvContains $Mcu.INPUT_BUSES $Input.BUS) -and ([string]::IsNullOrEmpty($Bus) -or $Input.BUS -eq $Bus)) { $Result.Add($Id) }
+    }
+    $Result.Sort()
+    if (Get-CatalogIds 'input' | Where-Object { $_ -eq 'none' }) { $Result.Add('none') }
+    return @($Result)
 }
 
 function Get-CatalogOptionDescription([string]$Kind, [string]$Id) {
@@ -1142,7 +1190,7 @@ function Get-CatalogOptionDescription([string]$Kind, [string]$Id) {
         'mcu/esp32s3' = @('ESP32-S3，最多 48 路 GPIO，支持 SPI / I80 显示', 'ESP32-S3, up to GPIO48, SPI / I80 display support')
         'board/esp32-wroom-32e-legacy' = @('ESP32-WROOM-32E，4MB Flash，可本地构建（推荐）', 'ESP32-WROOM-32E, 4MB Flash, build-ready (recommended)')
         'board/esp32s3-n16r8-st7796u-gt1151' = @('慧勤智远 ESP32-S3 N16R8，ST7796U / GT1151，16MB Flash / 8MB PSRAM，可本地构建', 'Huiqin Zhiyuan ESP32-S3 N16R8, ST7796U / GT1151, 16MB Flash / 8MB PSRAM, build-ready')
-        'board/custom' = @('自定义开发板：选择 MCU、显示屏并填写 GPIO', 'Custom board: choose MCU, display, and GPIO pins')
+        'board/custom' = @('自定义开发板：从清单选择主控、显示屏和触摸屏，再填写 GPIO', 'Custom board: select MCU, display, and touch from the catalog, then enter GPIO pins')
         'display/st7789-spi' = @('ST7789 SPI 显示屏', 'ST7789 SPI display')
         'display/ili9488-i80' = @('ILI9488 8080 并行显示屏', 'ILI9488 I80 parallel display')
         'display/st7796u-i80' = @('ST7796U 16 位 8080 并行显示屏（320 × 480）', 'ST7796U 16-bit I80 parallel display (320 × 480)')
@@ -1400,6 +1448,13 @@ function Select-DashboardOptions([System.Collections.IDictionary]$Config) {
 function Set-CustomBoardGpio([System.Collections.IDictionary]$Config) {
     $Config.INPUT_GPIO = ''
     $Config.OUTPUT_GPIO = ''
+    if ($script:Language -eq 'en') {
+        Write-Host ""
+        Write-Host "Selected MCU: $($Config.MCU) (GPIO range: 0-$script:MCUGpioMax). Enter every GPIO for this custom board; no board preset is used."
+    } else {
+        Write-Host ""
+        Write-Host "当前主控：$($Config.MCU)（GPIO 范围：0–$script:MCUGpioMax）。自定义开发板不使用预设引脚，请逐项填写所有 GPIO。"
+    }
     foreach ($Requirement in (Get-CustomBoardGpioRequirements $Config)) {
         $Parts = $Requirement -split ':', 2
         $Kind = $Parts[0]
@@ -1438,29 +1493,19 @@ function Set-CustomBoardConfig([System.Collections.IDictionary]$Config) {
     Read-CustomNumber $Config 'PSRAM_MB' '0' 'PSRAM 容量（MB）' 'PSRAM size (MB)'
     $Config.PARTITIONS = 'firmware/partitions/esp32-wroom-32e-legacy.csv'
 
-    $DisplayOptions = @(Get-CatalogDisplayIdsSupportedByMcu $Config.MCU) + 'custom'
-    $Config.DISPLAY = Select-CatalogOption 'display' 'Display' 'custom' $DisplayOptions
-    if ($Config.DISPLAY -eq 'custom') {
-        Read-CustomId $Config 'DISPLAY_NAME' '自定义显示屏名称（ASCII）' 'Custom display name (ASCII)'
-        $DisplayBuses = @(Split-Csv $script:MCUDisplayBuses)
-        $Config.DISPLAY_BUS = Select-ValueOption 'Display bus' $DisplayBuses[0] $DisplayBuses
-        if ($Config.DISPLAY_BUS -eq 'I80') {
-            $script:BoardDisplayDataWidth = Select-ValueOption 'I80 data width' '8' @('8', '16')
-        } else {
-            $script:BoardDisplayDataWidth = '0'
-        }
-    } else {
-        $Display = Get-Record 'display' $Config.DISPLAY
-        $Config.DISPLAY_BUS = $Display.BUS
-        $script:BoardDisplayDataWidth = $Display.DATA_WIDTH
-    }
+    $DisplayOptions = @(Get-CatalogDisplayIdsSupportedByMcu $Config.MCU)
+    $DisplayDefault = @($DisplayOptions | Where-Object { $_ -ne 'custom' } | Select-Object -First 1)
+    if ($DisplayOptions -contains $Config.DISPLAY) { $DisplayDefault = $Config.DISPLAY }
+    $Config.DISPLAY = Select-CatalogOption 'display' 'Display' $DisplayDefault $DisplayOptions
+    $Display = Get-Record 'display' $Config.DISPLAY
+    $Config.DISPLAY_BUS = $Display.BUS
+    $script:BoardDisplayDataWidth = $Display.DATA_WIDTH
 
-    $InputOptions = @(Get-CatalogIds 'input') + @('custom', 'none')
-    $Config.INPUT = Select-CatalogOption 'input' 'Input' 'custom' $InputOptions
-    if ($Config.INPUT -eq 'custom') {
-        Read-CustomId $Config 'INPUT_NAME' '自定义输入设备名称（ASCII）' 'Custom input name (ASCII)'
-        $Config.INPUT_BUS = Select-ValueOption 'Input bus' 'SPI' @('SPI', 'I2C', 'NONE')
-    } elseif ($Config.INPUT -eq 'none') {
+    $InputOptions = @(Get-CatalogInputIdsSupportedByMcuAndBus $Config.MCU '')
+    $InputDefault = @($InputOptions | Where-Object { $_ -ne 'none' } | Select-Object -First 1)
+    if ($InputOptions -contains $Config.INPUT) { $InputDefault = $Config.INPUT }
+    $Config.INPUT = Select-CatalogOption 'input' 'Touch' $InputDefault $InputOptions
+    if ($Config.INPUT -eq 'none') {
         $Config.INPUT_BUS = 'NONE'
     } else {
         $Config.INPUT_BUS = (Get-Record 'input' $Config.INPUT).BUS
@@ -1670,19 +1715,18 @@ function Invoke-Interactive {
         while ($true) {
             switch ($Stage) {
                 'display' {
-                    $DisplayOptions = @(Get-CatalogIdsMatching 'display' 'BUS' $Board.DISPLAY_BUS) + 'custom'
+                    $DisplayOptions = @(Get-CatalogDisplayIdsSupportedByMcu $Config.MCU | Where-Object { (Get-Record 'display' $_).BUS -eq $Board.DISPLAY_BUS })
                     if ($DisplayOptions -notcontains $Config.DISPLAY) { $Config.DISPLAY = $DisplayOptions[0] }
                     $Config.DISPLAY = Select-CatalogOption 'display' 'Display' $Config.DISPLAY $DisplayOptions
                     if ($script:ReturnToPreviousFunctionList) { continue 2 }
-                    if ($Config.DISPLAY -eq 'custom') { Read-CustomId $Config 'DISPLAY_NAME' '自定义显示屏名称（ASCII）' 'Custom display name (ASCII)' }
                     $Stage = 'input'
                 }
                 'input' {
-                    $InputOptions = @(Get-CatalogIdsMatching 'input' 'BUS' $Board.INPUT_BUS) + 'custom'
+                    $InputOptions = @(Get-CatalogInputIdsSupportedByMcuAndBus $Config.MCU $Board.INPUT_BUS)
                     if ($InputOptions -notcontains $Config.INPUT) { $Config.INPUT = $InputOptions[0] }
-                    $Config.INPUT = Select-CatalogOption 'input' 'Input' $Config.INPUT $InputOptions
+                    $Config.INPUT = Select-CatalogOption 'input' 'Touch' $Config.INPUT $InputOptions
                     if ($script:ReturnToPreviousFunctionList) { $Stage = 'display'; continue }
-                    if ($Config.INPUT -eq 'custom') { Read-CustomId $Config 'INPUT_NAME' '自定义输入设备名称（ASCII）' 'Custom input name (ASCII)' }
+                    if ($Config.INPUT -eq 'none') { $Config.INPUT_BUS = 'NONE' }
                     $Stage = 'module'
                 }
                 'module' {

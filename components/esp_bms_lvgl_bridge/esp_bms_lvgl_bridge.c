@@ -16,8 +16,12 @@
 #include "esp_lcd_touch.h"
 #include "esp_lcd_touch_ft5x06.h"
 #include "esp_lcd_touch_gt1151.h"
+#include "esp_lcd_touch_gt911.h"
+#include "esp_lcd_touch_cst816s.h"
 #include "esp_lcd_touch_xpt2046.h"
 #include "esp_lcd_ili9488.h"
+#include "esp_lcd_ili9341.h"
+#include "esp_lcd_gc9a01.h"
 #include "esp_lcd_st7796.h"
 #include "esp_bms_lvgl_contract.h"
 #include "esp_lv_adapter.h"
@@ -861,9 +865,17 @@ static esp_err_t init_touch_i2c(const esp_bms_lvgl_bridge_config_t *config,
     if (config->touch_driver == ESP_BMS_LVGL_TOUCH_FT5X06) {
         ESP_RETURN_ON_ERROR(esp_lcd_touch_new_i2c_ft5x06(s_touch_io, &touch_config, &s_touch),
                             TAG, "create FT5X06 touch failed");
-    } else {
+    } else if (config->touch_driver == ESP_BMS_LVGL_TOUCH_GT1151) {
         ESP_RETURN_ON_ERROR(esp_lcd_touch_new_i2c_gt1151(s_touch_io, &touch_config, &s_touch),
                             TAG, "create GT1151 touch failed");
+    } else if (config->touch_driver == ESP_BMS_LVGL_TOUCH_GT911) {
+        ESP_RETURN_ON_ERROR(esp_lcd_touch_new_i2c_gt911(s_touch_io, &touch_config, &s_touch),
+                            TAG, "create GT911 touch failed");
+    } else if (config->touch_driver == ESP_BMS_LVGL_TOUCH_CST816S) {
+        ESP_RETURN_ON_ERROR(esp_lcd_touch_new_i2c_cst816s(s_touch_io, &touch_config, &s_touch),
+                            TAG, "create CST816S touch failed");
+    } else {
+        return ESP_ERR_NOT_SUPPORTED;
     }
     return register_touch(config);
 }
@@ -881,6 +893,8 @@ static esp_err_t init_touch(const esp_bms_lvgl_bridge_config_t *config, uint16_t
         return init_touch_xpt2046(config, hres, vres);
     case ESP_BMS_LVGL_TOUCH_FT5X06:
     case ESP_BMS_LVGL_TOUCH_GT1151:
+    case ESP_BMS_LVGL_TOUCH_GT911:
+    case ESP_BMS_LVGL_TOUCH_CST816S:
         return init_touch_i2c(config, hres, vres);
     default:
         return ESP_ERR_NOT_SUPPORTED;
@@ -889,7 +903,9 @@ static esp_err_t init_touch(const esp_bms_lvgl_bridge_config_t *config, uint16_t
 
 static esp_err_t init_panel_spi(const esp_bms_lvgl_bridge_config_t *config, int max_transfer_sz)
 {
-    ESP_RETURN_ON_FALSE(config->panel_driver == ESP_BMS_LVGL_PANEL_ST7789,
+    ESP_RETURN_ON_FALSE(config->panel_driver == ESP_BMS_LVGL_PANEL_ST7789 ||
+                            config->panel_driver == ESP_BMS_LVGL_PANEL_ILI9341 ||
+                            config->panel_driver == ESP_BMS_LVGL_PANEL_GC9A01,
                         ESP_ERR_NOT_SUPPORTED, TAG, "SPI panel driver is unsupported");
     const spi_bus_config_t bus_config = {
         .sclk_io_num = config->pin_sclk,
@@ -919,6 +935,12 @@ static esp_err_t init_panel_spi(const esp_bms_lvgl_bridge_config_t *config, int 
         .data_endian = LCD_RGB_DATA_ENDIAN_BIG,
         .bits_per_pixel = 16,
     };
+    if (config->panel_driver == ESP_BMS_LVGL_PANEL_ILI9341) {
+        return esp_lcd_new_panel_ili9341(s_panel_io, &panel_config, &s_panel);
+    }
+    if (config->panel_driver == ESP_BMS_LVGL_PANEL_GC9A01) {
+        return esp_lcd_new_panel_gc9a01(s_panel_io, &panel_config, &s_panel);
+    }
     return esp_lcd_new_panel_st7789(s_panel_io, &panel_config, &s_panel);
 }
 
