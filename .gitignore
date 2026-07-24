@@ -3,6 +3,7 @@
 /build_dragdiag/
 /build_dragdiag_db/
 /build-simulator/
+/build-esp32-wroom-32e-legacy-s1000rr-diag/
 /managed_components/
 /.embuild/
 /.espflash/
@@ -19,8 +20,7 @@
 /output/
 /release-images/
 /ota-images/
-/build-esp32-wroom-32e-legacy-s1000rr-diag/log/
-/build-esp32-wroom-32e-legacy-s1000rr-diag/esp-idf/log/
+/logs/
 /preview/
 /docs/hardware/
 /gpt_image2_call.py
