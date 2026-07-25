@@ -60,6 +60,11 @@ static const char *TAG = "bms_lvgl_bridge";
 #define BACKLIGHT_PWM_CHANNEL LEDC_CHANNEL_0
 #define LVGL_SPI_DRAW_BUFFER_HEIGHT CONFIG_ESP_BMS_LVGL_BRIDGE_SPI_DRAW_BUFFER_HEIGHT
 #define LVGL_TASK_MAX_DELAY_MS CONFIG_ESP_BMS_LVGL_BRIDGE_TASK_MAX_DELAY_MS
+#if CONFIG_FREERTOS_NUMBER_OF_CORES > 1
+#define LVGL_TASK_CORE_ID 1
+#else
+#define LVGL_TASK_CORE_ID 0
+#endif
 #define TOUCH_CALIBRATION_VERSION 1U
 #define TOUCH_CALIBRATION_POINT_COUNT 4U
 #define TOUCH_CALIBRATION_NVS_NAMESPACE "esp_bms"
@@ -1114,6 +1119,7 @@ esp_err_t esp_bms_lvgl_bridge_init(const esp_bms_lvgl_bridge_config_t *config)
     ESP_RETURN_ON_ERROR(esp_lcd_panel_disp_on_off(s_panel, true), TAG, "turn panel on failed");
 
     esp_lv_adapter_config_t adapter_config = ESP_LV_ADAPTER_DEFAULT_CONFIG();
+    adapter_config.task_core_id = LVGL_TASK_CORE_ID;
     adapter_config.task_max_delay_ms = LVGL_TASK_MAX_DELAY_MS;
 #if CONFIG_ESP_LVGL_ADAPTER_LVGL_THREAD_STACK_IN_PSRAM
     adapter_config.stack_in_psram = use_psram_buffers;
