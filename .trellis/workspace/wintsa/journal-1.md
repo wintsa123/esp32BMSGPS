@@ -439,3 +439,36 @@ Added a primitive-drawn quick-panel lock icon, full-screen interaction guard, fr
 ### Next Steps
 
 - None - task complete
+
+
+## Session 14: ESP32 LVGL dual-core frame-rate optimization
+
+**Date**: 2026-07-25
+**Task**: ESP32 LVGL dual-core frame-rate optimization
+**Branch**: `main`
+
+### Summary
+
+Enabled two LVGL software draw units on dual-core targets, pinned the adapter worker to Core 1, preserved the C3 single-core override, and validated ESP32/S3 builds plus simulator smoke tests.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5ef2184` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
