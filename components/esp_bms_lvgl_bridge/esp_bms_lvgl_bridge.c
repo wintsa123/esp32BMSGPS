@@ -881,8 +881,11 @@ static esp_err_t init_touch_i2c(const esp_bms_lvgl_bridge_config_t *config,
     };
     ESP_RETURN_ON_ERROR(esp_lcd_new_panel_io_i2c(s_touch_i2c_bus, &touch_io_config, &s_touch_io),
                         TAG, "create touch I2C panel IO failed");
+#if ESP_BMS_PROFILE_TOUCH_FT5X06 || ESP_BMS_PROFILE_TOUCH_GT1151 || \
+    ESP_BMS_PROFILE_TOUCH_GT911 || ESP_BMS_PROFILE_TOUCH_CST816S
     const esp_lcd_touch_config_t touch_config = make_touch_config(config, hres, vres);
- #if ESP_BMS_PROFILE_TOUCH_FT5X06
+#endif
+#if ESP_BMS_PROFILE_TOUCH_FT5X06
     if (config->touch_driver == ESP_BMS_LVGL_TOUCH_FT5X06) {
         ESP_RETURN_ON_ERROR(esp_lcd_touch_new_i2c_ft5x06(s_touch_io, &touch_config, &s_touch),
                             TAG, "create FT5X06 touch failed");
@@ -1021,13 +1024,15 @@ static esp_err_t init_panel_i80(const esp_bms_lvgl_bridge_config_t *config, int 
     };
     ESP_RETURN_ON_ERROR(esp_lcd_new_panel_io_i80(i80_bus, &io_config, &s_panel_io),
                         TAG, "create display I80 panel IO failed");
+#if ESP_BMS_PROFILE_PANEL_ST7796 || ESP_BMS_PROFILE_PANEL_ILI9488
     const esp_lcd_panel_dev_config_t panel_config = {
         .reset_gpio_num = config->pin_reset,
         .rgb_ele_order = config->rgb_element_order,
         .data_endian = LCD_RGB_DATA_ENDIAN_BIG,
         .bits_per_pixel = 16,
     };
- #if ESP_BMS_PROFILE_PANEL_ST7796
+#endif
+#if ESP_BMS_PROFILE_PANEL_ST7796
     if (config->panel_driver == ESP_BMS_LVGL_PANEL_ST7796) {
         return esp_lcd_new_panel_st7796(s_panel_io, &panel_config, &s_panel);
     }

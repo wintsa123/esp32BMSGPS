@@ -687,8 +687,10 @@ function Validate-Config([System.Collections.IDictionary]$Config) {
         $BoardOutputGpio = $Config.OUTPUT_GPIO
     } else {
         $Board = Get-Record 'board' $Config.BOARD
-        Assert-Keys $Board @('SCHEMA_VERSION', 'ID', 'MCU', 'DISPLAY_BUS', 'DISPLAY_DATA_WIDTH', 'INPUT_BUS', 'FLASH_MB', 'PSRAM_MB', 'PARTITIONS', 'BUILD_READY', 'AUDIO_BACKEND', 'AUDIO_DAC_CHANNEL', 'AUDIO_ENABLE_ACTIVE_LEVEL', 'INPUT_GPIO', 'OUTPUT_GPIO', 'APPROVED_DANGEROUS_GPIO')
+        Assert-Keys $Board @('SCHEMA_VERSION', 'ID', 'MCU', 'DISPLAY', 'INPUT', 'DISPLAY_BUS', 'DISPLAY_DATA_WIDTH', 'INPUT_BUS', 'FLASH_MB', 'PSRAM_MB', 'PARTITIONS', 'BUILD_READY', 'AUDIO_BACKEND', 'AUDIO_DAC_CHANNEL', 'AUDIO_ENABLE_ACTIVE_LEVEL', 'INPUT_GPIO', 'OUTPUT_GPIO', 'APPROVED_DANGEROUS_GPIO')
         if ($Board.MCU -ne $Config.MCU) { Fail "board $($Config.BOARD) requires $($Board.MCU)" }
+        if ($Board.DISPLAY -ne $Config.DISPLAY) { Fail "board $($Config.BOARD) requires display $($Board.DISPLAY)" }
+        if ($Config.INPUT -ne 'none' -and $Board.INPUT -ne $Config.INPUT) { Fail "board $($Config.BOARD) requires input $($Board.INPUT) or none" }
         $script:BoardDisplayBus = $Board.DISPLAY_BUS
         $script:BoardDisplayDataWidth = $Board.DISPLAY_DATA_WIDTH
         $script:BoardInputBus = $Board.INPUT_BUS
@@ -948,6 +950,7 @@ function Invoke-LocalBuild([System.Collections.IDictionary]$Config) {
     $ProfileDir = Join-Path $BuildRoot $Config.PROFILE
     $ProfileProject = Join-Path (Join-Path $IdfBuildRoot $Config.PROFILE) 'idf-project'
     $BuildDir = Join-Path (Join-Path $IdfBuildRoot $Config.PROFILE) 'idf-build'
+    $env:FIRMWARE_BUILD_ROOT = $BuildRoot
     $env:ESP_BMS_PROFILE_FILE = Join-Path $ProfileDir 'generated/profile.cmake'
     $IdfExport = Ensure-IdfExportScript
 
@@ -1032,15 +1035,22 @@ function Show-LocalBuildResult([System.Collections.IDictionary]$Config, [string]
     $BuildDir = (Resolve-Path -LiteralPath $BuildDir).Path
     $OutputDirectory = Join-Path $FirmwareOutputRoot $Config.PROFILE
     [void](New-Item -ItemType Directory -Path $OutputDirectory -Force)
+    $Python = Get-PythonExecutable
+    $PublishArguments = @('--build-dir', $BuildDir, '--output-dir', $OutputDirectory, '--profile', $Config.PROFILE)
+    if ((Split-Csv $Config.MODULES) -contains 'ota') { $PublishArguments += '--ota-enabled' }
+    & $Python (Join-Path $Root 'scripts/publish-flash-artifacts.py') @PublishArguments
+    if ($LASTEXITCODE -ne 0) { Fail 'failed to publish the complete flash bundle' }
     $OutputFirmwarePath = Join-Path $OutputDirectory "$($Config.PROFILE).bin"
-    Copy-Item -LiteralPath $FirmwarePath -Destination $OutputFirmwarePath -Force
+    $FlashBundlePath = Join-Path $OutputDirectory "$($Config.PROFILE)-flash.bin"
     $FirmwarePath = (Resolve-Path -LiteralPath $OutputFirmwarePath).Path
+    $FlashBundlePath = (Resolve-Path -LiteralPath $FlashBundlePath).Path
     $FlashCommand = ".\scripts\flash.ps1 -Port COMx -BuildDir `"$BuildDir`""
 
     Write-Host ''
     if ($script:Language -eq 'en') {
         Write-Host 'Build completed'
         Write-Host "  Firmware: $FirmwarePath"
+        Write-Host "  Full flash image (write at 0x0): $FlashBundlePath"
         if ((Split-Csv $Config.MODULES) -contains 'ota') {
             Write-Host "  OTA code: $(Get-FirmwareOtaCode $FirmwarePath)"
             Write-Host '  Enter this four-digit code when uploading the firmware in the device web UI.'
@@ -1050,7 +1060,8 @@ function Show-LocalBuildResult([System.Collections.IDictionary]$Config, [string]
         Write-Host "  Flash command (replace COMx with the actual port): $FlashCommand"
     } else {
         Write-Host '编译完成'
-        Write-Host "  固件地址：$FirmwarePath"
+        Write-Host "  应用镜像（写入 0x10000）：$FirmwarePath"
+        Write-Host "  完整烧录镜像（写入 0x0）：$FlashBundlePath"
         if ((Split-Csv $Config.MODULES) -contains 'ota') {
             Write-Host "  固件 OTA 密码：$(Get-FirmwareOtaCode $FirmwarePath)"
             Write-Host '  请在设备网页上传固件时填写上述四位密码。'
@@ -1215,9 +1226,9 @@ function Get-CatalogOptionDescription([string]$Kind, [string]$Id) {
     if ($Kind -eq 'display' -and $Id -ne 'custom') {
         $Display = Get-Record 'display' $Id
         if ($script:Language -eq 'en') {
-            return "$($Display.DRIVER) $($Display.SIZE_INCH) inch, $($Display.WIDTH) x $($Display.HEIGHT), $($Display.BUS)"
+            return "$($Display.DRIVER), $($Display.WIDTH) x $($Display.HEIGHT)"
         }
-        return "$($Display.DRIVER) $($Display.SIZE_INCH) 英寸，$($Display.WIDTH) × $($Display.HEIGHT)，$($Display.BUS)"
+        return "$($Display.DRIVER)，$($Display.WIDTH) × $($Display.HEIGHT)"
     }
     $Labels = @{
         'mcu/esp32' = @('ESP32，最多 39 路 GPIO，支持 SPI 显示', 'ESP32, up to GPIO39, SPI display support')
@@ -1531,44 +1542,59 @@ function Set-CustomBoardGpio([System.Collections.IDictionary]$Config) {
 function Set-CustomBoardConfig([System.Collections.IDictionary]$Config) {
     $Config.BOARD = 'custom'
     Read-CustomId $Config 'BOARD_NAME' '自定义开发板名称（ASCII）' 'Custom board name (ASCII)'
+    $Stage = 'mcu'
     while ($true) {
-        do {
-            $Config.MCU = Select-CatalogOption 'mcu' 'MCU' $Config.MCU @(Get-CatalogIds 'mcu')
-        } while ($script:ReturnToPreviousFunctionList)
-        $Mcu = Get-Record 'mcu' $Config.MCU
-        $script:MCUDisplayBuses = $Mcu.DISPLAY_BUSES
-        $script:MCUGpioMax = [int]$Mcu.GPIO_MAX
-        $script:MCUDangerous = $Mcu.DANGEROUS_GPIO
-        Read-CustomNumber $Config 'FLASH_MB' '4' 'Flash 容量（MB）' 'Flash size (MB)'
-        Read-CustomNumber $Config 'PSRAM_MB' '0' 'PSRAM 容量（MB）' 'PSRAM size (MB)'
-        $Config.PARTITIONS = 'firmware/partitions/esp32-wroom-32e-legacy.csv'
-
-        $DisplayOptions = @(Get-CatalogDisplayIdsSupportedByMcu $Config.MCU)
-        $DisplayDefault = @($DisplayOptions | Where-Object { $_ -ne 'custom' } | Select-Object -First 1)
-        if ($DisplayOptions -contains $Config.DISPLAY) { $DisplayDefault = $Config.DISPLAY }
-        $Config.DISPLAY = Select-CatalogOption 'display' 'Display' $DisplayDefault $DisplayOptions
-        if ($script:ReturnToPreviousFunctionList) { continue }
-        $Display = Get-Record 'display' $Config.DISPLAY
-        $Config.DISPLAY_BUS = $Display.BUS
-        $script:BoardDisplayDataWidth = $Display.DATA_WIDTH
-        break
-    }
-
-    $InputOptions = @(Get-CatalogInputIdsSupportedByMcuAndBus $Config.MCU '')
-    $InputDefault = @($InputOptions | Where-Object { $_ -ne 'none' } | Select-Object -First 1)
-    if ($InputOptions -contains $Config.INPUT) { $InputDefault = $Config.INPUT }
-    $Config.INPUT = Select-CatalogOption 'input' 'Touch' $InputDefault $InputOptions
-    if ($Config.INPUT -eq 'none') {
-        $Config.INPUT_BUS = 'NONE'
-    } else {
-        $Config.INPUT_BUS = (Get-Record 'input' $Config.INPUT).BUS
+        switch ($Stage) {
+            'mcu' {
+                $Config.MCU = Select-CatalogOption 'mcu' 'MCU' $Config.MCU @(Get-CatalogIds 'mcu')
+                if ($script:ReturnToPreviousFunctionList) { continue }
+                $Mcu = Get-Record 'mcu' $Config.MCU
+                $script:MCUDisplayBuses = $Mcu.DISPLAY_BUSES
+                $script:MCUGpioMax = [int]$Mcu.GPIO_MAX
+                $script:MCUDangerous = $Mcu.DANGEROUS_GPIO
+                Read-CustomNumber $Config 'FLASH_MB' '4' 'Flash 容量（MB）' 'Flash size (MB)'
+                Read-CustomNumber $Config 'PSRAM_MB' '0' 'PSRAM 容量（MB）' 'PSRAM size (MB)'
+                $Config.PARTITIONS = 'firmware/partitions/esp32-wroom-32e-legacy.csv'
+                $Stage = 'display'
+            }
+            'display' {
+                $DisplayOptions = @(Get-CatalogDisplayIdsSupportedByMcu $Config.MCU)
+                $DisplayDefault = @($DisplayOptions | Where-Object { $_ -ne 'custom' } | Select-Object -First 1)
+                if ($DisplayOptions -contains $Config.DISPLAY) { $DisplayDefault = $Config.DISPLAY }
+                $Config.DISPLAY = Select-CatalogOption 'display' 'Display' $DisplayDefault $DisplayOptions
+                if ($script:ReturnToPreviousFunctionList) { $Stage = 'mcu'; continue }
+                $Display = Get-Record 'display' $Config.DISPLAY
+                $Config.DISPLAY_BUS = $Display.BUS
+                $script:BoardDisplayDataWidth = $Display.DATA_WIDTH
+                $Stage = 'input'
+            }
+            'input' {
+                $InputOptions = @(Get-CatalogInputIdsSupportedByMcuAndBus $Config.MCU '')
+                $InputDefault = @($InputOptions | Where-Object { $_ -ne 'none' } | Select-Object -First 1)
+                if ($InputOptions -contains $Config.INPUT) { $InputDefault = $Config.INPUT }
+                $Config.INPUT = Select-CatalogOption 'input' 'Touch' $InputDefault $InputOptions
+                if ($script:ReturnToPreviousFunctionList) { $Stage = 'display'; continue }
+                if ($Config.INPUT -eq 'none') {
+                    $Config.INPUT_BUS = 'NONE'
+                } else {
+                    $Config.INPUT_BUS = (Get-Record 'input' $Config.INPUT).BUS
+                }
+                $Stage = 'module'
+            }
+            'module' {
+                $Config.MODULES = Select-ModuleOptions $Config.MODULES
+                if ($script:ReturnToPreviousFunctionList) { $Stage = 'input'; continue }
+                $Stage = 'dashboard'
+            }
+            'dashboard' {
+                $Config.DASHBOARDS = Select-DashboardOptions $Config
+                if ($script:ReturnToPreviousFunctionList) { $Stage = 'module'; continue }
+                break
+            }
+        }
     }
     $script:BoardDisplayBus = $Config.DISPLAY_BUS
     $script:BoardInputBus = $Config.INPUT_BUS
-    do {
-        $Config.MODULES = Select-ModuleOptions $Config.MODULES
-        $Config.DASHBOARDS = Select-DashboardOptions $Config
-    } while ($script:ReturnToPreviousFunctionList)
     Set-CustomBoardGpio $Config
 }
 
@@ -1763,24 +1789,19 @@ function Invoke-Interactive {
     } else {
         $Board = Get-Record 'board' $Config.BOARD
         $Config.MCU = $Board.MCU
+        $Config.DISPLAY = $Board.DISPLAY
         $Config.DISPLAY_BUS = $Board.DISPLAY_BUS
         $Config.INPUT_BUS = $Board.INPUT_BUS
-        $Stage = 'display'
+        $Stage = 'input'
         while ($true) {
             switch ($Stage) {
-                'display' {
-                    $DisplayOptions = @(Get-CatalogDisplayIdsSupportedByMcu $Config.MCU | Where-Object { (Get-Record 'display' $_).BUS -eq $Board.DISPLAY_BUS })
-                    if ($DisplayOptions -notcontains $Config.DISPLAY) { $Config.DISPLAY = $DisplayOptions[0] }
-                    $Config.DISPLAY = Select-CatalogOption 'display' 'Display' $Config.DISPLAY $DisplayOptions
-                    if ($script:ReturnToPreviousFunctionList) { continue 2 }
-                    $Stage = 'input'
-                }
                 'input' {
-                    $InputOptions = @(Get-CatalogInputIdsSupportedByMcuAndBus $Config.MCU $Board.INPUT_BUS)
-                    if ($InputOptions -notcontains $Config.INPUT) { $Config.INPUT = $InputOptions[0] }
+                    $InputOptions = @($Board.INPUT)
+                    if ($Board.INPUT -ne 'none') { $InputOptions += 'none' }
+                    $Config.INPUT = $Board.INPUT
                     $Config.INPUT = Select-CatalogOption 'input' 'Touch' $Config.INPUT $InputOptions
-                    if ($script:ReturnToPreviousFunctionList) { $Stage = 'display'; continue }
-                    if ($Config.INPUT -eq 'none') { $Config.INPUT_BUS = 'NONE' }
+                    if ($script:ReturnToPreviousFunctionList) { continue 2 }
+                    if ($Config.INPUT -eq 'none') { $Config.INPUT_BUS = 'NONE' } else { $Config.INPUT_BUS = $Board.INPUT_BUS }
                     $Stage = 'module'
                 }
                 'module' {

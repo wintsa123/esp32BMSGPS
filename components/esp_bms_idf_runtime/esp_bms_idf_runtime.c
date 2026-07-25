@@ -3470,6 +3470,17 @@ esp_err_t esp_bms_idf_runtime_start_controller_scan(esp_bms_idf_runtime_t *runti
     return runtime->controller_ble_driver->start_scan(runtime);
 }
 
+esp_err_t esp_bms_idf_runtime_resume_bms_scan(esp_bms_idf_runtime_t *runtime)
+{
+    if (!runtime) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!runtime->bms_ble_driver || !runtime->bms_ble_driver->resume_scan) {
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+    return runtime->bms_ble_driver->resume_scan(runtime);
+}
+
 void esp_bms_idf_runtime_stop_controller_ble(esp_bms_idf_runtime_t *runtime)
 {
     if (!runtime) {

@@ -114,6 +114,27 @@ rg -Fq '.pin_backlight = GPIO_NUM_NC' "${work_dir}/no-backlight.h"
 rg -Fx '#define ESP_BMS_PROFILE_BATTERY_ADC (gpio_num_t)34' "${work_dir}/audio-legacy.h"
 rg -Fx '#define ESP_BMS_PROFILE_AUDIO_BACKEND ESP_BMS_PROFILE_AUDIO_BACKEND_DAC' "${work_dir}/audio-legacy.h"
 
+expect_fail 'requires display st7789-spi' "${repo_root}/start.sh" validate --lang en --mcu esp32 --board esp32-wroom-32e-legacy --display ili9341-2p8-spi --input xpt2046-spi
+cat >"${work_dir}/legacy-ili9341-2p8.env" <<'EOF'
+SCHEMA_VERSION=1
+PROFILE=legacy-ili9341-2p8
+MCU=esp32
+BOARD=custom
+BOARD_NAME=legacy-ili9341-2p8-board
+DISPLAY=ili9341-2p8-spi
+INPUT=xpt2046-spi
+MODULES=
+FLASH_MB=4
+PSRAM_MB=0
+PARTITIONS=firmware/partitions/esp32-wroom-32e-legacy.csv
+INPUT_GPIO=TOUCH_MISO:39
+OUTPUT_GPIO=TFT_MOSI:13,TFT_SCLK:14,TFT_CS:15,TFT_DC:2,TOUCH_MOSI:32,TOUCH_CS:33,TOUCH_SCLK:25
+EOF
+FIRMWARE_BUILD_ROOT="${work_dir}/legacy-ili9341-2p8-build" "${repo_root}/start.sh" configure --lang en --config "${work_dir}/legacy-ili9341-2p8.env" >/dev/null
+rg -qx 'DISPLAY=ili9341-2p8-spi' "${work_dir}/legacy-ili9341-2p8-build/legacy-ili9341-2p8/firmware.env"
+rg -Fx '#define ESP_BMS_PROFILE_DISPLAY_SIZE_INCH "2.8"' "${work_dir}/legacy-ili9341-2p8-build/legacy-ili9341-2p8/generated/esp_bms_profile_hardware.h"
+rg -Fx '.physical_width = 240' "${work_dir}/legacy-ili9341-2p8-build/legacy-ili9341-2p8/generated/esp_bms_profile_hardware.h"
+
 expect_fail 'does not provide an audio hardware profile' "${repo_root}/start.sh" validate --lang en --profile audio-st7796 --mcu esp32s3 --board esp32s3-n16r8-st7796u-gt1151 --display st7796u-i80 --input gt1151-i2c --modules audio
 
 cat >"${work_dir}/malicious.env" <<'EOF'
@@ -176,8 +197,29 @@ fi
 args=("$@")
 for ((index = 0; index < ${#args[@]}; index++)); do
     if [[ "${args[$index]}" == -B ]]; then
-        mkdir -p "${args[$((index + 1))]}"
-        : >"${args[$((index + 1))]}/esp32_bms_gps_idf.bin"
+        build_dir="${args[$((index + 1))]}"
+        if [[ -e "$build_dir/CMakeCache.txt" ]]; then
+            printf '%s\n' 'stale CMake cache was not removed before build' >&2
+            exit 1
+        fi
+        mkdir -p "$build_dir/bootloader" "$build_dir/partition_table"
+        printf 'bootloader' >"$build_dir/bootloader/bootloader.bin"
+        printf 'partition-table' >"$build_dir/partition_table/partition-table.bin"
+        printf 'ota-data' >"$build_dir/ota_data_initial.bin"
+        printf 'application' >"$build_dir/esp32_bms_gps_idf.bin"
+        cat >"$build_dir/flasher_args.json" <<'JSON'
+{
+  "flash_settings": {"flash_mode": "dio", "flash_freq": "40m", "flash_size": "4MB"},
+  "flash_files": {
+    "0x1000": "bootloader/bootloader.bin",
+    "0x8000": "partition_table/partition-table.bin",
+    "0xd000": "ota_data_initial.bin",
+    "0x10000": "esp32_bms_gps_idf.bin"
+  },
+  "app": {"offset": "0x10000", "file": "esp32_bms_gps_idf.bin"},
+  "extra_esptool_args": {"chip": "esp32"}
+}
+JSON
         break
     fi
 done
@@ -260,6 +302,8 @@ rg -Fq 'clone interrupted; retrying (2/3)' "${work_dir}/retry-install-idf.out"
 [[ "$(rg -cx 'clone' "${work_dir}/retry-git.args")" == 2 ]]
 test -f "${retry_install_dir}/install.sh"
 
+mkdir -p "${work_dir}/ascii-idf-build/golden/idf-build"
+touch "${work_dir}/ascii-idf-build/golden/idf-build/CMakeCache.txt"
 IDF_PATH="$fake_idf_root" \
     FIRMWARE_BUILD_ROOT="${work_dir}/local-build" \
     ESP_BMS_IDF_BUILD_ROOT="${work_dir}/ascii-idf-build" \
@@ -270,6 +314,20 @@ rg -Fq 'Build completed' "${work_dir}/local-build.out"
 rg -Fx -- '-B' "${work_dir}/local-idf.args"
 rg -Fx "${work_dir}/ascii-idf-build/golden/idf-build" "${work_dir}/local-idf.args"
 test -f "${work_dir}/output/golden/golden.bin"
+test -f "${work_dir}/output/golden/bootloader.bin"
+test -f "${work_dir}/output/golden/partition-table.bin"
+test -f "${work_dir}/output/golden/ota_data_initial.bin"
+test -f "${work_dir}/output/golden/golden-flash.bin"
+test -x "${work_dir}/output/golden/flash.sh"
+test -f "${work_dir}/output/golden/README.md"
+rg -Fq '"offset": "0x10000"' "${work_dir}/output/golden/flash-manifest.json"
+rg -Fq '"file": "golden-flash.bin"' "${work_dir}/output/golden/flash-manifest.json"
+rg -Fq 'write_flash' "${work_dir}/output/golden/flash.sh"
+rg -Fq '`0x0`' "${work_dir}/output/golden/README.md"
+ota_code="$(python3 -c 'import sys,zlib; data=open(sys.argv[1], "rb").read(); print(f"{zlib.crc32(data) % 10000:04d}")' "${work_dir}/output/golden/golden.bin")"
+rg -Fq "OTA 四位验证码：\`${ota_code}\`" "${work_dir}/output/golden/README.md"
+[[ "$(dd if="${work_dir}/output/golden/golden-flash.bin" bs=1 skip=4096 count=10 status=none)" == bootloader ]]
+[[ "$(dd if="${work_dir}/output/golden/golden-flash.bin" bs=1 skip=65536 count=11 status=none)" == application ]]
 test ! -d "${work_dir}/ascii-idf-build/golden/idf-build"
 
 printf '2\nsaved-s3\n' | \
@@ -337,7 +395,8 @@ rg -q '^config: .*/interactive-retry-build/esp32s3-n16r8-st7796u-gt1151/firmware
 
 printf '1\n2\n\n\n2,7\n\nn\n' | FIRMWARE_BUILD_ROOT="${work_dir}/interactive-cancel-build" "${repo_root}/start.sh" >"${work_dir}/interactive-cancel.out"
 rg -Fq '  1) ili9488-i80 ' "${work_dir}/interactive-cancel.out"
-rg -Fq '  1) cst816s-i2c ' "${work_dir}/interactive-cancel.out"
+rg -Fq '  1) gt1151-i2c ' "${work_dir}/interactive-cancel.out"
+rg -Fq '  2) none ' "${work_dir}/interactive-cancel.out"
 rg -q '^已取消生成配置。$' "${work_dir}/interactive-cancel.out"
 ! test -e "${work_dir}/interactive-cancel-build/esp32s3-n16r8-st7796u-gt1151/firmware.env"
 
@@ -438,6 +497,8 @@ rg -Fq 'choose_catalog_option_with_keyboard' "${repo_root}/start.sh"
 rg -U -Fq $'choose_board_or_saved_profile\n    [[ "$MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST" == YES ]] && continue' "${repo_root}/start.sh"
 rg -U -Fq $'choose_catalog_option mcu \'MCU\' "${CFG[MCU]}" "${choices[@]}"\n        [[ "$MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST" == YES ]] && continue' "${repo_root}/start.sh"
 rg -U -Fq $'choose_catalog_option display \'Display\' "$default_option" "${choices[@]}"\n        [[ "$MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST" == YES ]] && continue' "${repo_root}/start.sh"
+rg -Fq '[[ "$MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST" == YES ]] && { stage=display; continue; }' "${repo_root}/start.sh"
+rg -Fq '[[ "$MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST" == YES ]] && { stage=input; continue; }' "${repo_root}/start.sh"
 rg -Fq 'Left to return to the previous feature list' "${repo_root}/start.ps1"
 rg -Fq 'Left to return, Enter to continue.' "${repo_root}/start.ps1"
 rg -Fq '← 返回上一个功能清单' "${repo_root}/start.sh"
@@ -445,7 +506,8 @@ rg -Fq 'MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST=YES' "${repo_root}/start.sh"
 rg -Fq '[ConsoleKey]::LeftArrow' "${repo_root}/start.ps1"
 [[ "$(rg -F 'Clear-Host' "${repo_root}/start.ps1" | wc -l | tr -d '[:space:]')" == 2 ]]
 rg -Fq 'function Update-KeyboardMenuPrefixes' "${repo_root}/start.ps1"
-rg -U -Fq $"$Config.DISPLAY = Select-CatalogOption 'display' 'Display' $DisplayDefault $DisplayOptions\n        if ($script:ReturnToPreviousFunctionList) { continue }" "${repo_root}/start.ps1"
+rg -Fq "if ($script:ReturnToPreviousFunctionList) { $Stage = 'display'; continue }" "${repo_root}/start.ps1"
+rg -Fq "if ($script:ReturnToPreviousFunctionList) { $Stage = 'input'; continue }" "${repo_root}/start.ps1"
 rg -Fq "'DISPLAY_DATA_WIDTH'" "${repo_root}/start.ps1"
 rg -Fq "'DATA_WIDTH'" "${repo_root}/start.ps1"
 ! rg -Fq 'scripts/esp-idf-env.sh' "${repo_root}/start.ps1"
@@ -490,6 +552,7 @@ rg -Fq 'ESP-IDF v6.0.2' "${repo_root}/start.ps1"
 rg -Fq 'esp-idf-v6.0.2' "${repo_root}/scripts/esp-idf-env.sh"
 rg -Fq -- '-DIDF_TARGET="${CFG[MCU]}"' "${repo_root}/start.sh"
 rg -Fq -- '"-DIDF_TARGET=$($Config.MCU)"' "${repo_root}/start.ps1"
+rg -Fq '$env:FIRMWARE_BUILD_ROOT = $BuildRoot' "${repo_root}/start.ps1"
 ! rg -Fq 'esp-idf-v5.5.4' "${repo_root}/start.sh"
 ! rg -Fq 'esp-idf-v5.5.4' "${repo_root}/start.ps1"
 rg -Fq 'DISPLAY_DATA_WIDTH' "${repo_root}/start.sh"

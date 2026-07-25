@@ -7,8 +7,8 @@ export all_proxy="${all_proxy:-socks5://127.0.0.1:7897}"
 
 readonly ESP_IDF_REQUIRED_VERSION="ESP-IDF v6.0.2"
 readonly PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-readonly PROJECT_IDF_PATH="$PROJECT_ROOT/esp-idf-v6.0.2"
-readonly PROJECT_TOOLS_PATH="$PROJECT_ROOT/esp-idf-tools"
+readonly PROJECT_IDF_PATH="${ESP_BMS_IDF_PATH:-/vol1/1000/toolchains/esp-idf-v6.0.2}"
+readonly PROJECT_TOOLS_PATH="${ESP_BMS_IDF_TOOLS_PATH:-/vol1/1000/toolchains/.espressif-v6.0.2}"
 configured_idf_path=''
 idf_path_config="${XDG_CONFIG_HOME:-$HOME/.config}/esp32-bms-gps/idf-path"
 
@@ -32,7 +32,7 @@ if [[ -f "${IDF_PATH:-}/export.sh" ]]; then
     # shellcheck source=/dev/null
     source "$IDF_PATH/export.sh"
 else
-    printf 'missing ESP-IDF v6.0.2 export.sh; set IDF_PATH, run ./start.sh install-idf, or keep esp-idf-v6.0.2 in the project root\n' >&2
+    printf 'missing ESP-IDF v6.0.2 export.sh; set IDF_PATH or run ./start.sh install-idf\n' >&2
     exit 127
 fi
 

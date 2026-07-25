@@ -104,9 +104,9 @@
 Linux/macOS：
 
 ```bash
-# 检查环境；首次安装 ESP-IDF 6.0.2 时使用 install-idf
+# 检查公共 ESP-IDF 环境；首次安装 ESP-IDF 6.0.2 时使用 install-idf
 ./start.sh doctor
-./start.sh install-idf --dir "$PWD/esp-idf-v6.0.2"
+./start.sh install-idf --dir /vol1/1000/toolchains/esp-idf-v6.0.2
 
 # 交互式配置，或校验/保存火刃+BMS+控制器配置档
 ./start.sh
@@ -118,7 +118,7 @@ Linux/macOS：
 ./start.sh build-cloud --profile fireblade --modules bms,controller --dashboards fireblade
 ```
 
-Windows 使用相同参数，将命令替换为 `.\start.cmd`，例如 `.\start.cmd doctor`、`.\start.cmd` 或 `.\start.cmd build-local --profile fireblade --modules bms,controller --dashboards fireblade`。Windows 首次安装可运行 `.\start.cmd install-idf --dir C:\esp\esp-idf-v6.0.2`；Linux/macOS 会把 ESP-IDF 源码和工具包默认放在项目根目录的 `esp-idf-v6.0.2/` 与 `esp-idf-tools/`。
+Windows 使用相同参数，将命令替换为 `.\start.cmd`，例如 `.\start.cmd doctor`、`.\start.cmd` 或 `.\start.cmd build-local --profile fireblade --modules bms,controller --dashboards fireblade`。Windows 首次安装可运行 `.\start.cmd install-idf --dir C:\esp\esp-idf-v6.0.2`；当前 Linux 主机的公共 ESP-IDF 位于 `/vol1/1000/toolchains/esp-idf-v6.0.2`，工具缓存位于 `/vol1/1000/toolchains/.espressif-v6.0.2`。
 
 Linux 本地串口：
 
@@ -133,6 +133,10 @@ Windows 本地串口：
 ```
 
 编译后的交互烧录默认选择本地串口；远程 RFC2217 仅在明确选择后才输入地址。
+
+本地编译会在 `output/<配置名>/` 生成完整烧录包。在线烧录请选择
+`<配置名>-flash.bin` 并写入 `0x0`；单独的 `<配置名>.bin` 是 OTA/应用镜像，
+只能按同目录 `flash-manifest.json` 的应用地址烧录（旧 ESP32 为 `0x10000`），不能写入 `0x1000`。
 
 如果设备此前使用其他分区表，首次切换时需要先擦除 Flash。详细的构建、擦除、诊断镜像、分区布局和故障排查见[固件硬件、构建与烧录规范](./.trellis/spec/backend/hardware-build-flash.md)。
 

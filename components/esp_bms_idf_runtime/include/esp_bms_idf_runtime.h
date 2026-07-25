@@ -260,6 +260,7 @@ void esp_bms_idf_runtime_bms_scan_store_candidate(esp_bms_idf_runtime_t *runtime
 esp_err_t esp_bms_idf_runtime_start_bluetooth_advertising(esp_bms_idf_runtime_t *runtime);
 esp_err_t esp_bms_idf_runtime_start_controller_ble_if_enabled(esp_bms_idf_runtime_t *runtime);
 esp_err_t esp_bms_idf_runtime_start_controller_scan(esp_bms_idf_runtime_t *runtime);
+esp_err_t esp_bms_idf_runtime_resume_bms_scan(esp_bms_idf_runtime_t *runtime);
 void esp_bms_idf_runtime_stop_controller_ble(esp_bms_idf_runtime_t *runtime);
 void esp_bms_idf_runtime_project_controller_snapshot(esp_bms_idf_runtime_t *runtime);
 void esp_bms_idf_runtime_set_active_data_source(esp_bms_idf_runtime_t *runtime,

@@ -4,8 +4,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CATALOG_DIR="${FIRMWARE_CATALOG_DIR:-$ROOT/firmware/catalog}"
 BUILD_ROOT="${FIRMWARE_BUILD_ROOT:-$ROOT/firmware-builds}"
-PROJECT_IDF_PATH="${ESP_BMS_IDF_PATH:-$ROOT/esp-idf-v6.0.2}"
-PROJECT_TOOLS_PATH="${ESP_BMS_IDF_TOOLS_PATH:-$ROOT/esp-idf-tools}"
+# ESP-IDF is shared by all projects on this host; per-project overrides remain available.
+PROJECT_IDF_PATH="${ESP_BMS_IDF_PATH:-/vol1/1000/toolchains/esp-idf-v6.0.2}"
+PROJECT_TOOLS_PATH="${ESP_BMS_IDF_TOOLS_PATH:-/vol1/1000/toolchains/.espressif-v6.0.2}"
 # ESP-IDF's Xtensa toolchain cannot parse non-ASCII paths in generated specs.
 # Keep its CMake tree on the ASCII volume, then publish only the firmware here.
 IDF_BUILD_ROOT="${ESP_BMS_IDF_BUILD_ROOT:-/tmp/esp32-bms-gps-idf-builds/$UID}"
@@ -847,8 +848,10 @@ validate_config() {
         BOARD_OUTPUT_GPIO="${CFG[OUTPUT_GPIO]}"
     else
         load_record board "${CFG[BOARD]}"
-        require_keys RECORD SCHEMA_VERSION ID MCU DISPLAY_BUS DISPLAY_DATA_WIDTH INPUT_BUS FLASH_MB PSRAM_MB PARTITIONS BUILD_READY AUDIO_BACKEND AUDIO_DAC_CHANNEL AUDIO_ENABLE_ACTIVE_LEVEL INPUT_GPIO OUTPUT_GPIO APPROVED_DANGEROUS_GPIO
+        require_keys RECORD SCHEMA_VERSION ID MCU DISPLAY INPUT DISPLAY_BUS DISPLAY_DATA_WIDTH INPUT_BUS FLASH_MB PSRAM_MB PARTITIONS BUILD_READY AUDIO_BACKEND AUDIO_DAC_CHANNEL AUDIO_ENABLE_ACTIVE_LEVEL INPUT_GPIO OUTPUT_GPIO APPROVED_DANGEROUS_GPIO
         [[ "${RECORD[MCU]}" == "${CFG[MCU]}" ]] || die "board ${CFG[BOARD]} requires ${RECORD[MCU]}"
+        [[ "${RECORD[DISPLAY]}" == "${CFG[DISPLAY]}" ]] || die "board ${CFG[BOARD]} requires display ${RECORD[DISPLAY]}"
+        [[ "${CFG[INPUT]}" == none || "${RECORD[INPUT]}" == "${CFG[INPUT]}" ]] || die "board ${CFG[BOARD]} requires input ${RECORD[INPUT]} or none"
         BOARD_DISPLAY_BUS="${RECORD[DISPLAY_BUS]}"
         BOARD_DISPLAY_DATA_WIDTH="${RECORD[DISPLAY_DATA_WIDTH]}"
         BOARD_INPUT_BUS="${RECORD[INPUT_BUS]}"
@@ -1226,8 +1229,8 @@ catalog_option_description() {
         display:custom) zh='自定义显示屏：填写名称并选择总线'; en='Custom display: name it and choose its bus' ;;
         display:*)
             load_record display "$id"
-            zh="${RECORD[DRIVER]} ${RECORD[SIZE_INCH]} 英寸，${RECORD[WIDTH]} × ${RECORD[HEIGHT]}，${RECORD[BUS]}"
-            en="${RECORD[DRIVER]} ${RECORD[SIZE_INCH]} inch, ${RECORD[WIDTH]} x ${RECORD[HEIGHT]}, ${RECORD[BUS]}"
+            zh="${RECORD[DRIVER]}，${RECORD[WIDTH]} × ${RECORD[HEIGHT]}"
+            en="${RECORD[DRIVER]}, ${RECORD[WIDTH]} x ${RECORD[HEIGHT]}"
             ;;
         input:xpt2046-spi) zh='XPT2046 SPI 触摸屏'; en='XPT2046 SPI touch input' ;;
         input:ft6336u-i2c) zh='FT6336U I2C 触摸屏'; en='FT6336U I2C touch input' ;;
@@ -1552,63 +1555,74 @@ configure_custom_board_gpio() {
 }
 
 configure_custom_board() {
-    local default_option
+    local default_option stage
     local -a choices=()
     CFG[BOARD]=custom
     prompt_custom_id BOARD_NAME '自定义开发板名称（ASCII）' 'Custom board name (ASCII)'
+    stage=mcu
     while true; do
-        mapfile -t choices < <(catalog_ids mcu)
-        while true; do
-            choose_catalog_option mcu 'MCU' "${CFG[MCU]}" "${choices[@]}"
-            [[ "$MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST" == YES ]] && continue
-            CFG[MCU]="$MENU_SELECTION"
-            break
-        done
-        load_record mcu "${CFG[MCU]}"
-        MCU_DISPLAY_BUSES="${RECORD[DISPLAY_BUSES]}"
-        MCU_GPIO_MAX="${RECORD[GPIO_MAX]}"
-        MCU_DANGEROUS_GPIO="${RECORD[DANGEROUS_GPIO]}"
-        prompt_custom_number FLASH_MB 4 'Flash 容量（MB）' 'Flash size (MB)'
-        prompt_custom_number PSRAM_MB 0 'PSRAM 容量（MB）' 'PSRAM size (MB)'
-        CFG[PARTITIONS]=firmware/partitions/esp32-wroom-32e-legacy.csv
-
-        mapfile -t choices < <(catalog_display_ids_supported_by_mcu "${CFG[MCU]}")
-        default_option="${choices[0]}"
-        for option in "${choices[@]}"; do
-            [[ "$option" == "${CFG[DISPLAY]}" ]] && default_option="$option"
-        done
-        choose_catalog_option display 'Display' "$default_option" "${choices[@]}"
-        [[ "$MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST" == YES ]] && continue
-        CFG[DISPLAY]="$MENU_SELECTION"
-        load_record display "${CFG[DISPLAY]}"
-        CFG[DISPLAY_BUS]="${RECORD[BUS]}"
-        BOARD_DISPLAY_DATA_WIDTH="${RECORD[DATA_WIDTH]}"
-        break
+        case "$stage" in
+            mcu)
+                mapfile -t choices < <(catalog_ids mcu)
+                choose_catalog_option mcu 'MCU' "${CFG[MCU]}" "${choices[@]}"
+                [[ "$MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST" == YES ]] && continue
+                CFG[MCU]="$MENU_SELECTION"
+                load_record mcu "${CFG[MCU]}"
+                MCU_DISPLAY_BUSES="${RECORD[DISPLAY_BUSES]}"
+                MCU_GPIO_MAX="${RECORD[GPIO_MAX]}"
+                MCU_DANGEROUS_GPIO="${RECORD[DANGEROUS_GPIO]}"
+                prompt_custom_number FLASH_MB 4 'Flash 容量（MB）' 'Flash size (MB)'
+                prompt_custom_number PSRAM_MB 0 'PSRAM 容量（MB）' 'PSRAM size (MB)'
+                CFG[PARTITIONS]=firmware/partitions/esp32-wroom-32e-legacy.csv
+                stage=display
+                ;;
+            display)
+                mapfile -t choices < <(catalog_display_ids_supported_by_mcu "${CFG[MCU]}")
+                default_option="${choices[0]}"
+                for option in "${choices[@]}"; do
+                    [[ "$option" == "${CFG[DISPLAY]}" ]] && default_option="$option"
+                done
+                choose_catalog_option display 'Display' "$default_option" "${choices[@]}"
+                [[ "$MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST" == YES ]] && { stage=mcu; continue; }
+                CFG[DISPLAY]="$MENU_SELECTION"
+                load_record display "${CFG[DISPLAY]}"
+                CFG[DISPLAY_BUS]="${RECORD[BUS]}"
+                BOARD_DISPLAY_DATA_WIDTH="${RECORD[DATA_WIDTH]}"
+                stage=input
+                ;;
+            input)
+                mapfile -t choices < <(catalog_input_ids_supported_by_mcu_and_bus "${CFG[MCU]}")
+                default_option="${choices[0]}"
+                for option in "${choices[@]}"; do
+                    [[ "$option" == "${CFG[INPUT]}" ]] && default_option="$option"
+                done
+                choose_catalog_option input 'Touch' "$default_option" "${choices[@]}"
+                [[ "$MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST" == YES ]] && { stage=display; continue; }
+                CFG[INPUT]="$MENU_SELECTION"
+                if [[ "${CFG[INPUT]}" == none ]]; then
+                    CFG[INPUT_BUS]=NONE
+                else
+                    load_record input "${CFG[INPUT]}"
+                    CFG[INPUT_BUS]="${RECORD[BUS]}"
+                fi
+                stage=module
+                ;;
+            module)
+                choose_module_options
+                [[ "$MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST" == YES ]] && { stage=input; continue; }
+                CFG[MODULES]="$MENU_SELECTION"
+                stage=dashboard
+                ;;
+            dashboard)
+                choose_dashboard_options
+                [[ "$MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST" == YES ]] && { stage=module; continue; }
+                CFG[DASHBOARDS]="$MENU_SELECTION"
+                break
+                ;;
+        esac
     done
-
-    mapfile -t choices < <(catalog_input_ids_supported_by_mcu_and_bus "${CFG[MCU]}")
-    default_option="${choices[0]}"
-    for option in "${choices[@]}"; do
-        [[ "$option" == "${CFG[INPUT]}" ]] && default_option="$option"
-    done
-    choose_catalog_option input 'Touch' "$default_option" "${choices[@]}"
-    CFG[INPUT]="$MENU_SELECTION"
-    if [[ "${CFG[INPUT]}" == none ]]; then
-        CFG[INPUT_BUS]=NONE
-    else
-        load_record input "${CFG[INPUT]}"
-        CFG[INPUT_BUS]="${RECORD[BUS]}"
-    fi
     BOARD_DISPLAY_BUS="${CFG[DISPLAY_BUS]}"
     BOARD_INPUT_BUS="${CFG[INPUT_BUS]}"
-    while true; do
-        choose_module_options
-        CFG[MODULES]="$MENU_SELECTION"
-        choose_dashboard_options
-        [[ "$MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST" == YES ]] && continue
-        CFG[DASHBOARDS]="$MENU_SELECTION"
-        break
-    done
     configure_custom_board_gpio
 }
 
@@ -2087,26 +2101,20 @@ run_interactive() {
     else
         load_record board "${CFG[BOARD]}"
         CFG[MCU]="${RECORD[MCU]}"
+        CFG[DISPLAY]="${RECORD[DISPLAY]}"
         CFG[DISPLAY_BUS]="${RECORD[DISPLAY_BUS]}"
         CFG[INPUT_BUS]="${RECORD[INPUT_BUS]}"
-        stage=display
+        stage=input
         while true; do
             case "$stage" in
-                display)
-                    mapfile -t choices < <(catalog_display_ids_supported_by_mcu_and_bus "${CFG[MCU]}" "${RECORD[DISPLAY_BUS]}")
-                    [[ " ${choices[*]} " == *" ${CFG[DISPLAY]} "* ]] || CFG[DISPLAY]="${choices[0]}"
-                    choose_catalog_option display 'Display' "${CFG[DISPLAY]}" "${choices[@]}"
-                    [[ "$MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST" == YES ]] && continue 2
-                    CFG[DISPLAY]="$MENU_SELECTION"
-                    stage=input
-                    ;;
                 input)
-                    mapfile -t choices < <(catalog_input_ids_supported_by_mcu_and_bus "${CFG[MCU]}" "${RECORD[INPUT_BUS]}")
-                    [[ " ${choices[*]} " == *" ${CFG[INPUT]} "* ]] || CFG[INPUT]="${choices[0]}"
+                    choices=("${RECORD[INPUT]}")
+                    [[ "${RECORD[INPUT]}" == none ]] || choices+=(none)
+                    CFG[INPUT]="${RECORD[INPUT]}"
                     choose_catalog_option input 'Touch' "${CFG[INPUT]}" "${choices[@]}"
-                    [[ "$MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST" == YES ]] && { stage=display; continue; }
+                    [[ "$MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST" == YES ]] && continue 2
                     CFG[INPUT]="$MENU_SELECTION"
-                    [[ "${CFG[INPUT]}" != none ]] || CFG[INPUT_BUS]=NONE
+                    [[ "${CFG[INPUT]}" == none ]] && CFG[INPUT_BUS]=NONE || CFG[INPUT_BUS]="${RECORD[INPUT_BUS]}"
                     stage=module
                     ;;
                 module)
@@ -2206,6 +2214,7 @@ main() {
                 write_profile
                 [[ "$BOARD_BUILD_READY" == YES ]] || die "board ${CFG[BOARD]} is not build-ready yet"
                 local profile_dir="$BUILD_ROOT/${CFG[PROFILE]}" profile_project="$IDF_BUILD_ROOT/${CFG[PROFILE]}/idf-project" build_dir="$IDF_BUILD_ROOT/${CFG[PROFILE]}/idf-build"
+                cleanup_idf_build_dir "$build_dir"
                 prepare_profile_idf_project "$profile_dir" "$profile_project"
                 (
                     cd "$profile_project"
@@ -2220,16 +2229,23 @@ main() {
                 if [[ -f "$profile_project/dependencies.lock" ]]; then
                     cp "$profile_project/dependencies.lock" "$profile_dir/generated/dependencies.lock"
                 fi
-                local firmware_path output_firmware_path answer
+                local firmware_path output_directory output_firmware_path flash_bundle_path answer
                 firmware_path="$build_dir/esp32_bms_gps_idf.bin"
                 [[ -f "$firmware_path" ]] || die "build completed but firmware is missing: $firmware_path"
-                output_firmware_path="$FIRMWARE_OUTPUT_ROOT/${CFG[PROFILE]}/${CFG[PROFILE]}.bin"
-                mkdir -p "${output_firmware_path%/*}"
-                cp "$firmware_path" "$output_firmware_path"
+                output_directory="$FIRMWARE_OUTPUT_ROOT/${CFG[PROFILE]}"
+                local -a publish_args=(
+                    --build-dir "$build_dir"
+                    --output-dir "$output_directory"
+                    --profile "${CFG[PROFILE]}"
+                )
+                [[ ",${CFG[MODULES]}," == *,ota,* ]] && publish_args+=(--ota-enabled)
+                python3 "$ROOT/scripts/publish-flash-artifacts.py" "${publish_args[@]}"
+                output_firmware_path="$output_directory/${CFG[PROFILE]}.bin"
+                flash_bundle_path="$output_directory/${CFG[PROFILE]}-flash.bin"
                 if [[ "$LANGUAGE" == en ]]; then
-                    printf 'Build completed\n  Firmware: %s\n' "$output_firmware_path"
+                    printf 'Build completed\n  Firmware: %s\n  Full flash image (write at 0x0): %s\n' "$output_firmware_path" "$flash_bundle_path"
                 else
-                    printf '编译完成\n  固件地址：%s\n' "$output_firmware_path"
+                    printf '编译完成\n  应用镜像（写入 0x10000）：%s\n  完整烧录镜像（写入 0x0）：%s\n' "$output_firmware_path" "$flash_bundle_path"
                 fi
                 if is_interactive_terminal; then
                     if [[ "$LANGUAGE" == en ]]; then

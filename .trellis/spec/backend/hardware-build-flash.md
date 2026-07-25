@@ -210,6 +210,19 @@ RUN_TESTS=1 ./scripts/build-android-cast.sh
 - Use RFC2217, not `socket://`, because esptool requires DTR/RTS line control.
 - Use explicit `-b 115200` on the fixed bridge and allow only one bridge client
   at a time.
+- A successful profile build publishes a portable flash bundle in
+  `output/<profile>/`, before its isolated ESP-IDF build directory is removed:
+  - `<profile>.bin` is the application/OTA image and must be written to the
+    app address in `flash-manifest.json` (`0x10000` for the legacy ESP32
+    partition table), never to `0x1000`.
+  - `bootloader.bin`, `partition-table.bin`, and `ota_data_initial.bin` are
+    the matching ESP-IDF support images. Their offsets come only from
+    `flash-manifest.json`.
+  - `<profile>-flash.bin` contains the complete image set with erased-byte
+    padding and is the only one-file online-flash input; write it at `0x0`.
+- `scripts/publish-flash-artifacts.py` derives this bundle from the completed
+  build's `flasher_args.json`. Both `start.sh` and `start.ps1` must call this
+  one publisher rather than separately copying an app image.
 - Documentation-only, preview-only, Trellis/spec, and agent-file changes do not
   require a firmware build or hardware flash unless the user explicitly asks.
   Firmware-impacting changes require the normal build and the project hardware
@@ -229,6 +242,8 @@ RUN_TESTS=1 ./scripts/build-android-cast.sh
 | RFC2217 TCP port is closed | Check the Windows bridge process, firewall scope, host IP, and port 4000 |
 | RFC2217 connects but flash sync fails | Close other clients, confirm the server is RFC2217 rather than raw TCP, and keep `-b 115200` |
 | Firmware flashes but boot loops after a partition change | Erase Flash once, then flash the complete ESP-IDF image set |
+| Online tool received only `<profile>.bin` at `0x1000` | Erase Flash once, then write `<profile>-flash.bin` at `0x0`, or follow `flash-manifest.json` for every separate file |
+| Profile build has no `flasher_args.json` or one referenced image is missing | Fail publication and retain the build error; never silently publish an app-only image as a complete flash package |
 | TFT or touch does not initialize | Compare the generated profile header with the selected catalog record and validate board-designated dangerous pins under cold boot |
 | GPS UART receives no bytes | Confirm the generated GPS RX/TX roles, crossed wiring, selected UART baud, power, and signal level |
 | PPS never triggers | Check the generated PPS role, GPS fix/PPS output, voltage, and required external pull configuration |
@@ -249,6 +264,10 @@ RUN_TESTS=1 ./scripts/build-android-cast.sh
   regenerate the profile, run the firmware build, flash through the correct
   transport, and validate affected hardware plus cold boot when a dangerous
   pin is involved.
+- Good: select `<profile>-flash.bin` in an online flasher and set its address
+  to `0x0`; alternatively use each `flash-manifest.json` file/offset pair.
+- Bad: write `<profile>.bin` at `0x1000`. It is an application image for
+  `0x10000` and overwrites the bootloader when placed at the bootloader offset.
 - Good: import an EasyEDA delta, move staged parts inside the board, clear all
   new-part clearance/keepout errors, save/close/reopen, and verify persisted
   component/pad/net counts before calling placement complete.
@@ -785,6 +804,8 @@ build-cloud -> validate generated firmware.env -> verify pushed GitHub branch
 FIRMWARE_VERSION=VALUE
 ESP_BMS_PROFILE_FIRMWARE_VERSION
 esp_bms_idf_runtime_start_{bms,controller}_scan(runtime)
+esp_bms_idf_runtime_resume_bms_scan(runtime)
+BLE_GAP_EVENT_DISC_COMPLETE
 ```
 
 ### 3. Contracts
@@ -797,9 +818,17 @@ esp_bms_idf_runtime_start_{bms,controller}_scan(runtime)
   never a source-code version literal.
 - NimBLE has one active GAP discovery callback. Starting a BMS scan while a
   controller scan is active, or the reverse, must cancel the active discovery,
-  preserve the requested source as pending, and start it on a later runtime
-  tick. The initiating source owns only its own active flag, revision, and
+  clear the superseded source's pending flag, and preserve only the latest
+  request. The active callback must start that pending source from its
+  `BLE_GAP_EVENT_DISC_COMPLETE` handler; do not depend on BMS/controller tick
+  ordering. The initiating source owns only its own active flag, revision, and
   candidate array; do not reuse BMS candidate data for the controller list.
+- The legacy ESP32 catalog entry `ili9341-2p8-spi` is an ESP32-compatible
+  240x320 ILI9341 SPI display. It remains selectable with `xpt2046-spi`; the
+  generated profile must report size `2.8`, ILI9341, and XPT2046.
+- A profile may compile out every I2C touch or I80 panel driver. Declarations
+  used only by those driver constructors must use the same preprocessor guard,
+  so the bridge produces no `-Wunused-variable` warning in a SPI-only profile.
 
 ### 4. Validation & Error Matrix
 
@@ -807,8 +836,9 @@ esp_bms_idf_runtime_start_{bms,controller}_scan(runtime)
 | --- | --- |
 | Missing or invalid `FIRMWARE_VERSION` | Configurator/generator exits before writing a buildable profile |
 | Legacy profile has no version | Regenerate or explicitly set it; do not silently compile a blank runtime value |
-| A second scan begins during GAP discovery | Cancel discovery, log the source handoff, defer the new source, and publish no false active state |
+| A second scan begins during GAP discovery | Cancel discovery, clear the older pending flag, then start the latest source from `BLE_GAP_EVENT_DISC_COMPLETE` and publish no false active state |
 | Controller scan returns advertisements | Update `controller_scan_candidates` and its revision so the controller list refreshes |
+| SPI-only profile compiles no I2C/I80 driver | Do not declare `touch_config` or `panel_config` outside their matching preprocessor guards |
 
 ### 5. Good / Base / Bad Cases
 
@@ -816,16 +846,22 @@ esp_bms_idf_runtime_start_{bms,controller}_scan(runtime)
   header, About page, and `/api/status` JSON.
 - Base: a single BMS or controller scan runs normally and populates only that
   source's list.
-- Bad: hard-code `0.1.0`, leave a controller scan marked active after its
-  callback was displaced, or display BMS candidates in the controller UI.
+- Bad: hard-code `0.1.0`, let both pending scan flags survive a handoff, rely
+  on tick ordering after cancellation, leave a controller scan marked active
+  after its callback was displaced, or display BMS candidates in the
+  controller UI.
 
 ### 6. Tests Required
 
 - `tests/configurator_selftest.sh` must assert `FIRMWARE_VERSION` persistence
-  and `ESP_BMS_PROFILE_FIRMWARE_VERSION` generation.
+  and `ESP_BMS_PROFILE_FIRMWARE_VERSION` generation, plus the legacy
+  `ili9341-2p8-spi` + `xpt2046-spi` generated header values.
+- Build a SPI-only legacy profile and an I2C/I80 profile; the former must have
+  no `touch_config`/`panel_config` unused-variable warning and the latter must
+  still invoke its selected constructors.
 - Run the legacy profile build and check the device boot/status output.
 - On hardware, open both BLE list pages in succession and verify the log shows
-  a handoff and the second page receives its own candidates.
+  a completion-event handoff and the second page receives its own candidates.
 
 ### 7. Wrong vs Correct
 
@@ -840,4 +876,20 @@ snprintf(json, sizeof(json), "{\\\"version\\\":\\\"0.1.0\\\"}");
 ```c
 snprintf(json, sizeof(json), "{\\\"version\\\":\\\"%s\\\"}",
          runtime->snapshot.firmware_version);
+```
+
+#### Wrong
+
+```c
+/* The next tick may start the old source first. */
+ble_gap_disc_cancel();
+```
+
+#### Correct
+
+```c
+/* Keep only the latest request, then hand it off when discovery completes. */
+RUNTIME_SET_FLAG(runtime, BMS_SCAN_REQUESTED, false);
+RUNTIME_SET_FLAG(runtime, CONTROLLER_SCAN_REQUESTED, true);
+ble_gap_disc_cancel();
 ```

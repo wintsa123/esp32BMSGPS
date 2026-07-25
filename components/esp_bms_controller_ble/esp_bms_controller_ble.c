@@ -584,6 +584,12 @@ static int controller_scan_gap_event(struct ble_gap_event *event, void *arg)
     case BLE_GAP_EVENT_DISC_COMPLETE:
         RUNTIME_SET_FLAG(runtime, CONTROLLER_SCAN_ACTIVE, false);
         esp_bms_idf_runtime_project_controller_snapshot(runtime);
+        if (RUNTIME_FLAG(runtime, BMS_SCAN_REQUESTED)) {
+            const esp_err_t ret = esp_bms_idf_runtime_resume_bms_scan(runtime);
+            if (ret != ESP_OK) {
+                ESP_LOGW(TAG, "BMS scan handoff failed: %s", esp_err_to_name(ret));
+            }
+        }
         return 0;
     default:
         return 0;
@@ -595,6 +601,8 @@ static esp_err_t controller_start_scan(esp_bms_idf_runtime_t *runtime)
     if (!runtime) {
         return ESP_ERR_INVALID_ARG;
     }
+    /* NimBLE owns one discovery callback: the most recent request wins. */
+    RUNTIME_SET_FLAG(runtime, BMS_SCAN_REQUESTED, false);
     ESP_RETURN_ON_ERROR(esp_bms_idf_runtime_ensure_ble_host(runtime), TAG, "NimBLE init failed");
     if (!RUNTIME_FLAG(runtime, BLE_HOST_SYNCED)) {
         RUNTIME_SET_FLAG(runtime, CONTROLLER_SCAN_REQUESTED, true);

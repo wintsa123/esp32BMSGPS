@@ -103,9 +103,9 @@ Dependency versions, partitions, diagnostic images, and platform build commands 
 Linux/macOS:
 
 ```bash
-# Check the environment; use install-idf for a first ESP-IDF 6.0.2 setup
+# Check the shared ESP-IDF environment; use install-idf for a first ESP-IDF 6.0.2 setup
 ./start.sh doctor
-./start.sh install-idf --dir "$PWD/esp-idf-v6.0.2"
+./start.sh install-idf --dir /vol1/1000/toolchains/esp-idf-v6.0.2
 
 # Guided configuration, or validate/save a Fireblade + BMS + controller profile
 ./start.sh
@@ -117,7 +117,7 @@ Linux/macOS:
 ./start.sh build-cloud --profile fireblade --modules bms,controller --dashboards fireblade
 ```
 
-On Windows, use the same arguments with `.\start.cmd`, for example `.\start.cmd doctor`, `.\start.cmd`, or `.\start.cmd build-local --profile fireblade --modules bms,controller --dashboards fireblade`. For a first setup, run `.\start.cmd install-idf --dir C:\esp\esp-idf-v6.0.2`. On Linux/macOS, the default project-local locations are `esp-idf-v6.0.2/` and `esp-idf-tools/` at the repository root.
+On Windows, use the same arguments with `.\start.cmd`, for example `.\start.cmd doctor`, `.\start.cmd`, or `.\start.cmd build-local --profile fireblade --modules bms,controller --dashboards fireblade`. For a first setup, run `.\start.cmd install-idf --dir C:\esp\esp-idf-v6.0.2`. On this Linux host, the shared ESP-IDF is `/vol1/1000/toolchains/esp-idf-v6.0.2` and its tool cache is `/vol1/1000/toolchains/.espressif-v6.0.2`.
 
 Linux local serial:
 
