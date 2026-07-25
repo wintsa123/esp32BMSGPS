@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 12
-- **Last Active**: 2026-07-23
+- **Total Sessions**: 13
+- **Last Active**: 2026-07-25
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~408 | Active |
+| `journal-1.md` | ~441 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 13 | 2026-07-25 | 速度来源编译裁剪 | `c0d87db` | `main` |
 | 12 | 2026-07-23 | 修复 ESP32 启动期 WDT | `d4fca3d` | `main` |
 | 11 | 2026-07-21 | 功能组件拆分与中文定制化编译脚本 | `c64a4c2` | `main` |
 | 10 | 2026-07-14 | 正式 UI 与剩余里程 | `e4f01f2`, `e67b356` | `main` |

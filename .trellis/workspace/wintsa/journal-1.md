@@ -406,3 +406,36 @@ Added a primitive-drawn quick-panel lock icon, full-screen interaction guard, fr
 ### Next Steps
 
 - None - task complete
+
+
+## Session 13: 速度来源编译裁剪
+
+**Date**: 2026-07-25
+**Task**: 速度来源编译裁剪
+**Branch**: `main`
+
+### Summary
+
+速度来源三级页按 GPS/控制器 feature 裁剪，GPS-only 保持可进入三级页；确认 ASCII 固件版本链路为 profile 到状态 API，未发现字符库问题。主机与配置器自测通过，ESP-IDF profile 构建未产生镜像，未刷写真机。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c0d87db` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
