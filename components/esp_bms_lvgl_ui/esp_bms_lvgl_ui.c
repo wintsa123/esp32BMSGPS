@@ -37,7 +37,8 @@ LV_FONT_DECLARE(settings_zh_16);
 #define QUICK_PANEL_GRID_COLS 4
 #define QUICK_PANEL_GRID_ROWS 2
 #define QUICK_PANEL_GRID_SLOT_COUNT (QUICK_PANEL_GRID_COLS * QUICK_PANEL_GRID_ROWS)
-#define QUICK_PANEL_CONTROL_COUNT (QUICK_PANEL_BUTTON_COUNT + 2)
+#define QUICK_PANEL_LEVEL_COUNT (1 + ESP_BMS_FEATURE_AUDIO)
+#define QUICK_PANEL_CONTROL_COUNT (QUICK_PANEL_BUTTON_COUNT + QUICK_PANEL_LEVEL_COUNT)
 #define QUICK_EDIT_BUTTON_SIZE 28
 #define ARRAY_SIZE(array) (sizeof(array) / sizeof((array)[0]))
 #define QUICK_BLUETOOTH_SYMBOL "\xee\x9c\xa8"
@@ -1033,9 +1034,11 @@ static void quick_layout_make_default(quick_panel_layout_t *layout,
     }
 
     layout->brightness = slots[0];
+#if ESP_BMS_FEATURE_AUDIO
     layout->volume = slots[1];
+#endif
     for (uint32_t index = 0; index < QUICK_PANEL_BUTTON_COUNT; ++index) {
-        layout->items[index] = slots[index + 2U];
+        layout->items[index] = slots[index + QUICK_PANEL_LEVEL_COUNT];
     }
 }
 
@@ -1151,7 +1154,9 @@ static void quick_layout_apply_current(void)
 {
     quick_panel_layout_t *layout = quick_layout_ensure_current();
     quick_obj_apply_rect(s_ui.quick_brightness_tile, &layout->brightness);
+#if ESP_BMS_FEATURE_AUDIO
     quick_obj_apply_rect(s_ui.quick_volume_tile, &layout->volume);
+#endif
     for (uint32_t index = 0; index < QUICK_PANEL_BUTTON_COUNT; ++index) {
         quick_obj_apply_rect(s_ui.quick_panel_items[index], &layout->items[index]);
     }
@@ -1188,10 +1193,18 @@ static void quick_layout_find_drop_target(quick_panel_layout_t *layout,
     int32_t best_distance = INT32_MAX;
 
     for (uint32_t slot = 0; slot < QUICK_PANEL_CONTROL_COUNT; ++slot) {
-        const quick_drag_target_kind_t kind =
-            slot == 0U ? QUICK_DRAG_TARGET_BRIGHTNESS :
-            slot == 1U ? QUICK_DRAG_TARGET_VOLUME : QUICK_DRAG_TARGET_ITEM;
-        const uint8_t index = slot < 2U ? 0U : (uint8_t)(slot - 2U);
+        quick_drag_target_kind_t kind = QUICK_DRAG_TARGET_ITEM;
+        uint8_t index = (uint8_t)(slot - QUICK_PANEL_LEVEL_COUNT);
+        if (slot == 0U) {
+            kind = QUICK_DRAG_TARGET_BRIGHTNESS;
+            index = 0U;
+        }
+#if ESP_BMS_FEATURE_AUDIO
+        else if (slot == 1U) {
+            kind = QUICK_DRAG_TARGET_VOLUME;
+            index = 0U;
+        }
+#endif
         quick_tile_rect_t *rect = quick_layout_rect_for_target(layout, kind, index);
         if (!rect) {
             continue;
@@ -2355,7 +2368,9 @@ _Static_assert(ARRAY_SIZE(SETTINGS_BMS_TYPE_LABELS) == ARRAY_SIZE(SETTINGS_BMS_T
 
 static const settings_detail_row_t SETTINGS_SYSTEM_ROWS[] = {
     { "亮度", "调节屏幕亮度", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_BRIGHTNESS },
+#if ESP_BMS_FEATURE_AUDIO
     { "音量", "调节提示音量", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_VOLUME },
+#endif
     { "调节条位置", "中间", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_LEVEL_POSITION },
     { "启动动画", "电量充能 / 机车扫表", ESP_BMS_LVGL_ACTION_NONE,
       SETTINGS_SYSTEM_VIEW_BOOT_ANIMATION },
@@ -5762,10 +5777,12 @@ static void settings_show_system_view(settings_system_view_t view)
         label_set_text_if_changed(s_ui.settings_detail_title, "亮度");
         settings_show_system_slider(QUICK_LEVEL_BRIGHTNESS);
         break;
+#if ESP_BMS_FEATURE_AUDIO
     case SETTINGS_SYSTEM_VIEW_VOLUME:
         label_set_text_if_changed(s_ui.settings_detail_title, "音量");
         settings_show_system_slider(QUICK_LEVEL_VOLUME);
         break;
+#endif
     case SETTINGS_SYSTEM_VIEW_LEVEL_POSITION:
         label_set_text_if_changed(s_ui.settings_detail_title, "调节条位置");
         settings_show_system_position();
@@ -10125,6 +10142,7 @@ static void create_screen(lv_display_t *display)
                            quick_layout->brightness.h,
                            QUICK_LEVEL_BRIGHTNESS,
                            85U);
+#if ESP_BMS_FEATURE_AUDIO
     (void)quick_level_tile(s_ui.quick_panel,
                            quick_layout->volume.x,
                            quick_layout->volume.y,
@@ -10132,6 +10150,7 @@ static void create_screen(lv_display_t *display)
                            quick_layout->volume.h,
                            QUICK_LEVEL_VOLUME,
                            65U);
+#endif
 
     s_ui.quick_edit_button = panel(s_ui.quick_panel,
                                    s_ui.width - QUICK_EDIT_BUTTON_SIZE - 8,
