@@ -260,12 +260,15 @@ def main() -> int:
             if board_id == "custom":
                 board_path = args.firmware_env
                 board = {
-                    "AUDIO_BACKEND": "NONE",
-                    "AUDIO_DAC_CHANNEL": "0",
-                    "AUDIO_ENABLE_ACTIVE_LEVEL": "0",
+                    "AUDIO_BACKEND": profile.get("AUDIO_BACKEND", "NONE"),
+                    "AUDIO_DAC_CHANNEL": profile.get("AUDIO_DAC_CHANNEL", "0"),
+                    "AUDIO_ENABLE_ACTIVE_LEVEL": profile.get("AUDIO_ENABLE_ACTIVE_LEVEL", "0"),
                 }
             else:
                 board = read_env(board_path)
+                for key in ("AUDIO_BACKEND", "AUDIO_DAC_CHANNEL", "AUDIO_ENABLE_ACTIVE_LEVEL"):
+                    if key in profile:
+                        board[key] = profile[key]
             content = config_macro(profile, read_env(mcu_path), mcu_path,
                                    board, board_path,
                                    read_env(display_path), display_path,

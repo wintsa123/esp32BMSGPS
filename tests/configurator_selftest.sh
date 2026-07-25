@@ -137,6 +137,48 @@ rg -Fx '.physical_width = 240' "${work_dir}/legacy-ili9341-2p8-build/legacy-ili9
 
 expect_fail 'does not provide an audio hardware profile' "${repo_root}/start.sh" validate --lang en --profile audio-st7796 --mcu esp32s3 --board esp32s3-n16r8-st7796u-gt1151 --display st7796u-i80 --input gt1151-i2c --modules audio
 
+cat >"${work_dir}/s3-i2s-audio.env" <<'EOF'
+SCHEMA_VERSION=1
+PROFILE=s3-i2s-audio
+MCU=esp32s3
+BOARD=esp32s3-n16r8-st7796u-gt1151
+DISPLAY=st7796u-i80
+INPUT=gt1151-i2c
+MODULES=audio
+AUDIO_BACKEND=I2S
+AUDIO_DAC_CHANNEL=0
+AUDIO_ENABLE_ACTIVE_LEVEL=0
+GPIO_I2S_BCLK=20
+GPIO_I2S_LRCK=21
+GPIO_I2S_DATA=47
+GPIO_AMP_SHDN=48
+EOF
+FIRMWARE_BUILD_ROOT="${work_dir}/s3-i2s-audio-build" "${repo_root}/start.sh" configure --lang en --config "${work_dir}/s3-i2s-audio.env" >/dev/null
+rg -qx 'GPIO_I2S_DATA=47' "${work_dir}/s3-i2s-audio-build/s3-i2s-audio/firmware.env"
+rg -Fx '#define ESP_BMS_PROFILE_AUDIO_BACKEND ESP_BMS_PROFILE_AUDIO_BACKEND_I2S' "${work_dir}/s3-i2s-audio-build/s3-i2s-audio/generated/esp_bms_profile_hardware.h"
+
+cat >"${work_dir}/custom-i2s-audio.env" <<'EOF'
+SCHEMA_VERSION=1
+PROFILE=custom-i2s-audio
+MCU=esp32s3
+BOARD=custom
+BOARD_NAME=custom-i2s-audio-board
+DISPLAY=st7789-1p8-spi
+INPUT=none
+MODULES=audio
+FLASH_MB=16
+PSRAM_MB=8
+PARTITIONS=firmware/partitions/esp32-wroom-32e-legacy.csv
+AUDIO_BACKEND=I2S
+AUDIO_DAC_CHANNEL=0
+AUDIO_ENABLE_ACTIVE_LEVEL=0
+OUTPUT_GPIO=TFT_MOSI:13,TFT_SCLK:14,TFT_CS:15,TFT_DC:16,I2S_BCLK:17,I2S_LRCK:18,I2S_DATA:19,AMP_SHDN:20
+EOF
+FIRMWARE_BUILD_ROOT="${work_dir}/custom-i2s-audio-build" "${repo_root}/start.sh" configure --lang en --config "${work_dir}/custom-i2s-audio.env" >/dev/null
+rg -qx 'AUDIO_BACKEND=I2S' "${work_dir}/custom-i2s-audio-build/custom-i2s-audio/firmware.env"
+rg -Fx '#define ESP_BMS_PROFILE_AUDIO_BACKEND ESP_BMS_PROFILE_AUDIO_BACKEND_I2S' "${work_dir}/custom-i2s-audio-build/custom-i2s-audio/generated/esp_bms_profile_hardware.h"
+rg -Fx '#define ESP_BMS_PROFILE_AUDIO_I2S_DATA (gpio_num_t)19' "${work_dir}/custom-i2s-audio-build/custom-i2s-audio/generated/esp_bms_profile_hardware.h"
+
 cat >"${work_dir}/malicious.env" <<'EOF'
 SCHEMA_VERSION=1
 PROFILE=$(touch-payload)

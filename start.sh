@@ -442,6 +442,9 @@ set_defaults() {
     CFG[PARTITIONS]=''
     CFG[INPUT_GPIO]=''
     CFG[OUTPUT_GPIO]=''
+    CFG[AUDIO_BACKEND]=''
+    CFG[AUDIO_DAC_CHANNEL]=''
+    CFG[AUDIO_ENABLE_ACTIVE_LEVEL]=''
     CFG[MODULES]=bms,controller,network,ota
     CFG[DASHBOARDS]=''
     CFG[DASHBOARDS_AUTO]=YES
@@ -458,7 +461,7 @@ load_user_config() {
     [[ "${input[SCHEMA_VERSION]}" == "$SCHEMA_VERSION" ]] || die "unsupported configuration schema"
     for key in "${!input[@]}"; do
         case "$key" in
-            SCHEMA_VERSION|PROFILE|FIRMWARE_VERSION|MCU|BOARD|DISPLAY|INPUT|MODULES|DASHBOARDS|CONFIRM_DANGEROUS_GPIO|BOARD_NAME|DISPLAY_NAME|INPUT_NAME|DISPLAY_BUS|INPUT_BUS|FLASH_MB|PSRAM_MB|PARTITIONS|INPUT_GPIO|OUTPUT_GPIO)
+            SCHEMA_VERSION|PROFILE|FIRMWARE_VERSION|MCU|BOARD|DISPLAY|INPUT|MODULES|DASHBOARDS|CONFIRM_DANGEROUS_GPIO|BOARD_NAME|DISPLAY_NAME|INPUT_NAME|DISPLAY_BUS|INPUT_BUS|FLASH_MB|PSRAM_MB|PARTITIONS|INPUT_GPIO|OUTPUT_GPIO|AUDIO_BACKEND|AUDIO_DAC_CHANNEL|AUDIO_ENABLE_ACTIVE_LEVEL)
                 CFG["$key"]="${input[$key]}"
                 ;;
             GPIO_*)
@@ -685,7 +688,6 @@ collect_required_gpio_roles() {
     REQUIRED_GPIO_KINDS=()
     MODULE_GPIO_ROLE_STATE=()
     if [[ "${CFG[BOARD]}" == custom ]]; then
-        csv_has "${CFG[MODULES]}" audio && die "custom board audio requires a catalog board hardware profile"
         while IFS= read -r entry; do
             [[ -n "$entry" ]] || continue
             kind="${entry%%:*}"
@@ -841,9 +843,9 @@ validate_config() {
         BOARD_INPUT_BUS="${CFG[INPUT_BUS]}"
         BOARD_PARTITIONS="${CFG[PARTITIONS]}"
         BOARD_BUILD_READY=NO
-        BOARD_AUDIO_BACKEND=NONE
-        BOARD_AUDIO_DAC_CHANNEL=0
-        BOARD_AUDIO_ENABLE_ACTIVE_LEVEL=0
+        BOARD_AUDIO_BACKEND="${CFG[AUDIO_BACKEND]:-NONE}"
+        BOARD_AUDIO_DAC_CHANNEL="${CFG[AUDIO_DAC_CHANNEL]:-0}"
+        BOARD_AUDIO_ENABLE_ACTIVE_LEVEL="${CFG[AUDIO_ENABLE_ACTIVE_LEVEL]:-0}"
         BOARD_INPUT_GPIO="${CFG[INPUT_GPIO]}"
         BOARD_OUTPUT_GPIO="${CFG[OUTPUT_GPIO]}"
     else
@@ -862,6 +864,11 @@ validate_config() {
         BOARD_AUDIO_ENABLE_ACTIVE_LEVEL="${RECORD[AUDIO_ENABLE_ACTIVE_LEVEL]}"
         BOARD_INPUT_GPIO="${RECORD[INPUT_GPIO]}"
         BOARD_OUTPUT_GPIO="${RECORD[OUTPUT_GPIO]}"
+    fi
+    if [[ -n "${CFG[AUDIO_BACKEND]}" ]]; then
+        BOARD_AUDIO_BACKEND="${CFG[AUDIO_BACKEND]}"
+        BOARD_AUDIO_DAC_CHANNEL="${CFG[AUDIO_DAC_CHANNEL]}"
+        BOARD_AUDIO_ENABLE_ACTIVE_LEVEL="${CFG[AUDIO_ENABLE_ACTIVE_LEVEL]}"
     fi
     display_bus="$BOARD_DISPLAY_BUS"
     input_bus="$BOARD_INPUT_BUS"
@@ -1116,7 +1123,7 @@ write_firmware_env() {
         printf 'MODULES=%s\n' "${CFG[MODULES]}"
         printf 'DASHBOARDS=%s\n' "${CFG[DASHBOARDS]}"
         printf 'CONFIRM_DANGEROUS_GPIO=%s\n' "${CFG[CONFIRM_DANGEROUS_GPIO]}"
-        for key in BOARD_NAME DISPLAY_NAME INPUT_NAME DISPLAY_BUS INPUT_BUS FLASH_MB PSRAM_MB PARTITIONS INPUT_GPIO OUTPUT_GPIO; do
+        for key in BOARD_NAME DISPLAY_NAME INPUT_NAME DISPLAY_BUS INPUT_BUS FLASH_MB PSRAM_MB PARTITIONS INPUT_GPIO OUTPUT_GPIO AUDIO_BACKEND AUDIO_DAC_CHANNEL AUDIO_ENABLE_ACTIVE_LEVEL; do
             [[ -n "${CFG[$key]}" ]] && printf '%s=%s\n' "$key" "${CFG[$key]}"
         done
         for role in $(printf '%s\n' "${!GPIO_VALUES[@]}" | LC_ALL=C sort); do
@@ -1505,6 +1512,51 @@ custom_board_gpio_requirements() {
     for module in "${items[@]}"; do
         [[ -z "$module" ]] || custom_required_gpio_roles "$module"
     done
+    if csv_has "${CFG[MODULES]}" audio; then
+        case "${CFG[AUDIO_BACKEND]}" in
+            DAC)
+                printf '%s\n' output:AUDIO_DAC output:AUDIO_ENABLE
+                ;;
+            I2S)
+                printf '%s\n' output:I2S_BCLK output:I2S_LRCK output:I2S_DATA output:AMP_SHDN
+                ;;
+            *)
+                die 'custom board audio requires AUDIO_BACKEND DAC or I2S'
+                ;;
+        esac
+    fi
+}
+
+configure_audio_profile() {
+    local backend_title channel_title
+
+    csv_has "${CFG[MODULES]}" audio || return
+    if [[ "${CFG[BOARD]}" != custom && "$BOARD_AUDIO_BACKEND" != NONE ]]; then
+        return
+    fi
+    if [[ "$LANGUAGE" == en ]]; then
+        backend_title='Audio backend'
+        channel_title='DAC channel'
+    else
+        backend_title='音频接口'
+        channel_title='DAC 通道'
+    fi
+    if [[ "${CFG[MCU]}" == esp32 ]]; then
+        choose_value_option "$backend_title" I2S I2S DAC
+    else
+        choose_value_option "$backend_title" I2S I2S
+    fi
+    CFG[AUDIO_BACKEND]="$MENU_SELECTION"
+    if [[ "${CFG[AUDIO_BACKEND]}" == DAC ]]; then
+        choose_value_option "$channel_title" 1 1 2
+        CFG[AUDIO_DAC_CHANNEL]="$MENU_SELECTION"
+    else
+        CFG[AUDIO_DAC_CHANNEL]=0
+    fi
+    CFG[AUDIO_ENABLE_ACTIVE_LEVEL]=0
+    BOARD_AUDIO_BACKEND="${CFG[AUDIO_BACKEND]}"
+    BOARD_AUDIO_DAC_CHANNEL="${CFG[AUDIO_DAC_CHANNEL]}"
+    BOARD_AUDIO_ENABLE_ACTIVE_LEVEL="${CFG[AUDIO_ENABLE_ACTIVE_LEVEL]}"
 }
 
 configure_custom_board_gpio() {
@@ -1623,6 +1675,7 @@ configure_custom_board() {
     done
     BOARD_DISPLAY_BUS="${CFG[DISPLAY_BUS]}"
     BOARD_INPUT_BUS="${CFG[INPUT_BUS]}"
+    configure_audio_profile
     configure_custom_board_gpio
 }
 
@@ -1944,6 +1997,7 @@ configure_missing_board_gpio() {
     BOARD_AUDIO_ENABLE_ACTIVE_LEVEL="${RECORD[AUDIO_ENABLE_ACTIVE_LEVEL]}"
     BOARD_INPUT_GPIO="${RECORD[INPUT_GPIO]}"
     BOARD_OUTPUT_GPIO="${RECORD[OUTPUT_GPIO]}"
+    configure_audio_profile
     collect_required_gpio_roles
     GPIO_VALUES=()
     GPIO_KINDS=()
