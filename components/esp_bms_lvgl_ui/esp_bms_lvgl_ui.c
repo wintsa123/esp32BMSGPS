@@ -2271,7 +2271,9 @@ static void settings_show_bms_detail(void);
 static void settings_show_preset_range_edit(void);
 static void settings_show_controller_detail(void);
 static void settings_show_speed_unit_picker(void);
+#if ESP_BMS_FEATURE_GPS || ESP_BMS_FEATURE_CONTROLLER
 static void settings_show_speed_source_picker(void);
+#endif
 static void settings_show_system_view(settings_system_view_t view);
 static void set_setup_ap(const esp_bms_dashboard_snapshot_t *snapshot);
 static void settings_boot_preview_button_event_cb(lv_event_t *event);
@@ -4356,10 +4358,21 @@ static const char *const SETTINGS_SPEED_UNIT_LABELS[] = {
     "mph",
 };
 
-static const char *const SETTINGS_SPEED_SOURCE_LABELS[] = {
-    "GPS",
-    "控制器",
+#if ESP_BMS_FEATURE_GPS || ESP_BMS_FEATURE_CONTROLLER
+typedef struct {
+    esp_bms_speed_source_t source;
+    const char *label;
+} settings_speed_source_option_t;
+
+static const settings_speed_source_option_t SETTINGS_SPEED_SOURCE_OPTIONS[] = {
+#if ESP_BMS_FEATURE_GPS
+    { ESP_BMS_SPEED_SOURCE_GPS, "GPS" },
+#endif
+#if ESP_BMS_FEATURE_CONTROLLER
+    { ESP_BMS_SPEED_SOURCE_CONTROLLER, "控制器" },
+#endif
 };
+#endif
 
 static void settings_speed_unit_button_event_cb(lv_event_t *event)
 {
@@ -4452,6 +4465,7 @@ static void settings_show_speed_unit_picker(void)
     }
 }
 
+#if ESP_BMS_FEATURE_GPS || ESP_BMS_FEATURE_CONTROLLER
 static void settings_speed_source_button_event_cb(lv_event_t *event)
 {
     if (lv_event_get_code(event) != LV_EVENT_CLICKED || UI_FLAG(SETTINGS_SWIPE_CONSUMED)) {
@@ -4465,9 +4479,11 @@ static void settings_speed_source_option_event_cb(lv_event_t *event)
     if (!settings_bms_popup_click_ready(event)) {
         return;
     }
-    const size_t selected = (size_t)(uintptr_t)lv_event_get_user_data(event);
-    if (selected >= ARRAY_SIZE(SETTINGS_SPEED_SOURCE_LABELS) ||
-        selected == (size_t)settings_current_snapshot()->speed_source) {
+    const esp_bms_speed_source_t selected =
+        (esp_bms_speed_source_t)(uintptr_t)lv_event_get_user_data(event);
+    if ((selected != ESP_BMS_SPEED_SOURCE_GPS &&
+         selected != ESP_BMS_SPEED_SOURCE_CONTROLLER) ||
+        selected == settings_current_snapshot()->speed_source) {
         return;
     }
     queue_action_with_commit(ESP_BMS_LVGL_ACTION_SET_SPEED_SOURCE, true);
@@ -4485,7 +4501,7 @@ static void settings_show_speed_source_picker(void)
                                      SETTINGS_CHOICE_ROW_H_LANDSCAPE;
     const int32_t gap = portrait ? 8 : 6;
     const esp_bms_dashboard_snapshot_t *snapshot = settings_current_snapshot();
-    const size_t current = snapshot->speed_source == ESP_BMS_SPEED_SOURCE_CONTROLLER ? 1U : 0U;
+    const esp_bms_speed_source_t current = snapshot->speed_source;
 
     s_ui.settings_controller_view = (uint8_t)SETTINGS_CONTROLLER_VIEW_SPEED_SOURCE_LIST;
     s_ui.settings_bms_ble_status = NULL;
@@ -4494,9 +4510,10 @@ static void settings_show_speed_source_picker(void)
     settings_navigation_set_hidden(false, false);
     lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
 
-    for (size_t index = 0; index < ARRAY_SIZE(SETTINGS_SPEED_SOURCE_LABELS); ++index) {
-        const bool active = index == current;
-        const bool available = index == (size_t)ESP_BMS_SPEED_SOURCE_CONTROLLER ||
+    for (size_t index = 0; index < ARRAY_SIZE(SETTINGS_SPEED_SOURCE_OPTIONS); ++index) {
+        const settings_speed_source_option_t *option = &SETTINGS_SPEED_SOURCE_OPTIONS[index];
+        const bool active = option->source == current;
+        const bool available = option->source == ESP_BMS_SPEED_SOURCE_CONTROLLER ||
                                snapshot->gps_module_state ==
                                    (uint8_t)ESP_BMS_GPS_MODULE_AVAILABLE;
         lv_obj_t *row = panel(s_ui.settings_detail,
@@ -4517,13 +4534,13 @@ static void settings_show_speed_source_picker(void)
             lv_obj_add_event_cb(row,
                                 settings_speed_source_option_event_cb,
                                 LV_EVENT_CLICKED,
-                                (void *)(uintptr_t)index);
+                                (void *)(uintptr_t)option->source);
         } else {
             lv_obj_set_style_opa(row, LV_OPA_50, LV_PART_MAIN);
         }
         const int32_t text_h = (int32_t)settings_zh_16.line_height + 4;
         lv_obj_t *text = label(row, 12, (row_h - text_h) / 2, card_w - 52, text_h, &settings_zh_16);
-        lv_label_set_text(text, SETTINGS_SPEED_SOURCE_LABELS[index]);
+        lv_label_set_text(text, option->label);
         lv_obj_set_style_text_color(text,
                                     active ? COLOR_SWITCH_ACTIVE : COLOR_SETTINGS_TEXT,
                                     LV_PART_MAIN);
@@ -4536,6 +4553,7 @@ static void settings_show_speed_source_picker(void)
         }
     }
 }
+#endif
 
 static lv_obj_t *settings_speed_unit_row(lv_obj_t *parent,
                                          int32_t y,
@@ -4562,6 +4580,7 @@ static lv_obj_t *settings_speed_unit_row(lv_obj_t *parent,
     return box;
 }
 
+#if ESP_BMS_FEATURE_GPS || ESP_BMS_FEATURE_CONTROLLER
 static lv_obj_t *settings_speed_source_row(lv_obj_t *parent,
                                            int32_t y,
                                            int32_t w,
@@ -4580,6 +4599,7 @@ static lv_obj_t *settings_speed_source_row(lv_obj_t *parent,
     lv_obj_set_style_text_color(arrow, COLOR_SETTINGS_ACCENT, LV_PART_MAIN);
     return box;
 }
+#endif
 
 static void settings_controller_style_row(lv_obj_t *parent,
                                           int32_t y,
@@ -4633,6 +4653,7 @@ static void settings_show_controller_detail(void)
     lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
 
 #if !ESP_BMS_FEATURE_CONTROLLER
+#if ESP_BMS_FEATURE_GPS
     const settings_detail_row_t gps_status_row = {
         "速度来源",
         snapshot->gps_module_state == (uint8_t)ESP_BMS_GPS_MODULE_AVAILABLE ? "GPS"
@@ -4646,7 +4667,7 @@ static void settings_show_controller_detail(void)
                                         card_w,
                                         row_h,
                                         3U);
-    settings_detail_row(card, 0, 0, card_w, row_h, &gps_status_row);
+    settings_speed_source_row(card, 0, card_w, row_h, gps_status_row.subtitle);
     settings_controller_style_row(card,
                                   row_h,
                                   card_w,
@@ -4661,6 +4682,28 @@ static void settings_show_controller_detail(void)
     lv_obj_update_layout(s_ui.settings_detail);
     lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
     return;
+#else
+    lv_obj_t *card = settings_list_card(s_ui.settings_detail,
+                                        card_x,
+                                        12,
+                                        card_w,
+                                        row_h,
+                                        2U);
+    settings_controller_style_row(card,
+                                  0,
+                                  card_w,
+                                  row_h,
+                                  settings_dashboard_style_label(
+                                      speed_dashboard_style_from_snapshot(snapshot)));
+    settings_speed_unit_row(card,
+                            row_h,
+                            card_w,
+                            row_h,
+                            snapshot->speed_unit == ESP_BMS_SPEED_UNIT_MPH ? "mph" : "km/h");
+    lv_obj_update_layout(s_ui.settings_detail);
+    lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
+    return;
+#endif
 #else
 
     settings_bms_ble_format_status(ble_status,
@@ -8940,9 +8983,11 @@ static void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapsho
         } else if (s_ui.settings_controller_view ==
                        (uint8_t)SETTINGS_CONTROLLER_VIEW_SPEED_UNIT_LIST) {
             settings_show_speed_unit_picker();
+#if ESP_BMS_FEATURE_GPS || ESP_BMS_FEATURE_CONTROLLER
         } else if (s_ui.settings_controller_view ==
                        (uint8_t)SETTINGS_CONTROLLER_VIEW_SPEED_SOURCE_LIST) {
             settings_show_speed_source_picker();
+#endif
         } else if (s_ui.settings_controller_view ==
                        (uint8_t)SETTINGS_CONTROLLER_VIEW_BLE_LIST &&
                    controller_ble_changed) {
