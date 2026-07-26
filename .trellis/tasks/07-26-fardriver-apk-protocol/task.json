@@ -1,7 +1,7 @@
 {
-  "id": "controller-ble-tire-ratio",
-  "name": "controller-ble-tire-ratio",
-  "title": "完善控制器蓝牙与轮胎传动参数",
+  "id": "fardriver-apk-protocol",
+  "name": "fardriver-apk-protocol",
+  "title": "远驱 APK 蓝牙协议复核",
   "description": "",
   "status": "in_progress",
   "dev_type": null,
@@ -10,7 +10,7 @@
   "priority": "P2",
   "creator": "wintsa",
   "assignee": "wintsa",
-  "createdAt": "2026-07-12",
+  "createdAt": "2026-07-26",
   "completedAt": null,
   "branch": null,
   "base_branch": "main",
@@ -18,10 +18,8 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [
-    "07-26-fardriver-apk-protocol"
-  ],
-  "parent": null,
+  "children": [],
+  "parent": "07-12-controller-ble-tire-ratio",
   "relatedFiles": [],
   "notes": "",
   "meta": {}

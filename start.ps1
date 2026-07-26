@@ -727,7 +727,7 @@ function Validate-Config([System.Collections.IDictionary]$Config) {
 
     if ($Config.DISPLAY -eq 'custom') { Fail 'custom display names are no longer supported; select a catalog display' }
     $Display = Get-Record 'display' $Config.DISPLAY
-    Assert-Keys $Display @('SCHEMA_VERSION', 'ID', 'TARGETS', 'BUS', 'DATA_WIDTH', 'DRIVER', 'SIZE_INCH', 'COMPONENT', 'VERSION', 'CMAKE_COMPONENT', 'HEADER', 'INIT', 'REQUIRES_INPUT_GPIO', 'REQUIRES_OUTPUT_GPIO', 'WIDTH', 'HEIGHT', 'PIXEL_CLOCK_HZ', 'ROTATION', 'ROTATION_DEFAULT_VERSION', 'RGB_ORDER', 'INVERT_COLOR', 'SPI_MODE', 'I80_SWAP_COLOR_BYTES', 'I80_PCLK_ACTIVE_NEG', 'I80_PCLK_IDLE_LOW', 'BACKLIGHT_ON_LEVEL', 'POWER_ON_DELAY_MS')
+    Assert-Keys $Display @('SCHEMA_VERSION', 'ID', 'TARGETS', 'BUS', 'DATA_WIDTH', 'DRIVER', 'SIZE_INCH', 'COMPONENT', 'VERSION', 'CMAKE_COMPONENT', 'HEADER', 'INIT', 'REQUIRES_INPUT_GPIO', 'REQUIRES_OUTPUT_GPIO', 'WIDTH', 'HEIGHT', 'PIXEL_CLOCK_HZ', 'ROTATION', 'PANEL_MIRROR_X', 'ROTATION_DEFAULT_VERSION', 'RGB_ORDER', 'INVERT_COLOR', 'SPI_MODE', 'I80_SWAP_COLOR_BYTES', 'I80_PCLK_ACTIVE_NEG', 'I80_PCLK_IDLE_LOW', 'BACKLIGHT_ON_LEVEL', 'POWER_ON_DELAY_MS')
     if (-not (Test-CsvContains $Display.TARGETS $Config.MCU)) { Fail "display $($Config.DISPLAY) is unavailable on $($Config.MCU)" }
     if ($Config.BOARD -eq 'custom' -and [string]::IsNullOrEmpty($script:BoardDisplayBus)) { $script:BoardDisplayBus = $Display.BUS }
     if ($Display.BUS -ne $script:BoardDisplayBus) { Fail 'display bus is incompatible' }

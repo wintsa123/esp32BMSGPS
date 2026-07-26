@@ -70,6 +70,7 @@ typedef struct {
     uint16_t physical_width;
     uint16_t physical_height;
     esp_bms_display_rotation_t rotation;
+    bool panel_mirror_x;
     lcd_rgb_element_order_t rgb_element_order;
     bool invert_color;
     uint8_t spi_mode;

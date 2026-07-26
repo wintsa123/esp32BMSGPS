@@ -12,6 +12,14 @@ static uint32_t read_u32_le(const uint8_t *data, size_t offset)
     return (uint32_t)read_u16_le(data, offset) | ((uint32_t)read_u16_le(data, offset + 2U) << 16U);
 }
 
+static float read_f32_le(const uint8_t *data, size_t offset)
+{
+    const uint32_t bits = read_u32_le(data, offset);
+    float value = 0.0f;
+    memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+
 static uint8_t sum8(const uint8_t *data, size_t len)
 {
     uint8_t sum = 0U;
@@ -36,22 +44,23 @@ bool esp_bms_jk_poll_request(uint8_t poll_index, uint8_t out[20])
     return true;
 }
 
-static bool decode_cell_info(const uint8_t frame[ESP_BMS_JK_FRAME_LEN],
-                             esp_bms_bms_telemetry_t *telemetry)
+static bool decode_jk04_cell_info(const uint8_t frame[ESP_BMS_JK_FRAME_LEN],
+                                  esp_bms_bms_telemetry_t *telemetry)
 {
-    if (!telemetry || frame[4] != 0x02U || sum8(frame, ESP_BMS_JK_FRAME_LEN - 1U) != frame[299]) {
-        return false;
-    }
     memset(telemetry, 0, sizeof(*telemetry));
     uint32_t total_mv = 0U;
     uint16_t minimum_mv = UINT16_MAX;
     uint16_t maximum_mv = 0U;
     uint8_t cells = 0U;
-    for (uint8_t index = 0U; index < 32U; ++index) {
-        const uint16_t millivolts = read_u16_le(frame, 6U + (size_t)index * 2U);
-        if (millivolts == 0U) {
+    for (uint8_t index = 0U; index < 24U; ++index) {
+        const float volts = read_f32_le(frame, 6U + (size_t)index * 4U);
+        if (volts == 0.0f) {
             continue;
         }
+        if (!(volts >= 1.0f && volts <= 6.0f)) {
+            return false;
+        }
+        const uint16_t millivolts = (uint16_t)(volts * 1000.0f + 0.5f);
         total_mv += millivolts;
         minimum_mv = millivolts < minimum_mv ? millivolts : minimum_mv;
         maximum_mv = millivolts > maximum_mv ? millivolts : maximum_mv;
@@ -60,20 +69,93 @@ static bool decode_cell_info(const uint8_t frame[ESP_BMS_JK_FRAME_LEN],
     if (cells == 0U) {
         return false;
     }
-    const size_t dynamic = 32U;
-    telemetry->pack_voltage_mv = read_u32_le(frame, 118U + dynamic);
-    telemetry->current_deci_amps = (int16_t)(int32_t)(read_u32_le(frame, 126U + dynamic) / 100U);
-    telemetry->soc_percent = frame[141U + dynamic];
-    telemetry->capacity_remaining_mah = read_u32_le(frame, 142U + dynamic);
-    telemetry->total_capacity_mah = read_u32_le(frame, 146U + dynamic);
-    telemetry->protection_mask = read_u16_le(frame, 134U + dynamic);
+    telemetry->pack_voltage_mv = total_mv;
     telemetry->min_cell_voltage_mv = minimum_mv;
     telemetry->max_cell_voltage_mv = maximum_mv;
     telemetry->delta_cell_voltage_mv = maximum_mv - minimum_mv;
     telemetry->average_cell_voltage_mv = (uint16_t)(total_mv / cells);
-    telemetry->temperatures_celsius[0] = (int16_t)read_u16_le(frame, 112U + dynamic) / 10;
-    telemetry->temperature_valid[0] = true;
-    return telemetry->pack_voltage_mv != 0U;
+    telemetry->partial = true;
+    return true;
+}
+
+static bool decode_jk02_cell_info(const uint8_t frame[ESP_BMS_JK_FRAME_LEN],
+                                  uint8_t cell_slots,
+                                  esp_bms_bms_telemetry_t *telemetry)
+{
+    const size_t dynamic = cell_slots == 32U ? 32U : 0U;
+    uint32_t total_mv = 0U;
+    uint16_t minimum_mv = UINT16_MAX;
+    uint16_t maximum_mv = 0U;
+    uint8_t cells = 0U;
+    for (uint8_t index = 0U; index < cell_slots; ++index) {
+        const uint16_t millivolts = read_u16_le(frame, 6U + (size_t)index * 2U);
+        if (millivolts == 0U) {
+            continue;
+        }
+        if (millivolts < 1000U || millivolts > 6000U) {
+            return false;
+        }
+        total_mv += millivolts;
+        minimum_mv = millivolts < minimum_mv ? millivolts : minimum_mv;
+        maximum_mv = millivolts > maximum_mv ? millivolts : maximum_mv;
+        ++cells;
+    }
+    const uint32_t pack_voltage_mv = read_u32_le(frame, 118U + dynamic);
+    const uint32_t tolerance_mv = total_mv / 10U + 1000U;
+    if (cells == 0U || pack_voltage_mv == 0U ||
+        (pack_voltage_mv > total_mv ? pack_voltage_mv - total_mv : total_mv - pack_voltage_mv) > tolerance_mv ||
+        frame[141U + dynamic] > 100U) {
+        return false;
+    }
+
+    memset(telemetry, 0, sizeof(*telemetry));
+    telemetry->pack_voltage_mv = pack_voltage_mv;
+    telemetry->current_deci_amps = (int16_t)((int32_t)read_u32_le(frame, 126U + dynamic) / 100);
+    telemetry->soc_percent = frame[141U + dynamic];
+    telemetry->capacity_remaining_mah = read_u32_le(frame, 142U + dynamic);
+    telemetry->total_capacity_mah = read_u32_le(frame, 146U + dynamic);
+    telemetry->protection_mask = cell_slots == 32U ? read_u32_le(frame, 166U) : read_u16_le(frame, 136U);
+    telemetry->min_cell_voltage_mv = minimum_mv;
+    telemetry->max_cell_voltage_mv = maximum_mv;
+    telemetry->delta_cell_voltage_mv = maximum_mv - minimum_mv;
+    telemetry->average_cell_voltage_mv = (uint16_t)(total_mv / cells);
+    if (cell_slots == 32U) {
+        telemetry->temperatures_celsius[0] = (int16_t)read_u16_le(frame, 144U) / 10;
+        telemetry->temperatures_celsius[1] = (int16_t)read_u16_le(frame, 162U) / 10;
+        telemetry->temperatures_celsius[2] = (int16_t)read_u16_le(frame, 164U) / 10;
+        telemetry->temperature_valid[0] = true;
+        telemetry->temperature_valid[1] = true;
+        telemetry->temperature_valid[2] = true;
+    } else {
+        telemetry->temperatures_celsius[0] = (int16_t)read_u16_le(frame, 130U) / 10;
+        telemetry->temperatures_celsius[1] = (int16_t)read_u16_le(frame, 132U) / 10;
+        telemetry->temperatures_celsius[2] = (int16_t)read_u16_le(frame, 134U) / 10;
+        telemetry->temperature_valid[0] = true;
+        telemetry->temperature_valid[1] = true;
+        telemetry->temperature_valid[2] = true;
+    }
+    return true;
+}
+
+static bool decode_cell_info(const uint8_t frame[ESP_BMS_JK_FRAME_LEN],
+                             esp_bms_bms_telemetry_t *telemetry)
+{
+    if (!telemetry || frame[4] != 0x02U || sum8(frame, ESP_BMS_JK_FRAME_LEN - 1U) != frame[299]) {
+        return false;
+    }
+    esp_bms_bms_telemetry_t candidate = { 0 };
+    if (decode_jk04_cell_info(frame, &candidate)) {
+        *telemetry = candidate;
+        return true;
+    }
+    const bool decoded_24s = decode_jk02_cell_info(frame, 24U, &candidate);
+    esp_bms_bms_telemetry_t candidate_32s = { 0 };
+    const bool decoded_32s = decode_jk02_cell_info(frame, 32U, &candidate_32s);
+    if (decoded_24s == decoded_32s) {
+        return false;
+    }
+    *telemetry = decoded_24s ? candidate : candidate_32s;
+    return true;
 }
 
 bool esp_bms_jk_feed(uint8_t *stream,

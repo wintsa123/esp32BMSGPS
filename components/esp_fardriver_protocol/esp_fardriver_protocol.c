@@ -14,6 +14,13 @@ static const uint8_t FLASH_READ_ADDR[] = {
     0xE2, 0xE8, 0xEE, 0xD6, 0xDC, 0xF4, 0xFA,
 };
 
+static const uint8_t POLL_READ_ADDR[] = {
+    0xE2, 0xE8, 0xEE, 0xF4, 0xFA, 0xD6, 0x24, 0x2A, 0x30, 0x18, 0x69, 0x7C, 0xD0,
+    0xA0, 0xA6, 0x63, 0x69, 0x12, 0xD0, 0x24, 0x18, 0x1E, 0x2A, 0x30, 0xBE, 0xC4,
+    0x06, 0x0C, 0x9A, 0x94, 0x7C, 0xF4, 0x88, 0x8E, 0x00, 0x82, 0xB8, 0xCA, 0x22,
+    0xAC,
+};
+
 static uint16_t crc_table_entry(uint8_t index)
 {
     uint16_t crc = index;
@@ -36,6 +43,35 @@ uint16_t esp_fardriver_crc(const uint8_t *data, size_t len)
         b = (uint8_t)(entry >> 8U);
     }
     return (uint16_t)(((uint16_t)a << 8U) | b);
+}
+
+size_t esp_fardriver_poll_address_count(void)
+{
+    return sizeof(POLL_READ_ADDR);
+}
+
+bool esp_fardriver_poll_address(size_t poll_index, uint8_t *address)
+{
+    if (!address || poll_index >= sizeof(POLL_READ_ADDR)) {
+        return false;
+    }
+    *address = POLL_READ_ADDR[poll_index];
+    return true;
+}
+
+bool esp_fardriver_build_read_request(uint8_t address,
+                                      uint8_t out[ESP_FARDRIVER_READ_REQUEST_LEN])
+{
+    if (!out) {
+        return false;
+    }
+    out[0] = address;
+    out[1] = address;
+    out[2] = 0x80U;
+    const uint16_t crc = esp_fardriver_crc(out, 3U);
+    out[3] = (uint8_t)(crc >> 8U);
+    out[4] = (uint8_t)crc;
+    return true;
 }
 
 static uint16_t be16(const uint8_t *data)
@@ -90,23 +126,16 @@ static void parse_compact(esp_fardriver_state_t *state, uint8_t index, const uin
 {
     if (index == 0U) {
         const uint16_t raw_rpm = be16(data + 4U);
-        const int16_t iq_centi_a = (int16_t)be16(data + 8U);
-        const int16_t id_centi_a = (int16_t)be16(data + 10U);
-        const float amps = sqrtf((float)iq_centi_a * iq_centi_a + (float)id_centi_a * id_centi_a) / 100.0f;
-        state->rpm = raw_rpm / 4U;
+        state->rpm = raw_rpm;
         state->rpm_valid = true;
         state->gear = (uint8_t)((data[2] >> 2U) & 0x03U);
         state->gear = state->gear == 0U ? 3U : state->gear;
         state->gear_valid = true;
-        if (state->voltage_deci_v > 0U) {
-            state->power_w = (int32_t)lroundf(amps * ((float)state->voltage_deci_v / 10.0f));
-            if (iq_centi_a < 0 || id_centi_a < 0) {
-                state->power_w = -state->power_w;
-            }
-            state->power_valid = true;
-        }
     } else if (index == 1U) {
         state->voltage_deci_v = be16(data);
+        const int16_t current_quarter_a = (int16_t)be16(data + 2U);
+        state->power_w = ((int32_t)state->voltage_deci_v * current_quarter_a) / 40;
+        state->power_valid = true;
     } else if (index == 4U) {
         state->controller_temp_c = (int8_t)data[2];
         state->controller_temp_valid = true;
@@ -120,37 +149,6 @@ void esp_fardriver_refresh_derived(esp_fardriver_state_t *state)
 {
     if (!state) {
         return;
-    }
-    if (block_valid(state, 0xE5U)) {
-        state->rpm = le16(state->blocks[0xE5U]) / 4U;
-        state->rpm_valid = true;
-    }
-    if (block_valid(state, 0xE2U)) {
-        const uint8_t raw = state->blocks[0xE2U][0];
-        state->gear = (uint8_t)((raw >> 2U) & 0x03U);
-        state->gear = state->gear == 0U ? 3U : state->gear;
-        state->gear_valid = true;
-    }
-    if (block_valid(state, 0xE8U)) {
-        state->voltage_deci_v = le16(state->blocks[0xE8U]);
-    }
-    if (block_valid(state, 0xE9U)) {
-        state->controller_temp_c = (int8_t)state->blocks[0xE9U][0];
-        state->controller_temp_valid = true;
-    }
-    if (block_valid(state, 0xEBU)) {
-        state->motor_temp_c = (int8_t)state->blocks[0xEBU][0];
-        state->motor_temp_valid = true;
-    }
-    if (block_valid(state, 0xE6U) && block_valid(state, 0xE7U) && state->voltage_deci_v > 0U) {
-        const int16_t iq = (int16_t)le16(state->blocks[0xE6U]);
-        const int16_t id = (int16_t)le16(state->blocks[0xE7U]);
-        const float amps = sqrtf((float)iq * iq + (float)id * id) / 100.0f;
-        state->power_w = (int32_t)lroundf(amps * ((float)state->voltage_deci_v / 10.0f));
-        if (iq < 0 || id < 0) {
-            state->power_w = -state->power_w;
-        }
-        state->power_valid = true;
     }
     state->controller_speed_params_valid = false;
     state->tire_rim_inch = 0U;
@@ -199,18 +197,24 @@ void esp_fardriver_refresh_derived(esp_fardriver_state_t *state)
 
 bool esp_fardriver_parse_frame(esp_fardriver_state_t *state,
                                const uint8_t *frame,
-                               size_t len,
-                               esp_fardriver_layout_t layout)
+                               size_t len)
 {
     if (!state || !frame || len != ESP_FARDRIVER_FRAME_LEN || frame[0] != 0xAAU) {
         return false;
     }
-    const uint16_t crc = esp_fardriver_crc(frame, ESP_FARDRIVER_FRAME_LEN - 2U);
-    if (frame[14] != (uint8_t)(crc >> 8U) || frame[15] != (uint8_t)crc) {
+    uint16_t checksum = 0U;
+    if ((frame[1] & 0x80U) != 0U) {
+        checksum = esp_fardriver_crc(frame, ESP_FARDRIVER_FRAME_LEN - 2U);
+    } else {
+        for (size_t index = 0U; index < ESP_FARDRIVER_FRAME_LEN - 2U; ++index) {
+            checksum = (uint16_t)(checksum + frame[index]);
+        }
+    }
+    if (frame[14] != (uint8_t)(checksum >> 8U) || frame[15] != (uint8_t)checksum) {
         return false;
     }
-    const uint8_t index = (uint8_t)(frame[1] & 0x3FU);
-    if (layout == ESP_FARDRIVER_LAYOUT_COMPACT) {
+    const uint8_t index = (uint8_t)(frame[1] & 0x7FU);
+    if ((frame[1] & 0x80U) == 0U) {
         if (index > 29U) {
             return false;
         }

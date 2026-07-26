@@ -17,6 +17,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #if ESP_BMS_FEATURE_BLE
+#include "esp_bt.h"
 #include "host/ble_gap.h"
 #include "host/ble_gatt.h"
 #include "host/ble_hs.h"
@@ -61,8 +62,6 @@ static const char *TAG = "bms_idf_runtime";
 #define SETUP_AP_NVS_PASSWORD_KEY "setup_pw"
 #define ANT_BMS_SERVICE_UUID_16 0xFFE0U
 #define ANT_BMS_CHARACTERISTIC_UUID_16 0xFFE1U
-#define FARDRIVER_SERVICE_UUID_16 0xFFE0U
-#define FARDRIVER_CHARACTERISTIC_UUID_16 0xFFECU
 #define BMS_SCAN_DURATION_MS 10000
 #define BMS_SCAN_HOST_TASK_STACK 4096U
 #define BMS_SCAN_HOST_TASK_PRIORITY 5U
@@ -214,6 +213,22 @@ static void runtime_update_snapshot_speed(esp_bms_idf_runtime_t *runtime);
 
 #if ESP_BMS_FEATURE_BLE
 static esp_bms_idf_runtime_t *s_ble_host_runtime;
+
+static void runtime_set_ble_tx_power(void)
+{
+#if CONFIG_IDF_TARGET_ESP32C3
+    const esp_power_level_t level = ESP_PWR_LVL_P20;
+#else
+    const esp_power_level_t level = ESP_PWR_LVL_P9;
+#endif
+    const esp_err_t adv_ret = esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_ADV, level);
+    const esp_err_t scan_ret = esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_SCAN, level);
+    const esp_err_t default_ret = esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_DEFAULT, level);
+    if (adv_ret != ESP_OK || scan_ret != ESP_OK || default_ret != ESP_OK) {
+        ESP_LOGW(TAG, "[ble] TX power setup failed: adv=%s scan=%s default=%s",
+                 esp_err_to_name(adv_ret), esp_err_to_name(scan_ret), esp_err_to_name(default_ret));
+    }
+}
 #endif
 
 static bool runtime_controller_tire_matches_policy(uint8_t rim_inch,
@@ -1296,9 +1311,11 @@ static void runtime_reset_state(esp_bms_idf_runtime_t *runtime)
     runtime->controller_service_start_handle = 0;
     runtime->controller_service_end_handle = 0;
     runtime->controller_char_val_handle = 0;
+    runtime->controller_write_char_val_handle = 0;
     runtime->controller_cccd_handle = 0;
     runtime->controller_ble_phase = BMS_BLE_PHASE_IDLE;
     runtime->controller_keepalive_elapsed_ms = 0;
+    runtime->controller_poll_index = 0U;
     runtime->controller_scan_revision = 0U;
     runtime->controller_connection_enabled = false;
     runtime->controller_page_enabled = false;
@@ -3102,6 +3119,7 @@ static int runtime_bluetooth_gap_event(struct ble_gap_event *event, void *arg)
     case BLE_GAP_EVENT_CONNECT:
         if (event->connect.status == 0) {
             runtime->bluetooth_conn_handle = event->connect.conn_handle;
+            esp_bms_idf_runtime_request_coded_phy(event->connect.conn_handle, "local");
             RUNTIME_SET_FLAG(runtime, BLUETOOTH_CONNECTED, false);
             RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISING, false);
             (void)runtime_project_bluetooth_snapshot(runtime);
@@ -3126,6 +3144,15 @@ static int runtime_bluetooth_gap_event(struct ble_gap_event *event, void *arg)
             ESP_LOGW(TAG, "[bt] local Bluetooth connection failed: status=%d", event->connect.status);
         }
         return 0;
+#if CONFIG_BT_NIMBLE_LL_CFG_FEAT_LE_CODED_PHY
+    case BLE_GAP_EVENT_PHY_UPDATE_COMPLETE:
+        if (event->phy_updated.conn_handle == runtime->bluetooth_conn_handle &&
+            event->phy_updated.status != 0) {
+            ESP_LOGW(TAG, "[ble] local Coded PHY unavailable: conn=%u status=%d",
+                     event->phy_updated.conn_handle, event->phy_updated.status);
+        }
+        return 0;
+#endif
     case BLE_GAP_EVENT_DISCONNECT:
         if (event->disconnect.conn.conn_handle == runtime->bluetooth_conn_handle) {
             const bool start_bms_scan = RUNTIME_FLAG(runtime, BMS_SCAN_REQUESTED);
@@ -3349,6 +3376,7 @@ static esp_err_t runtime_init_ble_host(esp_bms_idf_runtime_t *runtime)
     if (ret != ESP_OK) {
         return ret;
     }
+    runtime_set_ble_tx_power();
 
     s_ble_host_runtime = runtime;
     ble_svc_gap_init();
@@ -3397,10 +3425,33 @@ esp_err_t esp_bms_idf_runtime_ensure_ble_host(esp_bms_idf_runtime_t *runtime)
     }
     return runtime_init_ble_host(runtime);
 }
+
+void esp_bms_idf_runtime_request_coded_phy(uint16_t conn_handle, const char *source)
+{
+#if CONFIG_BT_NIMBLE_LL_CFG_FEAT_LE_CODED_PHY
+    const int rc = ble_gap_set_prefered_le_phy(conn_handle,
+                                               BLE_GAP_LE_PHY_CODED_MASK,
+                                               BLE_GAP_LE_PHY_CODED_MASK,
+                                               BLE_GAP_LE_PHY_CODED_S8);
+    if (rc != 0) {
+        ESP_LOGW(TAG, "[ble] %s Coded PHY request failed: conn=%u rc=%d",
+                 source ? source : "link", conn_handle, rc);
+    }
+#else
+    (void)conn_handle;
+    (void)source;
+#endif
+}
 #else
 esp_err_t esp_bms_idf_runtime_ensure_ble_host(esp_bms_idf_runtime_t *runtime)
 {
     return runtime ? ESP_ERR_NOT_SUPPORTED : ESP_ERR_INVALID_ARG;
+}
+
+void esp_bms_idf_runtime_request_coded_phy(uint16_t conn_handle, const char *source)
+{
+    (void)conn_handle;
+    (void)source;
 }
 #endif
 

@@ -37,6 +37,13 @@ static const char *TAG = "esp_bms_bms_ble";
 #define BMS_HEARTBEAT_TIMEOUT_MS 5000U
 #define BMS_RECONNECT_BACKOFF_MS 3000U
 
+typedef enum {
+    ANT_BLE_PROTOCOL_PROBE_NEW = 0U,
+    ANT_BLE_PROTOCOL_PROBE_OLD = 1U,
+    ANT_BLE_PROTOCOL_NEW = 2U,
+    ANT_BLE_PROTOCOL_OLD = 3U,
+} ant_ble_protocol_t;
+
 #define RUNTIME_FLAG(runtime, name) \
     esp_bms_idf_runtime_flag_get((runtime), ESP_BMS_IDF_RUNTIME_FLAG_##name)
 #define RUNTIME_SET_FLAG(runtime, name, enabled) \
@@ -120,10 +127,10 @@ static bool bms_apply_telemetry(esp_bms_idf_runtime_t *runtime,
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, BMS_ONLINE, true);
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, PACK_VOLTAGE_VALID, true);
     runtime->snapshot.pack_voltage_mv = telemetry->pack_voltage_mv;
-    RUNTIME_SET_SNAPSHOT_FLAG(runtime, CURRENT_VALID, true);
-    runtime->snapshot.current_deci_amps = telemetry->current_deci_amps;
-    RUNTIME_SET_SNAPSHOT_FLAG(runtime, SOC_VALID, true);
-    runtime->snapshot.soc_percent = telemetry->soc_percent;
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, CURRENT_VALID, !telemetry->partial);
+    runtime->snapshot.current_deci_amps = telemetry->partial ? 0 : telemetry->current_deci_amps;
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, SOC_VALID, !telemetry->partial);
+    runtime->snapshot.soc_percent = telemetry->partial ? 0U : telemetry->soc_percent;
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, MAX_CELL_VALID, true);
     runtime->snapshot.max_cell_voltage_mv = telemetry->max_cell_voltage_mv;
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, MIN_CELL_VALID, true);
@@ -132,10 +139,10 @@ static bool bms_apply_telemetry(esp_bms_idf_runtime_t *runtime,
     runtime->snapshot.delta_cell_voltage_mv = telemetry->delta_cell_voltage_mv;
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, AVERAGE_CELL_VALID, true);
     runtime->snapshot.average_cell_voltage_mv = telemetry->average_cell_voltage_mv;
-    RUNTIME_SET_SNAPSHOT_FLAG(runtime, TOTAL_CAPACITY_VALID, true);
-    runtime->snapshot.total_capacity_mah = telemetry->total_capacity_mah;
-    RUNTIME_SET_SNAPSHOT_FLAG(runtime, CAPACITY_REMAINING_VALID, true);
-    runtime->snapshot.capacity_remaining_mah = telemetry->capacity_remaining_mah;
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, TOTAL_CAPACITY_VALID, !telemetry->partial);
+    runtime->snapshot.total_capacity_mah = telemetry->partial ? 0U : telemetry->total_capacity_mah;
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime, CAPACITY_REMAINING_VALID, !telemetry->partial);
+    runtime->snapshot.capacity_remaining_mah = telemetry->partial ? 0U : telemetry->capacity_remaining_mah;
     for (uint8_t index = 0U; index < ESP_BMS_BMS_TEMP_MAX_COUNT; ++index) {
         esp_bms_dashboard_snapshot_temperature_valid_set(&runtime->snapshot,
                                                          index,
@@ -144,7 +151,9 @@ static bool bms_apply_telemetry(esp_bms_idf_runtime_t *runtime,
     memcpy(runtime->snapshot.bms_temperature_celsius,
            telemetry->temperatures_celsius,
            sizeof(runtime->snapshot.bms_temperature_celsius));
-    bms_apply_fault_masks(&runtime->snapshot, telemetry->protection_mask, telemetry->warning_mask);
+    if (!telemetry->partial) {
+        bms_apply_fault_masks(&runtime->snapshot, telemetry->protection_mask, telemetry->warning_mask);
+    }
     runtime->bms_telemetry_last_us = esp_timer_get_time();
     bms_set_info(runtime, "BMS OK");
     return true;
@@ -168,6 +177,12 @@ static bool bms_is_jbd(const esp_bms_idf_runtime_t *runtime)
 static bool bms_is_daly(const esp_bms_idf_runtime_t *runtime)
 {
     return runtime && runtime->bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_DALY;
+}
+
+static bool bms_ant_uses_old_protocol(const esp_bms_idf_runtime_t *runtime)
+{
+    return runtime && (runtime->bms_poll_index == (uint8_t)ANT_BLE_PROTOCOL_PROBE_OLD ||
+                       runtime->bms_poll_index == (uint8_t)ANT_BLE_PROTOCOL_OLD);
 }
 
 static bool bms_has_separate_write_characteristic(const esp_bms_idf_runtime_t *runtime)
@@ -211,6 +226,28 @@ static bool bms_frame_push(esp_bms_idf_runtime_t *runtime,
                                                   &telemetry);
         runtime->bms_frame_len = (uint16_t)stream_len;
         return !decoded || bms_apply_telemetry(runtime, &telemetry);
+    }
+    const bool ant_old_start = chunk_len >= 3U && chunk[0] == 0xAAU && chunk[1] == 0x55U &&
+                               chunk[2] == 0xAAU;
+    const bool ant_old_stream = runtime->bms_frame_len >= 3U && runtime->bms_frame[0] == 0xAAU &&
+                                runtime->bms_frame[1] == 0x55U && runtime->bms_frame[2] == 0xAAU;
+    if (ant_old_start) {
+        runtime->bms_poll_index = (uint8_t)ANT_BLE_PROTOCOL_PROBE_OLD;
+    }
+    if (ant_old_start || ant_old_stream) {
+        size_t stream_len = runtime->bms_frame_len;
+        const bool decoded = esp_bms_ant_protocol_old_feed(runtime->bms_frame,
+                                                            &stream_len,
+                                                            sizeof(runtime->bms_frame),
+                                                            chunk,
+                                                            chunk_len,
+                                                            &telemetry);
+        runtime->bms_frame_len = (uint16_t)stream_len;
+        if (!decoded) {
+            return true;
+        }
+        runtime->bms_poll_index = (uint8_t)ANT_BLE_PROTOCOL_OLD;
+        return bms_apply_telemetry(runtime, &telemetry);
     }
     if (bms_is_jk(runtime)) {
         size_t stream_len = runtime->bms_frame_len;
@@ -270,6 +307,9 @@ static bool bms_frame_push(esp_bms_idf_runtime_t *runtime,
     if (device_info) {
         RUNTIME_SET_FLAG(runtime, BMS_DEVICE_INFO_KNOWN, true);
         return true;
+    }
+    if (decoded) {
+        runtime->bms_poll_index = (uint8_t)ANT_BLE_PROTOCOL_NEW;
     }
     return decoded && bms_apply_telemetry(runtime, &telemetry);
 }
@@ -445,15 +485,28 @@ static esp_err_t bms_send_poll_request(esp_bms_idf_runtime_t *runtime,
         }
         return ret;
     }
-    const bool send_device_info =
-        include_device_info && !RUNTIME_FLAG(runtime, BMS_DEVICE_INFO_REQUESTED);
-    const uint8_t *frame = send_device_info ? device_info_request : status_request;
-    const size_t frame_len = send_device_info ? sizeof(device_info_request) : sizeof(status_request);
+    const bool send_old = bms_ant_uses_old_protocol(runtime);
+    uint8_t old_status_request[6] = { 0 };
+    if (send_old && !esp_bms_ant_protocol_old_poll_request(old_status_request)) {
+        return ESP_FAIL;
+    }
+    const bool send_device_info = include_device_info &&
+                                  runtime->bms_poll_index == (uint8_t)ANT_BLE_PROTOCOL_NEW &&
+                                  !RUNTIME_FLAG(runtime, BMS_DEVICE_INFO_REQUESTED);
+    const uint8_t *frame = send_old ? old_status_request :
+                           (send_device_info ? device_info_request : status_request);
+    const size_t frame_len = send_old ? sizeof(old_status_request) :
+                             (send_device_info ? sizeof(device_info_request) : sizeof(status_request));
     const esp_err_t ret = bms_write_frame(runtime, frame, frame_len);
     if (ret == ESP_OK) {
         runtime->bms_status_poll_elapsed_ms = 0U;
         if (send_device_info) {
             RUNTIME_SET_FLAG(runtime, BMS_DEVICE_INFO_REQUESTED, true);
+        }
+        if (runtime->bms_poll_index == (uint8_t)ANT_BLE_PROTOCOL_PROBE_NEW) {
+            runtime->bms_poll_index = (uint8_t)ANT_BLE_PROTOCOL_PROBE_OLD;
+        } else if (runtime->bms_poll_index == (uint8_t)ANT_BLE_PROTOCOL_PROBE_OLD) {
+            runtime->bms_poll_index = (uint8_t)ANT_BLE_PROTOCOL_PROBE_NEW;
         }
     }
     return ret;
@@ -796,6 +849,7 @@ static int bms_gap_event(struct ble_gap_event *event, void *arg)
     case BLE_GAP_EVENT_CONNECT:
         if (event->connect.status == 0) {
             runtime->bms_conn_handle = event->connect.conn_handle;
+            esp_bms_idf_runtime_request_coded_phy(event->connect.conn_handle, "BMS");
             __atomic_fetch_or(&runtime->pending_audio_events,
                               ESP_BMS_IDF_RUNTIME_AUDIO_EVENT_BMS_CONNECTED,
                               __ATOMIC_RELAXED);
@@ -812,6 +866,15 @@ static int bms_gap_event(struct ble_gap_event *event, void *arg)
             bms_set_info(runtime, "BMS CONN FAIL");
         }
         return 0;
+#if CONFIG_BT_NIMBLE_LL_CFG_FEAT_LE_CODED_PHY
+    case BLE_GAP_EVENT_PHY_UPDATE_COMPLETE:
+        if (event->phy_updated.conn_handle == runtime->bms_conn_handle &&
+            event->phy_updated.status != 0) {
+            ESP_LOGW(TAG, "Coded PHY unavailable: conn=%u status=%d",
+                     event->phy_updated.conn_handle, event->phy_updated.status);
+        }
+        return 0;
+#endif
     case BLE_GAP_EVENT_DISCONNECT:
         if (event->disconnect.conn.conn_handle == runtime->bms_conn_handle ||
             runtime->bms_ble_phase != (uint8_t)BMS_BLE_PHASE_SCANNING) {

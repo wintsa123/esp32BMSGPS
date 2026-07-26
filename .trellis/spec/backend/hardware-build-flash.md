@@ -893,3 +893,73 @@ RUNTIME_SET_FLAG(runtime, BMS_SCAN_REQUESTED, false);
 RUNTIME_SET_FLAG(runtime, CONTROLLER_SCAN_REQUESTED, true);
 ble_gap_disc_cancel();
 ```
+
+## Scenario: Panel-Only Mirror Compensation
+
+### 1. Scope / Trigger
+
+- Apply when a catalog display needs a physical panel mirror correction while
+  the paired touch controller already reports correct coordinates.
+
+### 2. Signatures
+
+```text
+firmware/catalog/display/*.env: PANEL_MIRROR_X=0|1
+esp_bms_lvgl_bridge_config_t.panel_mirror_x
+```
+
+### 3. Contracts
+
+- `PANEL_MIRROR_X` is optional and defaults to `0`; the profile generator
+  validates a supplied value as `0` or `1` and emits `panel_mirror_x`.
+- The bridge combines this flag only with `esp_lcd_panel_mirror`. It must not
+  enter `touch_rotation_flags` or alter GT1151 calibration coordinates.
+- For `st7796u-i80` on the Huiqin ESP32-S3 N16R8 reference board, retain
+  `RGB_ORDER=BGR`, `I80_SWAP_COLOR_BYTES=0`, and `INVERT_COLOR=1`. The vendor
+  landscape flags are `swap_xy=1`, `mirror_x=0`, `mirror_y=0`; after the
+  generic landscape transform, that requires `PANEL_MIRROR_X=1`.
+- ESP LCD Touch applies `MIRROR_X` and `MIRROR_Y` before `SWAP_XY`. For this
+  board's final landscape orientation, `SWAP_XY=1`, `MIRROR_X=1`, and
+  `MIRROR_Y=0` produce `screen_y = 320 - raw_x`.
+- Use `RGB_ORDER=RGB` or `BGR` for channel order. Do not use color inversion
+  to compensate for a red/blue channel swap.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required response |
+| --- | --- |
+| `PANEL_MIRROR_X` is not `0` or `1` | Profile generation fails before compilation |
+| Landscape panel is vertically mirrored but touch is correct | Set `PANEL_MIRROR_X=1`; do not change `ROTATION` |
+| Red and blue are exchanged | Correct `RGB_ORDER`; retain `INVERT_COLOR` for luminance inversion only |
+| Vendor reference uses a swapped-axis orientation | Compare its final `swap_xy` and both mirror flags; do not infer the native mirror axis from the visual symptom |
+| Landscape touch is vertically reversed | Mirror the raw X axis before `SWAP_XY`; do not toggle `MIRROR_Y` |
+
+### 5. Good / Base / Bad Cases
+
+- Good: the ST7796U S3 record enables `PANEL_MIRROR_X=1`; touch remains unchanged.
+- Base: displays without the field generate `panel_mirror_x = false`.
+- Bad: change `LANDSCAPE` to `INVERTED_LANDSCAPE` to fix a panel-only mirror.
+
+### 6. Tests Required
+
+- `tests/configurator_selftest.sh` must assert the S3 generated header contains
+  `.panel_mirror_x = true` and the selected RGB order.
+- Build the S3 profile, flash its complete image through RFC2217, and verify
+  panel orientation, RGB channels, and touch independently on hardware.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```c
+rotation_flags(ESP_BMS_DISPLAY_ROTATION_INVERTED_LANDSCAPE, &swap, &mirror_x, &mirror_y);
+apply_touch_rotation(ESP_BMS_DISPLAY_ROTATION_INVERTED_LANDSCAPE);
+```
+
+#### Correct
+
+```c
+panel_rotation_flags(rotation, &swap, &mirror_x, &mirror_y);
+esp_lcd_panel_mirror(s_panel, mirror_x, mirror_y);
+/* Keep touch_rotation_flags(rotation, ...) unchanged. */
+```

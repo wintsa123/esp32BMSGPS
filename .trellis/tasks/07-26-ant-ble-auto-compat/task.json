@@ -1,8 +1,8 @@
 {
-  "id": "controller-ble-tire-ratio",
-  "name": "controller-ble-tire-ratio",
-  "title": "完善控制器蓝牙与轮胎传动参数",
-  "description": "",
+  "id": "ant-ble-auto-compat",
+  "name": "ant-ble-auto-compat",
+  "title": "ANT 新旧 BLE 自动兼容",
+  "description": "兼容上游可验证的 ANT 新旧 BLE 协议，并在绑定后自动识别协议。",
   "status": "in_progress",
   "dev_type": null,
   "scope": null,
@@ -10,7 +10,7 @@
   "priority": "P2",
   "creator": "wintsa",
   "assignee": "wintsa",
-  "createdAt": "2026-07-12",
+  "createdAt": "2026-07-26",
   "completedAt": null,
   "branch": null,
   "base_branch": "main",
@@ -18,10 +18,8 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [
-    "07-26-fardriver-apk-protocol"
-  ],
-  "parent": null,
+  "children": [],
+  "parent": "07-21-bms-ble-protocol-suite",
   "relatedFiles": [],
   "notes": "",
   "meta": {}

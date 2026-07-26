@@ -151,11 +151,13 @@ struct esp_bms_idf_runtime {
     uint16_t controller_service_start_handle;
     uint16_t controller_service_end_handle;
     uint16_t controller_char_val_handle;
+    uint16_t controller_write_char_val_handle;
     uint16_t controller_cccd_handle;
     uint8_t brightness_percent;
     uint8_t volume_percent;
     uint8_t bms_type;
     uint8_t bms_poll_index;
+    uint8_t controller_poll_index;
     uint8_t bms_own_addr_type;
     uint8_t bluetooth_own_addr_type;
     uint8_t bms_ble_phase;
@@ -243,6 +245,7 @@ esp_err_t esp_bms_idf_runtime_start_setup_ap(esp_bms_idf_runtime_t *runtime);
 esp_err_t esp_bms_idf_runtime_start_http_server(esp_bms_idf_runtime_t *runtime);
 esp_err_t esp_bms_idf_runtime_stop_setup_services(esp_bms_idf_runtime_t *runtime);
 esp_err_t esp_bms_idf_runtime_ensure_ble_host(esp_bms_idf_runtime_t *runtime);
+void esp_bms_idf_runtime_request_coded_phy(uint16_t conn_handle, const char *source);
 void esp_bms_idf_runtime_register_bms_frame_handler(
     esp_bms_idf_runtime_t *runtime,
     esp_bms_idf_runtime_bms_frame_handler_t handler);

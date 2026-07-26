@@ -42,6 +42,15 @@ printf '%s\n' "FarDriver protocol self-test passed"
 "${build_dir}/yanyang_bms_protocol_selftest"
 printf '%s\n' "Yanyang BMS protocol self-test passed"
 
+"${cc_bin}" "${cflags[@]}" \
+    -I"${repo_root}/components/esp_bms_bms_ble/protocols" \
+    -I"${repo_root}/components/esp_bms_bms_ble/protocols/ant" \
+    "${repo_root}/tests/ant_bms_protocol_selftest.c" \
+    "${repo_root}/components/esp_bms_bms_ble/protocols/ant/esp_bms_ant_protocol.c" \
+    -o "${build_dir}/ant_bms_protocol_selftest"
+"${build_dir}/ant_bms_protocol_selftest"
+printf '%s\n' "ANT BMS protocol self-test passed"
+
 for brand in jk jbd daly; do
     "${cc_bin}" "${cflags[@]}" \
         -I"${repo_root}/components/esp_bms_bms_ble/protocols" \

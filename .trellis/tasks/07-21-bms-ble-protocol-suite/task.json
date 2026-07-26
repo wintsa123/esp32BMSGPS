@@ -20,7 +20,8 @@
   "subtasks": [],
   "children": [
     "07-25-yanyang-bms-protocol",
-    "07-25-jk-jbd-daly-bms-protocols"
+    "07-25-jk-jbd-daly-bms-protocols",
+    "07-26-ant-ble-auto-compat"
   ],
   "parent": "07-21-multi-mcu-trimmable-firmware-s3",
   "relatedFiles": [],

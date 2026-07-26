@@ -82,6 +82,15 @@ def bool_value(values: dict[str, str], key: str, source: Path) -> str:
     raise ValueError(f"{source}: {key} must be 0 or 1")
 
 
+def optional_bool_value(values: dict[str, str], key: str, source: Path) -> str:
+    value = values.get(key, "0")
+    if value == "0":
+        return "false"
+    if value == "1":
+        return "true"
+    raise ValueError(f"{source}: {key} must be 0 or 1")
+
+
 def config_macro(profile: dict[str, str], mcu_record: dict[str, str], mcu_path: Path,
                  board: dict[str, str], board_path: Path,
                  display: dict[str, str], display_path: Path,
@@ -201,6 +210,7 @@ def config_macro(profile: dict[str, str], mcu_record: dict[str, str], mcu_path: 
         "physical_width": str(integer(display, "WIDTH", display_path)),
         "physical_height": str(integer(display, "HEIGHT", display_path)),
         "rotation": rotation,
+        "panel_mirror_x": optional_bool_value(display, "PANEL_MIRROR_X", display_path),
         "rgb_element_order": color_order,
         "invert_color": bool_value(display, "INVERT_COLOR", display_path),
         "spi_mode": str(integer(display, "SPI_MODE", display_path)),

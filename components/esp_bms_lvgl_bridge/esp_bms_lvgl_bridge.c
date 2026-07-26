@@ -102,6 +102,7 @@ static gpio_num_t s_backlight_pin = GPIO_NUM_NC;
 static esp_bms_display_rotation_t s_rotation = ESP_BMS_DISPLAY_ROTATION_LANDSCAPE;
 static uint16_t s_physical_width;
 static uint16_t s_physical_height;
+static bool s_panel_mirror_x;
 static bool s_touch_base_swap_xy;
 static bool s_touch_base_mirror_x;
 static bool s_touch_base_mirror_y;
@@ -610,6 +611,15 @@ static void rotation_flags(esp_bms_display_rotation_t rotation, bool *swap_xy, b
     }
 }
 
+static void panel_rotation_flags(esp_bms_display_rotation_t rotation,
+                                 bool *swap_xy,
+                                 bool *mirror_x,
+                                 bool *mirror_y)
+{
+    rotation_flags(rotation, swap_xy, mirror_x, mirror_y);
+    *mirror_x = *mirror_x != s_panel_mirror_x;
+}
+
 static void touch_rotation_flags(esp_bms_display_rotation_t rotation, bool *swap_xy, bool *mirror_x, bool *mirror_y)
 {
     bool swap = s_touch_base_swap_xy;
@@ -758,7 +768,7 @@ esp_err_t esp_bms_lvgl_bridge_set_rotation(esp_bms_display_rotation_t rotation)
     bool swap_xy = false;
     bool mirror_x = false;
     bool mirror_y = false;
-    rotation_flags(rotation, &swap_xy, &mirror_x, &mirror_y);
+    panel_rotation_flags(rotation, &swap_xy, &mirror_x, &mirror_y);
     ESP_RETURN_ON_ERROR(esp_lcd_panel_swap_xy(s_panel, swap_xy), TAG, "set panel swap_xy failed");
     ESP_RETURN_ON_ERROR(esp_lcd_panel_mirror(s_panel, mirror_x, mirror_y), TAG, "set panel mirror failed");
     ESP_RETURN_ON_ERROR(apply_touch_rotation(rotation), TAG, "set touch rotation failed");
@@ -1179,6 +1189,7 @@ esp_err_t esp_bms_lvgl_bridge_init(const esp_bms_lvgl_bridge_config_t *config)
                                                                &psram_largest);
     s_physical_width = config->physical_width;
     s_physical_height = config->physical_height;
+    s_panel_mirror_x = config->panel_mirror_x;
 
     ESP_LOGI(TAG, "init display bus=%d panel=%d hres=%u vres=%u pclk=%lu",
              config->display_bus, config->panel_driver, hres, vres,
@@ -1198,7 +1209,7 @@ esp_err_t esp_bms_lvgl_bridge_init(const esp_bms_lvgl_bridge_config_t *config)
     bool swap_xy = false;
     bool mirror_x = false;
     bool mirror_y = false;
-    rotation_flags(config->rotation, &swap_xy, &mirror_x, &mirror_y);
+    panel_rotation_flags(config->rotation, &swap_xy, &mirror_x, &mirror_y);
     ESP_RETURN_ON_ERROR(esp_lcd_panel_swap_xy(s_panel, swap_xy), TAG, "set panel swap_xy failed");
     ESP_RETURN_ON_ERROR(esp_lcd_panel_mirror(s_panel, mirror_x, mirror_y), TAG, "set panel mirror failed");
     s_rotation = config->rotation;

@@ -20,4 +20,5 @@ typedef struct {
     bool temperature_valid[ESP_BMS_BMS_PROTOCOL_TEMP_MAX_COUNT];
     uint64_t protection_mask;
     uint64_t warning_mask;
+    bool partial;
 } esp_bms_bms_telemetry_t;
