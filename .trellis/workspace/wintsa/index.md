@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 14
-- **Last Active**: 2026-07-25
+- **Total Sessions**: 15
+- **Last Active**: 2026-07-26
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~474 | Active |
+| `journal-1.md` | ~507 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 15 | 2026-07-26 | PSRAM LVGL 帧率优化 | `00139dcf` | `main` |
 | 14 | 2026-07-25 | ESP32 LVGL dual-core frame-rate optimization | `5ef2184` | `main` |
 | 13 | 2026-07-25 | 速度来源编译裁剪 | `c0d87db` | `main` |
 | 12 | 2026-07-23 | 修复 ESP32 启动期 WDT | `d4fca3d` | `main` |

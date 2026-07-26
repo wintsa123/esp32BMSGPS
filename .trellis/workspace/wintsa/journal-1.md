@@ -472,3 +472,36 @@ Enabled two LVGL software draw units on dual-core targets, pinned the adapter wo
 ### Next Steps
 
 - None - task complete
+
+
+## Session 15: PSRAM LVGL 帧率优化
+
+**Date**: 2026-07-26
+**Task**: PSRAM LVGL 帧率优化
+**Branch**: `main`
+
+### Summary
+
+为 ESP32-S3 默认启用 PSRAM LVGL 双缓冲，保留内存容量回退路径，并完成旧 ESP32 与 S3 配置构建及真机日志验证。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `00139dcf` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
