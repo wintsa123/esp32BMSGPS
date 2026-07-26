@@ -172,6 +172,8 @@ Correct: keep the button/timer in production UI for simulator and device, guard 
 - Browsing down past `SETTINGS_NAV_SCROLL_THRESHOLD` hides the bar; browsing back up or reaching scroll position `0` shows it. Direct vertical drags use the same threshold so pages whose content fits the viewport still behave consistently.
 - A recognized vertical navigation drag must set `SETTINGS_SWIPE_CONSUMED` to prevent the release from triggering the row under the finger. Horizontal left-edge back tracking remains dominant when horizontal movement is larger.
 - Dynamic settings cards must calculate their visible row count before calling `settings_list_card()`. Create the card at its final height and place rows with a compact `visible_index`; do not create a maximum-height card and then hide rows or shrink it after child creation, because LVGL can retain stale scroll geometry or visible blank slots.
+- The enlarged S3 settings profile applies only when the logical display is exactly `480x320` or `320x480`. Centralize its 1.25x pixel geometry and `18px` title / `16px` subtitle font selection in settings helpers; do not use `transform_scale`, which can leave LVGL hit targets and layout metrics at their unscaled sizes.
+- Link `settings_zh_18.c` only for the ESP32-S3 target and the desktop simulator. Legacy `320x240` / `240x320` builds keep `settings_zh_16` / `settings_zh_13`; validate both legacy simulator orientations, both S3 resolutions, and an S3 ESP-IDF link after changing this boundary.
 
 Feature-trim validation must cover each module-disabled matrix, assert the visible settings/dashboard choices, inspect generated `ESP_BMS_PROFILE_MAIN_REQUIRES`, and verify the disabled component name is absent from the ESP-IDF build graph.
 

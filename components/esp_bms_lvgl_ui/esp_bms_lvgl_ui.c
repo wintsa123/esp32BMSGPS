@@ -29,6 +29,12 @@ LV_FONT_DECLARE(fireblade_scale_digits_14);
 LV_FONT_DECLARE(settings_zh_10);
 LV_FONT_DECLARE(settings_zh_13);
 LV_FONT_DECLARE(settings_zh_16);
+#if defined(CONFIG_IDF_TARGET_ESP32S3) || ESP_BMS_LVGL_UI_SIMULATOR
+#define SETTINGS_S3_FONT_ENABLED 1
+LV_FONT_DECLARE(settings_zh_18);
+#else
+#define SETTINGS_S3_FONT_ENABLED 0
+#endif
 
 #define QUICK_PANEL_BUTTON_COUNT \
     (3 + ((ESP_BMS_FEATURE_BMS || ESP_BMS_FEATURE_CONTROLLER) ? 1 : 0) + \
@@ -40,6 +46,7 @@ LV_FONT_DECLARE(settings_zh_16);
 #define QUICK_PANEL_LEVEL_COUNT (1 + ESP_BMS_FEATURE_AUDIO)
 #define QUICK_PANEL_CONTROL_COUNT (QUICK_PANEL_BUTTON_COUNT + QUICK_PANEL_LEVEL_COUNT)
 #define QUICK_EDIT_BUTTON_SIZE 28
+#define QUICK_EDIT_BUTTON_SIZE_S3 36
 #define ARRAY_SIZE(array) (sizeof(array) / sizeof((array)[0]))
 #define QUICK_BLUETOOTH_SYMBOL "\xee\x9c\xa8"
 #define QUICK_HOTSPOT_SYMBOL "\xee\x98\xab"
@@ -63,17 +70,26 @@ LV_FONT_DECLARE(settings_zh_16);
 #define SETTINGS_SWIPE_EDGE_WIDTH 56
 #define SETTINGS_SWIPE_INDICATOR_SIZE 42
 #define SETTINGS_SWIPE_INDICATOR_SETTLE_MS 140
-#define SETTINGS_DETAIL_HEADER_H 38
+#define SETTINGS_DETAIL_HEADER_H_BASE 38
 #define SETTINGS_NAV_SCROLL_THRESHOLD 12
 #define SETTINGS_NAV_ANIM_MS 160
-#define SETTINGS_LIST_ROW_H_PORTRAIT 52
-#define SETTINGS_LIST_ROW_H_LANDSCAPE 52
-#define SETTINGS_DETAIL_ROW_H_PORTRAIT 64
-#define SETTINGS_DETAIL_ROW_H_LANDSCAPE 56
-#define SETTINGS_CHOICE_ROW_H_PORTRAIT 56
-#define SETTINGS_CHOICE_ROW_H_LANDSCAPE 48
-#define SETTINGS_LIST_MARGIN_X 8
-#define SETTINGS_LIST_PAD_Y 4
+#define SETTINGS_LIST_ROW_H_PORTRAIT_BASE 52
+#define SETTINGS_LIST_ROW_H_LANDSCAPE_BASE 52
+#define SETTINGS_DETAIL_ROW_H_PORTRAIT_BASE 64
+#define SETTINGS_DETAIL_ROW_H_LANDSCAPE_BASE 56
+#define SETTINGS_CHOICE_ROW_H_PORTRAIT_BASE 56
+#define SETTINGS_CHOICE_ROW_H_LANDSCAPE_BASE 48
+#define SETTINGS_LIST_MARGIN_X_BASE 8
+#define SETTINGS_LIST_PAD_Y_BASE 4
+#define SETTINGS_DETAIL_HEADER_H settings_scaled_px(SETTINGS_DETAIL_HEADER_H_BASE)
+#define SETTINGS_LIST_ROW_H_PORTRAIT settings_scaled_px(SETTINGS_LIST_ROW_H_PORTRAIT_BASE)
+#define SETTINGS_LIST_ROW_H_LANDSCAPE settings_scaled_px(SETTINGS_LIST_ROW_H_LANDSCAPE_BASE)
+#define SETTINGS_DETAIL_ROW_H_PORTRAIT settings_scaled_px(SETTINGS_DETAIL_ROW_H_PORTRAIT_BASE)
+#define SETTINGS_DETAIL_ROW_H_LANDSCAPE settings_scaled_px(SETTINGS_DETAIL_ROW_H_LANDSCAPE_BASE)
+#define SETTINGS_CHOICE_ROW_H_PORTRAIT settings_scaled_px(SETTINGS_CHOICE_ROW_H_PORTRAIT_BASE)
+#define SETTINGS_CHOICE_ROW_H_LANDSCAPE settings_scaled_px(SETTINGS_CHOICE_ROW_H_LANDSCAPE_BASE)
+#define SETTINGS_LIST_MARGIN_X settings_scaled_px(SETTINGS_LIST_MARGIN_X_BASE)
+#define SETTINGS_LIST_PAD_Y settings_scaled_px(SETTINGS_LIST_PAD_Y_BASE)
 #define SETTINGS_BOOT_PREVIEW_TIMER_MS 20U
 #define SETTINGS_BOOT_PREVIEW_DURATION_MS 3000U
 #define SETTINGS_BOOT_PREVIEW_READY_HOLD_MS 300U
@@ -575,6 +591,40 @@ typedef struct {
 } esp_bms_lvgl_ui_t;
 
 static esp_bms_lvgl_ui_t s_ui;
+
+static bool settings_uses_s3_layout(void)
+{
+#if SETTINGS_S3_FONT_ENABLED
+    return (s_ui.width == 480 && s_ui.height == 320) ||
+           (s_ui.width == 320 && s_ui.height == 480);
+#else
+    return false;
+#endif
+}
+
+static int32_t settings_scaled_px(int32_t value)
+{
+    return settings_uses_s3_layout() ? (value * 5 + 2) / 4 : value;
+}
+
+static const lv_font_t *settings_title_font(void)
+{
+#if SETTINGS_S3_FONT_ENABLED
+    return settings_uses_s3_layout() ? &settings_zh_18 : &settings_zh_16;
+#else
+    return &settings_zh_16;
+#endif
+}
+
+static const lv_font_t *settings_subtitle_font(void)
+{
+    return settings_uses_s3_layout() ? &settings_zh_16 : &settings_zh_13;
+}
+
+static const lv_font_t *settings_disclosure_font(void)
+{
+    return settings_uses_s3_layout() ? &settings_zh_13 : &settings_zh_16;
+}
 
 static bool ui_state_flag_get(ui_state_flag_t flag)
 {
@@ -2561,21 +2611,33 @@ static void quick_tile_apply_press_inset(lv_obj_t *obj, const quick_tile_rect_t 
                     quick_tile_pressed_extent(rect->h, pressed));
 }
 
+static int32_t quick_edit_button_size(void)
+{
+    return settings_uses_s3_layout() ? QUICK_EDIT_BUTTON_SIZE_S3 : QUICK_EDIT_BUTTON_SIZE;
+}
+
+static const lv_font_t *quick_edit_icon_font(void)
+{
+    return settings_uses_s3_layout() ? &lv_font_montserrat_24 : &lv_font_montserrat_14;
+}
+
 static void quick_edit_set_pressed(bool pressed)
 {
+    const int32_t button_size = quick_edit_button_size();
     const quick_tile_rect_t rect = {
-        .x = s_ui.width - QUICK_EDIT_BUTTON_SIZE - 8,
+        .x = s_ui.width - button_size - 8,
         .y = 8,
-        .w = QUICK_EDIT_BUTTON_SIZE,
-        .h = QUICK_EDIT_BUTTON_SIZE,
+        .w = button_size,
+        .h = button_size,
     };
     quick_tile_apply_press_inset(s_ui.quick_edit_button, &rect, pressed);
-    const int32_t extent = quick_tile_pressed_extent(QUICK_EDIT_BUTTON_SIZE, pressed);
+    const int32_t extent = quick_tile_pressed_extent(button_size, pressed);
+    const int32_t icon_extent = settings_uses_s3_layout() ? extent : extent - 8;
     quick_symbol_icon_recenter(s_ui.quick_edit_icon,
-                               extent - 8,
-                               extent - 8,
+                               icon_extent,
+                               icon_extent,
                                LV_SYMBOL_EDIT,
-                               &lv_font_montserrat_14);
+                               quick_edit_icon_font());
 }
 
 static const lv_font_t *quick_panel_item_icon_font(const quick_panel_item_t *item)
@@ -2928,7 +2990,9 @@ static void settings_navigation_apply_offset(int32_t offset)
     lv_obj_set_style_pad_top(s_ui.settings_carousel, content_top, LV_PART_MAIN);
     lv_obj_set_style_pad_top(s_ui.settings_detail, content_top, LV_PART_MAIN);
     lv_obj_set_style_pad_bottom(s_ui.settings_carousel, offset, LV_PART_MAIN);
-    lv_obj_set_style_pad_bottom(s_ui.settings_detail, 16 + offset, LV_PART_MAIN);
+    lv_obj_set_style_pad_bottom(s_ui.settings_detail,
+                                settings_scaled_px(16) + offset,
+                                LV_PART_MAIN);
     lv_obj_set_pos(s_ui.settings_detail_edge_zone, 0, content_top);
     lv_obj_set_size(s_ui.settings_detail_edge_zone,
                     SETTINGS_SWIPE_EDGE_WIDTH,
@@ -3378,8 +3442,8 @@ static void settings_show_bms_type_picker(void)
     const int32_t card_w = s_ui.width - (SETTINGS_LIST_MARGIN_X * 2);
     const int32_t row_h = portrait ? SETTINGS_CHOICE_ROW_H_PORTRAIT :
                                      SETTINGS_CHOICE_ROW_H_LANDSCAPE;
-    const int32_t gap = portrait ? 7 : 5;
-    const int32_t first_y = 12;
+    const int32_t gap = settings_scaled_px(portrait ? 7 : 5);
+    const int32_t first_y = settings_scaled_px(12);
     const uint8_t current = settings_current_snapshot()->bms_type;
 
     s_ui.settings_bms_view = (uint8_t)SETTINGS_BMS_VIEW_TYPE_LIST;
@@ -3410,7 +3474,7 @@ static void settings_show_bms_type_picker(void)
                             LV_EVENT_CLICKED,
                             (void *)(uintptr_t)index);
 
-        const lv_font_t *text_font = &settings_zh_16;
+        const lv_font_t *text_font = settings_title_font();
         const int32_t text_h = (int32_t)text_font->line_height + 4;
         lv_obj_t *text = label(row, 12, (row_h - text_h) / 2, card_w - 52, text_h,
                                text_font);
@@ -3886,8 +3950,10 @@ static lv_obj_t *settings_controller_roller(lv_obj_t *parent,
     lv_roller_set_selected(roller, selected, LV_ANIM_OFF);
     lv_obj_set_pos(roller, x, y);
     lv_obj_set_size(roller, w, h);
-    lv_obj_set_style_text_font(roller, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_set_style_text_font(roller, &lv_font_montserrat_14, LV_PART_SELECTED);
+    const lv_font_t *font =
+        settings_uses_s3_layout() ? settings_title_font() : &lv_font_montserrat_14;
+    lv_obj_set_style_text_font(roller, font, LV_PART_MAIN);
+    lv_obj_set_style_text_font(roller, font, LV_PART_SELECTED);
     lv_obj_set_style_text_color(roller, COLOR_SETTINGS_MUTED, LV_PART_MAIN);
     lv_obj_set_style_text_color(roller, COLOR_WHITE, LV_PART_SELECTED);
     lv_obj_set_style_bg_color(roller, COLOR_SETTINGS_CARD, LV_PART_MAIN);
@@ -3935,12 +4001,12 @@ static void settings_show_preset_range_edit(void)
     const bool portrait = s_ui.width < s_ui.height;
     const uint16_t preset_range_km = settings_current_snapshot()->preset_range_km;
     const uint16_t divisors[] = { 1000U, 100U, 10U, 1U };
-    const int32_t card_x = 12;
-    const int32_t card_w = s_ui.width - 24;
-    const int32_t card_h = portrait ? 168 : 104;
-    const int32_t gap = 6;
-    const int32_t roller_h = portrait ? 116 : 72;
-    const int32_t roller_w = (card_w - 24 - (gap * 3)) / 4;
+    const int32_t card_x = settings_scaled_px(12);
+    const int32_t card_w = s_ui.width - (card_x * 2);
+    const int32_t card_h = settings_scaled_px(portrait ? 168 : 104);
+    const int32_t gap = settings_scaled_px(6);
+    const int32_t roller_h = settings_scaled_px(portrait ? 116 : 72);
+    const int32_t roller_w = (card_w - (card_x * 2) - (gap * 3)) / 4;
 
     lv_obj_clean(s_ui.settings_detail);
     s_ui.settings_detail_id = (uint8_t)SETTINGS_DETAIL_BMS;
@@ -3954,7 +4020,7 @@ static void settings_show_preset_range_edit(void)
 
     lv_obj_t *card = panel(s_ui.settings_detail,
                            card_x,
-                           12,
+                           settings_scaled_px(12),
                            card_w,
                            card_h,
                            COLOR_SETTINGS_CARD);
@@ -3966,7 +4032,7 @@ static void settings_show_preset_range_edit(void)
         const uint32_t digit = (preset_range_km / divisors[index]) % 10U;
         s_ui.settings_preset_range_rollers[index] = settings_controller_roller(
             card,
-            12 + (int32_t)index * (roller_w + gap),
+            card_x + (int32_t)index * (roller_w + gap),
             (card_h - roller_h) / 2,
             roller_w,
             roller_h,
@@ -3974,12 +4040,14 @@ static void settings_show_preset_range_edit(void)
             digit);
     }
 
-    const int32_t button_w = clamp_i32(s_ui.width - 64, 160, 240);
+    const int32_t button_w = clamp_i32(s_ui.width - settings_scaled_px(64),
+                                       settings_scaled_px(160),
+                                       settings_scaled_px(240));
     lv_obj_t *button = panel(s_ui.settings_detail,
                              (s_ui.width - button_w) / 2,
-                             24 + card_h,
+                             settings_scaled_px(24) + card_h,
                              button_w,
-                             42,
+                             settings_scaled_px(42),
                              COLOR_SWITCH_ACTIVE);
     lv_obj_set_style_radius(button, 8, LV_PART_MAIN);
     lv_obj_set_style_border_width(button, 0, LV_PART_MAIN);
@@ -3989,7 +4057,12 @@ static void settings_show_preset_range_edit(void)
                         settings_preset_range_confirm_event_cb,
                         LV_EVENT_CLICKED,
                         NULL);
-    lv_obj_t *text = label(button, 0, 10, button_w, 20, &settings_zh_16);
+    lv_obj_t *text = label(button,
+                           0,
+                           settings_scaled_px(10),
+                           button_w,
+                           settings_scaled_px(20),
+                           settings_title_font());
     lv_label_set_text(text, "确认");
     lv_obj_set_style_text_align(text, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(text, COLOR_WHITE, LV_PART_MAIN);
@@ -4063,19 +4136,26 @@ static void settings_controller_confirm_event_cb(lv_event_t *event)
 
 static void settings_controller_confirm_button(lv_obj_t *parent, int32_t y)
 {
-    const int32_t button_w = clamp_i32(s_ui.width - 64, 160, 240);
+    const int32_t button_w = clamp_i32(s_ui.width - settings_scaled_px(64),
+                                       settings_scaled_px(160),
+                                       settings_scaled_px(240));
     lv_obj_t *button = panel(parent,
                              (s_ui.width - button_w) / 2,
                              y,
                              button_w,
-                             42,
+                             settings_scaled_px(42),
                              COLOR_SWITCH_ACTIVE);
     lv_obj_set_style_radius(button, 8, LV_PART_MAIN);
     lv_obj_set_style_border_width(button, 0, LV_PART_MAIN);
     lv_obj_add_flag(button, LV_OBJ_FLAG_CLICKABLE);
     settings_add_swipe_handlers(button);
     lv_obj_add_event_cb(button, settings_controller_confirm_event_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *text = label(button, 0, 10, button_w, 20, &settings_zh_16);
+    lv_obj_t *text = label(button,
+                           0,
+                           settings_scaled_px(10),
+                           button_w,
+                           settings_scaled_px(20),
+                           settings_title_font());
     lv_label_set_text(text, "确认");
     lv_obj_set_style_text_align(text, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(text, COLOR_WHITE, LV_PART_MAIN);
@@ -4108,10 +4188,15 @@ static void settings_show_controller_tire_edit(void)
     s_ui.settings_controller_view = (uint8_t)SETTINGS_CONTROLLER_VIEW_TIRE_EDIT;
     label_set_text_if_changed(s_ui.settings_detail_title, "轮胎规格");
     lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
-    const int32_t card_x = 12;
-    const int32_t card_w = s_ui.width - 24;
-    const int32_t card_h = portrait ? 188 : 118;
-    lv_obj_t *card = panel(s_ui.settings_detail, card_x, 12, card_w, card_h, COLOR_SETTINGS_CARD);
+    const int32_t card_x = settings_scaled_px(12);
+    const int32_t card_w = s_ui.width - (card_x * 2);
+    const int32_t card_h = settings_scaled_px(portrait ? 188 : 118);
+    lv_obj_t *card = panel(s_ui.settings_detail,
+                           card_x,
+                           settings_scaled_px(12),
+                           card_w,
+                           card_h,
+                           COLOR_SETTINGS_CARD);
     lv_obj_set_style_radius(card, 8, LV_PART_MAIN);
     lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
     lv_obj_set_style_border_color(card, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
@@ -4129,25 +4214,30 @@ static void settings_show_controller_tire_edit(void)
         (width - ESP_BMS_CONTROLLER_TIRE_WIDTH_MIN) /
             ESP_BMS_CONTROLLER_TIRE_WIDTH_STEP,
     };
-    const int32_t gap = 6;
-    const int32_t roller_w = (card_w - 24 - gap * 2) / 3;
-    const int32_t roller_h = card_h - 42;
+    const int32_t gap = settings_scaled_px(6);
+    const int32_t roller_w = (card_w - (card_x * 2) - (gap * 2)) / 3;
+    const int32_t roller_h = card_h - settings_scaled_px(42);
     for (uint8_t index = 0; index < 3U; ++index) {
-        const int32_t x = 12 + index * (roller_w + gap);
-        lv_obj_t *title = label(card, x, 7, roller_w, 20, &settings_zh_13);
+        const int32_t x = card_x + index * (roller_w + gap);
+        lv_obj_t *title = label(card,
+                                x,
+                                settings_scaled_px(7),
+                                roller_w,
+                                settings_scaled_px(20),
+                                settings_subtitle_font());
         lv_label_set_text(title, titles[index]);
         lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
         s_ui.settings_controller_tire_rollers[index] =
             settings_controller_roller(card,
                                        x,
-                                       30,
+                                       settings_scaled_px(30),
                                        roller_w,
                                        roller_h,
                                        options[index],
                                        selected[index]);
     }
     s_ui.settings_controller_ratio_roller = NULL;
-    settings_controller_confirm_button(s_ui.settings_detail, 20 + card_h);
+    settings_controller_confirm_button(s_ui.settings_detail, settings_scaled_px(20) + card_h);
 }
 
 static void settings_show_controller_ratio_edit(void)
@@ -4167,12 +4257,14 @@ static void settings_show_controller_ratio_edit(void)
     s_ui.settings_controller_view = (uint8_t)SETTINGS_CONTROLLER_VIEW_RATIO_EDIT;
     label_set_text_if_changed(s_ui.settings_detail_title, "传动比");
     lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
-    const int32_t roller_w = clamp_i32(s_ui.width - 96, 128, 220);
-    const int32_t roller_h = s_ui.width < s_ui.height ? 178 : 112;
+    const int32_t roller_w = clamp_i32(s_ui.width - settings_scaled_px(96),
+                                       settings_scaled_px(128),
+                                       settings_scaled_px(220));
+    const int32_t roller_h = settings_scaled_px(s_ui.width < s_ui.height ? 178 : 112);
     s_ui.settings_controller_ratio_roller =
         settings_controller_roller(s_ui.settings_detail,
                                    (s_ui.width - roller_w) / 2,
-                                   12,
+                                   settings_scaled_px(12),
                                    roller_w,
                                    roller_h,
                                    options,
@@ -4181,7 +4273,7 @@ static void settings_show_controller_ratio_edit(void)
     memset(s_ui.settings_controller_tire_rollers,
            0,
            sizeof(s_ui.settings_controller_tire_rollers));
-    settings_controller_confirm_button(s_ui.settings_detail, 20 + roller_h);
+    settings_controller_confirm_button(s_ui.settings_detail, settings_scaled_px(20) + roller_h);
 }
 
 static void settings_controller_value_event_cb(lv_event_t *event)
@@ -4224,7 +4316,7 @@ static void settings_controller_value_row(lv_obj_t *parent,
                         settings_controller_value_event_cb,
                         LV_EVENT_CLICKED,
                         (void *)(uintptr_t)view);
-    lv_obj_t *arrow = label(box, w - 26, 0, 16, 18, &settings_zh_16);
+    lv_obj_t *arrow = label(box, w - 26, 0, 16, 18, settings_disclosure_font());
     lv_label_set_text(arrow, ">");
     lv_obj_align(arrow, LV_ALIGN_RIGHT_MID, -10, 0);
     lv_obj_set_style_text_align(arrow, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
@@ -4340,8 +4432,8 @@ static void settings_show_controller_style_picker(void)
     const int32_t card_w = s_ui.width - (SETTINGS_LIST_MARGIN_X * 2);
     const int32_t row_h = portrait ? SETTINGS_CHOICE_ROW_H_PORTRAIT :
                                      SETTINGS_CHOICE_ROW_H_LANDSCAPE;
-    const int32_t gap = portrait ? 8 : 6;
-    const int32_t first_y = 12;
+    const int32_t gap = settings_scaled_px(portrait ? 8 : 6);
+    const int32_t first_y = settings_scaled_px(12);
     const esp_bms_speed_dashboard_style_t current = speed_dashboard_style_from_snapshot(
         settings_current_snapshot());
 
@@ -4378,13 +4470,14 @@ static void settings_show_controller_style_picker(void)
                             LV_EVENT_CLICKED,
                             (void *)(uintptr_t)option->style);
 
-        const int32_t text_h = (int32_t)settings_zh_16.line_height + 4;
+        const lv_font_t *text_font = settings_title_font();
+        const int32_t text_h = (int32_t)text_font->line_height + 4;
         lv_obj_t *text = label(row,
                                12,
                                (row_h - text_h) / 2,
                                card_w - 52,
                                text_h,
-                               &settings_zh_16);
+                               text_font);
         lv_label_set_text(text, option->label);
         lv_obj_set_style_text_color(text,
                                     active ? COLOR_SWITCH_ACTIVE : COLOR_SETTINGS_TEXT,
@@ -4457,7 +4550,7 @@ static void settings_show_speed_unit_picker(void)
     const int32_t card_w = s_ui.width - (SETTINGS_LIST_MARGIN_X * 2);
     const int32_t row_h = portrait ? SETTINGS_CHOICE_ROW_H_PORTRAIT :
                                      SETTINGS_CHOICE_ROW_H_LANDSCAPE;
-    const int32_t gap = portrait ? 8 : 6;
+    const int32_t gap = settings_scaled_px(portrait ? 8 : 6);
     const size_t current = settings_current_snapshot()->speed_unit == ESP_BMS_SPEED_UNIT_MPH
                                ? 1U
                                : 0U;
@@ -4473,7 +4566,7 @@ static void settings_show_speed_unit_picker(void)
         const bool active = index == current;
         lv_obj_t *row = panel(s_ui.settings_detail,
                               card_x,
-                              12 + ((int32_t)index * (row_h + gap)),
+                              settings_scaled_px(12) + ((int32_t)index * (row_h + gap)),
                               card_w,
                               row_h,
                               COLOR_SETTINGS_CARD);
@@ -4490,13 +4583,14 @@ static void settings_show_speed_unit_picker(void)
                             LV_EVENT_CLICKED,
                             (void *)(uintptr_t)index);
 
-        const int32_t text_h = (int32_t)settings_zh_16.line_height + 4;
+        const lv_font_t *text_font = settings_title_font();
+        const int32_t text_h = (int32_t)text_font->line_height + 4;
         lv_obj_t *text = label(row,
                                12,
                                (row_h - text_h) / 2,
                                card_w - 52,
                                text_h,
-                               &settings_zh_16);
+                               text_font);
         lv_label_set_text(text, SETTINGS_SPEED_UNIT_LABELS[index]);
         lv_obj_set_style_text_color(text,
                                     active ? COLOR_SWITCH_ACTIVE : COLOR_SETTINGS_TEXT,
@@ -4549,7 +4643,7 @@ static void settings_show_speed_source_picker(void)
     const int32_t card_w = s_ui.width - (SETTINGS_LIST_MARGIN_X * 2);
     const int32_t row_h = portrait ? SETTINGS_CHOICE_ROW_H_PORTRAIT :
                                      SETTINGS_CHOICE_ROW_H_LANDSCAPE;
-    const int32_t gap = portrait ? 8 : 6;
+    const int32_t gap = settings_scaled_px(portrait ? 8 : 6);
     const esp_bms_dashboard_snapshot_t *snapshot = settings_current_snapshot();
     const esp_bms_speed_source_t current = snapshot->speed_source;
 
@@ -4568,7 +4662,7 @@ static void settings_show_speed_source_picker(void)
                                    (uint8_t)ESP_BMS_GPS_MODULE_AVAILABLE;
         lv_obj_t *row = panel(s_ui.settings_detail,
                               card_x,
-                              12 + ((int32_t)index * (row_h + gap)),
+                              settings_scaled_px(12) + ((int32_t)index * (row_h + gap)),
                               card_w,
                               row_h,
                               COLOR_SETTINGS_CARD);
@@ -4588,8 +4682,9 @@ static void settings_show_speed_source_picker(void)
         } else {
             lv_obj_set_style_opa(row, LV_OPA_50, LV_PART_MAIN);
         }
-        const int32_t text_h = (int32_t)settings_zh_16.line_height + 4;
-        lv_obj_t *text = label(row, 12, (row_h - text_h) / 2, card_w - 52, text_h, &settings_zh_16);
+        const lv_font_t *text_font = settings_title_font();
+        const int32_t text_h = (int32_t)text_font->line_height + 4;
+        lv_obj_t *text = label(row, 12, (row_h - text_h) / 2, card_w - 52, text_h, text_font);
         lv_label_set_text(text, option->label);
         lv_obj_set_style_text_color(text,
                                     active ? COLOR_SWITCH_ACTIVE : COLOR_SETTINGS_TEXT,
@@ -4622,7 +4717,7 @@ static lv_obj_t *settings_speed_unit_row(lv_obj_t *parent,
                         settings_speed_unit_button_event_cb,
                         LV_EVENT_CLICKED,
                         NULL);
-    lv_obj_t *arrow = label(box, w - 26, 0, 16, 18, &settings_zh_16);
+    lv_obj_t *arrow = label(box, w - 26, 0, 16, 18, settings_disclosure_font());
     lv_label_set_text(arrow, ">");
     lv_obj_align(arrow, LV_ALIGN_RIGHT_MID, -10, 0);
     lv_obj_set_style_text_align(arrow, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
@@ -4642,7 +4737,7 @@ static lv_obj_t *settings_speed_source_row(lv_obj_t *parent,
     };
     lv_obj_t *box = settings_detail_row(parent, 0, y, w, h, &descriptor);
     lv_obj_add_event_cb(box, settings_speed_source_button_event_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *arrow = label(box, w - 26, 0, 16, 18, &settings_zh_16);
+    lv_obj_t *arrow = label(box, w - 26, 0, 16, 18, settings_disclosure_font());
     lv_label_set_text(arrow, ">");
     lv_obj_align(arrow, LV_ALIGN_RIGHT_MID, -10, 0);
     lv_obj_set_style_text_align(arrow, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
@@ -4668,7 +4763,7 @@ static void settings_controller_style_row(lv_obj_t *parent,
                         settings_controller_style_button_event_cb,
                         LV_EVENT_CLICKED,
                         NULL);
-    lv_obj_t *arrow = label(box, w - 26, 0, 16, 18, &settings_zh_16);
+    lv_obj_t *arrow = label(box, w - 26, 0, 16, 18, settings_disclosure_font());
     lv_label_set_text(arrow, ">");
     lv_obj_align(arrow, LV_ALIGN_RIGHT_MID, -10, 0);
     lv_obj_set_style_text_align(arrow, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
@@ -4897,9 +4992,9 @@ static bool settings_detail_action_switch_on(esp_bms_lvgl_action_t action)
 
 static void settings_detail_switch(lv_obj_t *parent, int32_t x, int32_t y, bool enabled)
 {
-    const int32_t w = 34;
-    const int32_t h = 18;
-    const int32_t knob = 14;
+    const int32_t w = settings_scaled_px(34);
+    const int32_t h = settings_scaled_px(18);
+    const int32_t knob = settings_scaled_px(14);
     lv_obj_t *track = lv_obj_create(parent);
     clear_style(track);
     lv_obj_set_pos(track, x, y);
@@ -4915,7 +5010,9 @@ static void settings_detail_switch(lv_obj_t *parent, int32_t x, int32_t y, bool 
     lv_obj_t *thumb = lv_obj_create(track);
     clear_style(thumb);
     lv_obj_set_size(thumb, knob, knob);
-    lv_obj_set_pos(thumb, enabled ? (w - knob - 2) : 2, 2);
+    lv_obj_set_pos(thumb,
+                   enabled ? (w - knob - settings_scaled_px(2)) : settings_scaled_px(2),
+                   settings_scaled_px(2));
     lv_obj_set_style_radius(thumb, knob / 2, LV_PART_MAIN);
     lv_obj_set_style_bg_color(thumb, enabled ? COLOR_WHITE : COLOR_SETTINGS_MUTED, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(thumb, LV_OPA_COVER, LV_PART_MAIN);
@@ -5295,17 +5392,18 @@ static lv_obj_t *settings_detail_row(lv_obj_t *parent,
                                     row->system_view != SETTINGS_SYSTEM_VIEW_ROOT);
     const bool has_switch = has_action && settings_detail_action_uses_switch(row->action);
     const bool has_subtitle = row && row->subtitle && row->subtitle[0] != '\0';
-    const lv_font_t *title_font = &settings_zh_16;
-    const lv_font_t *subtitle_font = &settings_zh_13;
+    const lv_font_t *title_font = settings_title_font();
+    const lv_font_t *subtitle_font = settings_subtitle_font();
     const int32_t title_h = (int32_t)title_font->line_height + 4;
     const int32_t subtitle_h = (int32_t)subtitle_font->line_height + 4;
     const int32_t text_gap = has_subtitle ? 1 : 0;
     const int32_t total_text_h = title_h + (has_subtitle ? text_gap + subtitle_h : 0);
     const int32_t text_y = total_text_h < h ? (h - total_text_h) / 2 : 0;
-    const int32_t action_w = has_action ? (has_switch ? 54 : 42) : 24;
-    const int32_t text_w = w - 12 - action_w;
+    const int32_t action_w =
+        has_action ? settings_scaled_px(has_switch ? 54 : 42) : settings_scaled_px(24);
+    const int32_t text_w = w - settings_scaled_px(12) - action_w;
 
-    lv_obj_t *title = label(box, 12, text_y, text_w, title_h, title_font);
+    lv_obj_t *title = label(box, settings_scaled_px(12), text_y, text_w, title_h, title_font);
     lv_label_set_text(title, row ? row->title : "");
     lv_label_set_long_mode(title, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
     lv_obj_set_style_text_color(title, COLOR_SETTINGS_TEXT, LV_PART_MAIN);
@@ -5314,7 +5412,7 @@ static lv_obj_t *settings_detail_row(lv_obj_t *parent,
         const char *subtitle_text =
             row->system_view == SETTINGS_SYSTEM_VIEW_LEVEL_POSITION ? quick_level_position_text() : row->subtitle;
         lv_obj_t *subtitle = label(box,
-                                   12,
+                                   settings_scaled_px(12),
                                    text_y + title_h + text_gap,
                                    text_w,
                                    subtitle_h,
@@ -5325,15 +5423,15 @@ static lv_obj_t *settings_detail_row(lv_obj_t *parent,
     }
 
     if (has_switch) {
-        const int32_t switch_w = 34;
-        const int32_t switch_h = 18;
-        const int32_t switch_slot_w = 54;
+        const int32_t switch_w = settings_scaled_px(34);
+        const int32_t switch_h = settings_scaled_px(18);
+        const int32_t switch_slot_w = settings_scaled_px(54);
         settings_detail_switch(box,
                                w - switch_slot_w + ((switch_slot_w - switch_w) / 2),
                                (h - switch_h) / 2,
                                settings_detail_action_switch_on(row->action));
     } else if (has_action) {
-        lv_obj_t *arrow = label(box, w - 26, 0, 16, 18, &settings_zh_16);
+        lv_obj_t *arrow = label(box, w - 26, 0, 16, 18, settings_disclosure_font());
         lv_label_set_text(arrow, ">");
         lv_obj_align(arrow, LV_ALIGN_RIGHT_MID, -10, 0);
         lv_obj_set_style_text_align(arrow, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
@@ -5738,7 +5836,7 @@ static void settings_show_boot_animation_picker(void)
     const int32_t card_w = s_ui.width - (SETTINGS_LIST_MARGIN_X * 2);
     const int32_t row_h = portrait ? SETTINGS_CHOICE_ROW_H_PORTRAIT :
                                      SETTINGS_CHOICE_ROW_H_LANDSCAPE;
-    const int32_t gap = portrait ? 8 : 6;
+    const int32_t gap = settings_scaled_px(portrait ? 8 : 6);
     const uint8_t saved_style = settings_current_snapshot()->boot_animation_style;
     const size_t current = saved_style <= (uint8_t)ESP_BMS_BOOT_ANIMATION_GAUGE_SWEEP
                                ? saved_style
@@ -5748,7 +5846,7 @@ static void settings_show_boot_animation_picker(void)
         const bool active = index == current;
         lv_obj_t *row = panel(s_ui.settings_detail,
                               card_x,
-                              12 + ((int32_t)index * (row_h + gap)),
+                              settings_scaled_px(12) + ((int32_t)index * (row_h + gap)),
                               card_w,
                               row_h,
                               COLOR_SETTINGS_CARD);
@@ -5766,13 +5864,14 @@ static void settings_show_boot_animation_picker(void)
                             LV_EVENT_CLICKED,
                             (void *)(uintptr_t)index);
 
-        const int32_t text_h = (int32_t)settings_zh_16.line_height + 4;
+        const lv_font_t *text_font = settings_title_font();
+        const int32_t text_h = (int32_t)text_font->line_height + 4;
         lv_obj_t *text = label(row,
                                12,
                                (row_h - text_h) / 2,
                                card_w - 52,
                                text_h,
-                               &settings_zh_16);
+                               text_font);
         lv_label_set_text(text, SETTINGS_BOOT_ANIMATION_LABELS[index]);
         lv_obj_set_style_text_color(text,
                                     active ? COLOR_SWITCH_ACTIVE : COLOR_SETTINGS_TEXT,
@@ -5963,9 +6062,9 @@ static lv_obj_t *settings_option_card(lv_obj_t *parent,
     lv_obj_add_event_cb(box, settings_option_event_cb, LV_EVENT_CLICKED,
                         option ? (void *)(uintptr_t)option->detail_id : NULL);
 
-    const int32_t text_x = 12;
-    const lv_font_t *title_font = &settings_zh_16;
-    const lv_font_t *subtitle_font = &settings_zh_13;
+    const int32_t text_x = settings_scaled_px(12);
+    const lv_font_t *title_font = settings_title_font();
+    const lv_font_t *subtitle_font = settings_subtitle_font();
     const int32_t title_h = (int32_t)title_font->line_height + 4;
     const int32_t subtitle_h = (int32_t)subtitle_font->line_height + 4;
     const char *subtitle_text = option ? option->subtitle : "";
@@ -5973,7 +6072,12 @@ static lv_obj_t *settings_option_card(lv_obj_t *parent,
     const int32_t text_gap = show_subtitle ? 1 : 0;
     const int32_t total_text_h = title_h + (show_subtitle ? text_gap + subtitle_h : 0);
     const int32_t title_y = total_text_h < h ? (h - total_text_h) / 2 : 0;
-    lv_obj_t *title = label(box, text_x, title_y, w - text_x - 30, title_h, title_font);
+    lv_obj_t *title = label(box,
+                            text_x,
+                            title_y,
+                            w - text_x - settings_scaled_px(30),
+                            title_h,
+                            title_font);
     lv_label_set_text(title, option ? option->title : "");
     lv_label_set_long_mode(title, LV_LABEL_LONG_MODE_CLIP);
     lv_obj_set_style_text_color(title, COLOR_SETTINGS_TEXT, LV_PART_MAIN);
@@ -5982,7 +6086,7 @@ static lv_obj_t *settings_option_card(lv_obj_t *parent,
         lv_obj_t *subtitle = label(box,
                                    text_x,
                                    title_y + title_h + text_gap,
-                                   w - text_x - 30,
+                                   w - text_x - settings_scaled_px(30),
                                    subtitle_h,
                                    subtitle_font);
         lv_label_set_text(subtitle, subtitle_text);
@@ -5995,7 +6099,7 @@ static lv_obj_t *settings_option_card(lv_obj_t *parent,
                             0,
                             14,
                             16,
-                            &settings_zh_16);
+                            settings_disclosure_font());
     lv_label_set_text(arrow, ">");
     lv_obj_align(arrow, LV_ALIGN_RIGHT_MID, -8, 0);
     lv_obj_set_style_text_align(arrow, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
@@ -10001,7 +10105,7 @@ static void create_screen(lv_display_t *display)
     lv_obj_set_style_pad_top(s_ui.settings_detail,
                              SETTINGS_DETAIL_HEADER_H,
                              LV_PART_MAIN);
-    lv_obj_set_style_pad_bottom(s_ui.settings_detail, 16, LV_PART_MAIN);
+    lv_obj_set_style_pad_bottom(s_ui.settings_detail, settings_scaled_px(16), LV_PART_MAIN);
     lv_obj_set_style_bg_color(s_ui.settings_detail, COLOR_SETTINGS_BG, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_ui.settings_detail, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_add_flag(s_ui.settings_detail, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
@@ -10041,11 +10145,18 @@ static void create_screen(lv_display_t *display)
     lv_obj_set_style_pad_all(s_ui.settings_detail_header, 0, LV_PART_MAIN);
     lv_obj_add_flag(s_ui.settings_detail_header, LV_OBJ_FLAG_FLOATING);
 
+    const int32_t nav_x = settings_scaled_px(4);
+    const int32_t nav_y = settings_scaled_px(3);
+    const int32_t nav_width = settings_scaled_px(48);
+    const int32_t nav_inset = settings_scaled_px(6);
+    const int32_t nav_title_x = settings_scaled_px(56);
+    const int32_t nav_title_y = settings_scaled_px(7);
+    const int32_t nav_title_h = SETTINGS_DETAIL_HEADER_H - settings_scaled_px(12);
     lv_obj_t *detail_back = panel(s_ui.settings_detail_header,
-                                  4,
-                                  3,
-                                  48,
-                                  SETTINGS_DETAIL_HEADER_H - 6,
+                                  nav_x,
+                                  nav_y,
+                                  nav_width,
+                                  SETTINGS_DETAIL_HEADER_H - nav_inset,
                                   COLOR_SETTINGS_CARD);
     lv_obj_set_style_radius(detail_back, 6, LV_PART_MAIN);
     lv_obj_set_style_pad_all(detail_back, 0, LV_PART_MAIN);
@@ -10057,20 +10168,20 @@ static void create_screen(lv_display_t *display)
                         NULL);
     lv_obj_t *detail_back_icon = label(detail_back,
                                        0,
-                                       4,
-                                       48,
-                                       SETTINGS_DETAIL_HEADER_H - 10,
+                                       settings_scaled_px(4),
+                                       nav_width,
+                                       SETTINGS_DETAIL_HEADER_H - settings_scaled_px(10),
                                        &lv_font_montserrat_24);
     lv_label_set_text(detail_back_icon, "<");
     lv_obj_set_style_text_align(detail_back_icon, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(detail_back_icon, COLOR_SETTINGS_ACCENT, LV_PART_MAIN);
 
     s_ui.settings_detail_title = label(s_ui.settings_detail_header,
-                                       56,
-                                       7,
-                                       s_ui.width - 112,
-                                       SETTINGS_DETAIL_HEADER_H - 12,
-                                       &settings_zh_16);
+                                       nav_title_x,
+                                       nav_title_y,
+                                       s_ui.width - (nav_title_x * 2),
+                                       nav_title_h,
+                                       settings_title_font());
     lv_label_set_text(s_ui.settings_detail_title, "设置");
     lv_obj_set_style_text_align(s_ui.settings_detail_title,
                                 LV_TEXT_ALIGN_CENTER,
@@ -10080,10 +10191,10 @@ static void create_screen(lv_display_t *display)
                                 LV_PART_MAIN);
 
     s_ui.settings_boot_preview_button = panel(s_ui.settings_detail_header,
-                                              s_ui.width - 52,
-                                              3,
-                                              48,
-                                              SETTINGS_DETAIL_HEADER_H - 6,
+                                              s_ui.width - nav_x - nav_width,
+                                              nav_y,
+                                              nav_width,
+                                              SETTINGS_DETAIL_HEADER_H - nav_inset,
                                               COLOR_SETTINGS_CARD);
     lv_obj_set_style_radius(s_ui.settings_boot_preview_button, 6, LV_PART_MAIN);
     lv_obj_set_style_pad_all(s_ui.settings_boot_preview_button, 0, LV_PART_MAIN);
@@ -10098,9 +10209,9 @@ static void create_screen(lv_display_t *display)
                         NULL);
     lv_obj_t *boot_preview_icon = label(s_ui.settings_boot_preview_button,
                                         0,
-                                        4,
-                                        48,
-                                        SETTINGS_DETAIL_HEADER_H - 10,
+                                        settings_scaled_px(4),
+                                        nav_width,
+                                        SETTINGS_DETAIL_HEADER_H - settings_scaled_px(10),
                                         &lv_font_montserrat_24);
     lv_label_set_text(boot_preview_icon, LV_SYMBOL_PLAY);
     lv_obj_set_style_text_align(boot_preview_icon, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
@@ -10195,11 +10306,14 @@ static void create_screen(lv_display_t *display)
                            65U);
 #endif
 
+    const int32_t quick_edit_size = quick_edit_button_size();
+    const int32_t quick_edit_icon_size =
+        settings_uses_s3_layout() ? quick_edit_size : quick_edit_size - 8;
     s_ui.quick_edit_button = panel(s_ui.quick_panel,
-                                   s_ui.width - QUICK_EDIT_BUTTON_SIZE - 8,
+                                   s_ui.width - quick_edit_size - 8,
                                    8,
-                                   QUICK_EDIT_BUTTON_SIZE,
-                                   QUICK_EDIT_BUTTON_SIZE,
+                                   quick_edit_size,
+                                   quick_edit_size,
                                    COLOR_PANEL_ALT);
     lv_obj_set_style_radius(s_ui.quick_edit_button, 8, LV_PART_MAIN);
     lv_obj_add_flag(s_ui.quick_edit_button, LV_OBJ_FLAG_CLICKABLE);
@@ -10208,7 +10322,11 @@ static void create_screen(lv_display_t *display)
     lv_obj_add_event_cb(s_ui.quick_edit_button, quick_edit_event_cb, LV_EVENT_PRESS_LOST, NULL);
     lv_obj_add_event_cb(s_ui.quick_edit_button, quick_edit_event_cb, LV_EVENT_LONG_PRESSED, NULL);
     lv_obj_add_event_cb(s_ui.quick_edit_button, quick_edit_event_cb, LV_EVENT_CLICKED, NULL);
-    s_ui.quick_edit_icon = quick_symbol_icon(s_ui.quick_edit_button, 20, 20, LV_SYMBOL_EDIT, &lv_font_montserrat_14);
+    s_ui.quick_edit_icon = quick_symbol_icon(s_ui.quick_edit_button,
+                                             quick_edit_icon_size,
+                                             quick_edit_icon_size,
+                                             LV_SYMBOL_EDIT,
+                                             quick_edit_icon_font());
     lv_obj_set_style_text_color(s_ui.quick_edit_icon, COLOR_MUTED, LV_PART_MAIN);
 
     for (uint32_t index = 0; index < QUICK_PANEL_BUTTON_COUNT; ++index) {

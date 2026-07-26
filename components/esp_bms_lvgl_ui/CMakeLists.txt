@@ -23,6 +23,9 @@ set(ESP_BMS_LVGL_UI_SRCS
     "esp_bms_lvgl_ui.c" "bluetoothon.c" "settings_zh_16.c" "settings_zh_13.c"
     "settings_zh_10.c" "wlanJZ.c"
 )
+if(IDF_TARGET STREQUAL "esp32s3")
+    list(APPEND ESP_BMS_LVGL_UI_SRCS "settings_zh_18.c")
+endif()
 if(ESP_BMS_FEATURE_DASHBOARD_CONTROLLER)
     list(APPEND ESP_BMS_LVGL_UI_SRCS "controller_digits_72.c")
 endif()
