@@ -15,6 +15,12 @@
 #include "os/os_mbuf.h"
 
 #include "esp_bms_idf_runtime.h"
+#include "protocols/ant/esp_bms_ant_protocol.h"
+#include "protocols/daly/esp_bms_daly_protocol.h"
+#include "protocols/esp_bms_bms_protocol.h"
+#include "protocols/jbd/esp_bms_jbd_protocol.h"
+#include "protocols/jk/esp_bms_jk_protocol.h"
+#include "protocols/yanyang/esp_bms_yanyang_protocol.h"
 
 static const char *TAG = "esp_bms_bms_ble";
 
@@ -23,13 +29,6 @@ static const char *TAG = "esp_bms_bms_ble";
 #define BMS_FRAME_START_2 0xA1U
 #define BMS_FRAME_END_1 0xAAU
 #define BMS_FRAME_END_2 0x55U
-#define BMS_FRAME_TYPE_STATUS 0x11U
-#define BMS_FRAME_TYPE_DEVICE_INFO 0x12U
-#define BMS_MAX_CELLS 32U
-#define BMS_MAX_TEMPERATURE_SENSORS 4U
-#define BMS_STATUS_PROTECTION_MASK_OFFSET 10U
-#define BMS_STATUS_WARNING_MASK_OFFSET 18U
-#define BMS_STATUS_DYNAMIC_BASE_OFFSET 34U
 #define ANT_BMS_SERVICE_UUID_16 0xFFE0U
 #define ANT_BMS_CHARACTERISTIC_UUID_16 0xFFE1U
 #define BMS_SCAN_DURATION_MS 10000
@@ -112,215 +111,86 @@ static void bms_apply_fault_masks(esp_bms_dashboard_snapshot_t *snapshot,
     }
 }
 
-static uint16_t bms_crc16_modbus(const uint8_t *bytes, size_t len)
+static bool bms_apply_telemetry(esp_bms_idf_runtime_t *runtime,
+                                const esp_bms_bms_telemetry_t *telemetry)
 {
-    uint16_t crc = 0xFFFFU;
-    const uint8_t *cursor = bytes;
-    const uint8_t *const end = bytes + len;
-    while (cursor < end) {
-        crc ^= *cursor++;
-        for (uint8_t bit = 0U; bit < 8U; ++bit) {
-            crc = (crc & 0x0001U) ? (uint16_t)((crc >> 1U) ^ 0xA001U)
-                                  : (uint16_t)(crc >> 1U);
-        }
-    }
-    return crc;
-}
-
-static bool bms_read_u16_le(const uint8_t *data, size_t len, size_t index, uint16_t *out)
-{
-    if (!data || !out || len < 2U || index > len - 2U) {
+    if (!runtime || !telemetry) {
         return false;
     }
-    const uint8_t *const cursor = data + index;
-    *out = (uint16_t)cursor[0] | ((uint16_t)cursor[1] << 8U);
-    return true;
-}
-
-static bool bms_read_i16_le(const uint8_t *data, size_t len, size_t index, int16_t *out)
-{
-    uint16_t value = 0U;
-    if (!bms_read_u16_le(data, len, index, &value)) {
-        return false;
-    }
-    *out = (int16_t)value;
-    return true;
-}
-
-static bool bms_read_u32_le(const uint8_t *data, size_t len, size_t index, uint32_t *out)
-{
-    if (!data || !out || len < 4U || index > len - 4U) {
-        return false;
-    }
-    const uint8_t *const cursor = data + index;
-    *out = (uint32_t)cursor[0] | ((uint32_t)cursor[1] << 8U) |
-           ((uint32_t)cursor[2] << 16U) | ((uint32_t)cursor[3] << 24U);
-    return true;
-}
-
-static bool bms_read_u64_le(const uint8_t *data, size_t len, size_t index, uint64_t *out)
-{
-    if (!data || !out || len < 8U || index > len - 8U) {
-        return false;
-    }
-    uint64_t value = 0ULL;
-    const uint8_t *cursor = data + index;
-    for (uint8_t shift = 0U; shift < 64U; shift += 8U) {
-        value |= ((uint64_t)*cursor++) << shift;
-    }
-    *out = value;
-    return true;
-}
-
-static bool bms_validate_frame(const uint8_t *data,
-                               size_t len,
-                               uint8_t *function,
-                               size_t *protocol_len)
-{
-    if (!data || !function || !protocol_len || len < BMS_FRAME_MIN_LEN ||
-        len > ESP_BMS_IDF_BMS_FRAME_MAX_LEN || data[0] != BMS_FRAME_START_1 ||
-        data[1] != BMS_FRAME_START_2 || data[len - 2U] != BMS_FRAME_END_1 ||
-        data[len - 1U] != BMS_FRAME_END_2) {
-        return false;
-    }
-
-    *function = data[2];
-    *protocol_len = 6U + data[5] + 4U;
-    if (*protocol_len > len || *protocol_len < BMS_FRAME_MIN_LEN) {
-        return false;
-    }
-    if (*function != BMS_FRAME_TYPE_DEVICE_INFO && *protocol_len != len) {
-        return false;
-    }
-
-    const size_t crc_offset = *protocol_len - 4U;
-    const uint16_t expected_crc = bms_crc16_modbus(&data[1], crc_offset - 1U);
-    const uint16_t remote_crc = (uint16_t)data[crc_offset] |
-                                ((uint16_t)data[crc_offset + 1U] << 8U);
-    return expected_crc == remote_crc;
-}
-
-static bool bms_apply_status_frame(esp_bms_idf_runtime_t *runtime,
-                                   const uint8_t *data,
-                                   size_t len)
-{
-    uint8_t function = 0U;
-    size_t protocol_len = 0U;
-    if (!bms_validate_frame(data, len, &function, &protocol_len) ||
-        function != BMS_FRAME_TYPE_STATUS) {
-        return false;
-    }
-
-    const uint8_t temperature_sensor_count = data[8];
-    const uint8_t cell_count = data[9];
-    if (cell_count > BMS_MAX_CELLS || temperature_sensor_count > BMS_MAX_TEMPERATURE_SENSORS) {
-        return false;
-    }
-
-    const size_t dynamic_offset = ((size_t)cell_count * 2U) +
-                                  ((size_t)temperature_sensor_count * 2U);
-    uint16_t pack_voltage_dv = 0U;
-    int16_t current_deci_amps = 0;
-    uint16_t soc_percent = 0U;
-    uint32_t total_capacity_uah = 0U;
-    uint32_t capacity_remaining_uah = 0U;
-    uint64_t protection_mask = 0ULL;
-    uint64_t warning_mask = 0ULL;
-    uint16_t max_cell_mv = 0U;
-    uint16_t min_cell_mv = 0U;
-    uint16_t delta_cell_mv = 0U;
-    uint16_t average_cell_mv = 0U;
-    int16_t temperatures[ESP_BMS_BMS_TEMP_MAX_COUNT] = { 0 };
-    bool temperature_valid[ESP_BMS_BMS_TEMP_MAX_COUNT] = { false };
-
-    if (!bms_read_u64_le(data, protocol_len, BMS_STATUS_PROTECTION_MASK_OFFSET, &protection_mask) ||
-        !bms_read_u64_le(data, protocol_len, BMS_STATUS_WARNING_MASK_OFFSET, &warning_mask) ||
-        !bms_read_u16_le(data, protocol_len, 38U + dynamic_offset, &pack_voltage_dv) ||
-        !bms_read_i16_le(data, protocol_len, 40U + dynamic_offset, &current_deci_amps) ||
-        !bms_read_u16_le(data, protocol_len, 42U + dynamic_offset, &soc_percent) ||
-        !bms_read_u32_le(data, protocol_len, 50U + dynamic_offset, &total_capacity_uah) ||
-        !bms_read_u32_le(data, protocol_len, 54U + dynamic_offset, &capacity_remaining_uah) ||
-        !bms_read_u16_le(data, protocol_len, 74U + dynamic_offset, &max_cell_mv) ||
-        !bms_read_u16_le(data, protocol_len, 78U + dynamic_offset, &min_cell_mv) ||
-        !bms_read_u16_le(data, protocol_len, 82U + dynamic_offset, &delta_cell_mv) ||
-        !bms_read_u16_le(data, protocol_len, 84U + dynamic_offset, &average_cell_mv)) {
-        return false;
-    }
-
-    const size_t temperature_offset = BMS_STATUS_DYNAMIC_BASE_OFFSET + ((size_t)cell_count * 2U);
-    const uint8_t temperature_count = temperature_sensor_count > ESP_BMS_BMS_TEMP_MAX_COUNT - 2U
-                                          ? ESP_BMS_BMS_TEMP_MAX_COUNT - 2U
-                                          : temperature_sensor_count;
-    for (uint8_t index = 0U; index < temperature_count; ++index) {
-        if (!bms_read_i16_le(data, protocol_len, temperature_offset + ((size_t)index * 2U), &temperatures[index])) {
-            return false;
-        }
-        temperature_valid[index] = true;
-    }
-    if (!bms_read_i16_le(data, protocol_len, BMS_STATUS_DYNAMIC_BASE_OFFSET + dynamic_offset, &temperatures[4]) ||
-        !bms_read_i16_le(data, protocol_len, BMS_STATUS_DYNAMIC_BASE_OFFSET + dynamic_offset + 2U, &temperatures[5])) {
-        return false;
-    }
-    temperature_valid[4] = true;
-    temperature_valid[5] = true;
-
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, BMS_ONLINE, true);
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, PACK_VOLTAGE_VALID, true);
-    runtime->snapshot.pack_voltage_mv = (uint32_t)pack_voltage_dv * 10U;
+    runtime->snapshot.pack_voltage_mv = telemetry->pack_voltage_mv;
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, CURRENT_VALID, true);
-    runtime->snapshot.current_deci_amps = current_deci_amps;
-    runtime->bms_telemetry_last_us = esp_timer_get_time();
+    runtime->snapshot.current_deci_amps = telemetry->current_deci_amps;
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, SOC_VALID, true);
-    runtime->snapshot.soc_percent = soc_percent;
+    runtime->snapshot.soc_percent = telemetry->soc_percent;
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, MAX_CELL_VALID, true);
-    runtime->snapshot.max_cell_voltage_mv = max_cell_mv;
+    runtime->snapshot.max_cell_voltage_mv = telemetry->max_cell_voltage_mv;
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, MIN_CELL_VALID, true);
-    runtime->snapshot.min_cell_voltage_mv = min_cell_mv;
+    runtime->snapshot.min_cell_voltage_mv = telemetry->min_cell_voltage_mv;
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, DELTA_CELL_VALID, true);
-    runtime->snapshot.delta_cell_voltage_mv = delta_cell_mv;
+    runtime->snapshot.delta_cell_voltage_mv = telemetry->delta_cell_voltage_mv;
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, AVERAGE_CELL_VALID, true);
-    runtime->snapshot.average_cell_voltage_mv = average_cell_mv;
+    runtime->snapshot.average_cell_voltage_mv = telemetry->average_cell_voltage_mv;
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, TOTAL_CAPACITY_VALID, true);
-    runtime->snapshot.total_capacity_mah = total_capacity_uah / 1000U;
+    runtime->snapshot.total_capacity_mah = telemetry->total_capacity_mah;
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, CAPACITY_REMAINING_VALID, true);
-    runtime->snapshot.capacity_remaining_mah = capacity_remaining_uah / 1000U;
+    runtime->snapshot.capacity_remaining_mah = telemetry->capacity_remaining_mah;
     for (uint8_t index = 0U; index < ESP_BMS_BMS_TEMP_MAX_COUNT; ++index) {
         esp_bms_dashboard_snapshot_temperature_valid_set(&runtime->snapshot,
                                                          index,
-                                                         temperature_valid[index]);
+                                                         telemetry->temperature_valid[index]);
     }
     memcpy(runtime->snapshot.bms_temperature_celsius,
-           temperatures,
+           telemetry->temperatures_celsius,
            sizeof(runtime->snapshot.bms_temperature_celsius));
-    bms_apply_fault_masks(&runtime->snapshot, protection_mask, warning_mask);
+    bms_apply_fault_masks(&runtime->snapshot, telemetry->protection_mask, telemetry->warning_mask);
+    runtime->bms_telemetry_last_us = esp_timer_get_time();
     bms_set_info(runtime, "BMS OK");
-    ESP_LOGI(TAG,
-             "telemetry parsed: voltage=%lumV current_deci_amps=%d soc=%u%% temps=%u prot=%u warn=%u",
-             (unsigned long)runtime->snapshot.pack_voltage_mv,
-             (int)current_deci_amps,
-             (unsigned)runtime->snapshot.soc_percent,
-             (unsigned)temperature_count,
-             (unsigned)runtime->snapshot.bms_protection_count,
-             (unsigned)runtime->snapshot.bms_warning_count);
     return true;
 }
 
-static bool bms_apply_frame(esp_bms_idf_runtime_t *runtime, const uint8_t *data, size_t len)
+static bool bms_is_yanyang(const esp_bms_idf_runtime_t *runtime)
 {
-    uint8_t function = 0U;
-    size_t protocol_len = 0U;
-    if (!bms_validate_frame(data, len, &function, &protocol_len)) {
-        return false;
+    return runtime && runtime->bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_YANYANG;
+}
+
+static bool bms_is_jk(const esp_bms_idf_runtime_t *runtime)
+{
+    return runtime && runtime->bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_JK;
+}
+
+static bool bms_is_jbd(const esp_bms_idf_runtime_t *runtime)
+{
+    return runtime && runtime->bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_JBD;
+}
+
+static bool bms_is_daly(const esp_bms_idf_runtime_t *runtime)
+{
+    return runtime && runtime->bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_DALY;
+}
+
+static bool bms_has_separate_write_characteristic(const esp_bms_idf_runtime_t *runtime)
+{
+    return bms_is_yanyang(runtime) || bms_is_jbd(runtime) || bms_is_daly(runtime);
+}
+
+static uint16_t bms_service_uuid_16(const esp_bms_idf_runtime_t *runtime)
+{
+    if (bms_is_jbd(runtime)) {
+        return 0xFF00U;
     }
-    if (function == BMS_FRAME_TYPE_STATUS) {
-        return bms_apply_status_frame(runtime, data, len);
+    if (bms_is_daly(runtime)) {
+        return 0xFFF0U;
     }
-    if (function == BMS_FRAME_TYPE_DEVICE_INFO) {
-        RUNTIME_SET_FLAG(runtime, BMS_DEVICE_INFO_KNOWN, true);
-        ESP_LOGI(TAG, "device info parsed: len=%u", (unsigned)protocol_len);
-        return true;
-    }
-    return false;
+    return ANT_BMS_SERVICE_UUID_16;
+}
+
+static ble_uuid128_t bms_uuid128(const uint8_t bytes[ESP_BMS_YANYANG_UUID_LEN])
+{
+    ble_uuid128_t uuid = { .u = { .type = BLE_UUID_TYPE_128 } };
+    memcpy(uuid.value, bytes, sizeof(uuid.value));
+    return uuid;
 }
 
 static bool bms_frame_push(esp_bms_idf_runtime_t *runtime,
@@ -329,6 +199,51 @@ static bool bms_frame_push(esp_bms_idf_runtime_t *runtime,
 {
     if (!runtime || !chunk || chunk_len == 0U) {
         return false;
+    }
+    esp_bms_bms_telemetry_t telemetry = { 0 };
+    if (bms_is_yanyang(runtime)) {
+        size_t stream_len = runtime->bms_frame_len;
+        const bool decoded = esp_bms_yanyang_feed(runtime->bms_frame,
+                                                  &stream_len,
+                                                  sizeof(runtime->bms_frame),
+                                                  chunk,
+                                                  chunk_len,
+                                                  &telemetry);
+        runtime->bms_frame_len = (uint16_t)stream_len;
+        return !decoded || bms_apply_telemetry(runtime, &telemetry);
+    }
+    if (bms_is_jk(runtime)) {
+        size_t stream_len = runtime->bms_frame_len;
+        const bool decoded = esp_bms_jk_feed(runtime->bms_frame,
+                                             &stream_len,
+                                             sizeof(runtime->bms_frame),
+                                             chunk,
+                                             chunk_len,
+                                             &telemetry);
+        runtime->bms_frame_len = (uint16_t)stream_len;
+        return !decoded || bms_apply_telemetry(runtime, &telemetry);
+    }
+    if (bms_is_jbd(runtime)) {
+        size_t stream_len = runtime->bms_frame_len;
+        const bool decoded = esp_bms_jbd_feed(runtime->bms_frame,
+                                              &stream_len,
+                                              sizeof(runtime->bms_frame),
+                                              chunk,
+                                              chunk_len,
+                                              &telemetry);
+        runtime->bms_frame_len = (uint16_t)stream_len;
+        return !decoded || bms_apply_telemetry(runtime, &telemetry);
+    }
+    if (bms_is_daly(runtime)) {
+        size_t stream_len = runtime->bms_frame_len;
+        const bool decoded = esp_bms_daly_feed(runtime->bms_frame,
+                                               &stream_len,
+                                               sizeof(runtime->bms_frame),
+                                               chunk,
+                                               chunk_len,
+                                               &telemetry);
+        runtime->bms_frame_len = (uint16_t)stream_len;
+        return !decoded || bms_apply_telemetry(runtime, &telemetry);
     }
     if (chunk_len >= 2U && chunk[0] == BMS_FRAME_START_1 && chunk[1] == BMS_FRAME_START_2) {
         runtime->bms_frame_len = 0U;
@@ -339,17 +254,24 @@ static bool bms_frame_push(esp_bms_idf_runtime_t *runtime,
         runtime->bms_frame_len = 0U;
         return false;
     }
-
     memcpy(&runtime->bms_frame[runtime->bms_frame_len], chunk, chunk_len);
     runtime->bms_frame_len = (uint16_t)(runtime->bms_frame_len + chunk_len);
-    if (runtime->bms_frame_len >= BMS_FRAME_MIN_LEN &&
-        runtime->bms_frame[runtime->bms_frame_len - 2U] == BMS_FRAME_END_1 &&
-        runtime->bms_frame[runtime->bms_frame_len - 1U] == BMS_FRAME_END_2) {
-        const bool applied = bms_apply_frame(runtime, runtime->bms_frame, runtime->bms_frame_len);
-        runtime->bms_frame_len = 0U;
-        return applied;
+    if (runtime->bms_frame_len < BMS_FRAME_MIN_LEN ||
+        runtime->bms_frame[runtime->bms_frame_len - 2U] != BMS_FRAME_END_1 ||
+        runtime->bms_frame[runtime->bms_frame_len - 1U] != BMS_FRAME_END_2) {
+        return true;
     }
-    return true;
+    bool device_info = false;
+    const bool decoded = esp_bms_ant_protocol_decode(runtime->bms_frame,
+                                                     runtime->bms_frame_len,
+                                                     &telemetry,
+                                                     &device_info);
+    runtime->bms_frame_len = 0U;
+    if (device_info) {
+        RUNTIME_SET_FLAG(runtime, BMS_DEVICE_INFO_KNOWN, true);
+        return true;
+    }
+    return decoded && bms_apply_telemetry(runtime, &telemetry);
 }
 
 static void bms_clear_telemetry(esp_bms_idf_runtime_t *runtime)
@@ -401,8 +323,10 @@ static void bms_reset_connection_state(esp_bms_idf_runtime_t *runtime, bms_ble_p
     runtime->bms_service_start_handle = 0U;
     runtime->bms_service_end_handle = 0U;
     runtime->bms_char_val_handle = 0U;
+    runtime->bms_write_char_val_handle = 0U;
     runtime->bms_cccd_handle = 0U;
     runtime->bms_frame_len = 0U;
+    runtime->bms_poll_index = 0U;
     runtime->bms_status_poll_elapsed_ms = 0U;
     RUNTIME_SET_FLAG(runtime, BMS_WRITE_IN_FLIGHT, false);
     RUNTIME_SET_FLAG(runtime, BMS_DEVICE_INFO_REQUESTED, false);
@@ -447,11 +371,11 @@ static esp_err_t bms_write_frame(esp_bms_idf_runtime_t *runtime,
                                  size_t frame_len)
 {
     if (!runtime || !frame || frame_len == 0U || runtime->bms_conn_handle == 0xFFFFU ||
-        runtime->bms_char_val_handle == 0U || RUNTIME_FLAG(runtime, BMS_WRITE_IN_FLIGHT)) {
+        runtime->bms_write_char_val_handle == 0U || RUNTIME_FLAG(runtime, BMS_WRITE_IN_FLIGHT)) {
         return ESP_ERR_INVALID_STATE;
     }
     const int rc = ble_gattc_write_flat(runtime->bms_conn_handle,
-                                        runtime->bms_char_val_handle,
+                                        runtime->bms_write_char_val_handle,
                                         frame,
                                         (uint16_t)frame_len,
                                         bms_write_cb,
@@ -472,6 +396,54 @@ static esp_err_t bms_send_poll_request(esp_bms_idf_runtime_t *runtime,
                                                    0x20, 0x58, 0xC4, 0xAA, 0x55 };
     if (!runtime || runtime->bms_ble_phase != (uint8_t)BMS_BLE_PHASE_ONLINE) {
         return ESP_ERR_INVALID_STATE;
+    }
+    if (bms_is_yanyang(runtime)) {
+        uint8_t request[8] = { 0 };
+        if (!esp_bms_yanyang_poll_request(runtime->bms_poll_index, request)) {
+            return ESP_FAIL;
+        }
+        const esp_err_t ret = bms_write_frame(runtime, request, sizeof(request));
+        if (ret == ESP_OK) {
+            runtime->bms_poll_index = (uint8_t)((runtime->bms_poll_index + 1U) % 4U);
+            runtime->bms_status_poll_elapsed_ms = 0U;
+        }
+        return ret;
+    }
+    if (bms_is_jk(runtime)) {
+        uint8_t request[20] = { 0 };
+        if (!esp_bms_jk_poll_request(runtime->bms_poll_index, request)) {
+            return ESP_FAIL;
+        }
+        const esp_err_t ret = bms_write_frame(runtime, request, sizeof(request));
+        if (ret == ESP_OK) {
+            runtime->bms_poll_index = (uint8_t)((runtime->bms_poll_index + 1U) % 2U);
+            runtime->bms_status_poll_elapsed_ms = 0U;
+        }
+        return ret;
+    }
+    if (bms_is_jbd(runtime)) {
+        uint8_t request[7] = { 0 };
+        if (!esp_bms_jbd_poll_request(runtime->bms_poll_index, request)) {
+            return ESP_FAIL;
+        }
+        const esp_err_t ret = bms_write_frame(runtime, request, sizeof(request));
+        if (ret == ESP_OK) {
+            runtime->bms_poll_index = (uint8_t)((runtime->bms_poll_index + 1U) % 2U);
+            runtime->bms_status_poll_elapsed_ms = 0U;
+        }
+        return ret;
+    }
+    if (bms_is_daly(runtime)) {
+        uint8_t request[8] = { 0 };
+        if (!esp_bms_daly_poll_request(runtime->bms_poll_index, request)) {
+            return ESP_FAIL;
+        }
+        const esp_err_t ret = bms_write_frame(runtime, request, sizeof(request));
+        if (ret == ESP_OK) {
+            runtime->bms_poll_index = (uint8_t)((runtime->bms_poll_index + 1U) % 4U);
+            runtime->bms_status_poll_elapsed_ms = 0U;
+        }
+        return ret;
     }
     const bool send_device_info =
         include_device_info && !RUNTIME_FLAG(runtime, BMS_DEVICE_INFO_REQUESTED);
@@ -568,11 +540,33 @@ static int bms_chr_cb(uint16_t conn_handle,
         return 0;
     }
     if (error && error->status == 0 && chr) {
-        runtime->bms_char_val_handle = chr->val_handle;
+        if (bms_is_yanyang(runtime)) {
+            const ble_uuid128_t write_uuid = bms_uuid128(esp_bms_yanyang_write_uuid);
+            const ble_uuid128_t notify_uuid = bms_uuid128(esp_bms_yanyang_notify_uuid);
+            if (ble_uuid_cmp(&chr->uuid.u, &write_uuid.u) == 0) {
+                runtime->bms_write_char_val_handle = chr->val_handle;
+            } else if (ble_uuid_cmp(&chr->uuid.u, &notify_uuid.u) == 0) {
+                runtime->bms_char_val_handle = chr->val_handle;
+            }
+        } else if (bms_has_separate_write_characteristic(runtime)) {
+            const uint16_t write_uuid_16 = bms_is_jbd(runtime) ? 0xFF02U : 0xFFF2U;
+            const uint16_t notify_uuid_16 = bms_is_jbd(runtime) ? 0xFF01U : 0xFFF1U;
+            ble_uuid16_t write_uuid = BLE_UUID16_INIT(write_uuid_16);
+            ble_uuid16_t notify_uuid = BLE_UUID16_INIT(notify_uuid_16);
+            if (ble_uuid_cmp(&chr->uuid.u, &write_uuid.u) == 0) {
+                runtime->bms_write_char_val_handle = chr->val_handle;
+            } else if (ble_uuid_cmp(&chr->uuid.u, &notify_uuid.u) == 0) {
+                runtime->bms_char_val_handle = chr->val_handle;
+            }
+        } else {
+            runtime->bms_char_val_handle = chr->val_handle;
+            runtime->bms_write_char_val_handle = chr->val_handle;
+        }
         return 0;
     }
     if (error && error->status == BLE_HS_EDONE) {
-        if (runtime->bms_char_val_handle == 0U || bms_start_descriptor_discovery(runtime) != ESP_OK) {
+        if (runtime->bms_char_val_handle == 0U || runtime->bms_write_char_val_handle == 0U ||
+            bms_start_descriptor_discovery(runtime) != ESP_OK) {
             bms_set_info(runtime, "BMS NO CHR");
             (void)ble_gap_terminate(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
         }
@@ -589,9 +583,19 @@ static esp_err_t bms_start_characteristic_discovery(esp_bms_idf_runtime_t *runti
         runtime->bms_service_end_handle == 0U) {
         return ESP_ERR_INVALID_STATE;
     }
-    ble_uuid16_t characteristic_uuid = BLE_UUID16_INIT(ANT_BMS_CHARACTERISTIC_UUID_16);
     runtime->bms_ble_phase = (uint8_t)BMS_BLE_PHASE_DISCOVERING_CHARACTERISTIC;
     runtime->bms_char_val_handle = 0U;
+    runtime->bms_write_char_val_handle = 0U;
+    if (bms_is_yanyang(runtime) || bms_has_separate_write_characteristic(runtime)) {
+        return ble_gattc_disc_all_chrs(runtime->bms_conn_handle,
+                                       runtime->bms_service_start_handle,
+                                       runtime->bms_service_end_handle,
+                                       bms_chr_cb,
+                                       runtime) == 0
+                   ? ESP_OK
+                   : ESP_FAIL;
+    }
+    ble_uuid16_t characteristic_uuid = BLE_UUID16_INIT(ANT_BMS_CHARACTERISTIC_UUID_16);
     return ble_gattc_disc_chrs_by_uuid(runtime->bms_conn_handle,
                                        runtime->bms_service_start_handle,
                                        runtime->bms_service_end_handle,
@@ -636,10 +640,19 @@ static esp_err_t bms_start_service_discovery(esp_bms_idf_runtime_t *runtime)
     if (!runtime || runtime->bms_conn_handle == 0xFFFFU) {
         return ESP_ERR_INVALID_STATE;
     }
-    ble_uuid16_t service_uuid = BLE_UUID16_INIT(ANT_BMS_SERVICE_UUID_16);
     runtime->bms_ble_phase = (uint8_t)BMS_BLE_PHASE_DISCOVERING_SERVICE;
     runtime->bms_service_start_handle = 0U;
     runtime->bms_service_end_handle = 0U;
+    if (bms_is_yanyang(runtime)) {
+        const ble_uuid128_t service_uuid = bms_uuid128(esp_bms_yanyang_service_uuid);
+        return ble_gattc_disc_svc_by_uuid(runtime->bms_conn_handle,
+                                          &service_uuid.u,
+                                          bms_service_cb,
+                                          runtime) == 0
+                   ? ESP_OK
+                   : ESP_FAIL;
+    }
+    ble_uuid16_t service_uuid = BLE_UUID16_INIT(bms_service_uuid_16(runtime));
     return ble_gattc_disc_svc_by_uuid(runtime->bms_conn_handle,
                                       &service_uuid.u,
                                       bms_service_cb,

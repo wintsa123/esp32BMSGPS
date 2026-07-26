@@ -48,6 +48,13 @@ def integer(values: dict[str, str], key: str, source: Path) -> int:
     return int(value, 10)
 
 
+def optional_u8(values: dict[str, str], key: str, source: Path) -> int:
+    value = values.get(key, "0")
+    if not value.isdecimal() or int(value, 10) > 255:
+        raise ValueError(f"{source}: {key} must be a decimal integer from 0 to 255")
+    return int(value, 10)
+
+
 def gpio(profile: dict[str, str], role: str, required: bool) -> str:
     value = profile.get(f"GPIO_{role}")
     if value is None or value == "":
@@ -91,6 +98,7 @@ def config_macro(profile: dict[str, str], mcu_record: dict[str, str], mcu_path: 
     if mcu not in touch_targets.split(","):
         raise ValueError(f"{touch_path}: touch controller does not support MCU {mcu}")
     display_size_inch = require(display, "SIZE_INCH", display_path)
+    display_rotation_default_version = optional_u8(display, "ROTATION_DEFAULT_VERSION", display_path)
     panel = enum_value(require(display, "DRIVER", display_path), {
         "ST7789": "ESP_BMS_LVGL_PANEL_ST7789",
         "ST7796": "ESP_BMS_LVGL_PANEL_ST7796",
@@ -133,6 +141,9 @@ def config_macro(profile: dict[str, str], mcu_record: dict[str, str], mcu_path: 
         raise ValueError(f"{board_path}: non-DAC audio requires AUDIO_DAC_CHANNEL 0")
     if audio_enable_level not in (0, 1):
         raise ValueError(f"{board_path}: AUDIO_ENABLE_ACTIVE_LEVEL must be 0 or 1")
+    expander = board.get("EXPANDER", "NONE")
+    if expander not in ("NONE", "XL9555"):
+        raise ValueError(f"{board_path}: unsupported EXPANDER {expander}")
     audio_dac_mask = {
         0: "0",
         1: "DAC_CHANNEL_MASK_CH1",
@@ -171,6 +182,9 @@ def config_macro(profile: dict[str, str], mcu_record: dict[str, str], mcu_path: 
         "pin_dc": gpio(profile, "TFT_DC", True),
         "pin_reset": gpio(profile, "TFT_RESET", False),
         "pin_backlight": gpio(profile, "TFT_BACKLIGHT", False),
+        "pin_expander_sda": gpio(profile, "EXPANDER_SDA", expander == "XL9555"),
+        "pin_expander_scl": gpio(profile, "EXPANDER_SCL", expander == "XL9555"),
+        "use_xl9555_expander": "true" if expander == "XL9555" else "false",
         "i80_data_pins": "{ " + ", ".join(data_pins) + " }",
         "pin_wr": gpio(profile, "TFT_WR", not is_spi_display),
         "i80_bus_width": str(data_width),
@@ -213,6 +227,7 @@ def config_macro(profile: dict[str, str], mcu_record: dict[str, str], mcu_path: 
              f"#define ESP_BMS_PROFILE_FIRMWARE_VERSION \"{firmware_version}\"",
              f"#define ESP_BMS_PROFILE_COMMUNICATION_COPROCESSOR \"{communication_coprocessor}\"",
              f"#define ESP_BMS_PROFILE_DISPLAY_SIZE_INCH \"{display_size_inch}\"",
+             f"#define ESP_BMS_PROFILE_DISPLAY_ROTATION_DEFAULT_VERSION {display_rotation_default_version}",
              f"#define ESP_BMS_PROFILE_GPS_RX {gpio(profile, 'GPS_RX', False)}",
              f"#define ESP_BMS_PROFILE_GPS_TX {gpio(profile, 'GPS_TX', False)}",
              f"#define ESP_BMS_PROFILE_GPS_PPS {gpio(profile, 'GPS_PPS', False)}",

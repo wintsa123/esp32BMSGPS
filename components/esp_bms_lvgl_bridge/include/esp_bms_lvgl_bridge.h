@@ -51,6 +51,9 @@ typedef struct {
     gpio_num_t pin_dc;
     gpio_num_t pin_reset;
     gpio_num_t pin_backlight;
+    gpio_num_t pin_expander_sda;
+    gpio_num_t pin_expander_scl;
+    bool use_xl9555_expander;
     gpio_num_t i80_data_pins[16];
     gpio_num_t pin_wr;
     uint8_t i80_bus_width;

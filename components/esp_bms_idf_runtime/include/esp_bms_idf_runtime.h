@@ -35,11 +35,12 @@ typedef enum {
     ESP_BMS_IDF_BMS_TYPE_JK = 1,
     ESP_BMS_IDF_BMS_TYPE_JBD = 2,
     ESP_BMS_IDF_BMS_TYPE_DALY = 3,
+    ESP_BMS_IDF_BMS_TYPE_YANYANG = 4,
 } esp_bms_idf_bms_type_t;
 
 #define ESP_BMS_IDF_BMS_SCAN_MAX_CANDIDATES ESP_BMS_BMS_SCAN_MAX_CANDIDATES
 #define ESP_BMS_IDF_BMS_SCAN_NAME_LEN ESP_BMS_BMS_SCAN_NAME_LEN
-#define ESP_BMS_IDF_BMS_FRAME_MAX_LEN 192U
+#define ESP_BMS_IDF_BMS_FRAME_MAX_LEN 320U
 
 #define ESP_BMS_IDF_RUNTIME_FLAG_BATTERY_ADC_READY (UINT64_C(1) << 0)
 #define ESP_BMS_IDF_RUNTIME_FLAG_NVS_READY (UINT64_C(1) << 2)
@@ -145,6 +146,7 @@ struct esp_bms_idf_runtime {
     uint16_t bms_service_start_handle;
     uint16_t bms_service_end_handle;
     uint16_t bms_char_val_handle;
+    uint16_t bms_write_char_val_handle;
     uint16_t bms_cccd_handle;
     uint16_t controller_service_start_handle;
     uint16_t controller_service_end_handle;
@@ -153,6 +155,7 @@ struct esp_bms_idf_runtime {
     uint8_t brightness_percent;
     uint8_t volume_percent;
     uint8_t bms_type;
+    uint8_t bms_poll_index;
     uint8_t bms_own_addr_type;
     uint8_t bluetooth_own_addr_type;
     uint8_t bms_ble_phase;
@@ -197,6 +200,7 @@ struct esp_bms_idf_runtime {
     char http_pending_bms_bound_mac[18];
     uint64_t flags;
     esp_bms_idf_display_rotation_t display_rotation;
+    uint8_t display_rotation_default_version;
     esp_bms_idf_display_rotation_t http_pending_display_rotation;
     esp_bms_speed_unit_t http_pending_speed_unit;
     esp_bms_speed_source_t http_pending_speed_source;
@@ -229,6 +233,10 @@ static inline void esp_bms_idf_runtime_flag_set(esp_bms_idf_runtime_t *runtime,
 }
 
 void esp_bms_idf_runtime_init(esp_bms_idf_runtime_t *runtime);
+void esp_bms_idf_runtime_set_display_rotation_default(
+    esp_bms_idf_runtime_t *runtime,
+    esp_bms_idf_display_rotation_t rotation,
+    uint8_t version);
 esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runtime, bool *loaded);
 esp_err_t esp_bms_idf_runtime_save_display_settings(esp_bms_idf_runtime_t *runtime);
 esp_err_t esp_bms_idf_runtime_start_setup_ap(esp_bms_idf_runtime_t *runtime);

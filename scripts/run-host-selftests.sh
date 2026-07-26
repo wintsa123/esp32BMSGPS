@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-build_dir="$(mktemp -d "${TMPDIR:-/tmp}/esp32bmsgps-selftests.XXXXXX")"
+build_dir="$(mktemp -d "${repo_root}/.selftests.XXXXXX")"
 trap 'rm -rf "${build_dir}"' EXIT
 
 cc_bin="${CC:-cc}"
@@ -32,6 +32,26 @@ cflags=(-std=c11 -Wall -Wextra -Werror)
     -o "${build_dir}/fardriver_protocol_selftest"
 "${build_dir}/fardriver_protocol_selftest"
 printf '%s\n' "FarDriver protocol self-test passed"
+
+"${cc_bin}" "${cflags[@]}" \
+    -I"${repo_root}/components/esp_bms_bms_ble/protocols" \
+    -I"${repo_root}/components/esp_bms_bms_ble/protocols/yanyang" \
+    "${repo_root}/tests/yanyang_bms_protocol_selftest.c" \
+    "${repo_root}/components/esp_bms_bms_ble/protocols/yanyang/esp_bms_yanyang_protocol.c" \
+    -o "${build_dir}/yanyang_bms_protocol_selftest"
+"${build_dir}/yanyang_bms_protocol_selftest"
+printf '%s\n' "Yanyang BMS protocol self-test passed"
+
+for brand in jk jbd daly; do
+    "${cc_bin}" "${cflags[@]}" \
+        -I"${repo_root}/components/esp_bms_bms_ble/protocols" \
+        -I"${repo_root}/components/esp_bms_bms_ble/protocols/${brand}" \
+        "${repo_root}/tests/${brand}_bms_protocol_selftest.c" \
+        "${repo_root}/components/esp_bms_bms_ble/protocols/${brand}/esp_bms_${brand}_protocol.c" \
+        -o "${build_dir}/${brand}_bms_protocol_selftest"
+    "${build_dir}/${brand}_bms_protocol_selftest"
+done
+printf '%s\n' "JK/JBD/Daly BMS protocol self-tests passed"
 
 python3 "${repo_root}/scripts/push-agnss.py" --self-test
 python3 "${repo_root}/scripts/build-firmware.py" --self-test

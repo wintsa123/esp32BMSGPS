@@ -707,6 +707,9 @@ collect_required_gpio_roles() {
             for role in TFT_WR TFT_CS TFT_DC; do require_gpio_role output "$role"; done
             ;;
     esac
+    if [[ "$BOARD_EXPANDER" == XL9555 ]]; then
+        for role in EXPANDER_SDA EXPANDER_SCL; do require_gpio_role output "$role"; done
+    fi
     if [[ "${CFG[INPUT]}" != none ]]; then
         case "$BOARD_INPUT_BUS" in
             SPI)
@@ -846,11 +849,12 @@ validate_config() {
         BOARD_AUDIO_BACKEND="${CFG[AUDIO_BACKEND]:-NONE}"
         BOARD_AUDIO_DAC_CHANNEL="${CFG[AUDIO_DAC_CHANNEL]:-0}"
         BOARD_AUDIO_ENABLE_ACTIVE_LEVEL="${CFG[AUDIO_ENABLE_ACTIVE_LEVEL]:-0}"
+        BOARD_EXPANDER=NONE
         BOARD_INPUT_GPIO="${CFG[INPUT_GPIO]}"
         BOARD_OUTPUT_GPIO="${CFG[OUTPUT_GPIO]}"
     else
         load_record board "${CFG[BOARD]}"
-        require_keys RECORD SCHEMA_VERSION ID MCU DISPLAY INPUT DISPLAY_BUS DISPLAY_DATA_WIDTH INPUT_BUS FLASH_MB PSRAM_MB PARTITIONS BUILD_READY AUDIO_BACKEND AUDIO_DAC_CHANNEL AUDIO_ENABLE_ACTIVE_LEVEL INPUT_GPIO OUTPUT_GPIO APPROVED_DANGEROUS_GPIO
+        require_keys RECORD SCHEMA_VERSION ID MCU DISPLAY INPUT DISPLAY_BUS DISPLAY_DATA_WIDTH INPUT_BUS FLASH_MB PSRAM_MB PARTITIONS BUILD_READY AUDIO_BACKEND AUDIO_DAC_CHANNEL AUDIO_ENABLE_ACTIVE_LEVEL EXPANDER INPUT_GPIO OUTPUT_GPIO APPROVED_DANGEROUS_GPIO
         [[ "${RECORD[MCU]}" == "${CFG[MCU]}" ]] || die "board ${CFG[BOARD]} requires ${RECORD[MCU]}"
         [[ "${RECORD[DISPLAY]}" == "${CFG[DISPLAY]}" ]] || die "board ${CFG[BOARD]} requires display ${RECORD[DISPLAY]}"
         [[ "${CFG[INPUT]}" == none || "${RECORD[INPUT]}" == "${CFG[INPUT]}" ]] || die "board ${CFG[BOARD]} requires input ${RECORD[INPUT]} or none"
@@ -862,6 +866,7 @@ validate_config() {
         BOARD_AUDIO_BACKEND="${RECORD[AUDIO_BACKEND]}"
         BOARD_AUDIO_DAC_CHANNEL="${RECORD[AUDIO_DAC_CHANNEL]}"
         BOARD_AUDIO_ENABLE_ACTIVE_LEVEL="${RECORD[AUDIO_ENABLE_ACTIVE_LEVEL]}"
+        BOARD_EXPANDER="${RECORD[EXPANDER]:-NONE}"
         BOARD_INPUT_GPIO="${RECORD[INPUT_GPIO]}"
         BOARD_OUTPUT_GPIO="${RECORD[OUTPUT_GPIO]}"
     fi
@@ -888,6 +893,7 @@ validate_config() {
         *) die "unsupported audio backend: $BOARD_AUDIO_BACKEND" ;;
     esac
     [[ "$BOARD_AUDIO_ENABLE_ACTIVE_LEVEL" == 0 || "$BOARD_AUDIO_ENABLE_ACTIVE_LEVEL" == 1 ]] || die "AUDIO_ENABLE_ACTIVE_LEVEL must be 0 or 1"
+    [[ "$BOARD_EXPANDER" == NONE || "$BOARD_EXPANDER" == XL9555 ]] || die "unsupported board expander: $BOARD_EXPANDER"
     [[ "$BOARD_PARTITIONS" == firmware/partitions/* ]] || die "unsupported partition path: $BOARD_PARTITIONS"
     [[ "$BOARD_PARTITIONS" != *..* ]] || die "partition path traversal is not allowed"
     path="$ROOT/$BOARD_PARTITIONS"
@@ -895,7 +901,7 @@ validate_config() {
 
     [[ "${CFG[DISPLAY]}" != custom ]] || die 'custom display names are no longer supported; select a catalog display'
     load_record display "${CFG[DISPLAY]}"
-    require_keys RECORD SCHEMA_VERSION ID TARGETS BUS DATA_WIDTH DRIVER SIZE_INCH COMPONENT VERSION CMAKE_COMPONENT HEADER INIT REQUIRES_INPUT_GPIO REQUIRES_OUTPUT_GPIO WIDTH HEIGHT PIXEL_CLOCK_HZ ROTATION RGB_ORDER INVERT_COLOR SPI_MODE I80_SWAP_COLOR_BYTES I80_PCLK_ACTIVE_NEG I80_PCLK_IDLE_LOW BACKLIGHT_ON_LEVEL POWER_ON_DELAY_MS
+    require_keys RECORD SCHEMA_VERSION ID TARGETS BUS DATA_WIDTH DRIVER SIZE_INCH COMPONENT VERSION CMAKE_COMPONENT HEADER INIT REQUIRES_INPUT_GPIO REQUIRES_OUTPUT_GPIO WIDTH HEIGHT PIXEL_CLOCK_HZ ROTATION ROTATION_DEFAULT_VERSION RGB_ORDER INVERT_COLOR SPI_MODE I80_SWAP_COLOR_BYTES I80_PCLK_ACTIVE_NEG I80_PCLK_IDLE_LOW BACKLIGHT_ON_LEVEL POWER_ON_DELAY_MS
     csv_has "${RECORD[TARGETS]}" "${CFG[MCU]}" || die "display ${CFG[DISPLAY]} is unavailable on ${CFG[MCU]}"
     if [[ "${CFG[BOARD]}" == custom && -z "$BOARD_DISPLAY_BUS" ]]; then
         BOARD_DISPLAY_BUS="${RECORD[BUS]}"
@@ -1530,7 +1536,7 @@ custom_board_gpio_requirements() {
 configure_audio_profile() {
     local backend_title channel_title
 
-    csv_has "${CFG[MODULES]}" audio || return
+    csv_has "${CFG[MODULES]}" audio || return 0
     if [[ "${CFG[BOARD]}" != custom && "$BOARD_AUDIO_BACKEND" != NONE ]]; then
         return
     fi
@@ -1995,6 +2001,7 @@ configure_missing_board_gpio() {
     BOARD_AUDIO_BACKEND="${RECORD[AUDIO_BACKEND]}"
     BOARD_AUDIO_DAC_CHANNEL="${RECORD[AUDIO_DAC_CHANNEL]}"
     BOARD_AUDIO_ENABLE_ACTIVE_LEVEL="${RECORD[AUDIO_ENABLE_ACTIVE_LEVEL]}"
+    BOARD_EXPANDER="${RECORD[EXPANDER]:-NONE}"
     BOARD_INPUT_GPIO="${RECORD[INPUT_GPIO]}"
     BOARD_OUTPUT_GPIO="${RECORD[OUTPUT_GPIO]}"
     configure_audio_profile

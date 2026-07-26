@@ -9,7 +9,11 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$idfExportScript = Join-Path $env:USERPROFILE "esp\esp-idf-v6.0.2\export.ps1"
+$idfExportScript = if (-not [string]::IsNullOrWhiteSpace($env:SystemDrive)) {
+    Join-Path $env:SystemDrive "esp\esp-idf-v6.0.2\export.ps1"
+} else {
+    Join-Path $env:USERPROFILE "esp\esp-idf-v6.0.2\export.ps1"
+}
 $requiredIdfVersion = "ESP-IDF v6.0.2"
 $originalLocation = Get-Location
 

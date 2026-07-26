@@ -490,6 +490,7 @@ static bool apply_action_event(host_app_t *app, const esp_bms_lvgl_action_event_
     case ESP_BMS_LVGL_ACTION_SELECT_BMS_JK:
     case ESP_BMS_LVGL_ACTION_SELECT_BMS_JBD:
     case ESP_BMS_LVGL_ACTION_SELECT_BMS_DALY:
+    case ESP_BMS_LVGL_ACTION_SELECT_BMS_YANYANG:
         snapshot->bms_type = (uint8_t)(event->action - ESP_BMS_LVGL_ACTION_SELECT_BMS_ANT);
         return true;
     case ESP_BMS_LVGL_ACTION_CANCEL_BMS_CONNECTION:

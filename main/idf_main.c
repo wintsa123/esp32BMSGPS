@@ -40,6 +40,21 @@ static esp_bms_display_rotation_t bridge_rotation_from_runtime(esp_bms_idf_displ
     }
 }
 
+static esp_bms_idf_display_rotation_t runtime_rotation_from_bridge(esp_bms_display_rotation_t rotation)
+{
+    switch (rotation) {
+    case ESP_BMS_DISPLAY_ROTATION_PORTRAIT:
+        return ESP_BMS_IDF_DISPLAY_ROTATION_PORTRAIT;
+    case ESP_BMS_DISPLAY_ROTATION_INVERTED_PORTRAIT:
+        return ESP_BMS_IDF_DISPLAY_ROTATION_INVERTED_PORTRAIT;
+    case ESP_BMS_DISPLAY_ROTATION_INVERTED_LANDSCAPE:
+        return ESP_BMS_IDF_DISPLAY_ROTATION_INVERTED_LANDSCAPE;
+    case ESP_BMS_DISPLAY_ROTATION_LANDSCAPE:
+    default:
+        return ESP_BMS_IDF_DISPLAY_ROTATION_LANDSCAPE;
+    }
+}
+
 static bool action_should_save_display_settings(esp_bms_lvgl_action_t action)
 {
     return action == ESP_BMS_LVGL_ACTION_CYCLE_BRIGHTNESS ||
@@ -54,6 +69,7 @@ static bool action_should_save_display_settings(esp_bms_lvgl_action_t action)
            action == ESP_BMS_LVGL_ACTION_SELECT_BMS_JK ||
            action == ESP_BMS_LVGL_ACTION_SELECT_BMS_JBD ||
            action == ESP_BMS_LVGL_ACTION_SELECT_BMS_DALY ||
+           action == ESP_BMS_LVGL_ACTION_SELECT_BMS_YANYANG ||
            action == ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_CONNECTION ||
            action == ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_PAGE ||
            action == ESP_BMS_LVGL_ACTION_SET_SPEED_DASHBOARD_STYLE ||
@@ -117,6 +133,11 @@ void app_main(void)
 
     static esp_bms_idf_runtime_t runtime;
     esp_bms_idf_runtime_init(&runtime);
+    esp_bms_lvgl_bridge_config_t config = ESP_BMS_PROFILE_LVGL_CONFIG;
+    esp_bms_idf_runtime_set_display_rotation_default(
+        &runtime,
+        runtime_rotation_from_bridge(config.rotation),
+        ESP_BMS_PROFILE_DISPLAY_ROTATION_DEFAULT_VERSION);
     const esp_err_t modules_ret = esp_bms_module_registry_init(&runtime);
     if (modules_ret != ESP_OK) {
         ESP_LOGW(TAG, "optional module init failed: %s", esp_err_to_name(modules_ret));
@@ -139,7 +160,6 @@ void app_main(void)
                  esp_err_to_name(display_settings_ret));
     }
 
-    esp_bms_lvgl_bridge_config_t config = ESP_BMS_PROFILE_LVGL_CONFIG;
     config.rotation = bridge_rotation_from_runtime(runtime.display_rotation);
     ESP_ERROR_CHECK(esp_bms_lvgl_bridge_init(&config));
     ESP_ERROR_CHECK(esp_bms_lvgl_bridge_set_brightness(runtime.brightness_percent));

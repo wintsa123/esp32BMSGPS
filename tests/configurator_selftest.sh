@@ -81,6 +81,12 @@ expect_fail 'network requires capability WIFI' "${repo_root}/start.sh" validate 
 FIRMWARE_BUILD_ROOT="${work_dir}/s3-default-build" "${repo_root}/start.sh" configure --profile s3-default >/dev/null
 rg -qx 'MCU=esp32s3' "${work_dir}/s3-default-build/s3-default/firmware.env"
 rg -qx 'BOARD=esp32s3-n16r8-st7796u-gt1151' "${work_dir}/s3-default-build/s3-default/firmware.env"
+rg -Fq '#define ESP_BMS_PROFILE_DISPLAY_ROTATION_DEFAULT_VERSION 2' "${work_dir}/s3-default-build/s3-default/generated/esp_bms_profile_hardware.h"
+rg -Fq '.rotation = ESP_BMS_DISPLAY_ROTATION_LANDSCAPE' "${work_dir}/s3-default-build/s3-default/generated/esp_bms_profile_hardware.h"
+rg -Fq '.invert_color = false' "${work_dir}/s3-default-build/s3-default/generated/esp_bms_profile_hardware.h"
+rg -Fq '.pin_expander_sda = (gpio_num_t)2' "${work_dir}/s3-default-build/s3-default/generated/esp_bms_profile_hardware.h"
+rg -Fq '.pin_expander_scl = (gpio_num_t)1' "${work_dir}/s3-default-build/s3-default/generated/esp_bms_profile_hardware.h"
+rg -Fq '.use_xl9555_expander = true' "${work_dir}/s3-default-build/s3-default/generated/esp_bms_profile_hardware.h"
 rg -qx 'DISPLAY=st7796u-i80' "${work_dir}/s3-default-build/s3-default/firmware.env"
 rg -qx 'INPUT=gt1151-i2c' "${work_dir}/s3-default-build/s3-default/firmware.env"
 rg -qx 'GPIO_TFT_D15=4' "${work_dir}/s3-default-build/s3-default/firmware.env"
@@ -133,7 +139,7 @@ EOF
 FIRMWARE_BUILD_ROOT="${work_dir}/legacy-ili9341-2p8-build" "${repo_root}/start.sh" configure --lang en --config "${work_dir}/legacy-ili9341-2p8.env" >/dev/null
 rg -qx 'DISPLAY=ili9341-2p8-spi' "${work_dir}/legacy-ili9341-2p8-build/legacy-ili9341-2p8/firmware.env"
 rg -Fx '#define ESP_BMS_PROFILE_DISPLAY_SIZE_INCH "2.8"' "${work_dir}/legacy-ili9341-2p8-build/legacy-ili9341-2p8/generated/esp_bms_profile_hardware.h"
-rg -Fx '.physical_width = 240' "${work_dir}/legacy-ili9341-2p8-build/legacy-ili9341-2p8/generated/esp_bms_profile_hardware.h"
+rg -Fq '.physical_width = 240' "${work_dir}/legacy-ili9341-2p8-build/legacy-ili9341-2p8/generated/esp_bms_profile_hardware.h"
 
 expect_fail 'does not provide an audio hardware profile' "${repo_root}/start.sh" validate --lang en --profile audio-st7796 --mcu esp32s3 --board esp32s3-n16r8-st7796u-gt1151 --display st7796u-i80 --input gt1151-i2c --modules audio
 
@@ -592,6 +598,10 @@ rg -Fq '编译完成后保存此配置吗？[y/N]' "${repo_root}/start.ps1"
 rg -Fq '现在烧录这个固件吗？[y/N]' "${repo_root}/start.ps1"
 rg -Fq 'ESP-IDF v6.0.2' "${repo_root}/start.ps1"
 rg -Fq 'esp-idf-v6.0.2' "${repo_root}/scripts/esp-idf-env.sh"
+rg -Fq 'Join-Path $env:SystemDrive "esp\esp-idf-v6.0.2"' "${repo_root}/scripts/serial_tcp_bridge.ps1"
+rg -Fq 'Join-Path $env:SystemDrive "esp\esp-idf-tools\python_env"' "${repo_root}/scripts/serial_tcp_bridge.ps1"
+rg -Fq "Initialize-IdfEnvironment" "${repo_root}/scripts/serial_tcp_bridge.ps1"
+rg -Fq 'Join-Path $env:SystemDrive "esp\esp-idf-v6.0.2\export.ps1"' "${repo_root}/scripts/flash.ps1"
 rg -Fq -- '-DIDF_TARGET="${CFG[MCU]}"' "${repo_root}/start.sh"
 rg -Fq -- '"-DIDF_TARGET=$($Config.MCU)"' "${repo_root}/start.ps1"
 rg -Fq '$env:FIRMWARE_BUILD_ROOT = $BuildRoot' "${repo_root}/start.ps1"

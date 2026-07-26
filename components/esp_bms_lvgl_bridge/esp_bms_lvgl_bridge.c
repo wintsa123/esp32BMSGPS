@@ -58,6 +58,15 @@ static const char *TAG = "bms_lvgl_bridge";
 #define BACKLIGHT_PWM_MODE LEDC_LOW_SPEED_MODE
 #define BACKLIGHT_PWM_TIMER LEDC_TIMER_0
 #define BACKLIGHT_PWM_CHANNEL LEDC_CHANNEL_0
+#define XL9555_I2C_ADDRESS 0x20U
+#define XL9555_I2C_CLOCK_HZ 400000U
+#define XL9555_OUTPUT_PORT0_REG 0x02U
+#define XL9555_CONFIG_PORT0_REG 0x06U
+#define XL9555_TP_RESET_BIT 0x01U
+#define XL9555_LCD_RESET_BIT 0x02U
+#define XL9555_SD_CS_BIT 0x04U
+#define XL9555_BACKLIGHT_BIT 0x08U
+#define XL9555_LED_OFF_BIT 0x10U
 #define LVGL_SPI_DRAW_BUFFER_HEIGHT CONFIG_ESP_BMS_LVGL_BRIDGE_SPI_DRAW_BUFFER_HEIGHT
 #define LVGL_TASK_MAX_DELAY_MS CONFIG_ESP_BMS_LVGL_BRIDGE_TASK_MAX_DELAY_MS
 #if CONFIG_FREERTOS_NUMBER_OF_CORES > 1
@@ -85,6 +94,8 @@ static esp_lcd_panel_handle_t s_panel;
 static esp_lcd_panel_io_handle_t s_touch_io;
 static esp_lcd_touch_handle_t s_touch;
 static i2c_master_bus_handle_t s_touch_i2c_bus;
+static i2c_master_bus_handle_t s_expander_i2c_bus;
+static i2c_master_dev_handle_t s_xl9555;
 static lv_display_t *s_display;
 static lv_indev_t *s_touch_indev;
 static gpio_num_t s_backlight_pin = GPIO_NUM_NC;
@@ -95,6 +106,8 @@ static bool s_touch_base_swap_xy;
 static bool s_touch_base_mirror_x;
 static bool s_touch_base_mirror_y;
 static bool s_backlight_pwm_ready;
+static bool s_xl9555_backlight;
+static uint8_t s_xl9555_output_port0;
 static bool s_initialized;
 static TickType_t s_touch_last_log_tick;
 static TickType_t s_touch_last_filter_log_tick;
@@ -122,6 +135,72 @@ typedef enum {
 } touch_filter_result_t;
 
 static touch_filter_t s_touch_filter;
+
+static esp_err_t xl9555_write(uint8_t reg, uint8_t port0, uint8_t port1)
+{
+    const uint8_t payload[] = { reg, port0, port1 };
+    return i2c_master_transmit(s_xl9555, payload, sizeof(payload), -1);
+}
+
+static esp_err_t xl9555_set_backlight(bool on)
+{
+    if (on) {
+        s_xl9555_output_port0 |= XL9555_BACKLIGHT_BIT;
+    } else {
+        s_xl9555_output_port0 &= (uint8_t)~XL9555_BACKLIGHT_BIT;
+    }
+    return xl9555_write(XL9555_OUTPUT_PORT0_REG, s_xl9555_output_port0, 0U);
+}
+
+static esp_err_t init_xl9555(const esp_bms_lvgl_bridge_config_t *config)
+{
+    s_xl9555_backlight = false;
+    if (!config->use_xl9555_expander) {
+        return ESP_OK;
+    }
+    ESP_RETURN_ON_FALSE(config->pin_expander_sda != GPIO_NUM_NC &&
+                            config->pin_expander_scl != GPIO_NUM_NC,
+                        ESP_ERR_INVALID_ARG, TAG, "XL9555 I2C pins are required");
+
+    const i2c_master_bus_config_t bus_config = {
+        .i2c_port = -1,
+        .sda_io_num = config->pin_expander_sda,
+        .scl_io_num = config->pin_expander_scl,
+        .clk_source = I2C_CLK_SRC_DEFAULT,
+        .glitch_ignore_cnt = 7,
+        .flags.enable_internal_pullup = true,
+    };
+    ESP_RETURN_ON_ERROR(i2c_new_master_bus(&bus_config, &s_expander_i2c_bus),
+                        TAG, "initialize XL9555 I2C bus failed");
+    const i2c_device_config_t device_config = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address = XL9555_I2C_ADDRESS,
+        .scl_speed_hz = XL9555_I2C_CLOCK_HZ,
+    };
+    ESP_RETURN_ON_ERROR(i2c_master_bus_add_device(s_expander_i2c_bus, &device_config, &s_xl9555),
+                        TAG, "add XL9555 device failed");
+
+    s_xl9555_output_port0 = XL9555_TP_RESET_BIT | XL9555_LCD_RESET_BIT |
+                            XL9555_SD_CS_BIT | XL9555_LED_OFF_BIT;
+    ESP_RETURN_ON_ERROR(xl9555_write(XL9555_OUTPUT_PORT0_REG, s_xl9555_output_port0, 0U),
+                        TAG, "set XL9555 initial outputs failed");
+    ESP_RETURN_ON_ERROR(xl9555_write(XL9555_CONFIG_PORT0_REG, 0x00U, 0xF0U),
+                        TAG, "configure XL9555 directions failed");
+
+    vTaskDelay(pdMS_TO_TICKS(10));
+    s_xl9555_output_port0 &= (uint8_t)~XL9555_LCD_RESET_BIT;
+    ESP_RETURN_ON_ERROR(xl9555_write(XL9555_OUTPUT_PORT0_REG, s_xl9555_output_port0, 0U),
+                        TAG, "assert LCD reset failed");
+    vTaskDelay(pdMS_TO_TICKS(50));
+    s_xl9555_output_port0 |= XL9555_LCD_RESET_BIT;
+    ESP_RETURN_ON_ERROR(xl9555_write(XL9555_OUTPUT_PORT0_REG, s_xl9555_output_port0, 0U),
+                        TAG, "release LCD reset failed");
+    vTaskDelay(pdMS_TO_TICKS(200));
+    s_xl9555_backlight = true;
+    ESP_LOGI(TAG, "XL9555 initialized addr=0x%02x LCD reset and backlight ready",
+             XL9555_I2C_ADDRESS);
+    return ESP_OK;
+}
 
 typedef struct {
     uint32_t version;
@@ -573,6 +652,9 @@ static esp_err_t configure_backlight(gpio_num_t pin, int on_level)
 {
     s_backlight_pin = pin;
     s_backlight_pwm_ready = false;
+    if (s_xl9555_backlight) {
+        return ESP_OK;
+    }
     if (pin == GPIO_NUM_NC) {
         return ESP_OK;
     }
@@ -606,6 +688,9 @@ static esp_err_t configure_backlight(gpio_num_t pin, int on_level)
 
 esp_err_t esp_bms_lvgl_bridge_set_brightness(uint8_t percent)
 {
+    if (s_xl9555_backlight) {
+        return xl9555_set_backlight(percent > 0U);
+    }
     if (s_backlight_pin == GPIO_NUM_NC) {
         return ESP_OK;
     }
@@ -1098,6 +1183,7 @@ esp_err_t esp_bms_lvgl_bridge_init(const esp_bms_lvgl_bridge_config_t *config)
     ESP_LOGI(TAG, "init display bus=%d panel=%d hres=%u vres=%u pclk=%lu",
              config->display_bus, config->panel_driver, hres, vres,
              (unsigned long)config->pixel_clock_hz);
+    ESP_RETURN_ON_ERROR(init_xl9555(config), TAG, "initialize board expander failed");
     ESP_RETURN_ON_ERROR(configure_backlight(config->pin_backlight, config->backlight_on_level),
                         TAG, "configure backlight failed");
     if (config->power_on_delay_ms > 0U) {

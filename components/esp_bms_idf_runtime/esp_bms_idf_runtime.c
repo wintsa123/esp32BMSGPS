@@ -41,6 +41,7 @@
 
 #include <ctype.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <string.h>
 
 static const char *TAG = "bms_idf_runtime";
@@ -76,6 +77,7 @@ static const char *TAG = "bms_idf_runtime";
 #define DISPLAY_NVS_BRIGHTNESS_KEY "disp_bright"
 #define DISPLAY_NVS_VOLUME_KEY "disp_vol"
 #define DISPLAY_NVS_ROTATION_KEY "disp_rot"
+#define DISPLAY_NVS_ROTATION_DEFAULT_VERSION_KEY "disp_rot_ver"
 #define DISPLAY_NVS_SPEED_UNIT_KEY "speed_unit"
 #define DISPLAY_NVS_SPEED_SOURCE_KEY "speed_src"
 #define DISPLAY_NVS_SPEED_STYLE_KEY "speed_style"
@@ -105,6 +107,7 @@ static const char *TAG = "bms_idf_runtime";
 #define CONTROLLER_RATIO_CENTI_DEFAULT ESP_BMS_CONTROLLER_RATIO_CENTI_DEFAULT
 #define HTTP_BODY_MAX_LEN 384U
 #define HTTP_JSON_MAX_LEN 1024U
+#define HTTP_MANIFEST_JSON_MAX_LEN 3072U
 #define CAST_PROTOCOL_VERSION 1U
 #define CAST_BLOCK_MAX_SIDE 16U
 #define CAST_BLOCK_MAX_BYTES (CAST_BLOCK_MAX_SIDE * CAST_BLOCK_MAX_SIDE * 2U)
@@ -1004,6 +1007,8 @@ static const char *runtime_bms_type_config_text(esp_bms_idf_bms_type_t type)
         return "jbd";
     case ESP_BMS_IDF_BMS_TYPE_DALY:
         return "daly";
+    case ESP_BMS_IDF_BMS_TYPE_YANYANG:
+        return "yanyang";
     case ESP_BMS_IDF_BMS_TYPE_ANT:
     default:
         return "ant";
@@ -1028,6 +1033,10 @@ static bool runtime_parse_bms_type_config_text(const char *text, esp_bms_idf_bms
         *out_type = ESP_BMS_IDF_BMS_TYPE_DALY;
         return true;
     }
+    if (strcmp(text, "yanyang") == 0) {
+        *out_type = ESP_BMS_IDF_BMS_TYPE_YANYANG;
+        return true;
+    }
     return false;
 }
 
@@ -1040,6 +1049,8 @@ static const char *runtime_bms_type_status_text(esp_bms_idf_bms_type_t type)
         return "BMS JBD";
     case ESP_BMS_IDF_BMS_TYPE_DALY:
         return "BMS DALY";
+    case ESP_BMS_IDF_BMS_TYPE_YANYANG:
+        return "BMS YY";
     case ESP_BMS_IDF_BMS_TYPE_ANT:
     default:
         return "BMS ANT";
@@ -1092,6 +1103,18 @@ static bool runtime_rotation_matches_policy(uint8_t rotation)
     return rotation <= (uint8_t)ESP_BMS_IDF_DISPLAY_ROTATION_INVERTED_LANDSCAPE;
 }
 
+void esp_bms_idf_runtime_set_display_rotation_default(
+    esp_bms_idf_runtime_t *runtime,
+    esp_bms_idf_display_rotation_t rotation,
+    uint8_t version)
+{
+    if (!runtime || !runtime_rotation_matches_policy((uint8_t)rotation)) {
+        return;
+    }
+    runtime->display_rotation = rotation;
+    runtime->display_rotation_default_version = version;
+}
+
 static bool runtime_speed_unit_matches_policy(uint8_t speed_unit)
 {
     return speed_unit == (uint8_t)ESP_BMS_SPEED_UNIT_KMH ||
@@ -1123,7 +1146,7 @@ static bool runtime_language_matches_policy(uint8_t language)
 
 static bool runtime_bms_type_matches_policy(uint8_t bms_type)
 {
-    return bms_type <= (uint8_t)ESP_BMS_IDF_BMS_TYPE_DALY;
+    return bms_type <= (uint8_t)ESP_BMS_IDF_BMS_TYPE_YANYANG;
 }
 
 static bool runtime_select_bms_type(esp_bms_idf_runtime_t *runtime, esp_bms_idf_bms_type_t bms_type)
@@ -1139,6 +1162,16 @@ static bool runtime_select_bms_type(esp_bms_idf_runtime_t *runtime, esp_bms_idf_
     runtime->bms_type = (uint8_t)bms_type;
     runtime->snapshot.bms_type = runtime->bms_type;
     runtime_set_error(runtime, runtime_bms_type_status_text(bms_type));
+    if (runtime->bms_ble_driver && runtime->bms_ble_driver->stop) {
+        (void)runtime->bms_ble_driver->stop(runtime);
+    }
+    if (runtime->bms_bound_mac[0] != '\0' && runtime->bms_ble_driver &&
+        runtime->bms_ble_driver->start_if_bound) {
+        const esp_err_t ret = runtime->bms_ble_driver->start_if_bound(runtime);
+        if (ret != ESP_OK) {
+            ESP_LOGW(TAG, "[bms] restart after type change failed: %s", esp_err_to_name(ret));
+        }
+    }
     ESP_LOGI(TAG, "[bms] type selected: %s", runtime_bms_type_config_text(bms_type));
     return true;
 }
@@ -1238,6 +1271,10 @@ static bool runtime_json_get_string(const char *body,
 static void runtime_reset_state(esp_bms_idf_runtime_t *runtime)
 {
     memset(&runtime->snapshot, 0, sizeof(runtime->snapshot));
+    (void)snprintf(runtime->snapshot.firmware_version,
+                   sizeof(runtime->snapshot.firmware_version),
+                   "%s",
+                   ESP_BMS_PROFILE_FIRMWARE_VERSION);
     runtime->tick_count = 0;
     runtime->elapsed_ms = 0;
     runtime->battery_sample_elapsed_ms = 0;
@@ -1429,9 +1466,11 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
     uint8_t brightness_percent = 0;
     uint8_t volume_percent = 0;
     uint8_t rotation = 0;
+    uint8_t rotation_default_version = 0;
     uint8_t speed_unit = 0;
     uint8_t speed_source = (uint8_t)ESP_BMS_SPEED_SOURCE_GPS;
-    uint8_t speed_dashboard_style = 0;
+    uint8_t speed_dashboard_style =
+        (uint8_t)esp_bms_lvgl_ui_default_speed_dashboard_style();
     uint8_t boot_animation_style = (uint8_t)ESP_BMS_BOOT_ANIMATION_CHARGE;
     uint8_t language = 0;
     uint8_t bms_type = (uint8_t)ESP_BMS_IDF_BMS_TYPE_ANT;
@@ -1444,6 +1483,7 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
     uint16_t controller_ratio_centi = 0;
     uint16_t preset_range_km = ESP_BMS_PRESET_RANGE_DEFAULT_KM;
     bool speed_source_migration_needed = false;
+    bool rotation_migration_needed = false;
     bool preset_range_migration_needed = false;
     bool dashboard_style_migration_needed = false;
 
@@ -1458,6 +1498,11 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
     }
     if (ret == ESP_OK) {
         ret = nvs_get_u8(handle, DISPLAY_NVS_ROTATION_KEY, &rotation);
+    }
+    if (ret == ESP_OK) {
+        ret = runtime_nvs_get_optional_u8(handle,
+                                          DISPLAY_NVS_ROTATION_DEFAULT_VERSION_KEY,
+                                          &rotation_default_version);
     }
     if (ret == ESP_OK) {
         ret = nvs_get_u8(handle, DISPLAY_NVS_SPEED_UNIT_KEY, &speed_unit);
@@ -1555,6 +1600,11 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
         dashboard_style_migration_needed = true;
     }
 
+    if (rotation_default_version < runtime->display_rotation_default_version) {
+        rotation = (uint8_t)runtime->display_rotation;
+        rotation_migration_needed = true;
+    }
+
     if (!runtime_brightness_matches_policy(brightness_percent) ||
         !runtime_volume_matches_policy(volume_percent) ||
         !runtime_rotation_matches_policy(rotation) ||
@@ -1629,7 +1679,7 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
     runtime_project_controller_snapshot(runtime);
     runtime_update_snapshot_speed(runtime);
     *loaded = true;
-    if (speed_source_migration_needed || preset_range_migration_needed ||
+    if (rotation_migration_needed || speed_source_migration_needed || preset_range_migration_needed ||
         dashboard_style_migration_needed) {
         const esp_err_t migration_ret = esp_bms_idf_runtime_save_display_settings(runtime);
         if (migration_ret != ESP_OK) {
@@ -1695,6 +1745,11 @@ esp_err_t esp_bms_idf_runtime_save_display_settings(esp_bms_idf_runtime_t *runti
     }
     if (ret == ESP_OK) {
         ret = nvs_set_u8(handle, DISPLAY_NVS_ROTATION_KEY, (uint8_t)runtime->display_rotation);
+    }
+    if (ret == ESP_OK) {
+        ret = nvs_set_u8(handle,
+                         DISPLAY_NVS_ROTATION_DEFAULT_VERSION_KEY,
+                         runtime->display_rotation_default_version);
     }
     if (ret == ESP_OK) {
         ret = nvs_set_u8(handle, DISPLAY_NVS_SPEED_UNIT_KEY, (uint8_t)runtime->snapshot.speed_unit);
@@ -1821,13 +1876,14 @@ bool esp_bms_idf_runtime_apply_pending_http_config(esp_bms_idf_runtime_t *runtim
 
     RUNTIME_SET_FLAG(runtime, HTTP_CONFIG_APPLIED, true);
 
+    const bool bms_type_changed = runtime->bms_type != bms_type;
     const bool changed = runtime->brightness_percent != brightness_percent ||
                          runtime->volume_percent != volume_percent ||
                          runtime->display_rotation != rotation ||
                          runtime->snapshot.speed_unit != speed_unit ||
                          runtime->snapshot.speed_source != speed_source ||
                          RUNTIME_FLAG(runtime, LANGUAGE_ZH) != language_zh ||
-                         runtime->bms_type != bms_type;
+                         bms_type_changed;
     if (!changed) {
         ESP_LOGI(TAG, "[http] config consumed without value changes");
         return true;
@@ -1839,8 +1895,9 @@ bool esp_bms_idf_runtime_apply_pending_http_config(esp_bms_idf_runtime_t *runtim
     runtime->snapshot.speed_unit = speed_unit;
     runtime->snapshot.speed_source = speed_source;
     RUNTIME_SET_FLAG(runtime, LANGUAGE_ZH, language_zh);
-    runtime->bms_type = bms_type;
-    runtime->snapshot.bms_type = runtime->bms_type;
+    if (bms_type_changed) {
+        (void)runtime_select_bms_type(runtime, (esp_bms_idf_bms_type_t)bms_type);
+    }
     runtime_project_controller_snapshot(runtime);
     runtime_set_error(runtime, "HTTP CFG");
 
@@ -2157,6 +2214,75 @@ static esp_err_t runtime_http_config_handler(httpd_req_t *req, esp_bms_idf_runti
                                  runtime_bms_type_config_text((esp_bms_idf_bms_type_t)runtime->bms_type));
     if (written < 0 || (size_t)written >= sizeof(json)) {
         return runtime_http_send_text(req, "500 Internal Server Error", "json too large");
+    }
+    return runtime_http_send_json(req, json);
+}
+
+static bool runtime_json_append(char *json, size_t json_len, size_t *offset,
+                                const char *format, ...)
+{
+    if (!json || !offset || *offset >= json_len) {
+        return false;
+    }
+    va_list args;
+    va_start(args, format);
+    const int written = vsnprintf(json + *offset, json_len - *offset, format, args);
+    va_end(args);
+    if (written < 0 || (size_t)written >= json_len - *offset) {
+        return false;
+    }
+    *offset += (size_t)written;
+    return true;
+}
+
+static esp_err_t runtime_http_settings_manifest_handler(httpd_req_t *req,
+                                                         esp_bms_idf_runtime_t *runtime)
+{
+    /* HTTPD serializes this handler; static storage avoids consuming its small task stack. */
+    static char json[HTTP_MANIFEST_JSON_MAX_LEN];
+    char bms_mac[24] = { 0 };
+    runtime_config_bms_mac_json(runtime, bms_mac, sizeof(bms_mac));
+    size_t offset = 0;
+    bool first_item = true;
+    bool ok = runtime_json_append(json, sizeof(json), &offset,
+        "{\"protocol_version\":1,\"sections\":[{\"id\":\"device\","
+        "\"label\":{\"zh\":\"设备\",\"en\":\"Device\"},"
+        "\"submit\":{\"endpoint\":\"/api/config\",\"method\":\"POST\"},\"items\":[");
+#define MANIFEST_ITEM(...) \
+    do { \
+        ok = ok && runtime_json_append(json, sizeof(json), &offset, "%s", first_item ? "" : ","); \
+        ok = ok && runtime_json_append(json, sizeof(json), &offset, __VA_ARGS__); \
+        first_item = false; \
+    } while (0)
+    MANIFEST_ITEM("{\"id\":\"brightness\",\"kind\":\"range\",\"label\":{\"zh\":\"亮度\",\"en\":\"Brightness\"},\"value\":%u,\"min\":10,\"max\":100,\"step\":1}", runtime->brightness_percent);
+    MANIFEST_ITEM("{\"id\":\"volume\",\"kind\":\"range\",\"label\":{\"zh\":\"音量\",\"en\":\"Volume\"},\"value\":%u,\"min\":0,\"max\":100,\"step\":1}", runtime->volume_percent);
+    MANIFEST_ITEM("{\"id\":\"display_rotation\",\"kind\":\"select\",\"label\":{\"zh\":\"屏幕方向\",\"en\":\"Screen rotation\"},\"value\":\"%s\",\"options\":[{\"value\":\"portrait\",\"label\":{\"zh\":\"竖屏\",\"en\":\"Portrait\"}},{\"value\":\"landscape\",\"label\":{\"zh\":\"横屏\",\"en\":\"Landscape\"}},{\"value\":\"inverted_portrait\",\"label\":{\"zh\":\"反向竖屏\",\"en\":\"Inverted portrait\"}},{\"value\":\"inverted_landscape\",\"label\":{\"zh\":\"反向横屏\",\"en\":\"Inverted landscape\"}}]}", runtime_rotation_config_text(runtime->display_rotation));
+#if ESP_BMS_FEATURE_GPS || ESP_BMS_FEATURE_CONTROLLER
+    MANIFEST_ITEM("{\"id\":\"speed_unit\",\"kind\":\"select\",\"label\":{\"zh\":\"速度单位\",\"en\":\"Speed unit\"},\"value\":\"%s\",\"options\":[{\"value\":\"km/h\",\"label\":{\"zh\":\"公里/小时\",\"en\":\"km/h\"}},{\"value\":\"mph\",\"label\":{\"zh\":\"英里/小时\",\"en\":\"mph\"}}]}", runtime_speed_unit_config_text(runtime->snapshot.speed_unit));
+#endif
+#if ESP_BMS_FEATURE_GPS && ESP_BMS_FEATURE_CONTROLLER
+    MANIFEST_ITEM("{\"id\":\"speed_source\",\"kind\":\"select\",\"label\":{\"zh\":\"速度来源\",\"en\":\"Speed source\"},\"value\":\"%s\",\"options\":[{\"value\":\"gps\",\"label\":{\"zh\":\"GPS\",\"en\":\"GPS\"}},{\"value\":\"controller\",\"label\":{\"zh\":\"控制器\",\"en\":\"Controller\"}}]}", runtime_speed_source_config_text(runtime->snapshot.speed_source));
+#endif
+    MANIFEST_ITEM("{\"id\":\"language\",\"kind\":\"select\",\"label\":{\"zh\":\"语言\",\"en\":\"Language\"},\"value\":\"%s\",\"options\":[{\"value\":\"zh\",\"label\":{\"zh\":\"中文\",\"en\":\"Chinese\"}},{\"value\":\"en\",\"label\":{\"zh\":\"英文\",\"en\":\"English\"}}]}", RUNTIME_FLAG(runtime, LANGUAGE_ZH) ? "zh" : "en");
+#if ESP_BMS_FEATURE_BMS
+    MANIFEST_ITEM("{\"id\":\"bms_type\",\"kind\":\"select\",\"label\":{\"zh\":\"保护板类型\",\"en\":\"BMS type\"},\"value\":\"%s\",\"options\":[{\"value\":\"ant\",\"label\":{\"zh\":\"蚂蚁 ANT\",\"en\":\"ANT\"}},{\"value\":\"jk\",\"label\":{\"zh\":\"极空 JK\",\"en\":\"JK\"}},{\"value\":\"jbd\",\"label\":{\"zh\":\"嘉佰达 JBD\",\"en\":\"JBD\"}},{\"value\":\"daly\",\"label\":{\"zh\":\"达锂 Daly\",\"en\":\"Daly\"}},{\"value\":\"yanyang\",\"label\":{\"zh\":\"彦阳 BMS\",\"en\":\"Yanyang BMS\"}}]}", runtime_bms_type_config_text((esp_bms_idf_bms_type_t)runtime->bms_type));
+#endif
+#undef MANIFEST_ITEM
+    ok = ok && runtime_json_append(json, sizeof(json), &offset, "]}");
+#if ESP_BMS_FEATURE_BMS
+    ok = ok && runtime_json_append(json, sizeof(json), &offset,
+        ",{\"id\":\"bms\",\"label\":{\"zh\":\"保护板\",\"en\":\"BMS\"},\"items\":["
+        "{\"id\":\"bms_scan\",\"kind\":\"action\",\"label\":{\"zh\":\"扫描 BMS\",\"en\":\"Scan BMS\"},\"endpoint\":\"/api/bms/scan\"},"
+        "{\"id\":\"bms_mac\",\"kind\":\"choice\",\"label\":{\"zh\":\"蓝牙连接\",\"en\":\"Bluetooth connection\"},\"value\":%s,\"options_endpoint\":\"/api/bms/candidates\",\"submit_endpoint\":\"/api/bms/bind\",\"submit_key\":\"mac\"}]}", bms_mac);
+#endif
+#if ESP_BMS_FEATURE_OTA
+    ok = ok && runtime_json_append(json, sizeof(json), &offset,
+        ",{\"id\":\"update\",\"label\":{\"zh\":\"固件更新\",\"en\":\"Firmware update\"},\"items\":["
+        "{\"id\":\"ota\",\"kind\":\"upload\",\"label\":{\"zh\":\"上传并更新\",\"en\":\"Upload and update\"},\"endpoint\":\"/api/ota\",\"code_header\":\"X-Firmware-Code\",\"accept\":\".bin,application/octet-stream\"}]}");
+#endif
+    ok = ok && runtime_json_append(json, sizeof(json), &offset, "]}");
+    if (!ok) {
+        return runtime_http_send_text(req, "500 Internal Server Error", "manifest too large");
     }
     return runtime_http_send_json(req, json);
 }
@@ -2521,6 +2647,9 @@ esp_err_t esp_bms_idf_runtime_http_api_handler(httpd_req_t *req)
     }
     if (req->method == HTTP_GET && strcmp(req->uri, "/api/config") == 0) {
         return runtime_http_config_handler(req, runtime);
+    }
+    if (req->method == HTTP_GET && strcmp(req->uri, "/api/settings/manifest") == 0) {
+        return runtime_http_settings_manifest_handler(req, runtime);
     }
     if (req->method == HTTP_GET && strcmp(req->uri, "/api/bms/candidates") == 0) {
         return runtime_http_bms_candidates_handler(req, runtime);
@@ -3350,10 +3479,6 @@ void esp_bms_idf_runtime_init(esp_bms_idf_runtime_t *runtime)
     }
 
     memset(runtime, 0, sizeof(*runtime));
-    (void)snprintf(runtime->snapshot.firmware_version,
-                   sizeof(runtime->snapshot.firmware_version),
-                   "%s",
-                   ESP_BMS_PROFILE_FIRMWARE_VERSION);
     runtime->cast_socket_fd = -1;
     runtime->http_pending_lock = xSemaphoreCreateMutex();
     if (!runtime->http_pending_lock) {
@@ -3633,6 +3758,7 @@ static bool runtime_action_feature_enabled(esp_bms_lvgl_action_t action)
     case ESP_BMS_LVGL_ACTION_SELECT_BMS_JK:
     case ESP_BMS_LVGL_ACTION_SELECT_BMS_JBD:
     case ESP_BMS_LVGL_ACTION_SELECT_BMS_DALY:
+    case ESP_BMS_LVGL_ACTION_SELECT_BMS_YANYANG:
     case ESP_BMS_LVGL_ACTION_SET_PRESET_RANGE:
         return ESP_BMS_FEATURE_BMS;
     case ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_CONNECTION:
@@ -3980,6 +4106,8 @@ bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,
         return runtime_select_bms_type(runtime, ESP_BMS_IDF_BMS_TYPE_JBD);
     case ESP_BMS_LVGL_ACTION_SELECT_BMS_DALY:
         return runtime_select_bms_type(runtime, ESP_BMS_IDF_BMS_TYPE_DALY);
+    case ESP_BMS_LVGL_ACTION_SELECT_BMS_YANYANG:
+        return runtime_select_bms_type(runtime, ESP_BMS_IDF_BMS_TYPE_YANYANG);
     case ESP_BMS_LVGL_ACTION_RESTORE_DEFAULTS:
         esp_bms_idf_runtime_stop_controller_ble(runtime);
         runtime_reset_state(runtime);
@@ -4077,6 +4205,8 @@ const char *esp_bms_idf_runtime_action_name(esp_bms_lvgl_action_t action)
         return "select-bms-jbd";
     case ESP_BMS_LVGL_ACTION_SELECT_BMS_DALY:
         return "select-bms-daly";
+    case ESP_BMS_LVGL_ACTION_SELECT_BMS_YANYANG:
+        return "select-bms-yanyang";
     case ESP_BMS_LVGL_ACTION_RESTORE_DEFAULTS:
         return "restore-defaults";
     case ESP_BMS_LVGL_ACTION_NONE:

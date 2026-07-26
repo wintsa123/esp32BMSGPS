@@ -25,6 +25,16 @@
 /logs/
 /preview/*
 /docs/hardware/
+/.idf-builds/
+/.idf-validation/
+/.npm-cache/
+/.selftests-work-current/
+/.yy-apk-analysis.*/
+/.trellis/workspace/*/yybms-analysis/
+/build*.stale-*/
+/esp_idf_activate_*/
+/tmp*idf_*
+*.apk
 /gpt_image2_call.py
 /.gpt_image2_api_key
 /vercel/

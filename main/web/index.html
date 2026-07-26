@@ -28,6 +28,7 @@
     button.secondary { background: transparent; color: #176b87; }
     .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
     form + .grid { margin-top: 12px; }
+    #dynamic-settings:empty { display: none; }
     .status { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); margin-top: 16px; }
     .metric { border-left: 3px solid #2d8a66; padding-left: 10px; }
     .metric strong { display: block; font-size: 1.2rem; }
@@ -80,6 +81,7 @@
       <div class="metric"><span>Wi-Fi</span><strong id="wifi">--</strong></div>
     </div>
 
+    <div id="dynamic-settings"></div>
     <section>
       <h2 data-i18n="setupAp">设置热点</h2>
       <p class="section-note"><span data-i18n="setupApPurpose">手机连接热点后访问</span> <strong>192.168.4.1</strong></p>
@@ -89,12 +91,12 @@
       </form>
     </section>
 
-    <section>
+    <section id="bms-section">
       <h2 data-i18n="bmsBoard">保护板</h2>
       <p class="section-note" data-i18n="bmsPurpose">选择保护板类型，再扫描或填入蓝牙 MAC 绑定。</p>
       <form id="bms-form">
         <div class="grid">
-          <label><span data-i18n="bmsType">保护板类型</span><select name="bms_type"><option value="ant" data-i18n="antBms">蚂蚁 ANT</option><option value="jk" data-i18n="jkBms">极空 JK</option><option value="jbd" data-i18n="jbdBms">嘉佰达 JBD</option><option value="daly" data-i18n="dalyBms">达锂 Daly</option></select></label>
+          <label><span data-i18n="bmsType">保护板类型</span><select name="bms_type"><option value="ant" data-i18n="antBms">蚂蚁 ANT</option><option value="jk" data-i18n="jkBms">极空 JK</option><option value="jbd" data-i18n="jbdBms">嘉佰达 JBD</option><option value="daly" data-i18n="dalyBms">达锂 Daly</option><option value="yanyang" data-i18n="yanyangBms">彦阳 BMS</option></select></label>
           <label><span data-i18n="bmsBleMac">蓝牙连接</span><input name="bms_mac" placeholder="AA:BB:CC:DD:EE:FF" autocomplete="off"></label>
         </div>
         <div class="refs">
@@ -112,7 +114,7 @@
       </form>
     </section>
 
-    <section>
+    <section id="ota-section">
       <h2 data-i18n="firmwareUpdate">固件更新</h2>
       <p class="section-note" data-i18n="otaPurpose">选择应用固件并输入随固件生成的四位验证码。</p>
       <form id="ota-form">
@@ -123,7 +125,7 @@
       <p class="section-note" id="ota-status"></p>
     </section>
 
-    <section>
+    <section id="device-section">
       <h2 data-i18n="device">设备</h2>
       <form id="device-form">
         <div class="grid">
@@ -155,6 +157,7 @@
         controllerOfflineUsingGps: "控制器离线·当前 GPS",
         controllerSource: "控制器",
         dalyBms: "达锂 Daly",
+        yanyangBms: "彦阳 BMS",
         device: "设备",
         failed: "失败",
         firmware: "固件",
@@ -211,6 +214,7 @@
         controllerOfflineUsingGps: "Controller offline · using GPS",
         controllerSource: "Controller",
         dalyBms: "Daly",
+        yanyangBms: "Yanyang BMS",
         device: "Device",
         failed: "failed",
         firmware: "Firmware",
@@ -333,6 +337,64 @@
       }
     }
 
+    function settingLabel(item) {
+      return item.label?.[uiLanguage] || item.label?.zh || item.id;
+    }
+
+    function safeEndpoint(path) {
+      return typeof path === "string" && path.startsWith("/api/") ? path : null;
+    }
+
+    async function loadManifest() {
+      const host = $("dynamic-settings");
+      host.replaceChildren();
+      try {
+        const manifest = await api("/api/settings/manifest");
+        if (manifest.protocol_version !== 1 || !Array.isArray(manifest.sections)) throw new Error("firmware upgrade required");
+        const language = manifest.sections.flatMap((section) => section.items || []).find((item) => item.id === "language");
+        applyLanguage(language?.value);
+        for (const section of manifest.sections) {
+          if (!section?.label || !Array.isArray(section.items)) throw new Error("invalid manifest");
+          const panel = document.createElement("section");
+          const title = document.createElement("h2");
+          title.textContent = section.label[uiLanguage] || section.label.zh;
+          const form = document.createElement("form");
+          form.className = "grid";
+          for (const item of section.items) {
+            if (!item?.id || !["range", "select", "action", "choice", "upload"].includes(item.kind)) throw new Error("invalid item");
+            if (item.kind === "action") {
+              const button = document.createElement("button"); button.type = "button"; button.textContent = settingLabel(item);
+              button.onclick = async () => { const endpoint = safeEndpoint(item.endpoint); if (endpoint) await api(endpoint, { method: "POST" }); };
+              form.append(button); continue;
+            }
+            if (item.kind === "upload") {
+              const file = document.createElement("input"); file.type = "file"; file.accept = item.accept || ".bin";
+              const code = document.createElement("input"); code.inputMode = "numeric"; code.maxLength = 4; code.placeholder = "四位验证码";
+              const button = document.createElement("button"); button.type = "button"; button.textContent = settingLabel(item);
+              button.onclick = async () => { const endpoint = safeEndpoint(item.endpoint); if (!endpoint || !file.files[0] || !/^\\d{4}$/.test(code.value)) return; await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/octet-stream", [item.code_header || "X-Firmware-Code"]: code.value }, body: file.files[0] }); };
+              form.append(file, code, button); continue;
+            }
+            const label = document.createElement("label"); const text = document.createElement("span"); text.textContent = settingLabel(item);
+            const input = document.createElement(item.kind === "select" ? "select" : "input"); input.name = item.id; input.value = item.value ?? "";
+            if (item.kind === "range") { input.type = "range"; input.min = item.min; input.max = item.max; input.step = item.step || 1; }
+            if (item.kind === "select") for (const option of item.options || []) { const node = document.createElement("option"); node.value = option.value; node.textContent = option.label?.[uiLanguage] || option.label?.zh || option.value; input.append(node); }
+            label.append(text, input); form.append(label);
+            if (item.kind === "choice") {
+              const bind = document.createElement("button"); bind.type = "button"; bind.textContent = "绑定";
+              bind.onclick = async () => { const endpoint = safeEndpoint(item.submit_endpoint); if (endpoint) await api(endpoint, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ [item.submit_key || "mac"]: input.value }) }); };
+              form.append(bind);
+            }
+          }
+          if (section.submit && safeEndpoint(section.submit.endpoint)) { const save = document.createElement("button"); save.textContent = "保存"; form.onsubmit = async (event) => { event.preventDefault(); await api(section.submit.endpoint, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(Object.fromEntries(new FormData(form))) }); await loadManifest(); }; form.append(save); }
+          panel.append(title, form); host.append(panel);
+        }
+        ["bms-section", "ota-section", "device-section"].forEach((id) => { $(id).hidden = true; });
+      } catch {
+        host.textContent = "固件不支持动态设置，请升级";
+        ["bms-section", "ota-section", "device-section"].forEach((id) => { $(id).hidden = true; });
+      }
+    }
+
     async function refresh() {
       try {
         const data = await api("/api/status");
@@ -435,7 +497,7 @@
         updateSpeedSourceHint(config);
         bms.bms_mac.value = config.bms_mac ?? "";
         const bmsType = config.bms_type ?? "ant";
-        bms.bms_type.value = ["ant", "jk", "jbd", "daly"].includes(bmsType) ? bmsType : "ant";
+        bms.bms_type.value = ["ant", "jk", "jbd", "daly", "yanyang"].includes(bmsType) ? bmsType : "ant";
       } catch {
       }
     }
@@ -490,7 +552,7 @@
     });
     bindJsonForm("ap-form", "/api/ap-password");
     bindJsonForm("device-form", "/api/config");
-    loadConfig().then(loadBmsCandidates).then(refresh);
+    loadManifest().then(refresh);
   </script>
 </body>
 </html>

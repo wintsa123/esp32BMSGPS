@@ -990,6 +990,71 @@ GATT discovery, or frame parsing has not produced real data.
 Keep BMS fields offline/invalid until validated BLE notifications from the
 bound device update the runtime snapshot.
 
+## Scenario: Yanyang BMS BLE Telemetry
+
+### 1. Scope / Trigger
+
+- Trigger: adding or changing the Yanyang BMS selection, BLE discovery, read
+  polling, or notification parser.
+
+### 2. Signatures
+
+- BMS type: `ESP_BMS_IDF_BMS_TYPE_YANYANG = 4`; API/Web value: `yanyang`.
+- GATT service: `0000FE59-0000-1000-8000-00805F9B34FB`; write/notify
+  characteristics end in `...0001` and `...0002` respectively.
+- Parser boundary: `protocols/yanyang/esp_bms_yanyang_protocol.c` is pure C;
+  NimBLE lifecycle remains in `esp_bms_bms_ble.c`.
+
+### 3. Contracts
+
+- Poll only the APK-confirmed Modbus reads, in sequence: `0x003F/4`,
+  `0x0001/47`, `0x0030/42`, and `0x005A/22`.
+- CRC-16 uses Modbus `0xFFFF`/`0xA001`; frames place the CRC high byte first.
+  A response has `[address, 0x03, byte_count, payload..., crc_hi, crc_lo]`.
+- The `0x0001` page uses confirmed big-endian offsets for pack voltage,
+  signed current, SOC, capacities, and cell statistics. In APK `3.4.11`, its
+  four temperature bytes are `MOS=84`, `T1=83`, `T2=86`, and `BAL=85`, all as
+  unsigned byte minus `40` degrees C. Project them to the existing slots
+  `MOS->[5]`, `T1->[0]`, `T2->[1]`, and `BAL->[4]`; leave `T3/T4` invalid.
+  Do not infer control commands, protection-bit names, or additional
+  temperature offsets.
+
+### 4. Validation & Error Matrix
+
+- Split or concatenated notifications -> reassemble and accept only a complete
+  valid frame.
+- Invalid function, length, CRC, or stream overflow -> discard/resynchronize;
+  retain the last runtime snapshot and online timestamp.
+- Missing Yanyang service, write characteristic, notify characteristic, or
+  CCCD -> terminate discovery and leave BMS telemetry offline.
+
+### 5. Good / Base / Bad Cases
+
+- Good: discovery finds both characteristics, the CCCD enables, and a valid
+  `0x0001` frame updates the normalized dashboard snapshot, including
+  `T1/T2/BAL/MOS` after the `-40` conversion.
+- Base: a valid non-`0x0001` polling response advances the polling sequence but
+  does not invent dashboard fields.
+- Bad: treating little-endian Modbus CRC byte order as the wire order, or
+  sending configuration, calibration, or upgrade commands without APK or
+  capture evidence.
+
+### 6. Tests Required
+
+- Run `./scripts/run-host-selftests.sh`; assert all four request frames, CRC,
+  split/concatenated stream handling, rejected CRC, and scalar conversions.
+- Run the landscape and portrait LVGL headless smoke checks, the matching
+  hardware-profile build, and GitNexus `detect-changes`.
+- Real Yanyang hardware validation remains required for GATT discovery and
+  telemetry before extending the protocol beyond confirmed read-only fields.
+
+### 7. Wrong vs Correct
+
+```text
+Wrong: add an unverified write command or map unknown bytes to a temperature.
+Correct: poll only confirmed pages and project only APK-confirmed fields.
+```
+
 ## Scenario: Unified Speed Dashboard And Source Selection
 
 ### 1. Scope / Trigger

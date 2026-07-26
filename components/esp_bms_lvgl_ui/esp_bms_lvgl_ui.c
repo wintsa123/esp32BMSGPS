@@ -317,6 +317,8 @@ _Static_assert(ESP_BMS_LVGL_ACTION_SET_SPEED_DASHBOARD_STYLE == 31,
                "esp_bms_lvgl_action_t value changed; update C action consumers too");
 _Static_assert(ESP_BMS_LVGL_ACTION_SET_BOOT_ANIMATION_STYLE == 32,
                "esp_bms_lvgl_action_t value changed; update C action consumers too");
+_Static_assert(ESP_BMS_LVGL_ACTION_SELECT_BMS_YANYANG == 35,
+               "esp_bms_lvgl_action_t value changed; update C action consumers too");
 
 typedef struct {
     lv_display_t *display;
@@ -2354,6 +2356,7 @@ static const char *const SETTINGS_BMS_TYPE_LABELS[] = {
     "极空 JK",
     "嘉佰达 JBD",
     "达锂 Daly",
+    "彦阳 BMS",
 };
 
 static const esp_bms_lvgl_action_t SETTINGS_BMS_TYPE_ACTIONS[] = {
@@ -2361,6 +2364,7 @@ static const esp_bms_lvgl_action_t SETTINGS_BMS_TYPE_ACTIONS[] = {
     ESP_BMS_LVGL_ACTION_SELECT_BMS_JK,
     ESP_BMS_LVGL_ACTION_SELECT_BMS_JBD,
     ESP_BMS_LVGL_ACTION_SELECT_BMS_DALY,
+    ESP_BMS_LVGL_ACTION_SELECT_BMS_YANYANG,
 };
 
 _Static_assert(ARRAY_SIZE(SETTINGS_BMS_TYPE_LABELS) == ARRAY_SIZE(SETTINGS_BMS_TYPE_ACTIONS),
@@ -4213,8 +4217,8 @@ bool esp_bms_lvgl_ui_speed_dashboard_style_available(esp_bms_speed_dashboard_sty
 esp_bms_speed_dashboard_style_t esp_bms_lvgl_ui_default_speed_dashboard_style(void)
 {
     static const esp_bms_speed_dashboard_style_t styles[] = {
-        ESP_BMS_SPEED_DASHBOARD_STYLE_S1000RR,
         ESP_BMS_SPEED_DASHBOARD_STYLE_CONTROLLER,
+        ESP_BMS_SPEED_DASHBOARD_STYLE_S1000RR,
         ESP_BMS_SPEED_DASHBOARD_STYLE_HONDA_FIREBLADE,
     };
     for (size_t index = 0U; index < ARRAY_SIZE(styles); ++index) {
@@ -6575,8 +6579,8 @@ static void format_temp_c(char *out, size_t len, bool valid, int16_t celsius)
 
 static void set_header(const esp_bms_dashboard_snapshot_t *snapshot)
 {
+#if ESP_BMS_FEATURE_GPS
     const bool gps_fix_valid = SNAPSHOT_FLAG(snapshot, GPS_FIX_VALID);
-    const bool bms_online = SNAPSHOT_FLAG(snapshot, BMS_ONLINE);
 
     if (snapshot->gps_module_state == (uint8_t)ESP_BMS_GPS_MODULE_PROBING) {
         label_set_text_color_if_changed(s_ui.gps_state, COLOR_WARN);
@@ -6589,6 +6593,11 @@ static void set_header(const esp_bms_dashboard_snapshot_t *snapshot)
         label_set_text_color_if_changed(s_ui.gps_state, COLOR_BAD);
         label_set_text_if_changed(s_ui.gps_state, "GPS OFF");
     }
+#else
+    lv_obj_add_flag(s_ui.gps_state, LV_OBJ_FLAG_HIDDEN);
+#endif
+
+    const bool bms_online = SNAPSHOT_FLAG(snapshot, BMS_ONLINE);
 
     label_set_text_color_if_changed(s_ui.bms_state, bms_online ? COLOR_ACCENT : COLOR_BAD);
     label_set_text_if_changed(s_ui.bms_state, bms_online ? "BMS OK" : "BMS OFF");

@@ -67,10 +67,10 @@ pin as dangerous. Do not add a source-code fallback GPIO.
 
 ```powershell
 # Windows local flash
-.\scripts\flash.ps1 -Port COM3 -Monitor
+.\scripts\flash.ps1 -Port COM6 -Monitor
 
 # Windows side of the fixed RFC2217 bridge
-.\scripts\serial_tcp_bridge.ps1 -PortName COM3
+.\scripts\serial_tcp_bridge.ps1 -PortName COM6
 ```
 
 Companion builds:
@@ -205,7 +205,7 @@ RUN_TESTS=1 ./scripts/build-android-cast.sh
 - Interactive configurator builds default to local serial flashing. Remote
   RFC2217 requires an explicit target selection and URL.
 - The project remote bridge is
-  `rfc2217://192.168.2.10:4000?ign_set_control`, backed by Windows `COM3` and
+  `rfc2217://192.168.2.10:4000?ign_set_control`, backed by Windows `COM6` and
   `scripts/serial_tcp_bridge.ps1`.
 - Use RFC2217, not `socket://`, because esptool requires DTR/RTS line control.
 - Use explicit `-b 115200` on the fixed bridge and allow only one bridge client

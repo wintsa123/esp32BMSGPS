@@ -587,6 +587,9 @@ function Set-RequiredGpioRoles([System.Collections.IDictionary]$Config) {
             foreach ($Role in @('TFT_WR', 'TFT_CS', 'TFT_DC')) { Add-RequiredGpioRole 'output' $Role }
         }
     }
+    if ($script:BoardExpander -eq 'XL9555') {
+        foreach ($Role in @('EXPANDER_SDA', 'EXPANDER_SCL')) { Add-RequiredGpioRole 'output' $Role }
+    }
     if ($Config.INPUT -ne 'none') {
         switch ($script:BoardInputBus) {
             'SPI' {
@@ -683,11 +686,12 @@ function Validate-Config([System.Collections.IDictionary]$Config) {
         $script:BoardAudioBackend = 'NONE'
         $script:BoardAudioDacChannel = '0'
         $script:BoardAudioEnableActiveLevel = '0'
+        $script:BoardExpander = 'NONE'
         $BoardInputGpio = $Config.INPUT_GPIO
         $BoardOutputGpio = $Config.OUTPUT_GPIO
     } else {
         $Board = Get-Record 'board' $Config.BOARD
-        Assert-Keys $Board @('SCHEMA_VERSION', 'ID', 'MCU', 'DISPLAY', 'INPUT', 'DISPLAY_BUS', 'DISPLAY_DATA_WIDTH', 'INPUT_BUS', 'FLASH_MB', 'PSRAM_MB', 'PARTITIONS', 'BUILD_READY', 'AUDIO_BACKEND', 'AUDIO_DAC_CHANNEL', 'AUDIO_ENABLE_ACTIVE_LEVEL', 'INPUT_GPIO', 'OUTPUT_GPIO', 'APPROVED_DANGEROUS_GPIO')
+        Assert-Keys $Board @('SCHEMA_VERSION', 'ID', 'MCU', 'DISPLAY', 'INPUT', 'DISPLAY_BUS', 'DISPLAY_DATA_WIDTH', 'INPUT_BUS', 'FLASH_MB', 'PSRAM_MB', 'PARTITIONS', 'BUILD_READY', 'AUDIO_BACKEND', 'AUDIO_DAC_CHANNEL', 'AUDIO_ENABLE_ACTIVE_LEVEL', 'EXPANDER', 'INPUT_GPIO', 'OUTPUT_GPIO', 'APPROVED_DANGEROUS_GPIO')
         if ($Board.MCU -ne $Config.MCU) { Fail "board $($Config.BOARD) requires $($Board.MCU)" }
         if ($Board.DISPLAY -ne $Config.DISPLAY) { Fail "board $($Config.BOARD) requires display $($Board.DISPLAY)" }
         if ($Config.INPUT -ne 'none' -and $Board.INPUT -ne $Config.INPUT) { Fail "board $($Config.BOARD) requires input $($Board.INPUT) or none" }
@@ -699,6 +703,7 @@ function Validate-Config([System.Collections.IDictionary]$Config) {
         $script:BoardAudioBackend = $Board.AUDIO_BACKEND
         $script:BoardAudioDacChannel = $Board.AUDIO_DAC_CHANNEL
         $script:BoardAudioEnableActiveLevel = $Board.AUDIO_ENABLE_ACTIVE_LEVEL
+        $script:BoardExpander = if ([string]::IsNullOrEmpty($Board.EXPANDER)) { 'NONE' } else { $Board.EXPANDER }
         $BoardInputGpio = $Board.INPUT_GPIO
         $BoardOutputGpio = $Board.OUTPUT_GPIO
     }
@@ -715,13 +720,14 @@ function Validate-Config([System.Collections.IDictionary]$Config) {
     if ($script:BoardAudioBackend -in @('I2S', 'NONE') -and $script:BoardAudioDacChannel -ne '0') { Fail "$script:BoardAudioBackend board requires AUDIO_DAC_CHANNEL 0" }
     if ($script:BoardAudioBackend -notin @('DAC', 'I2S', 'NONE')) { Fail "unsupported audio backend: $script:BoardAudioBackend" }
     if ($script:BoardAudioEnableActiveLevel -notin @('0', '1')) { Fail 'AUDIO_ENABLE_ACTIVE_LEVEL must be 0 or 1' }
+    if ($script:BoardExpander -notin @('NONE', 'XL9555')) { Fail "unsupported board expander: $script:BoardExpander" }
     if (-not $script:BoardPartitions.StartsWith('firmware/partitions/')) { Fail "unsupported partition path: $($script:BoardPartitions)" }
     if ($script:BoardPartitions.Contains('..')) { Fail 'partition path traversal is not allowed' }
     if (-not (Test-Path -LiteralPath (Join-Path $Root $script:BoardPartitions) -PathType Leaf)) { Fail "board partition file is missing: $($script:BoardPartitions)" }
 
     if ($Config.DISPLAY -eq 'custom') { Fail 'custom display names are no longer supported; select a catalog display' }
     $Display = Get-Record 'display' $Config.DISPLAY
-    Assert-Keys $Display @('SCHEMA_VERSION', 'ID', 'TARGETS', 'BUS', 'DATA_WIDTH', 'DRIVER', 'SIZE_INCH', 'COMPONENT', 'VERSION', 'CMAKE_COMPONENT', 'HEADER', 'INIT', 'REQUIRES_INPUT_GPIO', 'REQUIRES_OUTPUT_GPIO', 'WIDTH', 'HEIGHT', 'PIXEL_CLOCK_HZ', 'ROTATION', 'RGB_ORDER', 'INVERT_COLOR', 'SPI_MODE', 'I80_SWAP_COLOR_BYTES', 'I80_PCLK_ACTIVE_NEG', 'I80_PCLK_IDLE_LOW', 'BACKLIGHT_ON_LEVEL', 'POWER_ON_DELAY_MS')
+    Assert-Keys $Display @('SCHEMA_VERSION', 'ID', 'TARGETS', 'BUS', 'DATA_WIDTH', 'DRIVER', 'SIZE_INCH', 'COMPONENT', 'VERSION', 'CMAKE_COMPONENT', 'HEADER', 'INIT', 'REQUIRES_INPUT_GPIO', 'REQUIRES_OUTPUT_GPIO', 'WIDTH', 'HEIGHT', 'PIXEL_CLOCK_HZ', 'ROTATION', 'ROTATION_DEFAULT_VERSION', 'RGB_ORDER', 'INVERT_COLOR', 'SPI_MODE', 'I80_SWAP_COLOR_BYTES', 'I80_PCLK_ACTIVE_NEG', 'I80_PCLK_IDLE_LOW', 'BACKLIGHT_ON_LEVEL', 'POWER_ON_DELAY_MS')
     if (-not (Test-CsvContains $Display.TARGETS $Config.MCU)) { Fail "display $($Config.DISPLAY) is unavailable on $($Config.MCU)" }
     if ($Config.BOARD -eq 'custom' -and [string]::IsNullOrEmpty($script:BoardDisplayBus)) { $script:BoardDisplayBus = $Display.BUS }
     if ($Display.BUS -ne $script:BoardDisplayBus) { Fail 'display bus is incompatible' }
@@ -1626,6 +1632,7 @@ function Set-MissingBoardGpio([System.Collections.IDictionary]$Config) {
     $script:BoardAudioBackend = $Board.AUDIO_BACKEND
     $script:BoardAudioDacChannel = $Board.AUDIO_DAC_CHANNEL
     $script:BoardAudioEnableActiveLevel = $Board.AUDIO_ENABLE_ACTIVE_LEVEL
+    $script:BoardExpander = if ([string]::IsNullOrEmpty($Board.EXPANDER)) { 'NONE' } else { $Board.EXPANDER }
     $BoardInputGpio = $Board.INPUT_GPIO
     $BoardOutputGpio = $Board.OUTPUT_GPIO
     Set-RequiredGpioRoles $Config
