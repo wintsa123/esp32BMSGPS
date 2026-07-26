@@ -7,6 +7,10 @@ mkdir -p "${repo_root}/firmware-builds"
 profile_dir="$(mktemp -d "${repo_root}/firmware-builds/.configurator-requires.XXXXXX")"
 trap 'rm -rf "${work_dir}" "${profile_dir}"' EXIT
 
+rg -Fq 'default y if SPIRAM' "${repo_root}/components/esp_bms_lvgl_bridge/Kconfig"
+rg -qx 'CONFIG_ESP_BMS_LVGL_BRIDGE_DOUBLE_BUFFER=y' "${repo_root}/config/sdkconfig/sdkconfig.defaults.esp32s3"
+rg -qx '# CONFIG_ESP_BMS_LVGL_BRIDGE_DOUBLE_BUFFER is not set' "${repo_root}/config/sdkconfig/sdkconfig.defaults"
+
 expect_fail() {
     local expected="$1"
     shift
@@ -447,7 +451,7 @@ printf 'invalid\n2\n\n\n\n\n\n\n' | FIRMWARE_BUILD_ROOT="${work_dir}/interactive
 rg -q '^请输入 1、2、zh 或 en。 / Enter 1, 2, zh, or en\.$' "${work_dir}/interactive-retry.err"
 rg -q '^config: .*/interactive-retry-build/esp32s3-n16r8-st7796u-gt1151/firmware.env$' "${work_dir}/interactive-retry.out"
 
-printf '1\n2\n\n\n2,7\n\nn\n' | FIRMWARE_BUILD_ROOT="${work_dir}/interactive-cancel-build" "${repo_root}/start.sh" >"${work_dir}/interactive-cancel.out"
+printf '1\n2\n\n\n\n\nn\n' | FIRMWARE_BUILD_ROOT="${work_dir}/interactive-cancel-build" "${repo_root}/start.sh" >"${work_dir}/interactive-cancel.out"
 rg -Fq '  1) ili9488-i80 ' "${work_dir}/interactive-cancel.out"
 rg -Fq '  1) gt1151-i2c ' "${work_dir}/interactive-cancel.out"
 rg -Fq '  2) none ' "${work_dir}/interactive-cancel.out"

@@ -24,15 +24,20 @@ menu "ESP BMS LVGL Bridge"
 
     config ESP_BMS_LVGL_BRIDGE_DOUBLE_BUFFER
         bool "Use two LVGL SPI draw buffers"
+        default y if SPIRAM
         default n
         help
             Allocate a secondary SPI draw buffer for the ESP LVGL adapter
             partial render mode. This can improve overlap between rendering and
-            SPI flush work during page drags, but at 320 px wide and 64 rows it
-            costs another about 40 KiB of internal DMA-capable RAM.
+            SPI/I80 flush work during page drags. On PSRAM targets this is
+            enabled by default and consumes external RAM; the bridge enables it
+            only when two buffers fit. At 320 px wide and 64 rows it costs
+            another about 40 KiB.
 
-            Keep this disabled in the normal image until hardware logs confirm
-            enough free internal RAM remains after LVGL, Wi-Fi, and HTTP start.
+            Keep this disabled in normal images without PSRAM until hardware
+            logs confirm enough free internal RAM remains after LVGL, Wi-Fi,
+            and HTTP start. Explicit diagnostic configurations can still enable
+            it for A/B testing on those targets.
 
     config ESP_BMS_LVGL_BRIDGE_SKIP_RGB565_SWAP
         bool "Skip adapter RGB565 byte swap (16-bit I80)"

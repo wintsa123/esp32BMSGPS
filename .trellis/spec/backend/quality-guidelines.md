@@ -721,6 +721,14 @@ if (action == ESP_BMS_LVGL_ACTION_ENABLE_WIFI_REPROVISIONING) {
 - Dynamic LVGL labels and QR widgets should update only when their rendered
   value changes.
 - Runtime snapshot updates should be deferred while page drag/settle is active.
+- On PSRAM targets, LVGL partial draw buffers may use external RAM. Request two
+  buffers only when the PSRAM heap can hold both; when only one fits, keep one
+  PSRAM buffer instead of falling back to two internal-RAM buffers.
+- No-PSRAM profiles stay single-buffered by default. An explicitly enabled
+  drag-diagnostic double buffer remains valid and uses internal RAM.
+- Do not move hot code, the LVGL worker stack, or existing ARGB8888 canvases
+  into PSRAM solely for FPS. Double buffering overlaps rendering with panel DMA
+  but cannot exceed the display-bus limit.
 
 ## Scenario: Cross-Component C Flag Storage
 

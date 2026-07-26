@@ -1233,9 +1233,16 @@ esp_err_t esp_bms_lvgl_bridge_init(const esp_bms_lvgl_bridge_config_t *config)
     size_t psram_free = 0;
     size_t psram_largest = 0;
     const bool use_psram_buffers = psram_can_hold_lvgl_buffers(draw_buffer_bytes,
-                                                               LVGL_REQUIRE_DOUBLE_BUFFER,
-                                                               &psram_free,
-                                                               &psram_largest);
+                                                                false,
+                                                                &psram_free,
+                                                                &psram_largest);
+#if CONFIG_SPIRAM
+    /* Do not turn PSRAM pressure into two internal draw buffers. */
+    const bool use_double_buffer = LVGL_REQUIRE_DOUBLE_BUFFER &&
+                                   psram_can_hold_lvgl_buffers(draw_buffer_bytes, true, NULL, NULL);
+#else
+    const bool use_double_buffer = LVGL_REQUIRE_DOUBLE_BUFFER;
+#endif
     s_physical_width = config->physical_width;
     s_physical_height = config->physical_height;
     s_panel_mirror_x = config->panel_mirror_x;
@@ -1276,7 +1283,7 @@ esp_err_t esp_bms_lvgl_bridge_init(const esp_bms_lvgl_bridge_config_t *config)
             s_panel, s_panel_io, hres, vres, ESP_LV_ADAPTER_ROTATE_0);
     display_config.profile.use_psram = use_psram_buffers;
     display_config.profile.buffer_height = LVGL_SPI_DRAW_BUFFER_HEIGHT;
-    display_config.profile.require_double_buffer = LVGL_REQUIRE_DOUBLE_BUFFER;
+    display_config.profile.require_double_buffer = use_double_buffer;
     s_display = esp_lv_adapter_register_display(&display_config);
     ESP_RETURN_ON_FALSE(s_display, ESP_FAIL, TAG, "register adapter display failed");
 #if ESP_BMS_PROFILE_PANEL_ST7796
@@ -1296,8 +1303,9 @@ esp_err_t esp_bms_lvgl_bridge_init(const esp_bms_lvgl_bridge_config_t *config)
     ESP_RETURN_ON_ERROR(set_backlight(config->pin_backlight, config->backlight_on_level),
                         TAG, "turn backlight on failed");
 
-    ESP_LOGI(TAG, "LVGL buffers height=%u double=%s psram=%s free=%u largest=%u",
+    ESP_LOGI(TAG, "LVGL buffers height=%u requested_double=%s active_double=%s psram=%s free=%u largest=%u",
              (unsigned)LVGL_SPI_DRAW_BUFFER_HEIGHT, LVGL_REQUIRE_DOUBLE_BUFFER ? "yes" : "no",
+             use_double_buffer ? "yes" : "no",
              use_psram_buffers ? "yes" : "no", (unsigned)psram_free, (unsigned)psram_largest);
     s_initialized = true;
     return ESP_OK;
