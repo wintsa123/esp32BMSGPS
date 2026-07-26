@@ -505,3 +505,36 @@ Enabled two LVGL software draw units on dual-core targets, pinned the adapter wo
 ### Next Steps
 
 - None - task complete
+
+
+## Session 16: Adjust S3 settings control sizing
+
+**Date**: 2026-07-27
+**Task**: Adjust S3 settings control sizing
+**Branch**: `main`
+
+### Summary
+
+Scaled settings controls only for S3 logical resolutions, added the 18px settings font, verified simulator and S3 builds, and skipped flashing at user request.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0e182e32` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

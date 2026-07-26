@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 15
-- **Last Active**: 2026-07-26
+- **Total Sessions**: 16
+- **Last Active**: 2026-07-27
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~507 | Active |
+| `journal-1.md` | ~540 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 16 | 2026-07-27 | Adjust S3 settings control sizing | `0e182e32` | `main` |
 | 15 | 2026-07-26 | PSRAM LVGL 帧率优化 | `00139dcf` | `main` |
 | 14 | 2026-07-25 | ESP32 LVGL dual-core frame-rate optimization | `5ef2184` | `main` |
 | 13 | 2026-07-25 | 速度来源编译裁剪 | `c0d87db` | `main` |
