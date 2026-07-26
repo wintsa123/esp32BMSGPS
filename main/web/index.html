@@ -32,6 +32,10 @@
     .status { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); margin-top: 16px; }
     .metric { border-left: 3px solid #2d8a66; padding-left: 10px; }
     .metric strong { display: block; font-size: 1.2rem; }
+    .ride-records { display: grid; gap: 8px; }
+    .ride-record { border-left: 3px solid #176b87; padding-left: 10px; }
+    .ride-record strong, .ride-record p { display: block; }
+    .ride-record p { font-size: .88rem; margin-top: 4px; overflow-wrap: anywhere; }
     .candidate-list { display: grid; gap: 8px; margin: 12px 0; }
     .refs { display: flex; flex-wrap: wrap; gap: 8px 12px; margin: 8px 0 12px; font-size: .88rem; }
     .refs a { color: #176b87; }
@@ -80,6 +84,11 @@
       <div class="metric"><span data-i18n="warnings">告警</span><strong id="bms-warnings">--</strong></div>
       <div class="metric"><span>Wi-Fi</span><strong id="wifi">--</strong></div>
     </div>
+
+    <section>
+      <h2 data-i18n="rideRecords">骑行峰值记录</h2>
+      <div id="ride-records" class="ride-records"></div>
+    </section>
 
     <div id="dynamic-settings"></div>
     <section>
@@ -184,7 +193,13 @@
         portrait: "竖屏",
         protections: "保护",
         protocolRefs: "协议参考",
+        currentRide: "本次开机",
+        maxCurrent: "最大电流",
+        maxDelta: "最大压差",
+        noRideRecords: "暂无骑行峰值记录",
         refresh: "刷新",
+        rideRecord: "骑行记录",
+        rideRecords: "骑行峰值记录",
         saveApPassword: "保存热点密码",
         saveDevice: "保存设备设置",
         scanBms: "扫描 BMS",
@@ -241,7 +256,13 @@
         portrait: "Portrait",
         protections: "Protections",
         protocolRefs: "Protocol refs",
+        currentRide: "Current boot",
+        maxCurrent: "Max current",
+        maxDelta: "Max delta",
+        noRideRecords: "No ride peak records",
         refresh: "Refresh",
+        rideRecord: "Ride record",
+        rideRecords: "Ride peak records",
         saveApPassword: "Save AP Password",
         saveDevice: "Save Device Settings",
         scanBms: "Scan BMS",
@@ -262,6 +283,7 @@
     let bmsScanPollTimer = 0;
     let bmsScanPollDeadline = 0;
     let lastConfig = {};
+    let rideRecords = [];
 
     function t(key) {
       return (I18N[uiLanguage] || I18N.zh)[key] || I18N.zh[key] || key;
@@ -274,6 +296,7 @@
         node.textContent = t(node.dataset.i18n);
       });
       updateSpeedSourceHint(lastConfig);
+      renderRideRecords();
     }
 
     function updateSpeedSourceHint(config = lastConfig) {
@@ -405,6 +428,13 @@
         $("bms-protections").textContent = formatCodes(data.bms_protections);
         $("bms-warnings").textContent = formatCodes(data.bms_warnings);
         $("wifi").textContent = formatState(data.wifi);
+        try {
+          const history = await api("/api/bms/ride-records");
+          rideRecords = Array.isArray(history.records) ? history.records : [];
+        } catch {
+          rideRecords = [];
+        }
+        renderRideRecords();
       } catch {
         $("wifi").textContent = t("setup");
       }
@@ -466,6 +496,42 @@
 
     function formatMillivolts(value) {
       return Number.isFinite(value) ? `${(value / 1000).toFixed(2)} V` : "--";
+    }
+
+    function formatDeciAmps(value) {
+      return Number.isFinite(value) ? `${(value / 10).toFixed(1)} A` : "--";
+    }
+
+    function formatRideSnapshot(snapshot) {
+      if (!snapshot || typeof snapshot !== "object") return "--";
+      const temperatures = Array.isArray(snapshot.temperatures_c)
+        ? snapshot.temperatures_c.filter(Number.isFinite).map((value) => `${value}C`)
+        : [];
+      const delta = Number.isFinite(snapshot.delta_cell_voltage_mv) ? `${snapshot.delta_cell_voltage_mv} mV` : "--";
+      const soc = Number.isFinite(snapshot.soc_percent) ? `${snapshot.soc_percent}%` : "--";
+      return `${formatMillivolts(snapshot.pack_voltage_mv)} · ${formatDeciAmps(snapshot.current_deci_amps)} · Δ ${delta} · ${soc} · T ${temperatures.join("/") || "--"}`;
+    }
+
+    function renderRideRecords() {
+      const host = $("ride-records");
+      if (!host) return;
+      host.replaceChildren();
+      if (!rideRecords.length) {
+        host.textContent = t("noRideRecords");
+        return;
+      }
+      rideRecords.forEach((record, index) => {
+        const item = document.createElement("article");
+        item.className = "ride-record";
+        const title = document.createElement("strong");
+        title.textContent = record.current === true ? t("currentRide") : `${t("rideRecord")} ${index + 1}`;
+        const current = document.createElement("p");
+        current.textContent = `${t("maxCurrent")}: ${formatRideSnapshot(record.max_current)}`;
+        const delta = document.createElement("p");
+        delta.textContent = `${t("maxDelta")}: ${formatRideSnapshot(record.max_delta)}`;
+        item.append(title, current, delta);
+        host.append(item);
+      });
     }
 
     function formatState(value) {

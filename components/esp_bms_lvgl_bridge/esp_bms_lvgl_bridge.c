@@ -44,6 +44,7 @@
 #include "esp_bms_lvgl_contract.h"
 #include "esp_lv_adapter.h"
 #include "esp_lv_adapter_input.h"
+#include "src/draw/sw/lv_draw_sw.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -83,6 +84,10 @@ static const char *TAG = "bms_lvgl_bridge";
 #define TOUCH_FILTER_MAX_SPEED_PX_PER_MS 4U
 #define TOUCH_FILTER_LOG_INTERVAL_MS 1000U
 #define TOUCH_FILTER_PRESS_STABILITY_DISTANCE 16U
+#if ESP_BMS_PROFILE_TOUCH_GT1151
+#define GT1151_POINT_STATUS_REGISTER 0x814EU
+#define GT1151_POINT_STATUS_READY_BIT 0x80U
+#endif
 #if CONFIG_ESP_BMS_LVGL_BRIDGE_DOUBLE_BUFFER
 #define LVGL_REQUIRE_DOUBLE_BUFFER true
 #else
@@ -120,10 +125,12 @@ typedef struct {
     uint16_t y[TOUCH_FILTER_HISTORY_COUNT];
     uint16_t accepted_x;
     uint16_t accepted_y;
+    esp_lcd_touch_point_data_t accepted_point;
     uint16_t candidate_x;
     uint16_t candidate_y;
     TickType_t accepted_tick;
     uint8_t count;
+    bool accepted_point_valid;
     bool candidate_pending;
     bool pressed;
     bool reported;
@@ -431,6 +438,8 @@ static touch_filter_result_t touch_filter_apply(esp_lcd_touch_point_data_t *poin
         s_touch_filter.reported = true;
         s_touch_filter.accepted_x = point->x;
         s_touch_filter.accepted_y = point->y;
+        s_touch_filter.accepted_point = *point;
+        s_touch_filter.accepted_point_valid = true;
         s_touch_filter.accepted_tick = now;
         touch_filter_push(s_touch_filter.candidate_x, s_touch_filter.candidate_y);
         touch_filter_push(point->x, point->y);
@@ -445,8 +454,9 @@ static touch_filter_result_t touch_filter_apply(esp_lcd_touch_point_data_t *poin
         s_touch_filter.candidate_x = point->x;
         s_touch_filter.candidate_y = point->y;
         s_touch_filter.candidate_pending = true;
-        point->x = s_touch_filter.accepted_x;
-        point->y = s_touch_filter.accepted_y;
+        if (s_touch_filter.accepted_point_valid) {
+            *point = s_touch_filter.accepted_point;
+        }
         return TOUCH_FILTER_REJECTED_SPIKE;
     }
 
@@ -462,6 +472,8 @@ static touch_filter_result_t touch_filter_apply(esp_lcd_touch_point_data_t *poin
     }
     s_touch_filter.accepted_x = point->x;
     s_touch_filter.accepted_y = point->y;
+    s_touch_filter.accepted_point = *point;
+    s_touch_filter.accepted_point_valid = true;
     s_touch_filter.accepted_tick = now;
     return TOUCH_FILTER_ACCEPT;
 }
@@ -806,6 +818,23 @@ static esp_err_t touch_read_with_diagnostics(esp_lcd_touch_handle_t tp,
         s_touch_read_callback_logged = true;
     }
 
+#if ESP_BMS_PROFILE_TOUCH_GT1151
+    uint8_t gt1151_status = 0;
+    const esp_err_t gt1151_status_ret =
+        esp_lcd_panel_io_rx_param(s_touch_io,
+                                  GT1151_POINT_STATUS_REGISTER,
+                                  &gt1151_status,
+                                  sizeof(gt1151_status));
+    /* A clear buffer-ready bit means the GT1151 coordinate data is invalid, not released. */
+    if (gt1151_status_ret == ESP_OK &&
+        (gt1151_status & GT1151_POINT_STATUS_READY_BIT) == 0U &&
+        s_touch_filter.accepted_point_valid && points && count && max_count > 0U) {
+        points[0] = s_touch_filter.accepted_point;
+        *count = 1U;
+        return ESP_OK;
+    }
+#endif
+
     esp_err_t ret = esp_lcd_touch_read_data(tp);
     if (ret != ESP_OK) {
         const bool was_pressed = s_touch_filter.pressed;
@@ -1038,6 +1067,26 @@ static esp_err_t init_touch(const esp_bms_lvgl_bridge_config_t *config, uint16_t
     }
 }
 
+#if ESP_BMS_PROFILE_PANEL_ST7796
+/**
+ * Custom draw bitmap callback for 16-bit I80 panels.
+ * ESP32-S3 I80 DMA sends low-address byte on D[15:8] (big-endian wire order),
+ * but LVGL renders RGB565 in native little-endian.  Swap bytes before sending.
+ */
+static esp_err_t i80_draw_bitmap_swap(lv_display_t *disp,
+                                       esp_lcd_panel_handle_t panel,
+                                       int x_start, int y_start,
+                                       int x_end, int y_end,
+                                       const void *color_map, void *user_ctx)
+{
+    (void)disp;
+    (void)user_ctx;
+    uint32_t pixel_count = (uint32_t)(x_end - x_start) * (uint32_t)(y_end - y_start);
+    lv_draw_sw_rgb565_swap((void *)color_map, pixel_count);
+    return esp_lcd_panel_draw_bitmap(panel, x_start, y_start, x_end, y_end, color_map);
+}
+#endif
+
 static esp_err_t init_panel_spi(const esp_bms_lvgl_bridge_config_t *config, int max_transfer_sz)
 {
     ESP_RETURN_ON_FALSE(config->panel_driver == ESP_BMS_LVGL_PANEL_ST7789 ||
@@ -1230,6 +1279,18 @@ esp_err_t esp_bms_lvgl_bridge_init(const esp_bms_lvgl_bridge_config_t *config)
     display_config.profile.require_double_buffer = LVGL_REQUIRE_DOUBLE_BUFFER;
     s_display = esp_lv_adapter_register_display(&display_config);
     ESP_RETURN_ON_FALSE(s_display, ESP_FAIL, TAG, "register adapter display failed");
+#if ESP_BMS_PROFILE_PANEL_ST7796
+    /* ESP32-S3 I80 16-bit DMA sends the low-address byte on D[15:8] (big-endian
+     * wire order).  LVGL renders RGB565 in native little-endian, so we byte-swap
+     * each pixel in our custom draw callback before sending to the panel. */
+    if (config->display_bus == ESP_BMS_LVGL_DISPLAY_BUS_I80) {
+        const esp_lv_adapter_draw_bitmap_callbacks_t cbs = {
+            .custom_draw_bitmap = i80_draw_bitmap_swap,
+        };
+        ESP_RETURN_ON_ERROR(esp_lv_adapter_set_draw_bitmap_callbacks(s_display, &cbs, NULL),
+                            TAG, "set draw bitmap callbacks failed");
+    }
+#endif
 
     ESP_RETURN_ON_ERROR(init_touch(config, hres, vres), TAG, "init touch failed");
     ESP_RETURN_ON_ERROR(set_backlight(config->pin_backlight, config->backlight_on_level),

@@ -555,6 +555,17 @@ x = touch_calibration_map(x, calibration.x_min, calibration.x_max, width - 1);
 touch_canonical_to_display(x, y, &display_x, &display_y);
 ```
 
+## Scenario: GT1151 Invalid Touch Reports
+
+- `0x814E` bit 7 is the GT1151 buffer-ready flag. A clear bit makes the
+  coordinate buffer invalid; it is not a zero-contact release report.
+- The bridge keeps the most recent accepted complete touch point while that
+  bit is clear, and only a valid zero-contact frame releases LVGL.
+- This guard is compiled only for the GT1151 profile. If the status-register
+  read fails, retain the driver's existing read path rather than blocking input.
+- Validate with the selected S3 profile build, RFC2217 flash, and a held drag,
+  a short tap, and a release on the physical screen.
+
 ## Required Patterns
 
 - Keep `main/idf_main.c` as orchestration only. Subsystem logic belongs in
@@ -847,6 +858,7 @@ The embedded Web UI currently calls these routes:
 - `GET /api/status`
 - `GET /api/config`
 - `GET /api/bms/candidates`
+- `GET /api/bms/ride-records`
 - `POST /api/config`
 - `POST /api/wifi`
 - `POST /api/ap-password`
@@ -857,6 +869,73 @@ The embedded Web UI currently calls these routes:
 Every route must either be implemented or intentionally return a clear error
 while the remaining ESP-IDF subsystem is being built. Do not return fake BMS
 candidates or fake OTA success.
+
+## Scenario: BMS Ride Peak Records
+
+### 1. Scope / Trigger
+
+- Trigger: changing BMS telemetry application, the per-boot peak history, its
+  NVS persistence, `GET /api/bms/ride-records`, or either device Web consumer.
+
+### 2. Signatures
+
+- API: `GET /api/bms/ride-records` returns `{"records":[...]}` newest first.
+- Persistence: namespace `esp_bms`, versioned blob key `ride_records`.
+- Snapshot fields: `pack_voltage_mv`, signed `current_deci_amps`,
+  `delta_cell_voltage_mv`, `soc_percent`, and six nullable temperatures.
+
+### 3. Contracts
+
+- The first complete, valid BMS sample after boot starts exactly one record;
+  disconnects, timeouts, GPS, and speed never split a record.
+- Replace `max_current` only when `abs(current_deci_amps)` strictly grows, and
+  replace `max_delta` only when the cell-voltage delta strictly grows. Keep the
+  signed current and copy every snapshot field from that same sample.
+- Keep five records oldest-to-newest in NVS; creating a sixth drops the oldest.
+  A missing, malformed, or incompatible blob reads as an empty history.
+- The NimBLE notification path may only update bounded RAM and mark it dirty.
+  The runtime tick persists it; NVS failure keeps the dirty history for a
+  rate-limited retry. Flash is the only persistent source, including on PSRAM
+  targets.
+- JSON temperature positions without a valid bit are `null`; `current` marks
+  only the active boot record. The local Web page and Vercel page read this
+  HTTP route directly, never through BLE or a cloud mirror.
+
+### 4. Validation & Error Matrix
+
+- No complete valid sample -> `records` is an empty array; create no blank row.
+- Partial or core-invalid sample -> ignore it and retain prior peaks.
+- Equal or smaller magnitude/delta -> retain the prior snapshot and do not
+  schedule an NVS write.
+- Sixth boot with a valid sample -> retain only the latest five records.
+- NVS write failure -> keep in-memory history dirty and retry; do not lose the
+  established peak.
+
+### 5. Good / Base / Bad Cases
+
+- Good: a negative discharge current with a larger magnitude replaces the
+  current peak and preserves its negative sign.
+- Base: the first valid sample initializes both peak snapshots, including when
+  both values are zero.
+- Bad: write NVS from a NimBLE callback, use PSRAM as the only history source,
+  or create a new record after a reconnect in the same boot.
+
+### 6. Tests Required
+
+- Run `./scripts/run-host-selftests.sh`; assert strict comparisons,
+  `INT16_MIN`, invalid samples, same-frame dual-peak updates, and five-slot
+  eviction.
+- Run the selected hardware-profile build, `git diff --check`, Vercel
+  type-check/build, and GitNexus change detection.
+- On hardware with an actual BMS, verify peak replacement, reboot recovery,
+  and both Web consumers; no connected BMS means this last check remains open.
+
+### 7. Wrong vs Correct
+
+```text
+Wrong: every notification writes Flash and reconnect creates another ride.
+Correct: one boot-owned RAM record updates on strict peaks, then tick persists it.
+```
 
 ## Scenario: Local Web OTA Firmware Confirmation
 

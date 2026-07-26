@@ -223,6 +223,11 @@ RUN_TESTS=1 ./scripts/build-android-cast.sh
 - `scripts/publish-flash-artifacts.py` derives this bundle from the completed
   build's `flasher_args.json`. Both `start.sh` and `start.ps1` must call this
   one publisher rather than separately copying an app image.
+- Flash acceptance does not require a separate full-image hash/readback pass
+  (for example, `esptool verify-flash`). A successful write command followed by
+  reset and the relevant runtime behavior check is sufficient. Any checksum
+  line emitted internally by the flashing tool is informational, not an
+  additional acceptance gate.
 - Documentation-only, preview-only, Trellis/spec, and agent-file changes do not
   require a firmware build or hardware flash unless the user explicitly asks.
   Firmware-impacting changes require the normal build and the project hardware
@@ -918,6 +923,10 @@ esp_bms_lvgl_bridge_config_t.panel_mirror_x
   `RGB_ORDER=BGR`, `I80_SWAP_COLOR_BYTES=0`, and `INVERT_COLOR=1`. The vendor
   landscape flags are `swap_xy=1`, `mirror_x=0`, `mirror_y=0`; after the
   generic landscape transform, that requires `PANEL_MIRROR_X=1`.
+- On that board, RGB565 byte swapping belongs exclusively to
+  `custom_draw_bitmap`: call `lv_draw_sw_rgb565_swap()` immediately before
+  `esp_lcd_panel_draw_bitmap()`. Do not rely on the adapter flush path or
+  enable `I80_SWAP_COLOR_BYTES`, which would duplicate the conversion.
 - ESP LCD Touch applies `MIRROR_X` and `MIRROR_Y` before `SWAP_XY`. For this
   board's final landscape orientation, `SWAP_XY=1`, `MIRROR_X=1`, and
   `MIRROR_Y=0` produce `screen_y = 320 - raw_x`.

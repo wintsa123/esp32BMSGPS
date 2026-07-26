@@ -73,6 +73,8 @@ static const char *TAG = "bms_idf_runtime";
 #define BMS_RECONNECT_BACKOFF_MS 3000U
 #define BMS_NVS_BOUND_MAC_KEY "bms_mac"
 #define BMS_NVS_BOUND_NAME_KEY "bms_name"
+#define RIDE_RECORDS_NVS_KEY "ride_records"
+#define RIDE_RECORDS_PERSIST_RETRY_US INT64_C(5000000)
 #define DISPLAY_NVS_BRIGHTNESS_KEY "disp_bright"
 #define DISPLAY_NVS_VOLUME_KEY "disp_vol"
 #define DISPLAY_NVS_ROTATION_KEY "disp_rot"
@@ -1286,6 +1288,7 @@ static bool runtime_json_get_string(const char *body,
 static void runtime_reset_state(esp_bms_idf_runtime_t *runtime)
 {
     memset(&runtime->snapshot, 0, sizeof(runtime->snapshot));
+    esp_bms_ride_records_reset(&runtime->ride_records);
     (void)snprintf(runtime->snapshot.firmware_version,
                    sizeof(runtime->snapshot.firmware_version),
                    "%s",
@@ -1317,6 +1320,10 @@ static void runtime_reset_state(esp_bms_idf_runtime_t *runtime)
     runtime->controller_keepalive_elapsed_ms = 0;
     runtime->controller_poll_index = 0U;
     runtime->controller_scan_revision = 0U;
+    runtime->ride_records_generation = 0U;
+    runtime->ride_records_retry_after_us = 0;
+    runtime->ride_records_session_started = false;
+    runtime->ride_records_dirty = false;
     runtime->controller_connection_enabled = false;
     runtime->controller_page_enabled = false;
     runtime->controller_fallback_tire_rim_inch = 0U;
@@ -1442,6 +1449,159 @@ static esp_err_t runtime_init_nvs(esp_bms_idf_runtime_t *runtime)
         RUNTIME_SET_FLAG(runtime, NVS_READY, true);
     }
     return ret;
+}
+
+static bool runtime_copy_ride_records(esp_bms_idf_runtime_t *runtime,
+                                      esp_bms_ride_records_t *records,
+                                      bool *session_started,
+                                      uint32_t *generation,
+                                      bool *dirty,
+                                      int64_t *retry_after_us)
+{
+    if (!runtime || !records) {
+        return false;
+    }
+
+    const bool locked = runtime->ride_records_lock != NULL;
+    if (locked && xSemaphoreTake(runtime->ride_records_lock, pdMS_TO_TICKS(100)) != pdTRUE) {
+        return false;
+    }
+    memcpy(records, &runtime->ride_records, sizeof(*records));
+    if (session_started) {
+        *session_started = runtime->ride_records_session_started;
+    }
+    if (generation) {
+        *generation = runtime->ride_records_generation;
+    }
+    if (dirty) {
+        *dirty = runtime->ride_records_dirty;
+    }
+    if (retry_after_us) {
+        *retry_after_us = runtime->ride_records_retry_after_us;
+    }
+    if (locked) {
+        xSemaphoreGive(runtime->ride_records_lock);
+    }
+    return true;
+}
+
+static esp_err_t runtime_load_ride_records(esp_bms_idf_runtime_t *runtime)
+{
+    ESP_RETURN_ON_FALSE(runtime, ESP_ERR_INVALID_ARG, TAG, "runtime is required");
+    ESP_RETURN_ON_ERROR(runtime_init_nvs(runtime), TAG, "NVS init failed");
+
+    esp_bms_ride_records_t loaded;
+    esp_bms_ride_records_reset(&loaded);
+    nvs_handle_t handle = 0;
+    esp_err_t ret = nvs_open(SETUP_AP_NVS_NAMESPACE, NVS_READONLY, &handle);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+
+    size_t blob_len = 0U;
+    ret = nvs_get_blob(handle, RIDE_RECORDS_NVS_KEY, NULL, &blob_len);
+    if (ret == ESP_OK && blob_len == sizeof(loaded)) {
+        ret = nvs_get_blob(handle, RIDE_RECORDS_NVS_KEY, &loaded, &blob_len);
+    }
+    nvs_close(handle);
+
+    if (ret == ESP_ERR_NVS_NOT_FOUND) {
+        return ESP_OK;
+    }
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    if (blob_len != sizeof(loaded) || !esp_bms_ride_records_valid(&loaded)) {
+        ESP_LOGW(TAG, "[bms] ignored invalid ride record history");
+        return ESP_OK;
+    }
+
+    runtime->ride_records = loaded;
+    return ESP_OK;
+}
+
+static esp_err_t runtime_save_ride_records(esp_bms_idf_runtime_t *runtime,
+                                           const esp_bms_ride_records_t *records)
+{
+    ESP_RETURN_ON_FALSE(runtime && records && esp_bms_ride_records_valid(records),
+                        ESP_ERR_INVALID_ARG,
+                        TAG,
+                        "invalid ride record history");
+    ESP_RETURN_ON_ERROR(runtime_init_nvs(runtime), TAG, "NVS init failed");
+
+    nvs_handle_t handle = 0;
+    esp_err_t ret = nvs_open(SETUP_AP_NVS_NAMESPACE, NVS_READWRITE, &handle);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    ret = nvs_set_blob(handle, RIDE_RECORDS_NVS_KEY, records, sizeof(*records));
+    if (ret == ESP_OK) {
+        ret = nvs_commit(handle);
+    }
+    nvs_close(handle);
+    return ret;
+}
+
+bool esp_bms_idf_runtime_record_bms_sample(esp_bms_idf_runtime_t *runtime,
+                                            const esp_bms_ride_record_sample_t *sample)
+{
+    if (!runtime || !sample || !sample->valid) {
+        return false;
+    }
+
+    const bool locked = runtime->ride_records_lock != NULL;
+    if (locked && xSemaphoreTake(runtime->ride_records_lock, portMAX_DELAY) != pdTRUE) {
+        return false;
+    }
+    const bool changed = esp_bms_ride_records_apply(&runtime->ride_records,
+                                                     &runtime->ride_records_session_started,
+                                                     sample);
+    if (changed) {
+        runtime->ride_records_dirty = true;
+        runtime->ride_records_generation++;
+        runtime->ride_records_retry_after_us = 0;
+    }
+    if (locked) {
+        xSemaphoreGive(runtime->ride_records_lock);
+    }
+    return changed;
+}
+
+static void runtime_persist_ride_records(esp_bms_idf_runtime_t *runtime)
+{
+    const int64_t now_us = esp_timer_get_time();
+    esp_bms_ride_records_t records;
+    uint32_t generation = 0U;
+    bool dirty = false;
+    int64_t retry_after_us = 0;
+    if (!runtime_copy_ride_records(runtime,
+                                   &records,
+                                   NULL,
+                                   &generation,
+                                   &dirty,
+                                   &retry_after_us) ||
+        !dirty || now_us < retry_after_us) {
+        return;
+    }
+
+    const esp_err_t ret = runtime_save_ride_records(runtime, &records);
+    const bool locked = runtime->ride_records_lock != NULL;
+    if (locked && xSemaphoreTake(runtime->ride_records_lock, pdMS_TO_TICKS(100)) != pdTRUE) {
+        return;
+    }
+    if (ret == ESP_OK) {
+        if (runtime->ride_records_generation == generation) {
+            runtime->ride_records_dirty = false;
+        }
+    } else if (runtime->ride_records_generation == generation) {
+        runtime->ride_records_retry_after_us = now_us + RIDE_RECORDS_PERSIST_RETRY_US;
+    }
+    if (locked) {
+        xSemaphoreGive(runtime->ride_records_lock);
+    }
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "[bms] ride record save failed: %s", esp_err_to_name(ret));
+    }
 }
 
 static esp_err_t runtime_nvs_get_optional_u8(nvs_handle_t handle, const char *key, uint8_t *value)
@@ -1965,6 +2125,114 @@ static esp_err_t runtime_http_send_json(httpd_req_t *req, const char *json)
     ESP_RETURN_ON_ERROR(runtime_http_set_common_headers(req), TAG, "set HTTP headers failed");
     ESP_RETURN_ON_ERROR(httpd_resp_set_type(req, "application/json"), TAG, "set HTTP type failed");
     return httpd_resp_send(req, json, HTTPD_RESP_USE_STRLEN);
+}
+
+static bool runtime_json_write_ride_snapshot(char *out,
+                                             size_t out_len,
+                                             const esp_bms_ride_record_snapshot_t *snapshot)
+{
+    if (!out || !snapshot || out_len == 0U) {
+        return false;
+    }
+
+    int written = snprintf(out,
+                           out_len,
+                           "{\"pack_voltage_mv\":%u,\"current_deci_amps\":%d,"
+                           "\"delta_cell_voltage_mv\":%u,\"soc_percent\":%u,"
+                           "\"temperatures_c\":[",
+                           (unsigned)snapshot->pack_voltage_mv,
+                           (int)snapshot->current_deci_amps,
+                           (unsigned)snapshot->delta_cell_voltage_mv,
+                           (unsigned)snapshot->soc_percent);
+    if (written < 0 || (size_t)written >= out_len) {
+        return false;
+    }
+    size_t offset = (size_t)written;
+    for (uint8_t index = 0U; index < ESP_BMS_RIDE_RECORD_TEMP_MAX_COUNT; ++index) {
+        const bool valid = (snapshot->temperature_valid_mask & (UINT8_C(1) << index)) != 0U;
+        written = valid
+                      ? snprintf(out + offset,
+                                 out_len - offset,
+                                 "%s%d",
+                                 index == 0U ? "" : ",",
+                                 (int)snapshot->temperatures_celsius[index])
+                      : snprintf(out + offset, out_len - offset, "%snull", index == 0U ? "" : ",");
+        if (written < 0 || (size_t)written >= out_len - offset) {
+            return false;
+        }
+        offset += (size_t)written;
+    }
+    written = snprintf(out + offset, out_len - offset, "]}");
+    return written >= 0 && (size_t)written < out_len - offset;
+}
+
+static esp_err_t runtime_http_ride_records_handler(httpd_req_t *req,
+                                                    esp_bms_idf_runtime_t *runtime)
+{
+    esp_bms_ride_records_t records;
+    bool session_started = false;
+    if (!runtime_copy_ride_records(runtime,
+                                   &records,
+                                   &session_started,
+                                   NULL,
+                                   NULL,
+                                   NULL)) {
+        return runtime_http_send_text(req, "503 Service Unavailable", "ride records busy");
+    }
+    if (!esp_bms_ride_records_valid(&records)) {
+        esp_bms_ride_records_reset(&records);
+        session_started = false;
+    }
+
+    ESP_RETURN_ON_ERROR(runtime_http_set_common_headers(req), TAG, "set HTTP headers failed");
+    ESP_RETURN_ON_ERROR(httpd_resp_set_type(req, "application/json"), TAG, "set HTTP type failed");
+    ESP_RETURN_ON_ERROR(httpd_resp_send_chunk(req, "{\"records\":[", HTTPD_RESP_USE_STRLEN),
+                        TAG,
+                        "send ride record header failed");
+
+    bool first = true;
+    for (uint8_t offset = records.count; offset > 0U; --offset) {
+        const uint8_t index = offset - 1U;
+        const bool current = session_started && index == records.count - 1U;
+        const esp_bms_ride_record_t *record = &records.records[index];
+        char prefix[48] = { 0 };
+        const int prefix_len = snprintf(prefix,
+                                        sizeof(prefix),
+                                        "%s{\"current\":%s,\"max_current\":",
+                                        first ? "" : ",",
+                                        current ? "true" : "false");
+        if (prefix_len < 0 || (size_t)prefix_len >= sizeof(prefix)) {
+            return ESP_FAIL;
+        }
+        char snapshot[256] = { 0 };
+        if (!runtime_json_write_ride_snapshot(snapshot, sizeof(snapshot), &record->max_current)) {
+            return ESP_FAIL;
+        }
+        ESP_RETURN_ON_ERROR(httpd_resp_send_chunk(req, prefix, HTTPD_RESP_USE_STRLEN),
+                            TAG,
+                            "send ride record prefix failed");
+        ESP_RETURN_ON_ERROR(httpd_resp_send_chunk(req, snapshot, HTTPD_RESP_USE_STRLEN),
+                            TAG,
+                            "send maximum current failed");
+        ESP_RETURN_ON_ERROR(httpd_resp_send_chunk(req, ",\"max_delta\":", HTTPD_RESP_USE_STRLEN),
+                            TAG,
+                            "send ride record divider failed");
+        if (!runtime_json_write_ride_snapshot(snapshot, sizeof(snapshot), &record->max_delta)) {
+            return ESP_FAIL;
+        }
+        ESP_RETURN_ON_ERROR(httpd_resp_send_chunk(req, snapshot, HTTPD_RESP_USE_STRLEN),
+                            TAG,
+                            "send maximum delta failed");
+        ESP_RETURN_ON_ERROR(httpd_resp_send_chunk(req, "}", HTTPD_RESP_USE_STRLEN),
+                            TAG,
+                            "send ride record end failed");
+        first = false;
+    }
+
+    ESP_RETURN_ON_ERROR(httpd_resp_send_chunk(req, "]}", HTTPD_RESP_USE_STRLEN),
+                        TAG,
+                        "send ride records end failed");
+    return httpd_resp_send_chunk(req, NULL, 0);
 }
 
 static bool runtime_json_write_bms_codes(char *out,
@@ -2658,6 +2926,9 @@ esp_err_t esp_bms_idf_runtime_http_api_handler(httpd_req_t *req)
 
     if (req->method == HTTP_GET && strcmp(req->uri, "/api/status") == 0) {
         return runtime_http_status_handler(req, runtime);
+    }
+    if (req->method == HTTP_GET && strcmp(req->uri, "/api/bms/ride-records") == 0) {
+        return runtime_http_ride_records_handler(req, runtime);
     }
     if (req->method == HTTP_GET && strcmp(req->uri, "/api/cast/info") == 0) {
         return runtime_http_cast_info_handler(req, runtime);
@@ -3539,8 +3810,16 @@ void esp_bms_idf_runtime_init(esp_bms_idf_runtime_t *runtime)
     if (!runtime->bms_scan_lock) {
         ESP_LOGW(TAG, "[bms] scan candidate mutex allocation failed");
     }
+    runtime->ride_records_lock = xSemaphoreCreateMutex();
+    if (!runtime->ride_records_lock) {
+        ESP_LOGW(TAG, "[bms] ride record mutex allocation failed");
+    }
     runtime_reset_state(runtime);
     runtime_ensure_setup_ap_credentials(runtime);
+    const esp_err_t ride_records_ret = runtime_load_ride_records(runtime);
+    if (ride_records_ret != ESP_OK) {
+        ESP_LOGW(TAG, "[bms] ride record load failed: %s", esp_err_to_name(ride_records_ret));
+    }
     runtime_init_battery_adc(runtime);
     (void)runtime_sample_battery(runtime);
 }
@@ -3790,6 +4069,7 @@ bool esp_bms_idf_runtime_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_m
         runtime->snapshot.uptime_seconds = displayed_uptime;
         changed = true;
     }
+    runtime_persist_ride_records(runtime);
     return changed;
 }
 

@@ -156,6 +156,24 @@ static bool bms_apply_telemetry(esp_bms_idf_runtime_t *runtime,
     }
     runtime->bms_telemetry_last_us = esp_timer_get_time();
     bms_set_info(runtime, "BMS OK");
+    if (!telemetry->partial && telemetry->pack_voltage_mv != 0U && telemetry->soc_percent <= 100U) {
+        esp_bms_ride_record_sample_t sample = {
+            .valid = true,
+            .snapshot = {
+                .pack_voltage_mv = telemetry->pack_voltage_mv,
+                .current_deci_amps = telemetry->current_deci_amps,
+                .delta_cell_voltage_mv = telemetry->delta_cell_voltage_mv,
+                .soc_percent = telemetry->soc_percent,
+            },
+        };
+        for (uint8_t index = 0U; index < ESP_BMS_RIDE_RECORD_TEMP_MAX_COUNT; ++index) {
+            sample.snapshot.temperatures_celsius[index] = telemetry->temperatures_celsius[index];
+            if (telemetry->temperature_valid[index]) {
+                sample.snapshot.temperature_valid_mask |= UINT8_C(1) << index;
+            }
+        }
+        (void)esp_bms_idf_runtime_record_bms_sample(runtime, &sample);
+    }
     return true;
 }
 

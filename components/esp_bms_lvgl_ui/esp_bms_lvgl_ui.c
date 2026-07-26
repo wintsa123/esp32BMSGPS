@@ -95,6 +95,13 @@ LV_FONT_DECLARE(settings_zh_16);
 #define QUICK_TILE_SCALE_NORMAL 256
 #define QUICK_TILE_SCALE_PRESSED 270
 #define QUICK_TILE_SCALE_LONG 292
+#if ESP_BMS_LVGL_UI_SIMULATOR
+#define SETTINGS_ABOUT_DEVICE_MODEL "ESP32-S3 BMS GPS"
+#define SETTINGS_ABOUT_DISPLAY_MODEL "ST7796U"
+#else
+#define SETTINGS_ABOUT_DEVICE_MODEL "ESP32 BMS GPS"
+#define SETTINGS_ABOUT_DISPLAY_MODEL "ST7789"
+#endif
 #define SCREEN_LOCK_PROMPT_TIMEOUT_MS 3000U
 #define SCREEN_LOCK_TAP_MAX_MOVE 14
 #define SCREEN_UNLOCK_THRESHOLD_PERCENT 85
@@ -767,6 +774,30 @@ static lv_obj_t *dashboard_panel(lv_obj_t *parent,
     lv_obj_set_style_border_post(obj, true, LV_PART_MAIN);
     lv_obj_set_style_pad_all(obj, 0, LV_PART_MAIN);
     return obj;
+}
+
+static lv_obj_t *dashboard_viewport(lv_obj_t *parent, bool portrait)
+{
+    const int32_t layout_w = portrait ? 240 : 320;
+    const int32_t layout_h = portrait ? 320 : 240;
+    lv_obj_t *viewport = lv_obj_create(parent);
+    clear_style(viewport);
+    lv_obj_set_pos(viewport, 0, 0);
+    lv_obj_set_size(viewport, layout_w, layout_h);
+    lv_obj_clear_flag(viewport, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+
+    if (s_ui.width != layout_w || s_ui.height != layout_h) {
+        /* ponytail: scale legacy fixed dashboards; use native responsive geometry for new panel sizes. */
+        lv_obj_set_style_transform_pivot_x(viewport, 0, LV_PART_MAIN);
+        lv_obj_set_style_transform_pivot_y(viewport, 0, LV_PART_MAIN);
+        lv_obj_set_style_transform_scale_x(viewport,
+                                           (s_ui.width * 256 + layout_w - 1) / layout_w,
+                                           LV_PART_MAIN);
+        lv_obj_set_style_transform_scale_y(viewport,
+                                           (s_ui.height * 256 + layout_h - 1) / layout_h,
+                                           LV_PART_MAIN);
+    }
+    return viewport;
 }
 
 static lv_obj_t *dashboard_separator(lv_obj_t *parent, int32_t x, int32_t y, int32_t w)
@@ -2385,9 +2416,9 @@ static const settings_detail_row_t SETTINGS_SYSTEM_ROWS[] = {
 };
 
 static const settings_detail_row_t SETTINGS_ABOUT_ROWS[] = {
-    { "设备", "ESP32 BMS GPS", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
+    { "设备", SETTINGS_ABOUT_DEVICE_MODEL, ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
     { "固件版本", "--", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
-    { "屏幕", "ST7789", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
+    { "屏幕", SETTINGS_ABOUT_DISPLAY_MODEL, ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
 };
 
 static uint32_t quick_panel_item_index(const quick_panel_item_t *item)
@@ -8165,10 +8196,12 @@ static void create_fireblade_dashboard(void)
     lv_obj_set_style_border_opa(s_ui.fireblade_page, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_clear_flag(s_ui.fireblade_page, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
     s_ui.fireblade_needle_signature_valid = false;
-    if (s_ui.width < s_ui.height) {
-        fireblade_create_portrait(s_ui.fireblade_page);
+    const bool portrait = s_ui.width < s_ui.height;
+    lv_obj_t *viewport = dashboard_viewport(s_ui.fireblade_page, portrait);
+    if (portrait) {
+        fireblade_create_portrait(viewport);
     } else {
-        fireblade_create_landscape(s_ui.fireblade_page);
+        fireblade_create_landscape(viewport);
     }
 }
 #endif
@@ -9607,7 +9640,7 @@ static void create_screen(lv_display_t *display)
     const int32_t page_h = s_ui.height;
     const int32_t settings_y = 0;
     const int32_t settings_h = s_ui.height - settings_y;
-    const int32_t content_w = s_ui.width - 16;
+    const int32_t content_w = (portrait ? 240 : 320) - 16;
 
     s_ui.header = panel(screen, 0, 0, s_ui.width, 20, COLOR_BG);
     lv_obj_set_style_radius(s_ui.header, 0, LV_PART_MAIN);
@@ -9709,8 +9742,9 @@ static void create_screen(lv_display_t *display)
     s_ui.cast_qr = NULL;
 #endif
 
+    lv_obj_t *battery_viewport = dashboard_viewport(s_ui.battery_page, portrait);
     if (portrait) {
-        lv_obj_t *soc_panel = dashboard_panel(s_ui.battery_page,
+        lv_obj_t *soc_panel = dashboard_panel(battery_viewport,
                                               8,
                                               8,
                                               108,
@@ -9721,7 +9755,7 @@ static void create_screen(lv_display_t *display)
         dashboard_battery_icon(soc_panel, 19, 43, 66, 22);
         s_ui.capacity = label(soc_panel, 4, 76, 100, 20, &lv_font_montserrat_14);
 
-        lv_obj_t *pack_panel = dashboard_panel(s_ui.battery_page,
+        lv_obj_t *pack_panel = dashboard_panel(battery_viewport,
                                                124,
                                                8,
                                                108,
@@ -9732,7 +9766,7 @@ static void create_screen(lv_display_t *display)
         dashboard_separator(pack_panel, 8, 52, 92);
         s_ui.current = label(pack_panel, 4, 58, 100, 34, &lv_font_montserrat_28);
 
-        lv_obj_t *bms_panel = dashboard_panel(s_ui.battery_page,
+        lv_obj_t *bms_panel = dashboard_panel(battery_viewport,
                                               8,
                                               128,
                                               108,
@@ -9749,7 +9783,7 @@ static void create_screen(lv_display_t *display)
         s_ui.remaining_range_unit = label(bms_panel, 72, 87, 28, 16, &lv_font_montserrat_14);
         lv_label_set_text(s_ui.remaining_range_unit, "km");
 
-        lv_obj_t *cell_panel = dashboard_panel(s_ui.battery_page,
+        lv_obj_t *cell_panel = dashboard_panel(battery_viewport,
                                                124,
                                                128,
                                                108,
@@ -9770,7 +9804,7 @@ static void create_screen(lv_display_t *display)
             }
         }
 
-        lv_obj_t *temp_panel = dashboard_panel(s_ui.battery_page,
+        lv_obj_t *temp_panel = dashboard_panel(battery_viewport,
                                                8,
                                                256,
                                                content_w,
@@ -9792,7 +9826,7 @@ static void create_screen(lv_display_t *display)
             lv_obj_set_style_text_color(s_ui.temperature_values[index], COLOR_DASHBOARD_VALUE, LV_PART_MAIN);
         }
     } else {
-        lv_obj_t *soc_panel = dashboard_panel(s_ui.battery_page,
+        lv_obj_t *soc_panel = dashboard_panel(battery_viewport,
                                               8,
                                               8,
                                               148,
@@ -9803,7 +9837,7 @@ static void create_screen(lv_display_t *display)
         dashboard_battery_icon(soc_panel, 34, 35, 76, 19);
         s_ui.capacity = label(soc_panel, 4, 58, 140, 20, &lv_font_montserrat_14);
 
-        lv_obj_t *pack_panel = dashboard_panel(s_ui.battery_page,
+        lv_obj_t *pack_panel = dashboard_panel(battery_viewport,
                                                164,
                                                8,
                                                148,
@@ -9814,7 +9848,7 @@ static void create_screen(lv_display_t *display)
         dashboard_separator(pack_panel, 10, 40, 128);
         s_ui.current = label(pack_panel, 4, 44, 140, 34, &lv_font_montserrat_28);
 
-        lv_obj_t *bms_panel = dashboard_panel(s_ui.battery_page,
+        lv_obj_t *bms_panel = dashboard_panel(battery_viewport,
                                               8,
                                               100,
                                               148,
@@ -9832,7 +9866,7 @@ static void create_screen(lv_display_t *display)
         s_ui.remaining_range_unit = label(bms_panel, 78, 50, 64, 16, &lv_font_montserrat_14);
         lv_label_set_text(s_ui.remaining_range_unit, "km");
 
-        lv_obj_t *cell_panel = dashboard_panel(s_ui.battery_page,
+        lv_obj_t *cell_panel = dashboard_panel(battery_viewport,
                                                164,
                                                100,
                                                148,
@@ -9853,7 +9887,7 @@ static void create_screen(lv_display_t *display)
             }
         }
 
-        lv_obj_t *temp_panel = dashboard_panel(s_ui.battery_page,
+        lv_obj_t *temp_panel = dashboard_panel(battery_viewport,
                                                8,
                                                178,
                                                304,

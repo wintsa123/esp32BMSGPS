@@ -34,4 +34,14 @@ menu "ESP BMS LVGL Bridge"
             Keep this disabled in the normal image until hardware logs confirm
             enough free internal RAM remains after LVGL, Wi-Fi, and HTTP start.
 
+    config ESP_BMS_LVGL_BRIDGE_SKIP_RGB565_SWAP
+        bool "Skip adapter RGB565 byte swap (16-bit I80)"
+        default y
+        help
+            The esp_lvgl_adapter flush callback byte-swaps RGB565 pixel data
+            for 8-bit SPI/I80 panels where bytes are transmitted sequentially.
+            On a 16-bit parallel I80 bus each pixel is a single atomic 16-bit
+            transfer, so the swap is incorrect and produces garbled colors.
+            Enable this to skip the swap.
+
 endmenu

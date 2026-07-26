@@ -25,6 +25,13 @@ cflags=(-std=c11 -Wall -Wextra -Werror)
 "${build_dir}/speed_dashboard_selftest"
 
 "${cc_bin}" "${cflags[@]}" \
+    -I"${repo_root}/components/esp_bms_idf_runtime/include" \
+    "${repo_root}/tests/ride_records_selftest.c" \
+    "${repo_root}/components/esp_bms_idf_runtime/esp_bms_ride_records.c" \
+    -o "${build_dir}/ride_records_selftest"
+"${build_dir}/ride_records_selftest"
+
+"${cc_bin}" "${cflags[@]}" \
     -I"${repo_root}/components/esp_fardriver_protocol/include" \
     "${repo_root}/tests/fardriver_protocol_selftest.c" \
     "${repo_root}/components/esp_fardriver_protocol/esp_fardriver_protocol.c" \
