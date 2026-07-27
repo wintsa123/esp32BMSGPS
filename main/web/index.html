@@ -158,6 +158,7 @@
         bindBms: "绑定 BMS",
         bmsBleMac: "蓝牙连接",
         bmsBoard: "保护板",
+        bmsCapacityEstimate: "电池真实容量估算",
         bmsPurpose: "选择保护板类型，再扫描或填入蓝牙 MAC 绑定。",
         bmsType: "保护板类型",
         brightness: "亮度",
@@ -197,6 +198,8 @@
         maxCurrent: "最大电流",
         maxDelta: "最大压差",
         noRideRecords: "暂无骑行峰值记录",
+        capacityEstimating: "估算中",
+        capacityUnsupported: "仅支持 ANT",
         refresh: "刷新",
         rideRecord: "骑行记录",
         rideRecords: "骑行峰值记录",
@@ -221,6 +224,7 @@
         bindBms: "Bind BMS",
         bmsBleMac: "Bluetooth connection",
         bmsBoard: "BMS",
+        bmsCapacityEstimate: "Estimated real battery capacity",
         bmsPurpose: "Choose a BMS type, then scan or enter a Bluetooth MAC to bind.",
         bmsType: "BMS type",
         brightness: "Brightness",
@@ -260,6 +264,8 @@
         maxCurrent: "Max current",
         maxDelta: "Max delta",
         noRideRecords: "No ride peak records",
+        capacityEstimating: "Estimating",
+        capacityUnsupported: "ANT only",
         refresh: "Refresh",
         rideRecord: "Ride record",
         rideRecords: "Ride peak records",
@@ -283,6 +289,7 @@
     let bmsScanPollTimer = 0;
     let bmsScanPollDeadline = 0;
     let lastConfig = {};
+    let lastStatus = {};
     let rideRecords = [];
 
     function t(key) {
@@ -297,6 +304,7 @@
       });
       updateSpeedSourceHint(lastConfig);
       renderRideRecords();
+      renderBmsCapacityEstimate(lastStatus);
     }
 
     function updateSpeedSourceHint(config = lastConfig) {
@@ -408,9 +416,19 @@
               form.append(bind);
             }
           }
+          if (section.items.some((item) => item.id === "bms_type")) {
+            const estimate = document.createElement("label");
+            const label = document.createElement("span");
+            label.id = "bms-capacity-estimate-label";
+            const value = document.createElement("strong");
+            value.id = "bms-capacity-estimate";
+            estimate.append(label, value);
+            form.append(estimate);
+          }
           if (section.submit && safeEndpoint(section.submit.endpoint)) { const save = document.createElement("button"); save.textContent = "保存"; form.onsubmit = async (event) => { event.preventDefault(); await api(section.submit.endpoint, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(Object.fromEntries(new FormData(form))) }); await loadManifest(); }; form.append(save); }
           panel.append(title, form); host.append(panel);
         }
+        renderBmsCapacityEstimate(lastStatus);
         ["bms-section", "ota-section", "device-section"].forEach((id) => { $(id).hidden = true; });
       } catch {
         host.textContent = "固件不支持动态设置，请升级";
@@ -421,6 +439,7 @@
     async function refresh() {
       try {
         const data = await api("/api/status");
+        lastStatus = data;
         $("fw").textContent = `${t("firmware")} ${data.version ?? "0.1.0"}`;
         $("speed").textContent = data.speed ?? "--";
         $("battery").textContent = formatMillivolts(data.local_battery_mv ?? data.pack_voltage_mv);
@@ -428,6 +447,7 @@
         $("bms-protections").textContent = formatCodes(data.bms_protections);
         $("bms-warnings").textContent = formatCodes(data.bms_warnings);
         $("wifi").textContent = formatState(data.wifi);
+        renderBmsCapacityEstimate(data);
         try {
           const history = await api("/api/bms/ride-records");
           rideRecords = Array.isArray(history.records) ? history.records : [];
@@ -546,6 +566,19 @@
     function formatBmsState(data) {
       const state = formatState(data.bms);
       return data.bms_info ? `${state} ${data.bms_info}` : state;
+    }
+
+    function renderBmsCapacityEstimate(data) {
+      const label = $("bms-capacity-estimate-label");
+      const value = $("bms-capacity-estimate");
+      if (!label || !value) return;
+      label.textContent = t("bmsCapacityEstimate");
+      if (data.bms_capacity_estimate_state === "ready" && Number.isFinite(data.bms_capacity_estimate_mah)) {
+        value.textContent = `${(data.bms_capacity_estimate_mah / 1000).toFixed(1)} Ah`;
+      } else {
+        value.textContent = data.bms_capacity_estimate_state === "unsupported"
+          ? t("capacityUnsupported") : t("capacityEstimating");
+      }
     }
 
     async function loadConfig() {

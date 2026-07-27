@@ -47,7 +47,8 @@ int main(void)
     assert(esp_bms_ant_protocol_decode(new_status_frame, sizeof(new_status_frame), &telemetry, &device_info));
     assert(!device_info && telemetry.pack_voltage_mv == 52840U && telemetry.current_deci_amps == 3 &&
            telemetry.soc_percent == 91U && telemetry.total_capacity_mah == 280000U &&
-           telemetry.capacity_remaining_mah == 252602U);
+           telemetry.capacity_remaining_mah == 252602U && telemetry.total_cycle_valid &&
+           telemetry.total_cycle_mah == 4862650U);
     assert(telemetry.min_cell_voltage_mv == 3300U && telemetry.max_cell_voltage_mv == 3305U &&
            telemetry.delta_cell_voltage_mv == 5U && telemetry.average_cell_voltage_mv == 3302U);
 
@@ -58,7 +59,8 @@ int main(void)
     assert(stream_len == 0U);
     assert(telemetry.pack_voltage_mv == 26700U && telemetry.current_deci_amps == -107 &&
            telemetry.soc_percent == 41U && telemetry.total_capacity_mah == 0U &&
-           telemetry.capacity_remaining_mah == 48487U);
+           telemetry.capacity_remaining_mah == 48487U && telemetry.total_cycle_valid &&
+           telemetry.total_cycle_mah == 19276387U);
     assert(telemetry.min_cell_voltage_mv == 3338U && telemetry.max_cell_voltage_mv == 3340U &&
            telemetry.delta_cell_voltage_mv == 2U && telemetry.average_cell_voltage_mv == 3339U);
     assert(telemetry.temperature_valid[0U] && telemetry.temperatures_celsius[0U] == 15 &&

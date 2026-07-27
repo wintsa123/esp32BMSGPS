@@ -58,6 +58,14 @@ printf '%s\n' "Yanyang BMS protocol self-test passed"
 "${build_dir}/ant_bms_protocol_selftest"
 printf '%s\n' "ANT BMS protocol self-test passed"
 
+"${cc_bin}" "${cflags[@]}" \
+    -I"${repo_root}/components/esp_bms_idf_runtime/include" \
+    "${repo_root}/tests/capacity_estimate_selftest.c" \
+    "${repo_root}/components/esp_bms_idf_runtime/esp_bms_capacity_estimate.c" \
+    -o "${build_dir}/capacity_estimate_selftest"
+"${build_dir}/capacity_estimate_selftest"
+printf '%s\n' "Capacity estimate self-test passed"
+
 for brand in jk jbd daly; do
     "${cc_bin}" "${cflags[@]}" \
         -I"${repo_root}/components/esp_bms_bms_ble/protocols" \

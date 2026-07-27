@@ -16,6 +16,8 @@ typedef struct {
     uint16_t delta_cell_voltage_mv;
     uint32_t total_capacity_mah;
     uint32_t capacity_remaining_mah;
+    uint32_t total_cycle_mah;
+    bool total_cycle_valid;
     int16_t temperatures_celsius[ESP_BMS_BMS_PROTOCOL_TEMP_MAX_COUNT];
     bool temperature_valid[ESP_BMS_BMS_PROTOCOL_TEMP_MAX_COUNT];
     uint64_t protection_mask;

@@ -1747,3 +1747,67 @@ Before a firmware build, scan all local font sources for `.fallback = &<font>`
 where `<font>` is the descriptor defined in the same file. The scan must return
 no self-references; the legacy profile build and a cold-boot WDT observation are
 required after changing generated or hand-maintained font descriptors.
+
+## Scenario: ANT BMS Real Capacity Estimate
+
+### 1. Scope / Trigger
+
+- Apply when changing ANT total-cycle decoding, the capacity estimator, its
+  `esp_bms` NVS state, or the capacity fields in `/api/status`.
+
+### 2. Signatures
+
+- Telemetry: `total_cycle_mah` with `total_cycle_valid`.
+- API: `bms_capacity_estimate_mah` (`number|null`) and
+  `bms_capacity_estimate_state` (`ready`, `estimating`, or `unsupported`).
+- NVS: versioned `cap_est` blob, bound to ANT BMS MAC.
+
+### 3. Contracts
+
+- Decode ANT new total-cycle mAh as little-endian at dynamic offset
+  `58 + 2 * cells + 2 * temperatures`; decode old ANT as big-endian at `83`.
+- Only accept a sample after a monotonic total-cycle increase of at least
+  `1000 mAh` and a SOC span of at least `20` points. Re-anchor, without
+  sampling, for delayed SOC correction or a direction reversal.
+- A changed MAC or reduced total-cycle counter clears the old estimate. Persist
+  only an accepted estimate or a cleared identity; never persist raw frames.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required response |
+| --- | --- |
+| Non-ANT BMS | `unsupported`, null estimate |
+| ANT without enough credible data | `estimating`, null estimate |
+| Delayed SOC correction | Re-anchor and retain any credible estimate |
+| Counter regression | Clear estimate and persist the reset state |
+
+### 5. Good / Base / Bad Cases
+
+- Good: a 20% partial charge with a 10 Ah cycle increase estimates 50 Ah.
+- Base: a user never reaches 0% or 100%; a credible partial interval is enough.
+- Bad: use a delayed SOC recalculation as throughput or reuse another BMS MAC's
+  result.
+
+### 6. Tests Required
+
+- Run `./scripts/run-host-selftests.sh`; assert both ANT frame layouts and the
+  delayed-SOC, reversal, partial-interval, and counter-reset estimator cases.
+- Run the Vercel typecheck/build when changing its BMS setting presentation.
+- Build, flash through RFC2217, and capture a boot log. With a bound ANT BMS,
+  confirm `estimating` changes to `ready` only after an eligible interval.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```c
+estimate_mah = cycle_delta_mah * 100 / (old_soc - new_soc); /* stale SOC */
+```
+
+#### Correct
+
+```c
+if (cycle_delta_mah < 1000U || soc_span < 20U) {
+    reanchor_without_sampling();
+}
+```

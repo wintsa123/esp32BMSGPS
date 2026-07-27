@@ -75,6 +75,10 @@ static const char *TAG = "bms_idf_runtime";
 #define BMS_NVS_BOUND_NAME_KEY "bms_name"
 #define RIDE_RECORDS_NVS_KEY "ride_records"
 #define RIDE_RECORDS_PERSIST_RETRY_US INT64_C(5000000)
+#define CAPACITY_ESTIMATE_NVS_KEY "bms_cap_est"
+#define CAPACITY_ESTIMATE_MAGIC UINT32_C(0x43415031)
+#define CAPACITY_ESTIMATE_VERSION 1U
+#define CAPACITY_ESTIMATE_PERSIST_RETRY_US INT64_C(5000000)
 #define DISPLAY_NVS_BRIGHTNESS_KEY "disp_bright"
 #define DISPLAY_NVS_VOLUME_KEY "disp_vol"
 #define DISPLAY_NVS_ROTATION_KEY "disp_rot"
@@ -1324,6 +1328,9 @@ static void runtime_reset_state(esp_bms_idf_runtime_t *runtime)
     runtime->ride_records_retry_after_us = 0;
     runtime->ride_records_session_started = false;
     runtime->ride_records_dirty = false;
+    runtime->capacity_estimate_generation = 0U;
+    runtime->capacity_estimate_retry_after_us = 0;
+    runtime->capacity_estimate_dirty = false;
     runtime->controller_connection_enabled = false;
     runtime->controller_page_enabled = false;
     runtime->controller_fallback_tire_rim_inch = 0U;
@@ -1601,6 +1608,189 @@ static void runtime_persist_ride_records(esp_bms_idf_runtime_t *runtime)
     }
     if (ret != ESP_OK) {
         ESP_LOGW(TAG, "[bms] ride record save failed: %s", esp_err_to_name(ret));
+    }
+}
+
+typedef struct {
+    uint32_t magic;
+    uint32_t estimate_mah;
+    uint32_t last_accepted_cycle_mah;
+    char bms_mac[18];
+    uint8_t version;
+    uint8_t bms_type;
+    uint8_t sample_count;
+    uint8_t ready;
+} runtime_capacity_estimate_blob_t;
+
+static bool runtime_capacity_estimate_blob_valid(const runtime_capacity_estimate_blob_t *blob)
+{
+    return blob && blob->magic == CAPACITY_ESTIMATE_MAGIC &&
+           blob->version == CAPACITY_ESTIMATE_VERSION &&
+           blob->bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_ANT &&
+           blob->bms_mac[sizeof(blob->bms_mac) - 1U] == '\0' &&
+           (blob->ready == 0U ||
+            (blob->ready == 1U && blob->estimate_mah > 0U && blob->sample_count > 0U &&
+             blob->sample_count <= 4U));
+}
+
+static void runtime_capacity_estimate_blob_from_runtime(
+    const esp_bms_idf_runtime_t *runtime,
+    runtime_capacity_estimate_blob_t *blob)
+{
+    memset(blob, 0, sizeof(*blob));
+    blob->magic = CAPACITY_ESTIMATE_MAGIC;
+    blob->version = CAPACITY_ESTIMATE_VERSION;
+    blob->bms_type = runtime->capacity_estimate_bms_type;
+    blob->estimate_mah = runtime->capacity_estimate.estimate_mah;
+    blob->last_accepted_cycle_mah = runtime->capacity_estimate.last_accepted_cycle_mah;
+    blob->sample_count = runtime->capacity_estimate.sample_count;
+    blob->ready = runtime->capacity_estimate.ready ? 1U : 0U;
+    memcpy(blob->bms_mac, runtime->capacity_estimate_bms_mac, sizeof(blob->bms_mac));
+}
+
+static esp_err_t runtime_load_capacity_estimate(esp_bms_idf_runtime_t *runtime)
+{
+    ESP_RETURN_ON_FALSE(runtime, ESP_ERR_INVALID_ARG, TAG, "runtime is required");
+    ESP_RETURN_ON_ERROR(runtime_init_nvs(runtime), TAG, "NVS init failed");
+
+    nvs_handle_t handle = 0;
+    esp_err_t ret = nvs_open(SETUP_AP_NVS_NAMESPACE, NVS_READONLY, &handle);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+
+    runtime_capacity_estimate_blob_t blob = { 0 };
+    size_t blob_len = sizeof(blob);
+    ret = nvs_get_blob(handle, CAPACITY_ESTIMATE_NVS_KEY, &blob, &blob_len);
+    nvs_close(handle);
+    if (ret == ESP_ERR_NVS_NOT_FOUND) {
+        return ESP_OK;
+    }
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    if (blob_len != sizeof(blob) || !runtime_capacity_estimate_blob_valid(&blob)) {
+        ESP_LOGW(TAG, "[bms] ignored invalid capacity estimate history");
+        return ESP_OK;
+    }
+
+    esp_bms_capacity_estimate_reset(&runtime->capacity_estimate);
+    runtime->capacity_estimate.estimate_mah = blob.estimate_mah;
+    runtime->capacity_estimate.last_accepted_cycle_mah = blob.last_accepted_cycle_mah;
+    runtime->capacity_estimate.sample_count = blob.sample_count;
+    runtime->capacity_estimate.ready = blob.ready == 1U;
+    runtime->capacity_estimate_bms_type = blob.bms_type;
+    memcpy(runtime->capacity_estimate_bms_mac,
+           blob.bms_mac,
+           sizeof(runtime->capacity_estimate_bms_mac));
+    return ESP_OK;
+}
+
+static esp_err_t runtime_save_capacity_estimate(esp_bms_idf_runtime_t *runtime,
+                                                const runtime_capacity_estimate_blob_t *blob)
+{
+    ESP_RETURN_ON_FALSE(runtime && runtime_capacity_estimate_blob_valid(blob),
+                        ESP_ERR_INVALID_ARG,
+                        TAG,
+                        "invalid capacity estimate history");
+    ESP_RETURN_ON_ERROR(runtime_init_nvs(runtime), TAG, "NVS init failed");
+
+    nvs_handle_t handle = 0;
+    esp_err_t ret = nvs_open(SETUP_AP_NVS_NAMESPACE, NVS_READWRITE, &handle);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    ret = nvs_set_blob(handle, CAPACITY_ESTIMATE_NVS_KEY, blob, sizeof(*blob));
+    if (ret == ESP_OK) {
+        ret = nvs_commit(handle);
+    }
+    nvs_close(handle);
+    return ret;
+}
+
+static bool runtime_capacity_estimate_identity_matches(const esp_bms_idf_runtime_t *runtime)
+{
+    return runtime->bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_ANT &&
+           runtime->bms_bound_mac[0] != '\0' &&
+           runtime->capacity_estimate_bms_type == runtime->bms_type &&
+           strcmp(runtime->capacity_estimate_bms_mac, runtime->bms_bound_mac) == 0;
+}
+
+bool esp_bms_idf_runtime_observe_bms_capacity(esp_bms_idf_runtime_t *runtime,
+                                               bool new_connection,
+                                               uint32_t total_cycle_mah,
+                                               uint16_t soc_percent)
+{
+    if (!runtime || runtime->bms_type != (uint8_t)ESP_BMS_IDF_BMS_TYPE_ANT ||
+        runtime->bms_bound_mac[0] == '\0' || !runtime->capacity_estimate_lock ||
+        xSemaphoreTake(runtime->capacity_estimate_lock, pdMS_TO_TICKS(100)) != pdTRUE) {
+        return false;
+    }
+
+    bool changed = false;
+    if (!runtime_capacity_estimate_identity_matches(runtime)) {
+        esp_bms_capacity_estimate_reset(&runtime->capacity_estimate);
+        runtime->capacity_estimate_bms_type = runtime->bms_type;
+        runtime_copy_snapshot_text(runtime->capacity_estimate_bms_mac,
+                                   sizeof(runtime->capacity_estimate_bms_mac),
+                                   runtime->bms_bound_mac);
+        changed = true;
+    }
+    if (new_connection) {
+        esp_bms_capacity_estimate_reset_anchor(&runtime->capacity_estimate);
+    }
+    const esp_bms_capacity_estimate_result_t result =
+        esp_bms_capacity_estimate_observe(&runtime->capacity_estimate,
+                                          total_cycle_mah,
+                                          soc_percent);
+    changed = changed || result == ESP_BMS_CAPACITY_ESTIMATE_UPDATED ||
+              result == ESP_BMS_CAPACITY_ESTIMATE_CLEARED;
+    if (changed) {
+        runtime->capacity_estimate_dirty = true;
+        runtime->capacity_estimate_generation++;
+        runtime->capacity_estimate_retry_after_us = 0;
+    }
+    xSemaphoreGive(runtime->capacity_estimate_lock);
+    return changed;
+}
+
+static void runtime_persist_capacity_estimate(esp_bms_idf_runtime_t *runtime)
+{
+    if (!runtime || !runtime->capacity_estimate_lock) {
+        return;
+    }
+
+    const int64_t now_us = esp_timer_get_time();
+    runtime_capacity_estimate_blob_t blob = { 0 };
+    uint32_t generation = 0U;
+    if (xSemaphoreTake(runtime->capacity_estimate_lock, pdMS_TO_TICKS(100)) != pdTRUE) {
+        return;
+    }
+    const bool should_save = runtime->capacity_estimate_dirty &&
+                             now_us >= runtime->capacity_estimate_retry_after_us;
+    if (should_save) {
+        runtime_capacity_estimate_blob_from_runtime(runtime, &blob);
+        generation = runtime->capacity_estimate_generation;
+    }
+    xSemaphoreGive(runtime->capacity_estimate_lock);
+    if (!should_save) {
+        return;
+    }
+
+    const esp_err_t ret = runtime_save_capacity_estimate(runtime, &blob);
+    if (xSemaphoreTake(runtime->capacity_estimate_lock, pdMS_TO_TICKS(100)) != pdTRUE) {
+        return;
+    }
+    if (runtime->capacity_estimate_generation == generation) {
+        if (ret == ESP_OK) {
+            runtime->capacity_estimate_dirty = false;
+        } else {
+            runtime->capacity_estimate_retry_after_us = now_us + CAPACITY_ESTIMATE_PERSIST_RETRY_US;
+        }
+    }
+    xSemaphoreGive(runtime->capacity_estimate_lock);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "[bms] capacity estimate save failed: %s", esp_err_to_name(ret));
     }
 }
 
@@ -2309,9 +2499,20 @@ static esp_err_t runtime_http_status_handler(httpd_req_t *req, esp_bms_idf_runti
     char current[16] = { 0 };
     char soc[16] = { 0 };
     char local_battery[16] = { 0 };
+    char capacity_estimate[16] = { 0 };
     char protections[96] = { 0 };
     char warnings[96] = { 0 };
     char temperatures[80] = { 0 };
+    bool capacity_ready = false;
+    uint32_t capacity_estimate_mah = 0U;
+    if (runtime->bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_ANT &&
+        runtime->capacity_estimate_lock &&
+        xSemaphoreTake(runtime->capacity_estimate_lock, pdMS_TO_TICKS(100)) == pdTRUE) {
+        capacity_ready = runtime_capacity_estimate_identity_matches(runtime) &&
+                         runtime->capacity_estimate.ready;
+        capacity_estimate_mah = runtime->capacity_estimate.estimate_mah;
+        xSemaphoreGive(runtime->capacity_estimate_lock);
+    }
     if (!runtime_json_write_u32_or_null(pack_voltage,
                                         sizeof(pack_voltage),
                                         RUNTIME_SNAPSHOT_FLAG(runtime, PACK_VOLTAGE_VALID),
@@ -2328,6 +2529,10 @@ static esp_err_t runtime_http_status_handler(httpd_req_t *req, esp_bms_idf_runti
                                         sizeof(local_battery),
                                         RUNTIME_SNAPSHOT_FLAG(runtime, LOCAL_BATTERY_VALID),
                                         runtime->snapshot.local_battery_mv) ||
+        !runtime_json_write_u32_or_null(capacity_estimate,
+                                        sizeof(capacity_estimate),
+                                        capacity_ready,
+                                        capacity_estimate_mah) ||
         !runtime_json_write_bms_codes(protections,
                                       sizeof(protections),
                                       runtime->snapshot.bms_protection_codes,
@@ -2347,6 +2552,9 @@ static esp_err_t runtime_http_status_handler(httpd_req_t *req, esp_bms_idf_runti
     }
 
     char json[HTTP_JSON_MAX_LEN] = { 0 };
+    const char *capacity_state = runtime->bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_ANT
+                                     ? capacity_ready ? "ready" : "estimating"
+                                     : "unsupported";
     const int written = snprintf(json,
                                  sizeof(json),
                                  "{\"version\":\"%s\",\"speed\":\"%s\",\"speed_unit\":\"%s\","
@@ -2355,7 +2563,8 @@ static esp_err_t runtime_http_status_handler(httpd_req_t *req, esp_bms_idf_runti
                                  "\"local_battery_mv\":%s,\"bms_info\":\"%s\","
                                  "\"bms_protections\":%s,\"bms_warnings\":%s,"
                                  "\"bms_temperatures_c\":%s,\"wifi\":\"%s\","
-                                 "\"setup_ap_enabled\":%s}",
+                                 "\"setup_ap_enabled\":%s,\"bms_capacity_estimate_mah\":%s,"
+                                 "\"bms_capacity_estimate_state\":\"%s\"}",
                                  runtime->snapshot.firmware_version,
                                  speed,
                                  runtime_speed_unit_config_text(runtime->snapshot.speed_unit),
@@ -2370,7 +2579,9 @@ static esp_err_t runtime_http_status_handler(httpd_req_t *req, esp_bms_idf_runti
                                  warnings,
                                  temperatures,
                                  runtime_wifi_config_text(runtime->snapshot.wifi),
-                                 RUNTIME_SNAPSHOT_FLAG(runtime, SETUP_AP_ENABLED) ? "true" : "false");
+                                 RUNTIME_SNAPSHOT_FLAG(runtime, SETUP_AP_ENABLED) ? "true" : "false",
+                                 capacity_estimate,
+                                 capacity_state);
     if (written < 0 || (size_t)written >= sizeof(json)) {
         return runtime_http_send_text(req, "500 Internal Server Error", "json too large");
     }
@@ -3821,11 +4032,19 @@ void esp_bms_idf_runtime_init(esp_bms_idf_runtime_t *runtime)
     if (!runtime->ride_records_lock) {
         ESP_LOGW(TAG, "[bms] ride record mutex allocation failed");
     }
+    runtime->capacity_estimate_lock = xSemaphoreCreateMutex();
+    if (!runtime->capacity_estimate_lock) {
+        ESP_LOGW(TAG, "[bms] capacity estimate mutex allocation failed");
+    }
     runtime_reset_state(runtime);
     runtime_ensure_setup_ap_credentials(runtime);
     const esp_err_t ride_records_ret = runtime_load_ride_records(runtime);
     if (ride_records_ret != ESP_OK) {
         ESP_LOGW(TAG, "[bms] ride record load failed: %s", esp_err_to_name(ride_records_ret));
+    }
+    const esp_err_t capacity_ret = runtime_load_capacity_estimate(runtime);
+    if (capacity_ret != ESP_OK) {
+        ESP_LOGW(TAG, "[bms] capacity estimate load failed: %s", esp_err_to_name(capacity_ret));
     }
     runtime_init_battery_adc(runtime);
     (void)runtime_sample_battery(runtime);
@@ -4077,6 +4296,7 @@ bool esp_bms_idf_runtime_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_m
         changed = true;
     }
     runtime_persist_ride_records(runtime);
+    runtime_persist_capacity_estimate(runtime);
     return changed;
 }
 

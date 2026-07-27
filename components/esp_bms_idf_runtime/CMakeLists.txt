@@ -43,7 +43,7 @@ if(ESP_BMS_FEATURE_OTA)
 endif()
 
 idf_component_register(
-    SRCS "esp_bms_idf_runtime.c" "esp_bms_ride_records.c" "esp_bms_speed_dashboard.c"
+    SRCS "esp_bms_idf_runtime.c" "esp_bms_capacity_estimate.c" "esp_bms_ride_records.c" "esp_bms_speed_dashboard.c"
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "${ESP_BMS_PROFILE_GENERATED_DIR}"
     REQUIRES ${ESP_BMS_RUNTIME_REQUIRES}

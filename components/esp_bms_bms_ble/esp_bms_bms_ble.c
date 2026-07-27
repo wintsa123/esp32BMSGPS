@@ -124,6 +124,9 @@ static bool bms_apply_telemetry(esp_bms_idf_runtime_t *runtime,
     if (!runtime || !telemetry) {
         return false;
     }
+    const bool new_connection = !esp_bms_dashboard_snapshot_flag_get(
+        &runtime->snapshot,
+        ESP_BMS_DASHBOARD_FLAG_BMS_ONLINE);
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, BMS_ONLINE, true);
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, PACK_VOLTAGE_VALID, true);
     runtime->snapshot.pack_voltage_mv = telemetry->pack_voltage_mv;
@@ -155,6 +158,13 @@ static bool bms_apply_telemetry(esp_bms_idf_runtime_t *runtime,
         bms_apply_fault_masks(&runtime->snapshot, telemetry->protection_mask, telemetry->warning_mask);
     }
     runtime->bms_telemetry_last_us = esp_timer_get_time();
+    if (!telemetry->partial && telemetry->total_cycle_valid &&
+        runtime->bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_ANT) {
+        (void)esp_bms_idf_runtime_observe_bms_capacity(runtime,
+                                                        new_connection,
+                                                        telemetry->total_cycle_mah,
+                                                        telemetry->soc_percent);
+    }
     bms_set_info(runtime, "BMS OK");
     if (!telemetry->partial && telemetry->pack_voltage_mv != 0U && telemetry->soc_percent <= 100U) {
         esp_bms_ride_record_sample_t sample = {

@@ -6,6 +6,7 @@
 #include "esp_err.h"
 #include "esp_http_server.h"
 #include "esp_adc/adc_oneshot.h"
+#include "esp_bms_capacity_estimate.h"
 #include "esp_bms_display_service.h"
 #include "esp_bms_ride_records.h"
 #include "esp_bms_speed_dashboard.h"
@@ -129,6 +130,7 @@ typedef struct {
 struct esp_bms_idf_runtime {
     esp_bms_dashboard_snapshot_t snapshot;
     esp_bms_ride_records_t ride_records;
+    esp_bms_capacity_estimate_t capacity_estimate;
     adc_oneshot_unit_handle_t battery_adc;
     adc_channel_t battery_adc_channel;
     uint32_t tick_count;
@@ -142,7 +144,9 @@ struct esp_bms_idf_runtime {
     uint32_t controller_keepalive_elapsed_ms;
     uint32_t controller_scan_revision;
     uint32_t ride_records_generation;
+    uint32_t capacity_estimate_generation;
     int64_t ride_records_retry_after_us;
+    int64_t capacity_estimate_retry_after_us;
     uint16_t bms_frame_len;
     uint16_t bms_conn_handle;
     uint16_t bluetooth_conn_handle;
@@ -171,12 +175,14 @@ struct esp_bms_idf_runtime {
     char setup_ap_password[9];
     char bms_bound_mac[18];
     char bms_bound_name[ESP_BMS_IDF_BMS_SCAN_NAME_LEN + 1U];
+    char capacity_estimate_bms_mac[18];
     char controller_bound_mac[18];
     char controller_bound_name[ESP_BMS_IDF_BMS_SCAN_NAME_LEN + 1U];
     char bluetooth_name[32];
     SemaphoreHandle_t http_pending_lock;
     SemaphoreHandle_t bms_scan_lock;
     SemaphoreHandle_t ride_records_lock;
+    SemaphoreHandle_t capacity_estimate_lock;
     esp_bms_idf_bms_scan_candidate_t bms_scan_candidates[ESP_BMS_IDF_BMS_SCAN_MAX_CANDIDATES];
     esp_bms_idf_bms_scan_candidate_t controller_scan_candidates[ESP_BMS_IDF_BMS_SCAN_MAX_CANDIDATES];
     uint8_t setup_ap_clients;
@@ -187,6 +193,7 @@ struct esp_bms_idf_runtime {
     bool cast_frame_active;
     bool ride_records_session_started;
     bool ride_records_dirty;
+    bool capacity_estimate_dirty;
     int cast_socket_fd;
     uint32_t cast_sequence;
     uint32_t cast_heartbeat_elapsed_ms;
@@ -205,6 +212,7 @@ struct esp_bms_idf_runtime {
     uint8_t http_pending_brightness_percent;
     uint8_t http_pending_volume_percent;
     uint8_t http_pending_bms_type;
+    uint8_t capacity_estimate_bms_type;
     char http_pending_setup_ap_password[9];
     char http_pending_bms_bound_mac[18];
     uint64_t flags;
@@ -258,6 +266,10 @@ void esp_bms_idf_runtime_register_bms_frame_handler(
     esp_bms_idf_runtime_bms_frame_handler_t handler);
 bool esp_bms_idf_runtime_record_bms_sample(esp_bms_idf_runtime_t *runtime,
                                             const esp_bms_ride_record_sample_t *sample);
+bool esp_bms_idf_runtime_observe_bms_capacity(esp_bms_idf_runtime_t *runtime,
+                                               bool new_connection,
+                                               uint32_t total_cycle_mah,
+                                               uint16_t soc_percent);
 void esp_bms_idf_runtime_register_bms_ble_driver(
     esp_bms_idf_runtime_t *runtime,
     const esp_bms_idf_runtime_bms_ble_driver_t *driver);
