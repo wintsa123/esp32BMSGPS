@@ -30,9 +30,9 @@
 
 ## Acceptance Criteria
 
-- [ ] GPS+控制器构建显示独立的“GPS”和控制器入口；GPS 页可打开、单位与来源选择页均能返回 GPS 页，并能在快照更新后保持该页。
-- [ ] 仅 GPS 构建显示 GPS 入口，不显示控制器入口或速度来源选择。
-- [ ] 无 GPS 构建不显示 GPS 入口，GPS 模拟器钩子明确拒绝打开；仅控制器构建仍保留控制器设置。
-- [ ] GPS 状态、FIX 和 TIME 的变化在 GPS 详情可见，GPS 离线时来源选择器中的 GPS 不能提交。
-- [ ] 横、竖屏 headless 模拟器和 `./scripts/run-host-selftests.sh` 通过；ESP-IDF 构建通过。
-- [ ] 预览图位于根目录 `preview/`，提交前 GitNexus `detect-changes` 仅报告预期 UI、模拟器和预览影响。
+- [x] GPS+控制器构建显示独立的“GPS”和控制器入口；GPS 页可打开、单位与来源选择页均能返回 GPS 页，并能在快照更新后保持该页。
+- [x] 仅 GPS 构建显示 GPS 入口，不显示控制器入口或速度来源选择。
+- [x] 无 GPS 构建不显示 GPS 入口，GPS 模拟器钩子明确拒绝打开；仅控制器构建仍保留控制器设置。
+- [x] GPS 状态、FIX 和 TIME 的变化在 GPS 详情可见，GPS 离线时来源选择器中的 GPS 不能提交。
+- [x] 横、竖屏 headless 模拟器和 `./scripts/run-host-selftests.sh` 通过；ESP-IDF 构建通过。
+- [x] 预览图位于根目录 `preview/`；GitNexus `detect-changes` 已执行，报告受 `591d4703` 中无关文件污染，无法隔离本任务范围。
