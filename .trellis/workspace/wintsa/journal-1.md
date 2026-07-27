@@ -670,3 +670,36 @@ Scaled settings controls only for S3 logical resolutions, added the 18px setting
 ### Next Steps
 
 - None - task complete
+
+
+## Session 21: 修复黑场轮播占位页
+
+**Date**: 2026-07-28
+**Task**: 修复黑场轮播占位页
+**Branch**: `main`
+
+### Summary
+
+将黑场切页从屏幕浮层改为轮播容器内的黑色标题占位页，保持真实页隐藏时的滚动边界；横竖屏无头模拟器、GitNexus 变更映射和 esp32all profile 编译均通过。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1dbabdcf` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
