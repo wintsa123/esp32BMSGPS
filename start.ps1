@@ -1274,7 +1274,7 @@ function Get-CatalogOptionDescription([string]$Kind, [string]$Id) {
     return $Label[0]
 }
 
-function Select-CatalogOption([string]$Kind, [string]$Title, [string]$Default, [string[]]$Options) {
+function Select-CatalogOption([string]$Kind, [string]$Title, [string]$Default, [string[]]$Options, [switch]$AllowSavedProfileDelete) {
     if ($Options.Count -eq 0) { Fail "no compatible $Kind catalog options" }
     $script:ReturnToPreviousFunctionList = $false
     if (Test-InteractiveTerminal) {
@@ -1287,9 +1287,20 @@ function Select-CatalogOption([string]$Kind, [string]$Title, [string]$Default, [
             $Option = $Options[$Index]
             $Pointer = if ($Index -eq $Cursor) { '>' } else { ' ' }
             $Mark = if ($Option -eq $Default) { '*' } else { ' ' }
-            Write-Host ("  {0} {1} {2}) {3} — {4}" -f $Pointer, $Mark, ($Index + 1), $Option, (Get-CatalogOptionDescription $Kind $Option))
+            if ($AllowSavedProfileDelete -and $Option.StartsWith('saved:')) {
+                $Label = if ($script:Language -eq 'en') { 'Saved configuration' } else { '已保存配置' }
+                Write-Host ("  {0} {1} {2}) [{3}] {4}" -f $Pointer, $Mark, ($Index + 1), $Label, $Option.Substring(6))
+            } else {
+                Write-Host ("  {0} {1} {2}) {3} — {4}" -f $Pointer, $Mark, ($Index + 1), $Option, (Get-CatalogOptionDescription $Kind $Option))
+            }
         }
-        Write-Host $(if ($script:Language -eq 'en') { 'Use Up/Down to move, Left to return, Enter to continue.' } else { '使用 ↑/↓ 移动，← 返回上一级，回车继续。' })
+        Write-Host $(if ($AllowSavedProfileDelete) {
+            if ($script:Language -eq 'en') { 'Use Up/Down to move, D to delete a selected saved configuration, Left to return, Enter to continue.' } else { '使用 ↑/↓ 移动，选中已保存配置后按 D 删除，← 返回上一级，回车继续。' }
+        } elseif ($script:Language -eq 'en') {
+            'Use Up/Down to move, Left to return, Enter to continue.'
+        } else {
+            '使用 ↑/↓ 移动，← 返回上一级，回车继续。'
+        })
         while ($true) {
             $PreviousCursor = $Cursor
             switch ([Console]::ReadKey($true).Key) {
@@ -1297,6 +1308,12 @@ function Select-CatalogOption([string]$Kind, [string]$Title, [string]$Default, [
                 ([ConsoleKey]::DownArrow) { $Cursor = ($Cursor + 1) % $Options.Count }
                 ([ConsoleKey]::Enter) { return $Options[$Cursor] }
                 ([ConsoleKey]::LeftArrow) { $script:ReturnToPreviousFunctionList = $true; return $Default }
+                ([ConsoleKey]::D) {
+                    if ($AllowSavedProfileDelete -and $Options[$Cursor].StartsWith('saved:')) {
+                        [void](Remove-SavedProfile $Options[$Cursor].Substring(6))
+                        return '__refresh_saved_profiles__'
+                    }
+                }
             }
             if ($Cursor -ne $PreviousCursor) {
                 $OldMark = if ($Options[$PreviousCursor] -eq $Default) { '*' } else { ' ' }
@@ -1680,12 +1697,31 @@ function Get-SavedProfileIds {
     return @($Profiles | Sort-Object -Unique)
 }
 
+function Remove-SavedProfile([string]$Profile) {
+    if (-not (Test-Id $Profile)) { return $false }
+    $ProfileDir = Join-Path $BuildRoot $Profile
+    if (-not (Test-Path -LiteralPath $ProfileDir -PathType Container)) { return $false }
+    $Directory = Get-Item -LiteralPath $ProfileDir
+    if ($Directory.Attributes -band [IO.FileAttributes]::ReparsePoint) { return $false }
+    $FirmwareEnv = Join-Path $Directory.FullName 'firmware.env'
+    if (-not (Test-Path -LiteralPath $FirmwareEnv -PathType Leaf)) { return $false }
+    if ((Get-Item -LiteralPath $FirmwareEnv).Attributes -band [IO.FileAttributes]::ReparsePoint) { return $false }
+    $Confirm = Read-Host $(if ($script:Language -eq 'en') { "Delete saved configuration $Profile? [y/N]" } else { "删除已保存配置 $Profile？[y/N]" })
+    if ($Confirm -notmatch '^[Yy]$') { return $false }
+    Remove-Item -LiteralPath $Directory.FullName -Recurse -Force
+    return $true
+}
+
 function Select-BoardOrSavedProfile([string]$Default) {
-    $Options = [System.Collections.Generic.List[string]]::new()
-    foreach ($Board in @(Get-CatalogIds 'board') + @('custom')) { [void]$Options.Add($Board) }
-    foreach ($Profile in Get-SavedProfileIds) { [void]$Options.Add("saved:$Profile") }
-    if (Test-InteractiveTerminal) { return (Select-CatalogOption 'board' 'Board' $Default $Options.ToArray()) }
     while ($true) {
+        $Options = [System.Collections.Generic.List[string]]::new()
+        foreach ($Board in @(Get-CatalogIds 'board') + @('custom')) { [void]$Options.Add($Board) }
+        foreach ($Profile in Get-SavedProfileIds) { [void]$Options.Add("saved:$Profile") }
+        if (Test-InteractiveTerminal) {
+            $Selected = Select-CatalogOption 'board' 'Board' $Default $Options.ToArray() -AllowSavedProfileDelete
+            if ($Selected -eq '__refresh_saved_profiles__') { continue }
+            return $Selected
+        }
         Write-Host ''
         Write-Host (Convert-LocalizedText 'Board')
         for ($Index = 0; $Index -lt $Options.Count; $Index++) {

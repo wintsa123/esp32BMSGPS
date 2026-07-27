@@ -18,8 +18,8 @@ CMakeFiles/esp_bms_lvgl_simulator.dir/vol1/1000/project/esp32BmsGps/components/e
  /usr/include/x86_64-linux-gnu/bits/wchar.h \
  /usr/include/x86_64-linux-gnu/bits/stdint-intn.h \
  /usr/include/x86_64-linux-gnu/bits/stdint-uintn.h \
- /vol1/1000/project/esp32BmsGps/simulator/include/esp_err.h \
- /vol1/1000/project/esp32BmsGps/simulator/include/host_compat.h \
+ /vol1/1000/project/esp32BmsGps/components/esp_bms_lvgl_contract/include/esp_bms_bms_safety.h \
+ /vol1/1000/project/esp32BmsGps/components/esp_bms_lvgl_contract/include/esp_bms_lvgl_contract.h \
  /vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/lvgl.h \
  /vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/../lvgl.h \
  /vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/../lv_version.h \
@@ -480,6 +480,9 @@ CMakeFiles/esp_bms_lvgl_simulator.dir/vol1/1000/project/esp32BmsGps/components/e
  /vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/../src/lv_api_map_v9_3.h \
  /vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/../src/lv_api_map_v9_4.h \
  /vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/lv_conf_internal.h \
+ /vol1/1000/project/esp32BmsGps/simulator/include/sdkconfig.h \
+ /vol1/1000/project/esp32BmsGps/simulator/include/esp_err.h \
+ /vol1/1000/project/esp32BmsGps/simulator/include/host_compat.h \
  /usr/include/stdlib.h /usr/include/x86_64-linux-gnu/bits/waitflags.h \
  /usr/include/x86_64-linux-gnu/bits/waitstatus.h \
  /usr/include/x86_64-linux-gnu/bits/floatn.h \
@@ -494,8 +497,6 @@ CMakeFiles/esp_bms_lvgl_simulator.dir/vol1/1000/project/esp32BmsGps/components/e
  /usr/include/x86_64-linux-gnu/bits/stdio_lim.h /usr/include/string.h \
  /usr/include/x86_64-linux-gnu/bits/types/locale_t.h \
  /usr/include/x86_64-linux-gnu/bits/types/__locale_t.h \
- /vol1/1000/project/esp32BmsGps/components/esp_bms_lvgl_contract/include/esp_bms_lvgl_contract.h \
- /vol1/1000/project/esp32BmsGps/simulator/include/sdkconfig.h \
  /vol1/1000/project/esp32BmsGps/simulator/include/esp_check.h \
  /vol1/1000/project/esp32BmsGps/simulator/include/esp_log.h \
  /vol1/1000/project/esp32BmsGps/simulator/include/esp_heap_caps.h \

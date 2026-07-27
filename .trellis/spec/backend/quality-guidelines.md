@@ -566,6 +566,23 @@ touch_canonical_to_display(x, y, &display_x, &display_y);
 - Validate with the selected S3 profile build, RFC2217 flash, and a held drag,
   a short tap, and a release on the physical screen.
 
+## Scenario: GT1151Q Native Gestures
+
+- Read `0x814C` only for the GT1151 profile, before the third-party driver
+  consumes its existing `0x814E` coordinate frame. Do not write `0x814C`
+  without controller evidence; preserve the driver's `0x814E` acknowledgement.
+- Decode only `AA/BB/AB/BA/CC/C1/C2/C4/C8`; unknown, ASCII, and custom values
+  do nothing. A nonzero value dispatches once and must return to zero before it
+  can dispatch again.
+- The bridge emits one semantic gesture for the display service to consume in
+  its existing LVGL task. The UI owns page, quick-panel, and focus behavior;
+  it must not read I2C. GT1151 skips `touch_cal`, while other touch drivers
+  retain their calibration flow.
+- Native horizontal/page and quick-panel swipe paths are mutually exclusive
+  with their coordinate equivalents. Keep coordinate click, scroll, slider,
+  edge-return, and LVGL long-press behavior intact; double tap is diagnostics
+  only until it has an approved action.
+
 ## Required Patterns
 
 - Keep `main/idf_main.c` as orchestration only. Subsystem logic belongs in

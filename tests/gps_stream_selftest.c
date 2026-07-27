@@ -12,6 +12,17 @@ typedef struct {
     char last_line[ESP_BMS_GPS_STREAM_CAPACITY + 1U];
 } stream_result_t;
 
+static size_t nmea_with_checksum(char *line, size_t capacity, const char *payload)
+{
+    uint8_t checksum = 0U;
+    for (const char *cursor = payload; *cursor != '\0'; ++cursor) {
+        checksum ^= (uint8_t)*cursor;
+    }
+    const int written = snprintf(line, capacity, "$%s*%02X", payload, checksum);
+    assert(written > 0 && (size_t)written < capacity);
+    return (size_t)written;
+}
+
 static void feed_text(esp_bms_gps_stream_t *stream,
                       stream_result_t *result,
                       const char *text)
@@ -77,6 +88,41 @@ static void test_nmea_checksum_validation(void)
     assert(!esp_bms_gps_stream_nmea_checksum_valid(missing, sizeof(missing) - 1U));
     assert(!esp_bms_gps_stream_nmea_checksum_valid(trailing, sizeof(trailing) - 1U));
     assert(!esp_bms_gps_stream_nmea_checksum_valid(bad, sizeof(bad) - 1U));
+}
+
+static void test_gsa_gsv_satellite_parsing(void)
+{
+    char line[ESP_BMS_GPS_STREAM_CAPACITY + 1U] = { 0 };
+    esp_bms_gps_gsa_t gsa = { 0 };
+    esp_bms_gps_gsv_t gsv = { 0 };
+
+    size_t line_len = nmea_with_checksum(
+        line, sizeof(line), "GNGSA,A,3,03,07,08,11,16,22,,,,,,,1.2,0.8,0.9,1");
+    assert(esp_bms_gps_stream_parse_gsa((const uint8_t *)line, line_len, &gsa));
+    assert(gsa.fix_dimension == 3U && gsa.satellites_used == 6U);
+
+    line_len = nmea_with_checksum(
+        line, sizeof(line), "GPGSA,A,2,,,,,,,,,,,,,2.1,1.3,1.7");
+    assert(esp_bms_gps_stream_parse_gsa((const uint8_t *)line, line_len, &gsa));
+    assert(gsa.fix_dimension == 2U && gsa.satellites_used == 0U);
+
+    line_len = nmea_with_checksum(
+        line, sizeof(line), "GNGSV,2,1,08,03,45,120,31,07,50,230,,08,22,050,44,11,18,300,27,1");
+    assert(line_len > 64U);
+    assert(esp_bms_gps_stream_parse_gsv((const uint8_t *)line, line_len, &gsv));
+    assert(gsv.sentence_count == 2U && gsv.sentence_index == 1U &&
+           gsv.satellites_visible == 8U && gsv.max_cn0 == 44U);
+
+    line[line_len - 1U] = line[line_len - 1U] == '0' ? '1' : '0';
+    assert(!esp_bms_gps_stream_parse_gsv((const uint8_t *)line, line_len, &gsv));
+
+    line_len = nmea_with_checksum(
+        line,
+        sizeof(line),
+        "GNGSV,3,3,12,16,09,010,18,22,07,090,52,27,04,180,09,31,02,270,12,32,01,001,11,33,02,002,12,34,03,003,13");
+    assert(line_len > 96U && line_len < ESP_BMS_GPS_STREAM_CAPACITY);
+    assert(esp_bms_gps_stream_parse_gsv((const uint8_t *)line, line_len, &gsv));
+    assert(gsv.sentence_index == 3U && gsv.max_cn0 == 52U);
 }
 
 static void test_overflow_discards_whole_sentence(void)
@@ -203,6 +249,7 @@ int main(void)
     test_noise_and_consecutive_rmc();
     test_rmc_sentence_classification();
     test_nmea_checksum_validation();
+    test_gsa_gsv_satellite_parsing();
     test_overflow_discards_whole_sentence();
     test_new_dollar_recovers_without_newline();
     test_casbin_build_and_parse();

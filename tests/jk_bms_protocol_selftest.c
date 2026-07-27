@@ -73,16 +73,20 @@ int main(void)
     esp_bms_bms_telemetry_t telemetry = { 0 };
     uint8_t frame[ESP_BMS_JK_FRAME_LEN] = { 0 };
     build_jk02_frame(frame, 16U, 32U);
+    frame[172U] = 1U;
+    set_checksum(frame);
     assert(!esp_bms_jk_feed(stream, &stream_len, sizeof(stream), frame, 100U, &telemetry));
     assert(esp_bms_jk_feed(stream, &stream_len, sizeof(stream), frame + 100U, sizeof(frame) - 100U, &telemetry));
     assert(telemetry.pack_voltage_mv == 52800U && telemetry.current_deci_amps == -12 &&
-           telemetry.protection_mask == 0x12345678U && telemetry.soc_percent == 76U);
+           telemetry.protection_mask == 0x12345678U && telemetry.soc_percent == 76U &&
+           telemetry.balancing_supported && telemetry.balancing_active);
 
     stream_len = 0U;
     build_jk02_frame(frame, 16U, 0U);
     assert(esp_bms_jk_feed(stream, &stream_len, sizeof(stream), frame, sizeof(frame), &telemetry));
     assert(telemetry.pack_voltage_mv == 52800U && telemetry.current_deci_amps == -12 &&
-           telemetry.protection_mask == 0x1234U && telemetry.soc_percent == 76U);
+           telemetry.protection_mask == 0x1234U && telemetry.soc_percent == 76U &&
+           telemetry.balancing_supported && !telemetry.balancing_active);
 
     stream_len = 0U;
     init_frame(frame);

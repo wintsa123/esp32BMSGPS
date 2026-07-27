@@ -6,5 +6,5 @@ idf_component_register(
          "protocols/jk/esp_bms_jk_protocol.c"
          "protocols/yanyang/esp_bms_yanyang_protocol.c"
     INCLUDE_DIRS "include"
-    REQUIRES bt esp_bms_idf_runtime esp_bms_lvgl_ui esp_timer
+    REQUIRES bt esp_bms_idf_runtime esp_bms_lvgl_contract esp_bms_lvgl_ui esp_timer
 )

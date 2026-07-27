@@ -145,6 +145,8 @@ static void init_snapshot(host_app_t *app)
     app->metric_consumption_deci_wh_per_km = 238;
     snapshot->gps_sentences_seen = 1234U;
     snapshot->uptime_seconds = 3661U;
+    snapshot->bms_running_time_seconds = 36591632U;
+    snapshot->bms_running_time_valid = true;
     snapshot->pack_voltage_mv = 72800U;
     snapshot->total_capacity_mah = 140000U;
     snapshot->capacity_remaining_mah = 104600U;
@@ -164,6 +166,8 @@ static void init_snapshot(host_app_t *app)
     snapshot->average_cell_voltage_mv = 3640U;
     snapshot->max_cell_voltage_mv = 3653U;
     snapshot->delta_cell_voltage_mv = 28U;
+    snapshot->bms_safety_supported_mask = ESP_BMS_BMS_SAFETY_KNOWN_MASK;
+    snapshot->bms_safety_active_mask = 0U;
     snapshot->brightness_percent = 85U;
     snapshot->volume_percent = 65U;
     snapshot->bms_type = 0U;
@@ -604,12 +608,11 @@ static bool run_capability_matrix(host_app_t *app)
     static const struct {
         bool gps_available;
         bool controller_online;
-        bool speed_page_expected;
     } cases[] = {
-        { true, false, true },
-        { false, false, true },
-        { false, true, true },
-        { true, true, true },
+        { true, false },
+        { false, false },
+        { false, true },
+        { true, true },
     };
 
     for (size_t index = 0U; index < sizeof(cases) / sizeof(cases[0]); ++index) {
@@ -631,12 +634,14 @@ static bool run_capability_matrix(host_app_t *app)
         const bool speed_page_active =
             esp_bms_lvgl_ui_stable_data_source() ==
             ESP_BMS_LVGL_DATA_SOURCE_SPEED_DASHBOARD;
-        if (speed_page_active != cases[index].speed_page_expected) {
+        const bool speed_page_expected =
+            ESP_BMS_FEATURE_GPS || ESP_BMS_FEATURE_CONTROLLER;
+        if (speed_page_active != speed_page_expected) {
             fprintf(stderr,
                     "capability matrix mismatch: gps=%d controller=%d expected_speed_page=%d\n",
                     cases[index].gps_available ? 1 : 0,
                     cases[index].controller_online ? 1 : 0,
-                    cases[index].speed_page_expected ? 1 : 0);
+                    speed_page_expected ? 1 : 0);
             return false;
         }
         if (esp_bms_lvgl_ui_set_page(ESP_BMS_LVGL_PAGE_CAST, false) != ESP_OK ||
@@ -743,7 +748,8 @@ static bool run_settings_boot_preview_smoke(
     return esp_bms_lvgl_ui_update(&app->snapshot) == ESP_OK;
 }
 
-#if ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
+#if ESP_BMS_FEATURE_DASHBOARD_FIREBLADE && \
+    (ESP_BMS_FEATURE_GPS || ESP_BMS_FEATURE_CONTROLLER)
 static bool run_native_dashboard_transition(host_app_t *app,
                                             esp_bms_lvgl_page_t page,
                                             uint32_t *snapshot_updates)
@@ -819,7 +825,17 @@ static bool run_native_dashboard_stress(host_app_t *app)
 
 static bool run_headless_feature_matrix(host_app_t *app)
 {
-    if (!speed_source_matrix_passes() || !run_capability_matrix(app)) {
+    const bool speed_source_ok = speed_source_matrix_passes();
+    const bool capability_ok = run_capability_matrix(app);
+    const bool native_gesture_ok = esp_bms_lvgl_ui_simulator_native_gesture_smoke();
+    const bool settings_scroll_ok = esp_bms_lvgl_ui_simulator_settings_scroll_smoke();
+    if (!speed_source_ok || !capability_ok || !native_gesture_ok || !settings_scroll_ok) {
+        fprintf(stderr,
+                "feature matrix failed: source=%d capability=%d gesture=%d scroll=%d\n",
+                speed_source_ok ? 1 : 0,
+                capability_ok ? 1 : 0,
+                native_gesture_ok ? 1 : 0,
+                settings_scroll_ok ? 1 : 0);
         return false;
     }
 #if ESP_BMS_FEATURE_GPS
@@ -846,6 +862,7 @@ static bool run_headless_feature_matrix(host_app_t *app)
 #endif
     init_snapshot(app);
     if (esp_bms_lvgl_ui_update(&app->snapshot) != ESP_OK) {
+        fputs("snapshot restore smoke failed\n", stderr);
         return false;
     }
     if (!run_boot_style_smoke(app,
@@ -854,12 +871,14 @@ static bool run_headless_feature_matrix(host_app_t *app)
         !run_boot_style_smoke(app,
                               ESP_BMS_BOOT_ANIMATION_GAUGE_SWEEP,
                               ESP_BMS_SPEED_DASHBOARD_STYLE_S1000RR)) {
+        fputs("S1000RR boot animation smoke failed\n", stderr);
         return false;
     }
 #if ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
     if (!run_boot_style_smoke(app,
                               ESP_BMS_BOOT_ANIMATION_GAUGE_SWEEP,
                               ESP_BMS_SPEED_DASHBOARD_STYLE_HONDA_FIREBLADE)) {
+        fputs("Fireblade boot animation smoke failed\n", stderr);
         return false;
     }
 #endif
@@ -869,13 +888,15 @@ static bool run_headless_feature_matrix(host_app_t *app)
         !run_settings_boot_preview_smoke(app,
                                          ESP_BMS_BOOT_ANIMATION_GAUGE_SWEEP,
                                          true)) {
+        fputs("settings boot animation smoke failed\n", stderr);
         return false;
     }
     init_snapshot(app);
     if (esp_bms_lvgl_ui_update(&app->snapshot) != ESP_OK) {
         return false;
     }
-#if ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
+#if ESP_BMS_FEATURE_DASHBOARD_FIREBLADE && \
+    (ESP_BMS_FEATURE_GPS || ESP_BMS_FEATURE_CONTROLLER)
     return run_native_dashboard_stress(app);
 #else
     return true;
@@ -990,7 +1011,7 @@ int main(int argc, char **argv)
     lv_indev_set_display(mouse, app.display);
     SDL_AddEventWatch(sdl_event_watch, &app);
 
-    if (esp_bms_lvgl_ui_init(app.display) != ESP_OK ||
+    if (esp_bms_lvgl_ui_init(app.display, false, true) != ESP_OK ||
         esp_bms_lvgl_ui_update(&app.snapshot) != ESP_OK) {
         fputs("真实 UI 初始化失败\n", stderr);
         SDL_DelEventWatch(sdl_event_watch, &app);

@@ -20,6 +20,7 @@
 - R2: 保留完整 A/B 诊断能力：默认诊断镜像使用局部失效，并提供显式全屏失效覆盖层供回归比较；既有 `--no-full-invalidate` 命令保持兼容。
 - R3: 不修改 BMS/Fireblade 的页面结构、缩放策略、页面映射、手势阈值、快照延迟或双缓冲策略。
 - R4: 在目标真机上验证 BMS <-> Fireblade 轮播的慢拖、快速甩动、松手吸附和程序化切页均无残影、分块、触摸退化、panic 或 WDT。
+- R5: 经典 ESP32 的原生横屏 320x240 S1000RR 速度仪表使用 Flash 中的 RGB565 静态底图，减少拖动期间的矢量绘制；动态速度、状态和文本保持 LVGL 实时绘制。
 
 ## Acceptance Criteria
 
@@ -28,12 +29,14 @@
 - [x] AC3: 构建并运行模拟器无头冒烟测试，覆盖 BMS、Fireblade、横屏和竖屏基本 UI 路径。
 - [ ] AC4: 目标硬件上的局部失效镜像反复切换 BMS <-> Fireblade 时无视觉残影或分块，且主观卡顿较当前默认镜像改善。
 - [x] AC5: `git diff --check`、相关配置/脚本检查、ESP-IDF 目标构建和 GitNexus `detect_changes` 通过。
+- [x] AC6: 经典 ESP32 构建仅增加一张 320x240 RGB565（153,600 B）静态底图；竖屏、ESP32-S3 和模拟器仍使用原有动态绘制路径。
 
 ## Out Of Scope
 
 - 将固定坐标仪表重写为原生响应式布局，或消除现有 BMS/Fireblade 的视觉缩放。
 - 修改 I80/SPI 时钟、像素格式、LVGL buffer 高度、PSRAM 双缓冲、触摸参数或轮播手势算法。
 - 修改 BMS、GPS、控制器、投屏和设置业务逻辑。
+- 为其他仪表风格、竖屏或 ESP32-S3 生成额外静态图片。
 
 ## Implementation Approval
 

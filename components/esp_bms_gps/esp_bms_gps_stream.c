@@ -215,6 +215,125 @@ bool esp_bms_gps_stream_nmea_checksum_valid(const uint8_t *line, size_t line_len
     return actual == (uint8_t)((high << 4) | low);
 }
 
+static bool nmea_line_is_kind(const uint8_t *line, size_t line_len, const char kind[4])
+{
+    return line && line_len >= 7U && line[0] == '$' && line[6] == ',' &&
+           memcmp(&line[3], kind, 3U) == 0;
+}
+
+static bool nmea_uint8_parse(const char *field, size_t field_len, uint8_t *value)
+{
+    if (!field || !value || field_len == 0U || field_len > 3U) {
+        return false;
+    }
+    uint16_t parsed = 0U;
+    for (size_t index = 0U; index < field_len; ++index) {
+        if (field[index] < '0' || field[index] > '9') {
+            return false;
+        }
+        parsed = (uint16_t)(parsed * 10U + (uint8_t)(field[index] - '0'));
+    }
+    if (parsed > UINT8_MAX) {
+        return false;
+    }
+    *value = (uint8_t)parsed;
+    return true;
+}
+
+bool esp_bms_gps_stream_parse_gsa(const uint8_t *line,
+                                  size_t line_len,
+                                  esp_bms_gps_gsa_t *gsa)
+{
+    if (!gsa || !nmea_line_is_kind(line, line_len, "GSA") ||
+        !esp_bms_gps_stream_nmea_checksum_valid(line, line_len)) {
+        return false;
+    }
+
+    esp_bms_gps_gsa_t parsed = { 0 };
+    const char *payload = (const char *)&line[1];
+    const size_t payload_len = line_len - 4U;
+    size_t field_index = 0U;
+    size_t field_start = 0U;
+    for (size_t index = 0U; index <= payload_len; ++index) {
+        if (index != payload_len && payload[index] != ',') {
+            continue;
+        }
+        const char *field = &payload[field_start];
+        const size_t field_len = index - field_start;
+        if (field_index == 2U) {
+            if (!nmea_uint8_parse(field, field_len, &parsed.fix_dimension) ||
+                parsed.fix_dimension < 1U || parsed.fix_dimension > 3U) {
+                return false;
+            }
+        } else if (field_index >= 3U && field_index <= 14U && field_len > 0U) {
+            uint8_t satellite_id = 0U;
+            if (!nmea_uint8_parse(field, field_len, &satellite_id) || satellite_id == 0U) {
+                return false;
+            }
+            parsed.satellites_used++;
+        }
+        field_index++;
+        field_start = index + 1U;
+    }
+    if (field_index <= 14U || parsed.fix_dimension == 0U) {
+        return false;
+    }
+    *gsa = parsed;
+    return true;
+}
+
+bool esp_bms_gps_stream_parse_gsv(const uint8_t *line,
+                                  size_t line_len,
+                                  esp_bms_gps_gsv_t *gsv)
+{
+    if (!gsv || !nmea_line_is_kind(line, line_len, "GSV") ||
+        !esp_bms_gps_stream_nmea_checksum_valid(line, line_len)) {
+        return false;
+    }
+
+    esp_bms_gps_gsv_t parsed = { 0 };
+    const char *payload = (const char *)&line[1];
+    const size_t payload_len = line_len - 4U;
+    size_t field_index = 0U;
+    size_t field_start = 0U;
+    for (size_t index = 0U; index <= payload_len; ++index) {
+        if (index != payload_len && payload[index] != ',') {
+            continue;
+        }
+        const char *field = &payload[field_start];
+        const size_t field_len = index - field_start;
+        uint8_t value = 0U;
+        if (field_index >= 1U && field_index <= 3U) {
+            if (!nmea_uint8_parse(field, field_len, &value)) {
+                return false;
+            }
+            if (field_index == 1U) {
+                parsed.sentence_count = value;
+            } else if (field_index == 2U) {
+                parsed.sentence_index = value;
+            } else {
+                parsed.satellites_visible = value;
+            }
+        } else if (field_index >= 7U && ((field_index - 7U) % 4U) == 0U &&
+                   field_len > 0U) {
+            if (!nmea_uint8_parse(field, field_len, &value)) {
+                return false;
+            }
+            if (value > parsed.max_cn0) {
+                parsed.max_cn0 = value;
+            }
+        }
+        field_index++;
+        field_start = index + 1U;
+    }
+    if (field_index <= 3U || parsed.sentence_count == 0U ||
+        parsed.sentence_index == 0U || parsed.sentence_index > parsed.sentence_count) {
+        return false;
+    }
+    *gsv = parsed;
+    return true;
+}
+
 esp_bms_gps_stream_event_t esp_bms_gps_stream_feed(esp_bms_gps_stream_t *stream,
                                                     uint8_t byte)
 {

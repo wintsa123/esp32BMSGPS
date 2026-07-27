@@ -86,6 +86,7 @@ static const char *TAG = "bms_lvgl_bridge";
 #define TOUCH_FILTER_LOG_INTERVAL_MS 1000U
 #define TOUCH_FILTER_PRESS_STABILITY_DISTANCE 16U
 #if ESP_BMS_PROFILE_TOUCH_GT1151
+#define GT1151_GESTURE_REGISTER 0x814CU
 #define GT1151_POINT_STATUS_REGISTER 0x814EU
 #define GT1151_POINT_STATUS_READY_BIT 0x80U
 #endif
@@ -120,6 +121,12 @@ static TickType_t s_touch_last_log_tick;
 static TickType_t s_touch_last_filter_log_tick;
 static bool s_touch_read_callback_logged;
 static bool s_touch_was_pressed;
+static esp_bms_lvgl_touch_driver_t s_touch_driver = ESP_BMS_LVGL_TOUCH_NONE;
+static esp_bms_lvgl_native_gesture_t s_pending_native_gesture;
+#if ESP_BMS_PROFILE_TOUCH_GT1151
+static uint8_t s_gt1151_latched_gesture;
+static TickType_t s_gt1151_last_error_log_tick;
+#endif
 static esp_bms_lvgl_bridge_metrics_t s_metrics;
 static int64_t s_render_started_us;
 static int64_t s_flush_started_us;
@@ -407,6 +414,11 @@ static bool touch_calibration_valid(const touch_calibration_t *calibration)
            calibration->y_max <= (int32_t)s_physical_height * 2;
 }
 
+static bool touch_calibration_supported(void)
+{
+    return s_touch_driver != ESP_BMS_LVGL_TOUCH_GT1151;
+}
+
 static int32_t touch_calibration_map(int32_t value, int32_t minimum, int32_t maximum, int32_t output_max)
 {
     const int32_t span = maximum - minimum;
@@ -419,7 +431,7 @@ static int32_t touch_calibration_map(int32_t value, int32_t minimum, int32_t max
 
 static void touch_calibration_apply(esp_lcd_touch_point_data_t *points, uint8_t count)
 {
-    if (!s_touch_calibration_valid || !points) {
+    if (!touch_calibration_supported() || !s_touch_calibration_valid || !points) {
         return;
     }
     for (uint8_t index = 0; index < count; ++index) {
@@ -437,6 +449,74 @@ static void touch_calibration_apply(esp_lcd_touch_point_data_t *points, uint8_t 
         touch_canonical_to_display(canonical_x, canonical_y, &points[index].x, &points[index].y);
     }
 }
+
+#if ESP_BMS_PROFILE_TOUCH_GT1151
+static esp_bms_lvgl_native_gesture_t gt1151_decode_gesture(uint8_t raw)
+{
+    switch (raw) {
+    case 0xAA:
+        return ESP_BMS_LVGL_NATIVE_GESTURE_SWIPE_RIGHT;
+    case 0xBB:
+        return ESP_BMS_LVGL_NATIVE_GESTURE_SWIPE_LEFT;
+    case 0xAB:
+        return ESP_BMS_LVGL_NATIVE_GESTURE_SWIPE_DOWN;
+    case 0xBA:
+        return ESP_BMS_LVGL_NATIVE_GESTURE_SWIPE_UP;
+    case 0xCC:
+        return ESP_BMS_LVGL_NATIVE_GESTURE_DOUBLE_TAP;
+    case 0xC1:
+        return ESP_BMS_LVGL_NATIVE_GESTURE_KEY_PREVIOUS;
+    case 0xC2:
+        return ESP_BMS_LVGL_NATIVE_GESTURE_KEY_NEXT;
+    case 0xC4:
+        return ESP_BMS_LVGL_NATIVE_GESTURE_KEY_CONFIRM;
+    case 0xC8:
+        return ESP_BMS_LVGL_NATIVE_GESTURE_KEY_BACK;
+    default:
+        return ESP_BMS_LVGL_NATIVE_GESTURE_NONE;
+    }
+}
+
+static void gt1151_capture_gesture(uint8_t raw,
+                                   esp_err_t gesture_ret,
+                                   uint8_t point_status,
+                                   esp_err_t status_ret,
+                                   TickType_t now)
+{
+    if (gesture_ret != ESP_OK) {
+        if (s_gt1151_last_error_log_tick == 0 ||
+            now - s_gt1151_last_error_log_tick >= pdMS_TO_TICKS(1000)) {
+            ESP_LOGW(TAG, "GT1151 gesture read failed: %s", esp_err_to_name(gesture_ret));
+            s_gt1151_last_error_log_tick = now;
+        }
+        return;
+    }
+    if (raw == 0U) {
+        s_gt1151_latched_gesture = 0U;
+        return;
+    }
+    if (raw == s_gt1151_latched_gesture) {
+        return;
+    }
+    s_gt1151_latched_gesture = raw;
+
+    const esp_bms_lvgl_native_gesture_t gesture = gt1151_decode_gesture(raw);
+    ESP_LOGI(TAG,
+             "GT1151 gesture raw=0x%02x status=%s0x%02x semantic=%u",
+             raw,
+             status_ret == ESP_OK ? "" : "unavailable/",
+             point_status,
+             (unsigned)gesture);
+    if (gesture == ESP_BMS_LVGL_NATIVE_GESTURE_NONE) {
+        return;
+    }
+    if (s_pending_native_gesture == ESP_BMS_LVGL_NATIVE_GESTURE_NONE) {
+        s_pending_native_gesture = gesture;
+    } else {
+        ESP_LOGW(TAG, "native gesture pending; dropping semantic=%u", (unsigned)gesture);
+    }
+}
+#endif
 
 static uint16_t touch_abs_difference(uint16_t left, uint16_t right)
 {
@@ -900,12 +980,23 @@ static esp_err_t touch_read_with_diagnostics(esp_lcd_touch_handle_t tp,
     }
 
 #if ESP_BMS_PROFILE_TOUCH_GT1151
+    uint8_t gt1151_gesture = 0;
+    const esp_err_t gt1151_gesture_ret =
+        esp_lcd_panel_io_rx_param(s_touch_io,
+                                  GT1151_GESTURE_REGISTER,
+                                  &gt1151_gesture,
+                                  sizeof(gt1151_gesture));
     uint8_t gt1151_status = 0;
     const esp_err_t gt1151_status_ret =
         esp_lcd_panel_io_rx_param(s_touch_io,
                                   GT1151_POINT_STATUS_REGISTER,
                                   &gt1151_status,
                                   sizeof(gt1151_status));
+    gt1151_capture_gesture(gt1151_gesture,
+                           gt1151_gesture_ret,
+                           gt1151_status,
+                           gt1151_status_ret,
+                           now);
     /* A clear buffer-ready bit means the GT1151 coordinate data is invalid, not released. */
     if (gt1151_status_ret == ESP_OK &&
         (gt1151_status & GT1151_POINT_STATUS_READY_BIT) == 0U &&
@@ -1327,6 +1418,7 @@ esp_err_t esp_bms_lvgl_bridge_init(const esp_bms_lvgl_bridge_config_t *config)
     s_physical_width = config->physical_width;
     s_physical_height = config->physical_height;
     s_panel_mirror_x = config->panel_mirror_x;
+    s_touch_driver = config->touch_driver;
 
     ESP_LOGI(TAG, "init display bus=%d panel=%d hres=%u vres=%u pclk=%lu",
              config->display_bus, config->panel_driver, hres, vres,
@@ -1470,6 +1562,12 @@ void esp_bms_lvgl_bridge_get_metrics(esp_bms_lvgl_bridge_metrics_t *metrics)
 esp_err_t esp_bms_lvgl_bridge_load_touch_calibration(void)
 {
     ESP_RETURN_ON_FALSE(s_initialized, ESP_ERR_INVALID_STATE, TAG, "bridge is not initialized");
+    if (!touch_calibration_supported()) {
+        memset(&s_touch_calibration, 0, sizeof(s_touch_calibration));
+        memset(&s_touch_calibration_session, 0, sizeof(s_touch_calibration_session));
+        s_touch_calibration_valid = false;
+        return ESP_OK;
+    }
 
     nvs_handle_t handle = 0;
     esp_err_t ret = nvs_open(TOUCH_CALIBRATION_NVS_NAMESPACE, NVS_READONLY, &handle);
@@ -1506,6 +1604,8 @@ esp_err_t esp_bms_lvgl_bridge_load_touch_calibration(void)
 
 esp_err_t esp_bms_lvgl_bridge_begin_touch_calibration(void)
 {
+    ESP_RETURN_ON_FALSE(touch_calibration_supported(), ESP_ERR_NOT_SUPPORTED,
+                        TAG, "touch calibration is unsupported");
     ESP_RETURN_ON_FALSE(s_initialized && s_touch, ESP_ERR_INVALID_STATE, TAG, "touch is not initialized");
     ESP_RETURN_ON_FALSE(!s_touch_calibration_session.active,
                         ESP_ERR_INVALID_STATE, TAG, "touch calibration already active");
@@ -1528,6 +1628,8 @@ esp_err_t esp_bms_lvgl_bridge_add_touch_calibration_sample(uint8_t target_index,
 {
     ESP_RETURN_ON_FALSE(finished, ESP_ERR_INVALID_ARG, TAG, "finished output is required");
     *finished = false;
+    ESP_RETURN_ON_FALSE(touch_calibration_supported(), ESP_ERR_NOT_SUPPORTED,
+                        TAG, "touch calibration is unsupported");
     ESP_RETURN_ON_FALSE(s_touch_calibration_session.active,
                         ESP_ERR_INVALID_STATE, TAG, "touch calibration is not active");
     ESP_RETURN_ON_FALSE(target_index < TOUCH_CALIBRATION_POINT_COUNT,
@@ -1593,6 +1695,9 @@ esp_err_t esp_bms_lvgl_bridge_add_touch_calibration_sample(uint8_t target_index,
 
 void esp_bms_lvgl_bridge_cancel_touch_calibration(void)
 {
+    if (!touch_calibration_supported()) {
+        return;
+    }
     if (!s_touch_calibration_session.active) {
         return;
     }
@@ -1607,6 +1712,9 @@ esp_err_t esp_bms_lvgl_bridge_reset_touch_calibration(void)
     }
     memset(&s_touch_calibration, 0, sizeof(s_touch_calibration));
     s_touch_calibration_valid = false;
+    if (!touch_calibration_supported()) {
+        return ESP_OK;
+    }
 
     nvs_handle_t handle = 0;
     esp_err_t ret = nvs_open(TOUCH_CALIBRATION_NVS_NAMESPACE, NVS_READWRITE, &handle);
@@ -1623,4 +1731,24 @@ esp_err_t esp_bms_lvgl_bridge_reset_touch_calibration(void)
     }
     nvs_close(handle);
     return ret;
+}
+
+bool esp_bms_lvgl_bridge_touch_calibration_supported(void)
+{
+    return touch_calibration_supported();
+}
+
+bool esp_bms_lvgl_bridge_native_gestures_supported(void)
+{
+    return s_touch_driver == ESP_BMS_LVGL_TOUCH_GT1151;
+}
+
+bool esp_bms_lvgl_bridge_take_native_gesture(esp_bms_lvgl_native_gesture_t *gesture)
+{
+    if (!gesture || s_pending_native_gesture == ESP_BMS_LVGL_NATIVE_GESTURE_NONE) {
+        return false;
+    }
+    *gesture = s_pending_native_gesture;
+    s_pending_native_gesture = ESP_BMS_LVGL_NATIVE_GESTURE_NONE;
+    return true;
 }

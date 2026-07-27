@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "driver/gpio.h"
+#include "esp_bms_lvgl_contract.h"
 #include "esp_err.h"
 #include "esp_lcd_types.h"
 #include "lvgl.h"
@@ -122,6 +123,9 @@ esp_err_t esp_bms_lvgl_bridge_add_touch_calibration_sample(uint8_t target_index,
                                                            bool *finished);
 void esp_bms_lvgl_bridge_cancel_touch_calibration(void);
 esp_err_t esp_bms_lvgl_bridge_reset_touch_calibration(void);
+bool esp_bms_lvgl_bridge_touch_calibration_supported(void);
+bool esp_bms_lvgl_bridge_native_gestures_supported(void);
+bool esp_bms_lvgl_bridge_take_native_gesture(esp_bms_lvgl_native_gesture_t *gesture);
 esp_err_t esp_bms_lvgl_bridge_lock(int32_t timeout_ms);
 void esp_bms_lvgl_bridge_unlock(void);
 /* Caller holds the LVGL bridge lock. Pixels are RGB565 big-endian. */

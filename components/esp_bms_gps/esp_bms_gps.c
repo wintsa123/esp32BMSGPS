@@ -23,6 +23,7 @@ static const char *TAG = "esp_bms_gps";
 #define GPS_PPS_GPIO ESP_BMS_PROFILE_GPS_PPS
 #define GPS_PPS_TIMEOUT_MS 3000U
 #define GPS_RMC_TIMEOUT_MS 3000U
+#define GPS_SATELLITE_TIMEOUT_MS 3000U
 #define GPS_DIAGNOSTIC_PERIOD_MS 60000U
 #define GPS_SECURITY_QUERY_PERIOD_MS 1000U
 #define GPS_SECURITY_JAM_CHANNEL_MASK 0x07U
@@ -55,6 +56,8 @@ typedef struct {
     uint32_t pps_processed_count;
     uint32_t elapsed_ms;
     uint32_t rmc_elapsed_ms;
+    uint32_t gsa_elapsed_ms;
+    uint32_t gsv_elapsed_ms;
     uint32_t pps_elapsed_ms;
     uint32_t diagnostics_elapsed_ms;
     uint32_t security_elapsed_ms;
@@ -71,11 +74,18 @@ typedef struct {
     uint8_t spoof_state;
     uint8_t jam_level;
     uint8_t security_config_attempts;
+    uint8_t satellites_visible;
+    uint8_t satellites_used;
+    uint8_t max_cn0;
+    uint8_t fix_dimension;
     bool uart_ready;
     bool pps_active;
     bool pps_ever_seen;
     bool rmc_seen;
     bool rmc_timed_out;
+    bool gsa_seen;
+    bool gsv_seen;
+    bool satellite_info_valid;
     esp_bms_gps_motion_filter_t motion_filter;
     bool security_state_valid;
     bool security_configured;
@@ -84,6 +94,23 @@ typedef struct {
 } esp_bms_gps_state_t;
 
 static esp_bms_gps_state_t s_gps;
+
+static bool gps_line_is_satellite_sentence(const uint8_t *line, size_t line_len)
+{
+    return line && line_len >= 7U && line[0] == '$' &&
+           (memcmp(&line[3], "GSA", 3U) == 0 || memcmp(&line[3], "GSV", 3U) == 0);
+}
+
+static bool gps_invalidate_satellite_info(esp_bms_idf_runtime_t *runtime)
+{
+    s_gps.satellite_info_valid = false;
+    return esp_bms_idf_runtime_publish_gps_satellites(runtime,
+                                                      s_gps.satellites_visible,
+                                                      s_gps.satellites_used,
+                                                      s_gps.max_cn0,
+                                                      s_gps.fix_dimension,
+                                                      false);
+}
 
 static bool gps_uart_write(const uint8_t *data, size_t data_len)
 {
@@ -435,6 +462,47 @@ static void gps_apply_casbin(const esp_bms_gps_casbin_stream_t *stream)
 
 static bool gps_apply_line(esp_bms_idf_runtime_t *runtime, const uint8_t *line, size_t line_len)
 {
+    esp_bms_gps_gsa_t gsa = { 0 };
+    if (esp_bms_gps_stream_parse_gsa(line, line_len, &gsa)) {
+        s_gps.gsa_seen = true;
+        s_gps.gsa_elapsed_ms = 0U;
+        s_gps.satellites_used = gsa.satellites_used;
+        s_gps.fix_dimension = gsa.fix_dimension;
+        s_gps.satellite_info_valid = s_gps.gsv_seen &&
+                                     s_gps.gsv_elapsed_ms < GPS_SATELLITE_TIMEOUT_MS;
+        return esp_bms_idf_runtime_publish_gps_satellites(runtime,
+                                                          s_gps.satellites_visible,
+                                                          s_gps.satellites_used,
+                                                          s_gps.max_cn0,
+                                                          s_gps.fix_dimension,
+                                                          s_gps.satellite_info_valid);
+    }
+
+    esp_bms_gps_gsv_t gsv = { 0 };
+    if (esp_bms_gps_stream_parse_gsv(line, line_len, &gsv)) {
+        s_gps.gsv_seen = true;
+        s_gps.gsv_elapsed_ms = 0U;
+        s_gps.satellites_visible = gsv.satellites_visible;
+        if (gsv.sentence_index == 1U) {
+            s_gps.max_cn0 = 0U;
+        }
+        if (gsv.max_cn0 > s_gps.max_cn0) {
+            s_gps.max_cn0 = gsv.max_cn0;
+        }
+        s_gps.satellite_info_valid = s_gps.gsa_seen &&
+                                     s_gps.gsa_elapsed_ms < GPS_SATELLITE_TIMEOUT_MS;
+        return esp_bms_idf_runtime_publish_gps_satellites(runtime,
+                                                          s_gps.satellites_visible,
+                                                          s_gps.satellites_used,
+                                                          s_gps.max_cn0,
+                                                          s_gps.fix_dimension,
+                                                          s_gps.satellite_info_valid);
+    }
+
+    if (gps_line_is_satellite_sentence(line, line_len)) {
+        return gps_invalidate_satellite_info(runtime);
+    }
+
     bool fix_valid = false;
     uint32_t speed_knots_milli = 0U;
     gps_datetime_t utc = { 0 };
@@ -495,10 +563,12 @@ static bool gps_feed_byte(esp_bms_idf_runtime_t *runtime, uint8_t byte)
         return false;
     }
 
+    const bool satellite_sentence =
+        gps_line_is_satellite_sentence(s_gps.nmea_stream.line, s_gps.nmea_stream.line_len);
     const esp_bms_gps_stream_event_t event = esp_bms_gps_stream_feed(&s_gps.nmea_stream, byte);
     if (event == ESP_BMS_GPS_STREAM_EVENT_OVERFLOW) {
         s_gps.overflow_lines++;
-        return false;
+        return satellite_sentence && gps_invalidate_satellite_info(runtime);
     }
     if (event != ESP_BMS_GPS_STREAM_EVENT_LINE) {
         return false;
@@ -640,6 +710,12 @@ bool esp_bms_gps_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_ms)
     }
     s_gps.elapsed_ms += elapsed_ms;
     s_gps.rmc_elapsed_ms += elapsed_ms;
+    if (s_gps.gsa_seen) {
+        s_gps.gsa_elapsed_ms += elapsed_ms;
+    }
+    if (s_gps.gsv_seen) {
+        s_gps.gsv_elapsed_ms += elapsed_ms;
+    }
     s_gps.pps_elapsed_ms += elapsed_ms;
     s_gps.diagnostics_elapsed_ms += elapsed_ms;
     s_gps.security_elapsed_ms += elapsed_ms;
@@ -669,6 +745,11 @@ bool esp_bms_gps_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_ms)
         s_gps.rmc_timed_out = true;
         changed = esp_bms_idf_runtime_timeout_gps(runtime) || changed;
         ESP_LOGW(TAG, "RMC timeout");
+    }
+    if (s_gps.satellite_info_valid &&
+        (s_gps.gsa_elapsed_ms >= GPS_SATELLITE_TIMEOUT_MS ||
+         s_gps.gsv_elapsed_ms >= GPS_SATELLITE_TIMEOUT_MS)) {
+        changed = gps_invalidate_satellite_info(runtime) || changed;
     }
     if (s_gps.diagnostics_elapsed_ms >= GPS_DIAGNOSTIC_PERIOD_MS) {
         s_gps.diagnostics_elapsed_ms = 0U;

@@ -17,10 +17,14 @@ typedef struct {
     uint32_t total_capacity_mah;
     uint32_t capacity_remaining_mah;
     uint32_t total_cycle_mah;
+    uint32_t running_time_seconds;
     bool total_cycle_valid;
+    bool running_time_valid;
     int16_t temperatures_celsius[ESP_BMS_BMS_PROTOCOL_TEMP_MAX_COUNT];
     bool temperature_valid[ESP_BMS_BMS_PROTOCOL_TEMP_MAX_COUNT];
     uint64_t protection_mask;
     uint64_t warning_mask;
+    bool balancing_supported;
+    bool balancing_active;
     bool partial;
 } esp_bms_bms_telemetry_t;

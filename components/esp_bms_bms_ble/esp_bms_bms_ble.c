@@ -15,6 +15,7 @@
 #include "os/os_mbuf.h"
 
 #include "esp_bms_idf_runtime.h"
+#include "esp_bms_bms_safety.h"
 #include "protocols/ant/esp_bms_ant_protocol.h"
 #include "protocols/daly/esp_bms_daly_protocol.h"
 #include "protocols/esp_bms_bms_protocol.h"
@@ -118,6 +119,119 @@ static void bms_apply_fault_masks(esp_bms_dashboard_snapshot_t *snapshot,
     }
 }
 
+static bool bms_mask_has_any(uint64_t mask, uint64_t bits)
+{
+    return (mask & bits) != 0ULL;
+}
+
+static void bms_apply_safety_status(esp_bms_idf_runtime_t *runtime,
+                                    const esp_bms_bms_telemetry_t *telemetry)
+{
+    if (!runtime || !telemetry || telemetry->partial) {
+        return;
+    }
+
+    uint16_t supported = 0U;
+    uint16_t active = 0U;
+    const uint64_t mask = telemetry->protection_mask;
+    if (runtime->bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_JBD) {
+        supported = ESP_BMS_BMS_SAFETY_CELL_OV | ESP_BMS_BMS_SAFETY_CELL_UV |
+                    ESP_BMS_BMS_SAFETY_OVER_TEMP | ESP_BMS_BMS_SAFETY_UNDER_TEMP |
+                    ESP_BMS_BMS_SAFETY_OVER_CURRENT | ESP_BMS_BMS_SAFETY_SHORT_CIRCUIT;
+        if (bms_mask_has_any(mask, UINT64_C(0x0005))) {
+            active |= ESP_BMS_BMS_SAFETY_CELL_OV;
+        }
+        if (bms_mask_has_any(mask, UINT64_C(0x000A))) {
+            active |= ESP_BMS_BMS_SAFETY_CELL_UV;
+        }
+        if (bms_mask_has_any(mask, UINT64_C(0x0050))) {
+            active |= ESP_BMS_BMS_SAFETY_OVER_TEMP;
+        }
+        if (bms_mask_has_any(mask, UINT64_C(0x00A0))) {
+            active |= ESP_BMS_BMS_SAFETY_UNDER_TEMP;
+        }
+        if (bms_mask_has_any(mask, UINT64_C(0x0300))) {
+            active |= ESP_BMS_BMS_SAFETY_OVER_CURRENT;
+        }
+        if (bms_mask_has_any(mask, UINT64_C(0x0400))) {
+            active |= ESP_BMS_BMS_SAFETY_SHORT_CIRCUIT;
+        }
+    } else if (runtime->bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_JK) {
+        supported = ESP_BMS_BMS_SAFETY_CELL_OV | ESP_BMS_BMS_SAFETY_CELL_UV |
+                    ESP_BMS_BMS_SAFETY_OVER_TEMP | ESP_BMS_BMS_SAFETY_UNDER_TEMP |
+                    ESP_BMS_BMS_SAFETY_OVER_CURRENT | ESP_BMS_BMS_SAFETY_SHORT_CIRCUIT;
+        if (bms_mask_has_any(mask, UINT64_C(1) << 5U)) {
+            active |= ESP_BMS_BMS_SAFETY_CELL_OV;
+        }
+        if (bms_mask_has_any(mask, (UINT64_C(1) << 11U) | (UINT64_C(1) << 12U))) {
+            active |= ESP_BMS_BMS_SAFETY_CELL_UV;
+        }
+        if (bms_mask_has_any(mask,
+                             (UINT64_C(1) << 1U) | (UINT64_C(1) << 8U) |
+                                 (UINT64_C(1) << 15U) | (UINT64_C(1) << 21U))) {
+            active |= ESP_BMS_BMS_SAFETY_OVER_TEMP;
+        }
+        if (bms_mask_has_any(mask, (UINT64_C(1) << 9U) | (UINT64_C(1) << 27U))) {
+            active |= ESP_BMS_BMS_SAFETY_UNDER_TEMP;
+        }
+        if (bms_mask_has_any(mask,
+                             (UINT64_C(1) << 6U) | (UINT64_C(1) << 13U) |
+                                 (UINT64_C(1) << 25U) | (UINT64_C(1) << 26U))) {
+            active |= ESP_BMS_BMS_SAFETY_OVER_CURRENT;
+        }
+        if (bms_mask_has_any(mask,
+                             (UINT64_C(1) << 7U) | (UINT64_C(1) << 14U) |
+                                 (UINT64_C(1) << 24U))) {
+            active |= ESP_BMS_BMS_SAFETY_SHORT_CIRCUIT;
+        }
+    } else if (runtime->bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_DALY) {
+#define DALY_PROTECTION_BIT(byte_index, bit_index) \
+    (UINT64_C(1) << (((7U - (byte_index)) * 8U) + (bit_index)))
+        supported = ESP_BMS_BMS_SAFETY_CELL_OV | ESP_BMS_BMS_SAFETY_CELL_UV |
+                    ESP_BMS_BMS_SAFETY_OVER_TEMP | ESP_BMS_BMS_SAFETY_UNDER_TEMP |
+                    ESP_BMS_BMS_SAFETY_OVER_CURRENT | ESP_BMS_BMS_SAFETY_SHORT_CIRCUIT |
+                    ESP_BMS_BMS_SAFETY_CELL_DELTA;
+        if (bms_mask_has_any(mask,
+                             DALY_PROTECTION_BIT(0U, 0U) | DALY_PROTECTION_BIT(0U, 2U))) {
+            active |= ESP_BMS_BMS_SAFETY_CELL_OV;
+        }
+        if (bms_mask_has_any(mask,
+                             DALY_PROTECTION_BIT(0U, 1U) | DALY_PROTECTION_BIT(0U, 3U))) {
+            active |= ESP_BMS_BMS_SAFETY_CELL_UV;
+        }
+        if (bms_mask_has_any(mask,
+                             DALY_PROTECTION_BIT(1U, 0U) | DALY_PROTECTION_BIT(1U, 2U) |
+                                 DALY_PROTECTION_BIT(4U, 0U) | DALY_PROTECTION_BIT(4U, 1U))) {
+            active |= ESP_BMS_BMS_SAFETY_OVER_TEMP;
+        }
+        if (bms_mask_has_any(mask,
+                             DALY_PROTECTION_BIT(1U, 1U) | DALY_PROTECTION_BIT(1U, 3U))) {
+            active |= ESP_BMS_BMS_SAFETY_UNDER_TEMP;
+        }
+        if (bms_mask_has_any(mask,
+                             DALY_PROTECTION_BIT(2U, 0U) | DALY_PROTECTION_BIT(2U, 1U))) {
+            active |= ESP_BMS_BMS_SAFETY_OVER_CURRENT;
+        }
+        if (bms_mask_has_any(mask, DALY_PROTECTION_BIT(6U, 2U))) {
+            active |= ESP_BMS_BMS_SAFETY_SHORT_CIRCUIT;
+        }
+        if (bms_mask_has_any(mask,
+                             DALY_PROTECTION_BIT(3U, 0U) | DALY_PROTECTION_BIT(3U, 1U))) {
+            active |= ESP_BMS_BMS_SAFETY_CELL_DELTA;
+        }
+#undef DALY_PROTECTION_BIT
+    }
+
+    if (telemetry->balancing_supported) {
+        supported |= ESP_BMS_BMS_SAFETY_BALANCING;
+        if (telemetry->balancing_active) {
+            active |= ESP_BMS_BMS_SAFETY_BALANCING;
+        }
+    }
+    runtime->snapshot.bms_safety_supported_mask = supported;
+    runtime->snapshot.bms_safety_active_mask = active & supported;
+}
+
 static bool bms_apply_telemetry(esp_bms_idf_runtime_t *runtime,
                                 const esp_bms_bms_telemetry_t *telemetry)
 {
@@ -146,6 +260,8 @@ static bool bms_apply_telemetry(esp_bms_idf_runtime_t *runtime,
     runtime->snapshot.total_capacity_mah = telemetry->partial ? 0U : telemetry->total_capacity_mah;
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, CAPACITY_REMAINING_VALID, !telemetry->partial);
     runtime->snapshot.capacity_remaining_mah = telemetry->partial ? 0U : telemetry->capacity_remaining_mah;
+    runtime->snapshot.bms_running_time_seconds = telemetry->running_time_seconds;
+    runtime->snapshot.bms_running_time_valid = !telemetry->partial && telemetry->running_time_valid;
     for (uint8_t index = 0U; index < ESP_BMS_BMS_TEMP_MAX_COUNT; ++index) {
         esp_bms_dashboard_snapshot_temperature_valid_set(&runtime->snapshot,
                                                          index,
@@ -156,6 +272,7 @@ static bool bms_apply_telemetry(esp_bms_idf_runtime_t *runtime,
            sizeof(runtime->snapshot.bms_temperature_celsius));
     if (!telemetry->partial) {
         bms_apply_fault_masks(&runtime->snapshot, telemetry->protection_mask, telemetry->warning_mask);
+        bms_apply_safety_status(runtime, telemetry);
     }
     runtime->bms_telemetry_last_us = esp_timer_get_time();
     if (!telemetry->partial && telemetry->total_cycle_valid &&
@@ -368,8 +485,12 @@ static void bms_clear_telemetry(esp_bms_idf_runtime_t *runtime)
     runtime->snapshot.delta_cell_voltage_mv = 0U;
     runtime->snapshot.total_capacity_mah = 0U;
     runtime->snapshot.capacity_remaining_mah = 0U;
+    runtime->snapshot.bms_running_time_seconds = 0U;
+    runtime->snapshot.bms_running_time_valid = false;
     runtime->snapshot.bms_protection_count = 0U;
     runtime->snapshot.bms_warning_count = 0U;
+    runtime->snapshot.bms_safety_supported_mask = 0U;
+    runtime->snapshot.bms_safety_active_mask = 0U;
     memset(runtime->snapshot.bms_protection_codes, 0, sizeof(runtime->snapshot.bms_protection_codes));
     memset(runtime->snapshot.bms_warning_codes, 0, sizeof(runtime->snapshot.bms_warning_codes));
     memset(runtime->snapshot.bms_temperature_celsius,

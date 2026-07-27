@@ -2,6 +2,8 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "esp_bms_bms_safety.h"
+#include "esp_bms_lvgl_contract.h"
 #include "esp_err.h"
 #include "lvgl.h"
 
@@ -270,6 +272,7 @@ typedef struct {
     uint32_t pack_voltage_mv;
     uint32_t total_capacity_mah;
     uint32_t capacity_remaining_mah;
+    uint32_t bms_running_time_seconds;
     uint32_t local_battery_mv;
     esp_bms_speed_unit_t speed_unit;
     esp_bms_speed_source_t speed_source;
@@ -292,11 +295,17 @@ typedef struct {
     uint8_t volume_percent;
     uint8_t bms_type;
     uint8_t gps_module_state;
+    uint8_t gps_satellites_visible;
+    uint8_t gps_satellites_used;
+    uint8_t gps_max_cn0;
+    uint8_t gps_fix_dimension;
     uint8_t boot_animation_style;
     uint8_t bms_protection_count;
     char bms_protection_codes[ESP_BMS_BMS_CODE_MAX_COUNT][ESP_BMS_BMS_CODE_TEXT_LEN];
     uint8_t bms_warning_count;
     char bms_warning_codes[ESP_BMS_BMS_CODE_MAX_COUNT][ESP_BMS_BMS_CODE_TEXT_LEN];
+    uint16_t bms_safety_supported_mask;
+    uint16_t bms_safety_active_mask;
     char bluetooth_name[32];
     char bms_info_text[16];
     char bms_error_text[32];
@@ -336,6 +345,8 @@ typedef struct {
     uint8_t gps_local_weekday;
     bool gps_local_time_valid;
     bool gps_local_date_valid;
+    bool gps_satellite_info_valid;
+    bool bms_running_time_valid;
     bool average_speed_valid;
     bool average_consumption_valid;
     bool remaining_range_valid;
@@ -387,7 +398,9 @@ static inline void esp_bms_dashboard_snapshot_temperature_valid_set(esp_bms_dash
     }
 }
 
-esp_err_t esp_bms_lvgl_ui_init(lv_display_t *display);
+esp_err_t esp_bms_lvgl_ui_init(lv_display_t *display,
+                               bool touch_calibration_supported,
+                               bool native_gestures_supported);
 esp_err_t esp_bms_lvgl_ui_update(const esp_bms_dashboard_snapshot_t *snapshot);
 esp_err_t esp_bms_lvgl_ui_boot_start(const esp_bms_dashboard_snapshot_t *snapshot);
 esp_err_t esp_bms_lvgl_ui_boot_update(uint8_t progress_percent, const char *status_text);
@@ -395,6 +408,7 @@ esp_err_t esp_bms_lvgl_ui_boot_finish(const esp_bms_dashboard_snapshot_t *snapsh
 esp_err_t esp_bms_lvgl_ui_show_dashboard(void);
 esp_err_t esp_bms_lvgl_ui_touch_calibration_result(bool success);
 esp_err_t esp_bms_lvgl_ui_set_page(esp_bms_lvgl_page_t page, bool animated);
+esp_err_t esp_bms_lvgl_ui_handle_native_gesture(esp_bms_lvgl_native_gesture_t gesture);
 bool esp_bms_lvgl_ui_speed_dashboard_style_available(esp_bms_speed_dashboard_style_t style);
 esp_bms_speed_dashboard_style_t esp_bms_lvgl_ui_default_speed_dashboard_style(void);
 esp_bms_lvgl_data_source_t esp_bms_lvgl_ui_stable_data_source(void);
@@ -410,9 +424,11 @@ bool esp_bms_lvgl_ui_simulator_boot_animation_settings_visible(void);
 esp_err_t esp_bms_lvgl_ui_simulator_open_gps_settings(void);
 bool esp_bms_lvgl_ui_simulator_gps_settings_visible(void);
 bool esp_bms_lvgl_ui_simulator_gps_settings_smoke(void);
+bool esp_bms_lvgl_ui_simulator_settings_scroll_smoke(void);
 uint32_t esp_bms_lvgl_ui_simulator_object_count(void);
 uint8_t esp_bms_lvgl_ui_simulator_static_cache_count(void);
 bool esp_bms_lvgl_ui_simulator_snapshot_matches(const esp_bms_dashboard_snapshot_t *snapshot);
+bool esp_bms_lvgl_ui_simulator_native_gesture_smoke(void);
 #endif
 
 #ifdef __cplusplus

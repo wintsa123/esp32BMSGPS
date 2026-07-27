@@ -1375,7 +1375,12 @@ choose_catalog_option() {
 
 choose_catalog_option_with_keyboard() {
     local kind="$1" title="$2" default="$3" key suffix option index pointer mark previous_cursor old_mark new_mark
+    local allow_saved_profile_delete=NO
     shift 3
+    if [[ "${1:-}" == --delete-saved-profile ]]; then
+        allow_saved_profile_delete=YES
+        shift
+    fi
     local cursor=0
     local -a choices=("$@")
 
@@ -1396,9 +1401,18 @@ choose_catalog_option_with_keyboard() {
         (( index == cursor )) && pointer='>'
         mark=' '
         [[ "$option" == "$default" ]] && mark='*'
-        printf '  %s %s %d) %s — %s\n' "$pointer" "$mark" "$((index + 1))" "$option" "$(catalog_option_description "$kind" "$option")"
+        if [[ "$allow_saved_profile_delete" == YES && "$option" == saved:* ]]; then
+            printf '  %s %s %d) [%s] %s\n' "$pointer" "$mark" "$((index + 1))" \
+                "$([[ "$LANGUAGE" == en ]] && printf 'Saved configuration' || printf '已保存配置')" "${option#saved:}"
+        else
+            printf '  %s %s %d) %s — %s\n' "$pointer" "$mark" "$((index + 1))" "$option" "$(catalog_option_description "$kind" "$option")"
+        fi
     done
-    [[ "$LANGUAGE" == en ]] && printf '%s\n' 'Use Up/Down to move, Left to return, Enter to continue.' || printf '%s\n' '使用 ↑/↓ 移动，← 返回上一级，回车继续。'
+    if [[ "$allow_saved_profile_delete" == YES ]]; then
+        [[ "$LANGUAGE" == en ]] && printf '%s\n' 'Use Up/Down to move, D to delete a selected saved configuration, Left to return, Enter to continue.' || printf '%s\n' '使用 ↑/↓ 移动，选中已保存配置后按 D 删除，← 返回上一级，回车继续。'
+    else
+        [[ "$LANGUAGE" == en ]] && printf '%s\n' 'Use Up/Down to move, Left to return, Enter to continue.' || printf '%s\n' '使用 ↑/↓ 移动，← 返回上一级，回车继续。'
+    fi
     while true; do
         key=''
         IFS= read -rsn1 key || { MENU_SELECTION="$default"; return; }
@@ -1413,6 +1427,13 @@ choose_catalog_option_with_keyboard() {
             $'\e[B'|$'\eOB') cursor=$(((cursor + 1) % ${#choices[@]})) ;;
             ''|$'\r') MENU_SELECTION="${choices[$cursor]}"; return ;;
             $'\e[D'|$'\eOD') MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST=YES; MENU_SELECTION="$default"; return ;;
+            d|D)
+                if [[ "$allow_saved_profile_delete" == YES && "${choices[$cursor]}" == saved:* ]]; then
+                    delete_saved_profile "${choices[$cursor]#saved:}" || true
+                    MENU_SELECTION=__refresh_saved_profiles__
+                    return
+                fi
+                ;;
         esac
         if (( cursor != previous_cursor )); then
             old_mark=' '
@@ -2055,18 +2076,38 @@ saved_profile_paths() {
     done | LC_ALL=C sort -u
 }
 
+delete_saved_profile() {
+    local profile="$1" target firmware_env answer
+    is_id "$profile" || return 1
+    target="$BUILD_ROOT/$profile"
+    firmware_env="$target/firmware.env"
+    [[ -d "$target" && ! -L "$target" && -f "$firmware_env" && ! -L "$firmware_env" ]] || return 1
+    if [[ "$LANGUAGE" == en ]]; then
+        read -r -p "Delete saved configuration $profile? [y/N]: " answer
+    else
+        read -r -p "删除已保存配置 $profile？[y/N]：" answer
+    fi
+    [[ "$answer" =~ ^[Yy]$ ]] || return 1
+    rm -rf -- "$target"
+}
+
 choose_board_or_saved_profile() {
     local answer option index
     local -a boards=() saved=() choices=()
     mapfile -t boards < <(catalog_ids board)
     boards+=(custom)
+    if is_interactive_terminal; then
+        while true; do
+            mapfile -t saved < <(saved_profile_paths)
+            choices=("${boards[@]}")
+            for option in "${saved[@]}"; do choices+=("saved:$option"); done
+            choose_catalog_option_with_keyboard board 'Board' "${CFG[BOARD]}" --delete-saved-profile "${choices[@]}"
+            [[ "$MENU_SELECTION" != __refresh_saved_profiles__ ]] && return
+        done
+    fi
     mapfile -t saved < <(saved_profile_paths)
     choices=("${boards[@]}")
     for option in "${saved[@]}"; do choices+=("saved:$option"); done
-    if is_interactive_terminal; then
-        choose_catalog_option_with_keyboard board 'Board' "${CFG[BOARD]}" "${choices[@]}"
-        return
-    fi
     while true; do
         printf '\n%s\n' "$(message_text 'Board')"
         for index in "${!choices[@]}"; do

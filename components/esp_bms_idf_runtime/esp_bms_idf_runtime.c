@@ -672,10 +672,14 @@ static void runtime_clear_bms_telemetry(esp_bms_idf_runtime_t *runtime)
     runtime->snapshot.total_capacity_mah = 0;
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, CAPACITY_REMAINING_VALID, false);
     runtime->snapshot.capacity_remaining_mah = 0;
+    runtime->snapshot.bms_running_time_seconds = 0U;
+    runtime->snapshot.bms_running_time_valid = false;
     runtime->snapshot.bms_protection_count = 0;
     memset(runtime->snapshot.bms_protection_codes, 0, sizeof(runtime->snapshot.bms_protection_codes));
     runtime->snapshot.bms_warning_count = 0;
     memset(runtime->snapshot.bms_warning_codes, 0, sizeof(runtime->snapshot.bms_warning_codes));
+    runtime->snapshot.bms_safety_supported_mask = 0;
+    runtime->snapshot.bms_safety_active_mask = 0;
     for (uint8_t index = 0; index < ESP_BMS_BMS_TEMP_MAX_COUNT; ++index) {
         esp_bms_dashboard_snapshot_temperature_valid_set(&runtime->snapshot, index, false);
     }
@@ -830,6 +834,7 @@ bool esp_bms_idf_runtime_set_gps_module_state(esp_bms_idf_runtime_t *runtime,
         runtime->gps_speed_knots_milli = 0U;
         runtime->snapshot.gps_local_time_valid = false;
         runtime->snapshot.gps_local_date_valid = false;
+        runtime->snapshot.gps_satellite_info_valid = false;
     }
     runtime_update_snapshot_speed(runtime);
 
@@ -891,6 +896,30 @@ void esp_bms_idf_runtime_publish_gps_datetime(esp_bms_idf_runtime_t *runtime,
     runtime->snapshot.gps_local_minute = minute;
     runtime->snapshot.gps_local_date_valid = valid;
     runtime->snapshot.gps_local_time_valid = valid;
+}
+
+bool esp_bms_idf_runtime_publish_gps_satellites(esp_bms_idf_runtime_t *runtime,
+                                                uint8_t satellites_visible,
+                                                uint8_t satellites_used,
+                                                uint8_t max_cn0,
+                                                uint8_t fix_dimension,
+                                                bool valid)
+{
+    if (!runtime) {
+        return false;
+    }
+    esp_bms_dashboard_snapshot_t *snapshot = &runtime->snapshot;
+    const bool changed = snapshot->gps_satellites_visible != satellites_visible ||
+                         snapshot->gps_satellites_used != satellites_used ||
+                         snapshot->gps_max_cn0 != max_cn0 ||
+                         snapshot->gps_fix_dimension != fix_dimension ||
+                         snapshot->gps_satellite_info_valid != valid;
+    snapshot->gps_satellites_visible = satellites_visible;
+    snapshot->gps_satellites_used = satellites_used;
+    snapshot->gps_max_cn0 = max_cn0;
+    snapshot->gps_fix_dimension = fix_dimension;
+    snapshot->gps_satellite_info_valid = valid;
+    return changed;
 }
 
 bool esp_bms_idf_runtime_timeout_gps(esp_bms_idf_runtime_t *runtime)

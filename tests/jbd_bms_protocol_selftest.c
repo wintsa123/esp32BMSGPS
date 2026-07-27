@@ -45,7 +45,15 @@ int main(void)
     esp_bms_bms_telemetry_t telemetry = { 0 };
     assert(!esp_bms_jbd_feed(stream, &stream_len, sizeof(stream), frame, 8U, &telemetry));
     assert(esp_bms_jbd_feed(stream, &stream_len, sizeof(stream), frame + 8U, sizeof(frame) - 8U, &telemetry));
-    assert(telemetry.pack_voltage_mv == 52000U && telemetry.soc_percent == 85U);
+    assert(telemetry.pack_voltage_mv == 52000U && telemetry.soc_percent == 85U &&
+           telemetry.balancing_supported && !telemetry.balancing_active);
+    frame[16] = 0x01U;
+    const uint16_t active_crc = checksum(frame + 2U, 27U);
+    frame[29] = (uint8_t)(active_crc >> 8U);
+    frame[30] = (uint8_t)active_crc;
+    stream_len = 0U;
+    assert(esp_bms_jbd_feed(stream, &stream_len, sizeof(stream), frame, sizeof(frame), &telemetry));
+    assert(telemetry.balancing_active);
     frame[30] ^= 1U;
     stream_len = 0U;
     assert(!esp_bms_jbd_feed(stream, &stream_len, sizeof(stream), frame, sizeof(frame), &telemetry));

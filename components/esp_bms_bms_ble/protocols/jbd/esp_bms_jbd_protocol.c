@@ -44,6 +44,9 @@ static bool decode_basic(const uint8_t *payload, size_t len, esp_bms_bms_telemet
     telemetry->capacity_remaining_mah = (uint32_t)read_u16_be(payload, 4U) * 10U;
     telemetry->total_capacity_mah = (uint32_t)read_u16_be(payload, 6U) * 10U;
     telemetry->protection_mask = read_u16_be(payload, 16U);
+    telemetry->balancing_supported = true;
+    telemetry->balancing_active = payload[12U] != 0U || payload[13U] != 0U ||
+                                  payload[14U] != 0U || payload[15U] != 0U;
     telemetry->soc_percent = payload[19U];
     const uint8_t temperature_count = payload[22U] > ESP_BMS_BMS_PROTOCOL_TEMP_MAX_COUNT
                                           ? ESP_BMS_BMS_PROTOCOL_TEMP_MAX_COUNT

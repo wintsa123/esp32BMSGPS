@@ -209,8 +209,8 @@ CMakeFiles/esp_bms_lvgl_simulator.dir/main.c.o: /vol1/1000/project/esp32BmsGps/s
   /usr/include/SDL2/SDL_misc.h \
   /usr/lib/gcc/x86_64-linux-gnu/12/include/stdbool.h \
   /vol1/1000/project/esp32BmsGps/components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h \
-  /vol1/1000/project/esp32BmsGps/simulator/include/esp_err.h \
-  /vol1/1000/project/esp32BmsGps/simulator/include/host_compat.h \
+  /vol1/1000/project/esp32BmsGps/components/esp_bms_lvgl_contract/include/esp_bms_bms_safety.h \
+  /vol1/1000/project/esp32BmsGps/components/esp_bms_lvgl_contract/include/esp_bms_lvgl_contract.h \
   /vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/lvgl.h \
   /vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/lvgl.h \
   /vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/lv_version.h \
@@ -669,6 +669,9 @@ CMakeFiles/esp_bms_lvgl_simulator.dir/main.c.o: /vol1/1000/project/esp32BmsGps/s
   /vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/lv_api_map_v9_3.h \
   /vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/lv_api_map_v9_4.h \
   /vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/lv_conf_internal.h \
+  /vol1/1000/project/esp32BmsGps/simulator/include/sdkconfig.h \
+  /vol1/1000/project/esp32BmsGps/simulator/include/esp_err.h \
+  /vol1/1000/project/esp32BmsGps/simulator/include/host_compat.h \
   /vol1/1000/project/esp32BmsGps/components/esp_bms_idf_runtime/include/esp_bms_speed_dashboard.h
 
 CMakeFiles/esp_bms_lvgl_simulator.dir/vol1/1000/project/esp32BmsGps/components/esp_bms_idf_runtime/esp_bms_speed_dashboard.c.o: /vol1/1000/project/esp32BmsGps/components/esp_bms_idf_runtime/esp_bms_speed_dashboard.c \
@@ -1691,8 +1694,8 @@ CMakeFiles/esp_bms_lvgl_simulator.dir/vol1/1000/project/esp32BmsGps/components/e
   /usr/include/x86_64-linux-gnu/bits/wchar.h \
   /usr/include/x86_64-linux-gnu/bits/stdint-intn.h \
   /usr/include/x86_64-linux-gnu/bits/stdint-uintn.h \
-  /vol1/1000/project/esp32BmsGps/simulator/include/esp_err.h \
-  /vol1/1000/project/esp32BmsGps/simulator/include/host_compat.h \
+  /vol1/1000/project/esp32BmsGps/components/esp_bms_lvgl_contract/include/esp_bms_bms_safety.h \
+  /vol1/1000/project/esp32BmsGps/components/esp_bms_lvgl_contract/include/esp_bms_lvgl_contract.h \
   /vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/lvgl.h \
   /vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/lvgl.h \
   /vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/lv_version.h \
@@ -2154,6 +2157,9 @@ CMakeFiles/esp_bms_lvgl_simulator.dir/vol1/1000/project/esp32BmsGps/components/e
   /vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/lv_api_map_v9_3.h \
   /vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/lv_api_map_v9_4.h \
   /vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/lv_conf_internal.h \
+  /vol1/1000/project/esp32BmsGps/simulator/include/sdkconfig.h \
+  /vol1/1000/project/esp32BmsGps/simulator/include/esp_err.h \
+  /vol1/1000/project/esp32BmsGps/simulator/include/host_compat.h \
   /usr/include/stdlib.h \
   /usr/include/x86_64-linux-gnu/bits/waitflags.h \
   /usr/include/x86_64-linux-gnu/bits/waitstatus.h \
@@ -2171,8 +2177,6 @@ CMakeFiles/esp_bms_lvgl_simulator.dir/vol1/1000/project/esp32BmsGps/components/e
   /usr/include/string.h \
   /usr/include/x86_64-linux-gnu/bits/types/locale_t.h \
   /usr/include/x86_64-linux-gnu/bits/types/__locale_t.h \
-  /vol1/1000/project/esp32BmsGps/components/esp_bms_lvgl_contract/include/esp_bms_lvgl_contract.h \
-  /vol1/1000/project/esp32BmsGps/simulator/include/sdkconfig.h \
   /vol1/1000/project/esp32BmsGps/simulator/include/esp_check.h \
   /vol1/1000/project/esp32BmsGps/simulator/include/esp_log.h \
   /vol1/1000/project/esp32BmsGps/simulator/include/esp_heap_caps.h \
@@ -6616,10 +6620,6 @@ CMakeFiles/esp_bms_lvgl_simulator.dir/vol1/1000/project/esp32BmsGps/components/e
 
 /vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/themes/default/lv_theme_default.h:
 
-/vol1/1000/project/esp32BmsGps/components/esp_bms_lvgl_contract/include/esp_bms_lvgl_contract.h:
-
-/vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/themes/lv_theme.h:
-
 /vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/draw/snapshot/lv_snapshot.h:
 
 /vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/draw/eve/lv_draw_eve_target.h:
@@ -6733,6 +6733,12 @@ CMakeFiles/esp_bms_lvgl_simulator.dir/vol1/1000/project/esp32BmsGps/components/e
 /vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/libs/gltf/gltf_view/lv_gltf.h:
 
 /vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/draw/lv_draw_arc.h:
+
+/vol1/1000/project/esp32BmsGps/simulator/include/host_compat.h:
+
+/vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/drivers/sdl/lv_sdl_keyboard.h:
+
+/vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/draw/lv_draw_image.h:
 
 /vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/misc/lv_fs.h:
 
@@ -6908,6 +6914,16 @@ CMakeFiles/esp_bms_lvgl_simulator.dir/vol1/1000/project/esp32BmsGps/components/e
 
 /usr/include/SDL2/SDL_surface.h:
 
+/vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/themes/lv_theme.h:
+
+/vol1/1000/project/esp32BmsGps/components/esp_bms_lvgl_contract/include/esp_bms_lvgl_contract.h:
+
+/vol1/1000/project/esp32BmsGps/simulator/include/esp_err.h:
+
+/vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/drivers/display/ili9341/lv_ili9341.h:
+
+/vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/misc/lv_anim.h:
+
 /usr/lib/gcc/x86_64-linux-gnu/12/include/stdint.h:
 
 /usr/include/x86_64-linux-gnu/bits/stdint-intn.h:
@@ -6985,8 +7001,6 @@ CMakeFiles/esp_bms_lvgl_simulator.dir/vol1/1000/project/esp32BmsGps/components/e
 /usr/include/x86_64-linux-gnu/bits/stdio_lim.h:
 
 /usr/include/x86_64-linux-gnu/bits/types/FILE.h:
-
-/usr/lib/gcc/x86_64-linux-gnu/12/include/xsaveintrin.h:
 
 /usr/lib/gcc/x86_64-linux-gnu/12/include/mwaitxintrin.h:
 
@@ -7228,12 +7242,6 @@ CMakeFiles/esp_bms_lvgl_simulator.dir/vol1/1000/project/esp32BmsGps/components/e
 
 /usr/lib/gcc/x86_64-linux-gnu/12/include/avx5124vnniwintrin.h:
 
-/vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/drivers/sdl/lv_sdl_keyboard.h:
-
-/vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/draw/lv_draw_image.h:
-
-/vol1/1000/project/esp32BmsGps/simulator/include/host_compat.h:
-
 /usr/lib/gcc/x86_64-linux-gnu/12/include/avx512vp2intersectvlintrin.h:
 
 /usr/lib/gcc/x86_64-linux-gnu/12/include/avx512vbmi2intrin.h:
@@ -7330,11 +7338,9 @@ CMakeFiles/esp_bms_lvgl_simulator.dir/vol1/1000/project/esp32BmsGps/components/e
 
 /vol1/1000/project/esp32BmsGps/components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h:
 
-/vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/drivers/display/ili9341/lv_ili9341.h:
+/usr/lib/gcc/x86_64-linux-gnu/12/include/xsaveintrin.h:
 
-/vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/misc/lv_anim.h:
-
-/vol1/1000/project/esp32BmsGps/simulator/include/esp_err.h:
+/vol1/1000/project/esp32BmsGps/components/esp_bms_lvgl_contract/include/esp_bms_bms_safety.h:
 
 /vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/lvgl.h:
 

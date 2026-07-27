@@ -121,6 +121,7 @@ static bool decode_status(const uint8_t *data, size_t len, esp_bms_bms_telemetry
     uint32_t total_capacity_uah = 0U;
     uint32_t capacity_remaining_uah = 0U;
     uint32_t total_cycle_mah = 0U;
+    uint32_t running_time_seconds = 0U;
     uint16_t max_cell_mv = 0U;
     uint16_t min_cell_mv = 0U;
     uint16_t delta_cell_mv = 0U;
@@ -135,6 +136,7 @@ static bool decode_status(const uint8_t *data, size_t len, esp_bms_bms_telemetry
         !read_u32_le(data, len, 50U + dynamic_offset, &total_capacity_uah) ||
         !read_u32_le(data, len, 54U + dynamic_offset, &capacity_remaining_uah) ||
         !read_u32_le(data, len, 58U + dynamic_offset, &total_cycle_mah) ||
+        !read_u32_le(data, len, 66U + dynamic_offset, &running_time_seconds) ||
         !read_u16_le(data, len, 74U + dynamic_offset, &max_cell_mv) ||
         !read_u16_le(data, len, 78U + dynamic_offset, &min_cell_mv) ||
         !read_u16_le(data, len, 82U + dynamic_offset, &delta_cell_mv) ||
@@ -153,6 +155,8 @@ static bool decode_status(const uint8_t *data, size_t len, esp_bms_bms_telemetry
     telemetry->capacity_remaining_mah = capacity_remaining_uah / 1000U;
     telemetry->total_cycle_mah = total_cycle_mah;
     telemetry->total_cycle_valid = true;
+    telemetry->running_time_seconds = running_time_seconds;
+    telemetry->running_time_valid = true;
     telemetry->protection_mask = protection_mask;
     telemetry->warning_mask = warning_mask;
     const size_t temperature_offset = 34U + (size_t)cell_count * 2U;
@@ -190,6 +194,7 @@ static bool decode_old_status(const uint8_t *data, size_t len, esp_bms_bms_telem
     uint32_t total_capacity_uah = 0U;
     uint32_t capacity_remaining_uah = 0U;
     uint32_t total_cycle_mah = 0U;
+    uint32_t running_time_seconds = 0U;
     uint16_t max_cell_mv = 0U;
     uint16_t min_cell_mv = 0U;
     uint16_t average_cell_mv = 0U;
@@ -197,6 +202,7 @@ static bool decode_old_status(const uint8_t *data, size_t len, esp_bms_bms_telem
         checksum != remote_checksum || !read_u16_be(data, len, 4U, &pack_voltage_dv) ||
         !read_u32_be(data, len, 70U, &current_raw) || !read_u32_be(data, len, 75U, &total_capacity_uah) ||
         !read_u32_be(data, len, 79U, &capacity_remaining_uah) || !read_u32_be(data, len, 83U, &total_cycle_mah) ||
+        !read_u32_be(data, len, 87U, &running_time_seconds) ||
         !read_u16_be(data, len, 116U, &max_cell_mv) ||
         !read_u16_be(data, len, 119U, &min_cell_mv) || !read_u16_be(data, len, 121U, &average_cell_mv) ||
         data[74U] > 100U || data[123U] == 0U || data[123U] > ANT_MAX_CELLS ||
@@ -216,6 +222,8 @@ static bool decode_old_status(const uint8_t *data, size_t len, esp_bms_bms_telem
     telemetry->capacity_remaining_mah = capacity_remaining_uah / 1000U;
     telemetry->total_cycle_mah = total_cycle_mah;
     telemetry->total_cycle_valid = true;
+    telemetry->running_time_seconds = running_time_seconds;
+    telemetry->running_time_valid = true;
     for (uint8_t index = 0U; index < ESP_BMS_BMS_PROTOCOL_TEMP_MAX_COUNT; ++index) {
         uint16_t temperature = 0U;
         if (!read_u16_be(data, len, 91U + (size_t)index * 2U, &temperature)) {

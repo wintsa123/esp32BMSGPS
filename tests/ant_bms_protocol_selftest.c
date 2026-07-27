@@ -49,6 +49,7 @@ int main(void)
            telemetry.soc_percent == 91U && telemetry.total_capacity_mah == 280000U &&
            telemetry.capacity_remaining_mah == 252602U && telemetry.total_cycle_valid &&
            telemetry.total_cycle_mah == 4862650U);
+    assert(telemetry.running_time_valid && telemetry.running_time_seconds == 36591632U);
     assert(telemetry.min_cell_voltage_mv == 3300U && telemetry.max_cell_voltage_mv == 3305U &&
            telemetry.delta_cell_voltage_mv == 5U && telemetry.average_cell_voltage_mv == 3302U);
 
@@ -61,6 +62,7 @@ int main(void)
            telemetry.soc_percent == 41U && telemetry.total_capacity_mah == 0U &&
            telemetry.capacity_remaining_mah == 48487U && telemetry.total_cycle_valid &&
            telemetry.total_cycle_mah == 19276387U);
+    assert(telemetry.running_time_valid && telemetry.running_time_seconds == 28405434U);
     assert(telemetry.min_cell_voltage_mv == 3338U && telemetry.max_cell_voltage_mv == 3340U &&
            telemetry.delta_cell_voltage_mv == 2U && telemetry.average_cell_voltage_mv == 3339U);
     assert(telemetry.temperature_valid[0U] && telemetry.temperatures_celsius[0U] == 15 &&

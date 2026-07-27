@@ -36,10 +36,16 @@ if(ESP_BMS_FEATURE_DASHBOARD_FIREBLADE)
     )
 endif()
 
+set(ESP_BMS_LVGL_UI_EMBED_FILES)
+if(IDF_TARGET STREQUAL "esp32" AND ESP_BMS_FEATURE_DASHBOARD_S1000RR)
+    list(APPEND ESP_BMS_LVGL_UI_EMBED_FILES "speed_dashboard_static_landscape.rgb565")
+endif()
+
 idf_component_register(
     SRCS ${ESP_BMS_LVGL_UI_SRCS}
     INCLUDE_DIRS "include"
     REQUIRES lvgl esp_bms_lvgl_contract esp_hw_support esp_timer
+    EMBED_FILES ${ESP_BMS_LVGL_UI_EMBED_FILES}
 )
 
 target_compile_definitions(${COMPONENT_LIB} PRIVATE

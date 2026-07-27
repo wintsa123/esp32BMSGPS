@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define ESP_BMS_GPS_STREAM_CAPACITY 96U
+#define ESP_BMS_GPS_STREAM_CAPACITY 192U
 #define ESP_BMS_GPS_CASBIN_OVERHEAD 10U
 #define ESP_BMS_GPS_CASBIN_MAX_PAYLOAD 524U
 #define ESP_BMS_GPS_CASBIN_MAX_FRAME \
@@ -56,11 +56,31 @@ typedef struct {
     uint8_t second;
 } esp_bms_gps_datetime_t;
 
+typedef struct {
+    uint8_t fix_dimension;
+    uint8_t satellites_used;
+} esp_bms_gps_gsa_t;
+
+typedef struct {
+    uint8_t sentence_count;
+    uint8_t sentence_index;
+    uint8_t satellites_visible;
+    uint8_t max_cn0;
+} esp_bms_gps_gsv_t;
+
 void esp_bms_gps_stream_reset(esp_bms_gps_stream_t *stream);
 
 bool esp_bms_gps_stream_line_is_rmc(const uint8_t *line, size_t line_len);
 
 bool esp_bms_gps_stream_nmea_checksum_valid(const uint8_t *line, size_t line_len);
+
+bool esp_bms_gps_stream_parse_gsa(const uint8_t *line,
+                                  size_t line_len,
+                                  esp_bms_gps_gsa_t *gsa);
+
+bool esp_bms_gps_stream_parse_gsv(const uint8_t *line,
+                                  size_t line_len,
+                                  esp_bms_gps_gsv_t *gsv);
 
 esp_bms_gps_stream_event_t esp_bms_gps_stream_feed(esp_bms_gps_stream_t *stream,
                                                     uint8_t byte);

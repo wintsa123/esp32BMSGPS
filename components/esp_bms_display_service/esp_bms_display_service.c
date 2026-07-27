@@ -396,14 +396,22 @@ static void display_service_task(void *arg)
         ret = esp_bms_lvgl_bridge_set_brightness(s_service.initial_brightness_percent);
     }
     if (ret == ESP_OK) {
-        const esp_err_t calibration_ret = esp_bms_lvgl_bridge_load_touch_calibration();
-        if (calibration_ret != ESP_OK) {
-            ESP_LOGW(TAG, "touch calibration load failed: %s", esp_err_to_name(calibration_ret));
+        ret = esp_bms_lvgl_bridge_start();
+    }
+    if (ret == ESP_OK) {
+        if (esp_bms_lvgl_bridge_touch_calibration_supported()) {
+            const esp_err_t calibration_ret = esp_bms_lvgl_bridge_load_touch_calibration();
+            if (calibration_ret != ESP_OK) {
+                ESP_LOGW(TAG, "touch calibration load failed: %s", esp_err_to_name(calibration_ret));
+            }
         }
         ret = esp_bms_lvgl_bridge_lock(-1);
     }
     if (ret == ESP_OK) {
-        ret = esp_bms_lvgl_ui_init(esp_bms_lvgl_bridge_get_display());
+        ret = esp_bms_lvgl_ui_init(
+            esp_bms_lvgl_bridge_get_display(),
+            esp_bms_lvgl_bridge_touch_calibration_supported(),
+            esp_bms_lvgl_bridge_native_gestures_supported());
         if (ret == ESP_OK) {
             s_service.last_snapshot = s_service.initial_snapshot;
             ret = esp_bms_lvgl_ui_boot_start(&s_service.last_snapshot);
@@ -436,6 +444,15 @@ static void display_service_task(void *arg)
             const int64_t timer_started_us = esp_timer_get_time();
             delay_ms = lv_timer_handler();
             const uint32_t timer_elapsed_us = elapsed_us_since(timer_started_us);
+            esp_bms_lvgl_native_gesture_t gesture = ESP_BMS_LVGL_NATIVE_GESTURE_NONE;
+            if (esp_bms_lvgl_bridge_take_native_gesture(&gesture)) {
+                const esp_err_t gesture_ret = esp_bms_lvgl_ui_handle_native_gesture(gesture);
+                if (gesture_ret != ESP_OK) {
+                    ESP_LOGW(TAG, "native gesture=%u failed: %s",
+                             (unsigned)gesture,
+                             esp_err_to_name(gesture_ret));
+                }
+            }
             const bool drag_active = esp_bms_lvgl_ui_drag_active();
             if (drag_active && !s_service.drag_perf.active) {
                 drag_perf_start();

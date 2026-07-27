@@ -445,6 +445,17 @@ rg -Fq '[Saved configuration] saved-s3' "${work_dir}/saved-profile.out"
 rg -Fx -- "-DSDKCONFIG_DEFAULTS=$saved_build_root/saved-s3/sdkconfig.defaults" "${work_dir}/saved-idf.args"
 rg -Fx "CONFIG_PARTITION_TABLE_CUSTOM_FILENAME=\"$saved_build_root/saved-s3/partitions.csv\"" "$saved_build_root/saved-s3/sdkconfig.defaults"
 
+delete_profile_root="${work_dir}/delete-saved-profile"
+mkdir -p "$delete_profile_root/remove-me"
+cp "${work_dir}/golden.env" "$delete_profile_root/remove-me/firmware.env"
+printf 'y\n' | FIRMWARE_BUILD_ROOT="$delete_profile_root" bash -c '
+    source <(sed -e "/^main /d" "$1")
+    delete_saved_profile remove-me
+' bash "${repo_root}/start.sh"
+test ! -e "$delete_profile_root/remove-me"
+rg -Fq -- '--delete-saved-profile' "${repo_root}/start.sh"
+rg -Fq 'Remove-SavedProfile' "${repo_root}/start.ps1"
+
 cat >"${work_dir}/custom.env" <<'EOF'
 SCHEMA_VERSION=1
 PROFILE=custom-gps

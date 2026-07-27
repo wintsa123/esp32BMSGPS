@@ -115,6 +115,8 @@ static bool decode_jk02_cell_info(const uint8_t frame[ESP_BMS_JK_FRAME_LEN],
     telemetry->capacity_remaining_mah = read_u32_le(frame, 142U + dynamic);
     telemetry->total_capacity_mah = read_u32_le(frame, 146U + dynamic);
     telemetry->protection_mask = cell_slots == 32U ? read_u32_le(frame, 166U) : read_u16_le(frame, 136U);
+    telemetry->balancing_supported = true;
+    telemetry->balancing_active = frame[140U + dynamic] != 0U;
     telemetry->min_cell_voltage_mv = minimum_mv;
     telemetry->max_cell_voltage_mv = maximum_mv;
     telemetry->delta_cell_voltage_mv = maximum_mv - minimum_mv;

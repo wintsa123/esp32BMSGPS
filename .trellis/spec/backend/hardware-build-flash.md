@@ -186,6 +186,10 @@ RUN_TESTS=1 ./scripts/build-android-cast.sh
 
 - Target hardware is ESP32-WROOM-32E revision 3 or newer, 4 MB Flash, with no
   PSRAM. `sdkconfig.defaults` is the source of truth for these constraints.
+- The ESP32-S3 defaults set `CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192`. The IDF
+  default 3584-byte main stack exhausts during NVS initialization on the
+  GT1151 S3 profile and can corrupt a later libc mutex; do not lower it without
+  repeating cold-boot/NVS validation and checking main-task high-water marks.
 - `partitions.csv` is the custom partition-table source:
   - `nvs`: `0x9000`, size `0x4000`
   - `otadata`: `0xd000`, size `0x2000`
