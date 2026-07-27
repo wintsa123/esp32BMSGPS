@@ -11,6 +11,7 @@
 #include "nvs.h"
 
 #include <stdio.h>
+#include <string.h>
 
 static const char *TAG = "bms_idf_main";
 
@@ -18,6 +19,28 @@ static const char *TAG = "bms_idf_main";
 #define MAIN_LOOP_PERIOD_MS 50U
 #define BOOT_READY_HOLD_MS 80U
 #define SETUP_AP_IDLE_TIMEOUT_MS (5U * 60U * 1000U)
+#define RESOURCE_DIAGNOSTICS_WINDOW_MS 1000U
+#define RESOURCE_DIAGNOSTICS_MAX_TASKS 48U
+#define RESOURCE_DIAGNOSTICS_TOP_TASKS 3U
+
+typedef struct {
+    const char *action_name;
+    int64_t started_us;
+    configRUN_TIME_COUNTER_TYPE total_runtime;
+    UBaseType_t task_count;
+    bool heap_monitoring;
+    bool active;
+    /* ponytail: tracks at most 48 tasks; use a heap-backed snapshot only if a profile exceeds this count. */
+    TaskStatus_t before[RESOURCE_DIAGNOSTICS_MAX_TASKS];
+    TaskStatus_t after[RESOURCE_DIAGNOSTICS_MAX_TASKS];
+} resource_diagnostics_t;
+
+typedef struct {
+    const char *name;
+    uint64_t runtime;
+} resource_diagnostics_task_usage_t;
+
+static resource_diagnostics_t s_resource_diagnostics;
 
 typedef enum {
     SETUP_SERVICE_START_IDLE = 0,
@@ -108,6 +131,160 @@ static void log_heap_state(const char *stage)
              (unsigned)heap_caps_get_minimum_free_size(internal_dma_caps),
              (unsigned)heap_caps_get_free_size(psram_caps),
              (unsigned)heap_caps_get_largest_free_block(psram_caps));
+}
+
+static UBaseType_t resource_diagnostics_capture_tasks(
+    TaskStatus_t *snapshot,
+    configRUN_TIME_COUNTER_TYPE *total_runtime)
+{
+    const UBaseType_t task_count = uxTaskGetNumberOfTasks();
+    if (task_count == 0U || task_count > RESOURCE_DIAGNOSTICS_MAX_TASKS) {
+        return 0U;
+    }
+    return uxTaskGetSystemState(snapshot, task_count, total_runtime);
+}
+
+static const TaskStatus_t *resource_diagnostics_find_task(const TaskStatus_t *snapshot,
+                                                           UBaseType_t task_count,
+                                                           TaskHandle_t handle)
+{
+    for (UBaseType_t index = 0U; index < task_count; ++index) {
+        if (snapshot[index].xHandle == handle) {
+            return &snapshot[index];
+        }
+    }
+    return NULL;
+}
+
+static bool resource_diagnostics_is_idle_task(const TaskStatus_t *task)
+{
+    return task->pcTaskName && strncmp(task->pcTaskName, "IDLE", 4U) == 0;
+}
+
+static unsigned resource_diagnostics_percent(uint64_t value, uint64_t total)
+{
+    return total == 0U ? 0U : (unsigned)((100U * value) / total);
+}
+
+static void resource_diagnostics_log_memory(const resource_diagnostics_t *diagnostics,
+                                            const char *phase)
+{
+    const uint32_t internal_caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+    const uint32_t psram_caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
+    const uint32_t elapsed_ms =
+        (uint32_t)((esp_timer_get_time() - diagnostics->started_us) / 1000);
+    ESP_LOGI(TAG,
+             "resource action=%s phase=%s elapsed_ms=%u heap_default_free=%u heap_default_min=%u internal8_free=%u internal8_min=%u psram_free=%u psram_min=%u",
+             diagnostics->action_name,
+             phase,
+             elapsed_ms,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_DEFAULT),
+             (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_DEFAULT),
+             (unsigned)heap_caps_get_free_size(internal_caps),
+             (unsigned)heap_caps_get_minimum_free_size(internal_caps),
+             (unsigned)heap_caps_get_free_size(psram_caps),
+             (unsigned)heap_caps_get_minimum_free_size(psram_caps));
+}
+
+static void resource_diagnostics_log_cpu(resource_diagnostics_t *diagnostics)
+{
+    configRUN_TIME_COUNTER_TYPE total_runtime = 0U;
+    const UBaseType_t task_count =
+        resource_diagnostics_capture_tasks(diagnostics->after, &total_runtime);
+    if (diagnostics->task_count == 0U || task_count == 0U) {
+        ESP_LOGW(TAG, "resource action=%s phase=end cpu=unavailable tasks=%u",
+                 diagnostics->action_name, (unsigned)uxTaskGetNumberOfTasks());
+        return;
+    }
+
+    const configRUN_TIME_COUNTER_TYPE runtime_elapsed = total_runtime - diagnostics->total_runtime;
+    const uint64_t total_capacity = (uint64_t)runtime_elapsed * configNUMBER_OF_CORES;
+    if (total_capacity == 0U) {
+        ESP_LOGW(TAG, "resource action=%s phase=end cpu=unavailable elapsed=0",
+                 diagnostics->action_name);
+        return;
+    }
+
+    resource_diagnostics_task_usage_t top[RESOURCE_DIAGNOSTICS_TOP_TASKS] = { 0 };
+    uint64_t idle_runtime = 0U;
+    for (UBaseType_t index = 0U; index < task_count; ++index) {
+        const TaskStatus_t *current = &diagnostics->after[index];
+        const TaskStatus_t *previous = resource_diagnostics_find_task(
+            diagnostics->before, diagnostics->task_count, current->xHandle);
+        const configRUN_TIME_COUNTER_TYPE previous_runtime =
+            previous ? previous->ulRunTimeCounter : 0U;
+        const uint64_t runtime = (uint64_t)(current->ulRunTimeCounter - previous_runtime);
+        if (resource_diagnostics_is_idle_task(current)) {
+            idle_runtime += runtime;
+            continue;
+        }
+        for (size_t position = 0U; position < RESOURCE_DIAGNOSTICS_TOP_TASKS; ++position) {
+            if (runtime <= top[position].runtime) {
+                continue;
+            }
+            for (size_t move = RESOURCE_DIAGNOSTICS_TOP_TASKS - 1U; move > position; --move) {
+                top[move] = top[move - 1U];
+            }
+            top[position] = (resource_diagnostics_task_usage_t) {
+                .name = current->pcTaskName,
+                .runtime = runtime,
+            };
+            break;
+        }
+    }
+
+    const uint64_t busy_runtime = idle_runtime >= total_capacity ? 0U : total_capacity - idle_runtime;
+    ESP_LOGI(TAG,
+             "resource action=%s phase=end cpu_busy_pct=%u task=%s:%u%% task=%s:%u%% task=%s:%u%%",
+             diagnostics->action_name,
+             resource_diagnostics_percent(busy_runtime, total_capacity),
+             top[0].name ? top[0].name : "-",
+             resource_diagnostics_percent(top[0].runtime, total_capacity),
+             top[1].name ? top[1].name : "-",
+             resource_diagnostics_percent(top[1].runtime, total_capacity),
+             top[2].name ? top[2].name : "-",
+             resource_diagnostics_percent(top[2].runtime, total_capacity));
+}
+
+static void resource_diagnostics_end(resource_diagnostics_t *diagnostics)
+{
+    if (!diagnostics->active) {
+        return;
+    }
+
+    resource_diagnostics_log_memory(diagnostics, "end");
+    resource_diagnostics_log_cpu(diagnostics);
+    if (diagnostics->heap_monitoring &&
+        heap_caps_monitor_local_minimum_free_size_stop() != ESP_OK) {
+        ESP_LOGW(TAG, "resource action=%s heap local-min stop failed",
+                 diagnostics->action_name);
+    }
+    diagnostics->active = false;
+}
+
+static void resource_diagnostics_begin(resource_diagnostics_t *diagnostics, const char *action_name)
+{
+    resource_diagnostics_end(diagnostics);
+    diagnostics->action_name = action_name;
+    diagnostics->started_us = esp_timer_get_time();
+    diagnostics->task_count =
+        resource_diagnostics_capture_tasks(diagnostics->before, &diagnostics->total_runtime);
+    diagnostics->heap_monitoring =
+        heap_caps_monitor_local_minimum_free_size_start() == ESP_OK;
+    diagnostics->active = true;
+    if (!diagnostics->heap_monitoring) {
+        ESP_LOGW(TAG, "resource action=%s heap local-min unavailable", action_name);
+    }
+    resource_diagnostics_log_memory(diagnostics, "begin");
+}
+
+static void resource_diagnostics_poll(resource_diagnostics_t *diagnostics)
+{
+    if (diagnostics->active &&
+        esp_timer_get_time() - diagnostics->started_us >=
+            (int64_t)RESOURCE_DIAGNOSTICS_WINDOW_MS * 1000) {
+        resource_diagnostics_end(diagnostics);
+    }
 }
 
 static void boot_animation_update(uint8_t progress_percent, const char *status_text)
@@ -232,6 +409,7 @@ void app_main(void)
 
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(MAIN_LOOP_PERIOD_MS));
+        resource_diagnostics_poll(&s_resource_diagnostics);
         const uint8_t previous_brightness = runtime.brightness_percent;
         const esp_bms_idf_display_rotation_t previous_rotation = runtime.display_rotation;
         const bool tick_changed = esp_bms_idf_runtime_tick(&runtime, 50);
@@ -254,6 +432,10 @@ void app_main(void)
         esp_bms_idf_runtime_set_active_data_source(&runtime,
                                                    esp_bms_display_service_stable_data_source());
         const esp_bms_lvgl_action_t action = action_event.action;
+        if (action != ESP_BMS_LVGL_ACTION_NONE) {
+            resource_diagnostics_begin(&s_resource_diagnostics,
+                                       esp_bms_idf_runtime_action_name(action));
+        }
         const bool http_config_applied =
             esp_bms_idf_runtime_flag_get(&runtime, ESP_BMS_IDF_RUNTIME_FLAG_HTTP_CONFIG_APPLIED);
         const bool setup_ap_started =

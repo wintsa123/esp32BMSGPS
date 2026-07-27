@@ -11,6 +11,14 @@ and `bms_lvgl_ui`.
 ## Required Logs
 
 - Log boot/runtime milestones and bounded heap snapshots.
+- Log each non-empty local UI action from `main/idf_main.c` as a paired
+  `resource action=<name> phase=begin|end` diagnostic. The end event covers a
+  one-second post-action window (or ends early for the next action) and carries
+  heap free/local-min values, `cpu_busy_pct`, and the top three non-idle tasks.
+- Keep resource task snapshots static and bounded at 48 tasks. If the bound or
+  local heap monitor is unavailable, log the unavailable field instead of a
+  partial CPU ranking. FreeRTOS trace facility and run-time stats must stay
+  enabled in every `config/sdkconfig/sdkconfig.defaults*` target variant.
 - Log Wi-Fi desired mode, setup AP SSID, external station SSID, and password
   lengths only.
 - Log AP start/stop separately from config acceptance.
