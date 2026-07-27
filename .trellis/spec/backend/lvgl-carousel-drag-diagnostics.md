@@ -81,55 +81,65 @@ scripts/esp-idf-drag-diag.sh --full-invalidate build
 
 ### 2. Signatures
 
-- `page_transition_show(esp_bms_lvgl_page_t from)`
-- `page_transition_update(esp_bms_lvgl_page_t from, int32_t drag_x)`
+- `page_transition_show(void)`
 - `page_transition_hide(void)`
+- `page_transition_page_create(lv_obj_t *parent, esp_bms_lvgl_page_t page)`
 
 ### 3. Contracts
 
-- At drag start, display an opaque `COLOR_DASHBOARD_BG` floating layer and
-  hide `battery_page`, `gps_page`, and `cast_page`; the layer uses the existing
-  `settings_zh_16` font subset for only the two centered page titles.
-- During the drag, move those two labels only. Derive the adjacent title from
-  the existing page mapping and omit it at the first/last carousel boundary.
+- Create one hidden, opaque `COLOR_DASHBOARD_BG` placeholder per physical
+  carousel slot (`BMS`, `仪表`, and, when enabled, `投屏`) as a normal
+  snappable child of `s_ui.pages`. Position every placeholder with
+  `page_target_scroll_x()`; it must never be a floating screen overlay.
+- At drag start, reveal those placeholders and hide `battery_page`,
+  `gps_page`, and `cast_page`. The placeholders preserve the parent scroll
+  extent while the real pages are hidden, so LVGL can still drag and snap to
+  every existing slot.
+- During the drag, do not manually move labels. The parent carousel scroll
+  moves each centered title naturally; a first/last-page drag cannot reveal a
+  nonexistent or empty target slot.
 - While the layer is visible, do not invalidate the dashboard viewport. Restore
-  every hidden page and flush the deferred snapshot after the normal snap path
-  or any early `finish_page_scroll_state()` cleanup.
+  every hidden page, hide every placeholder, and flush the deferred snapshot
+  after the normal snap path or any early `finish_page_scroll_state()` cleanup.
 
 ### 4. Validation & Error Matrix
 
 | Condition | Required response |
 | --- | --- |
 | A complex page remains visible during drag | Reject the change; it defeats the draw-cost reduction. |
-| An edge drag displays an empty target title | Reject the change; preserve the single current title. |
-| Settings, lock, or an aborted drag leaves the layer visible | Reject the change; route cleanup through `page_transition_hide()`. |
+| Hiding real pages shrinks `s_ui.pages` below its last target x | Reject the change; placeholders must retain the complete scroll range. |
+| An edge drag displays an empty target title | Reject the change; use only the physical carousel slots. |
+| Settings, lock, or an aborted drag leaves a placeholder visible | Reject the change; route cleanup through `page_transition_hide()`. |
 
 ### 5. Good / Base / Bad Cases
 
-- Good: BMS-to-Speed drag shows `BMS` and `仪表`; on snap, the complete Speed
-  page returns.
+- Good: BMS-to-Speed drag moves the black `BMS` and `仪表` pages with the
+  finger; on snap, the complete Speed page returns.
 - Base: a below-threshold drag returns the original complete page.
-- Bad: moving dashboard widgets under a translucent cover or caching a full
-  page bitmap during each gesture.
+- Bad: using a screen-level layer, because hiding the real children then
+  removes the carousel's scroll geometry; caching a full page bitmap during a
+  gesture is also forbidden.
 
 ### 6. Tests Required
 
-- Run the headless LVGL simulator and assert opaque black, title direction,
-  boundary behavior, and page restoration in its native gesture smoke test.
-- Build the affected profile, then flash it and inspect slow drag, cancel,
-  snap, and first/last-page drags on hardware.
+- Run both headless LVGL orientations and assert the opaque placeholders,
+  titles, retained `lv_obj_get_scroll_right(s_ui.pages)`, and real-page
+  restoration in the native gesture smoke test.
+- Build the affected profile. Before hardware sign-off, inspect slow drag,
+  cancel, snap, and first/last-page drags on the TFT.
 
 ### 7. Wrong vs Correct
 
 #### Wrong
 
 ```c
-invalidate_dashboard_viewport();  // redraws complex dashboard every drag frame
+page_transition_create(screen);  // screen overlay loses carousel geometry
 ```
 
 #### Correct
 
 ```c
+page_transition_create(s_ui.pages);
 if (!page_transition_active()) {
     invalidate_dashboard_viewport();
 }
