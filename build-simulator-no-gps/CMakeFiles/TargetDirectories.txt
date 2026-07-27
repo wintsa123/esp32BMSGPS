@@ -1,0 +1,14 @@
+/vol1/1000/project/esp32BmsGps/build-simulator-no-gps/CMakeFiles/esp_bms_lvgl_simulator.dir
+/vol1/1000/project/esp32BmsGps/build-simulator-no-gps/CMakeFiles/edit_cache.dir
+/vol1/1000/project/esp32BmsGps/build-simulator-no-gps/CMakeFiles/rebuild_cache.dir
+/vol1/1000/project/esp32BmsGps/build-simulator-no-gps/CMakeFiles/list_install_components.dir
+/vol1/1000/project/esp32BmsGps/build-simulator-no-gps/CMakeFiles/install.dir
+/vol1/1000/project/esp32BmsGps/build-simulator-no-gps/CMakeFiles/install/local.dir
+/vol1/1000/project/esp32BmsGps/build-simulator-no-gps/CMakeFiles/install/strip.dir
+/vol1/1000/project/esp32BmsGps/build-simulator-no-gps/lvgl/CMakeFiles/lvgl.dir
+/vol1/1000/project/esp32BmsGps/build-simulator-no-gps/lvgl/CMakeFiles/edit_cache.dir
+/vol1/1000/project/esp32BmsGps/build-simulator-no-gps/lvgl/CMakeFiles/rebuild_cache.dir
+/vol1/1000/project/esp32BmsGps/build-simulator-no-gps/lvgl/CMakeFiles/list_install_components.dir
+/vol1/1000/project/esp32BmsGps/build-simulator-no-gps/lvgl/CMakeFiles/install.dir
+/vol1/1000/project/esp32BmsGps/build-simulator-no-gps/lvgl/CMakeFiles/install/local.dir
+/vol1/1000/project/esp32BmsGps/build-simulator-no-gps/lvgl/CMakeFiles/install/strip.dir

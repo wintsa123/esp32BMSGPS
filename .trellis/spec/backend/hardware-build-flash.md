@@ -223,6 +223,11 @@ RUN_TESTS=1 ./scripts/build-android-cast.sh
 - `scripts/publish-flash-artifacts.py` derives this bundle from the completed
   build's `flasher_args.json`. Both `start.sh` and `start.ps1` must call this
   one publisher rather than separately copying an app image.
+- Codex-generated test or validation firmware is disposable: set
+  `FIRMWARE_BUILD_ROOT` and `FIRMWARE_OUTPUT_ROOT` to temporary directories.
+  Do not leave its generated profile under the default `firmware-builds/` or
+  its bundle under `output/`, because `start` treats retained profiles in
+  `firmware-builds/` as user-selectable saved configurations.
 - Flash acceptance does not require a separate full-image hash/readback pass
   (for example, `esptool verify-flash`). A successful write command followed by
   reset and the relevant runtime behavior check is sufficient. Any checksum
@@ -923,6 +928,17 @@ esp_bms_lvgl_bridge_config_t.panel_mirror_x
   `RGB_ORDER=BGR`, `I80_SWAP_COLOR_BYTES=0`, and `INVERT_COLOR=1`. The vendor
   landscape flags are `swap_xy=1`, `mirror_x=0`, `mirror_y=0`; after the
   generic landscape transform, that requires `PANEL_MIRROR_X=1`.
+- The validated RGB565 configuration for this board is:
+
+  ```text
+  RGB_ORDER=BGR
+  I80_SWAP_COLOR_BYTES=0
+  INVERT_COLOR=1
+  custom_draw_bitmap: lv_draw_sw_rgb565_swap() -> esp_lcd_panel_draw_bitmap()
+  ```
+
+  Red, green, and blue render correctly with this exact combination. Do not
+  replace it with `RGB_ORDER=RGB` or `I80_SWAP_COLOR_BYTES=1`.
 - On that board, RGB565 byte swapping belongs exclusively to
   `custom_draw_bitmap`: call `lv_draw_sw_rgb565_swap()` immediately before
   `esp_lcd_panel_draw_bitmap()`. Do not rely on the adapter flush path or

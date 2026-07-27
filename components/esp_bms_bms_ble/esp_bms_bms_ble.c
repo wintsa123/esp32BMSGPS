@@ -34,7 +34,7 @@ static const char *TAG = "esp_bms_bms_ble";
 #define BMS_SCAN_DURATION_MS 10000
 #define BMS_CONNECT_TIMEOUT_MS 10000
 #define BMS_STATUS_POLL_PERIOD_MS 500U
-#define BMS_HEARTBEAT_TIMEOUT_MS 5000U
+#define BMS_HEARTBEAT_TIMEOUT_MS 30000U
 #define BMS_RECONNECT_BACKOFF_MS 3000U
 
 typedef enum {
@@ -896,6 +896,11 @@ static int bms_gap_event(struct ble_gap_event *event, void *arg)
     case BLE_GAP_EVENT_DISCONNECT:
         if (event->disconnect.conn.conn_handle == runtime->bms_conn_handle ||
             runtime->bms_ble_phase != (uint8_t)BMS_BLE_PHASE_SCANNING) {
+            ESP_LOGW(TAG,
+                     "BMS disconnected: conn=%u reason=%d phase=%u",
+                     (unsigned)event->disconnect.conn.conn_handle,
+                     event->disconnect.reason,
+                     (unsigned)runtime->bms_ble_phase);
             const bool scan_requested = RUNTIME_FLAG(runtime, BMS_SCAN_REQUESTED);
             bms_reset_connection_state(runtime, BMS_BLE_PHASE_BACKOFF);
             bms_clear_telemetry(runtime);
@@ -1082,6 +1087,11 @@ static bool bms_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_ms)
         if (runtime->bms_telemetry_last_us > 0 && heartbeat_age_us >= 0 &&
             heartbeat_age_us >= (int64_t)BMS_HEARTBEAT_TIMEOUT_MS * 1000) {
             const uint16_t conn_handle = runtime->bms_conn_handle;
+            ESP_LOGW(TAG,
+                     "BMS heartbeat timeout: age_ms=%lld poll=%u write_in_flight=%u",
+                     (long long)(heartbeat_age_us / 1000),
+                     (unsigned)runtime->bms_poll_index,
+                     (unsigned)RUNTIME_FLAG(runtime, BMS_WRITE_IN_FLIGHT));
             runtime->bms_ble_phase = (uint8_t)BMS_BLE_PHASE_BACKOFF;
             runtime->bms_status_poll_elapsed_ms = 0U;
             bms_clear_telemetry(runtime);

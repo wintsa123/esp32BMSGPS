@@ -10,6 +10,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "sdkconfig.h"
+#include "misc/cache/instance/lv_image_cache.h"
 #include "widgets/canvas/lv_canvas.h"
 #include "widgets/line/lv_line.h"
 
@@ -138,11 +139,16 @@ LV_FONT_DECLARE(settings_zh_18);
 #define FIREBLADE_ARC_SWEEP_ANGLE 234
 #define FIREBLADE_SPEED_TICK_COUNT 18U
 #define FIREBLADE_SCALE_LABEL_COUNT ((FIREBLADE_SPEED_TICK_COUNT / 2U) + 1U)
+#define FIREBLADE_NEEDLE_HUB_RADIUS 38
 #define BOOT_CHARGE_SEGMENT_COUNT 10U
 #define DASHBOARD_CELL_KEY_BITMAP_W 28
 #define DASHBOARD_CELL_KEY_BITMAP_H 16
 #define DASHBOARD_CELL_KEY_BITMAP_BYTES \
     (((DASHBOARD_CELL_KEY_BITMAP_W * DASHBOARD_CELL_KEY_BITMAP_H) + 7U) / 8U)
+#define DASHBOARD_STATIC_CACHE_WIDTH 480U
+#define DASHBOARD_STATIC_CACHE_HEIGHT 320U
+#define DASHBOARD_STATIC_CACHE_BYTES \
+    (DASHBOARD_STATIC_CACHE_WIDTH * DASHBOARD_STATIC_CACHE_HEIGHT * sizeof(uint16_t))
 
 typedef enum {
     QUICK_LAYOUT_PORTRAIT = 0,
@@ -156,6 +162,8 @@ _Static_assert(QUICK_PANEL_BUTTON_COUNT <= 8,
                "quick panel item masks are stored in uint8_t");
 _Static_assert(DASHBOARD_CELL_STAT_COUNT <= 8,
                "dashboard cell draw buffer masks are stored in uint8_t");
+_Static_assert(DASHBOARD_STATIC_CACHE_BYTES == 307200U,
+               "480x320 RGB565 dashboard cache size changed");
 _Static_assert(SPEED_DASHBOARD_SEGMENT_COUNT < 64U,
                "speed dashboard segments must fit the render signature");
 _Static_assert((SPEED_DASHBOARD_SEGMENT_COUNT % 16U) == 0U,
@@ -214,6 +222,12 @@ typedef enum {
     SETTINGS_CONTROLLER_VIEW_RATIO_EDIT,
 } settings_controller_view_t;
 
+typedef enum {
+    SETTINGS_GPS_VIEW_ROOT = 0,
+    SETTINGS_GPS_VIEW_SPEED_UNIT_LIST,
+    SETTINGS_GPS_VIEW_SPEED_SOURCE_LIST,
+} settings_gps_view_t;
+
 typedef struct {
     int16_t x;
     int16_t y;
@@ -228,6 +242,30 @@ typedef struct {
     quick_tile_rect_t volume;
     quick_tile_rect_t items[QUICK_PANEL_BUTTON_COUNT];
 } quick_panel_layout_t;
+
+typedef struct {
+    void *pixels;
+    lv_draw_buf_t draw_buf;
+    lv_obj_t *image;
+    bool active;
+} dashboard_static_cache_t;
+
+typedef struct {
+    int32_t margin;
+    int32_t gap;
+    int32_t content_w;
+    int32_t top_y;
+    int32_t top_h;
+    int32_t top_w;
+    int32_t right_x;
+    int32_t middle_y;
+    int32_t middle_h;
+    int32_t status_w;
+    int32_t cell_x;
+    int32_t cell_w;
+    int32_t bottom_y;
+    int32_t bottom_h;
+} bms_native_layout_t;
 
 static uint8_t ui_flag_bit(uint32_t index)
 {
@@ -354,6 +392,8 @@ typedef struct {
     lv_obj_t *cast_page;
     lv_obj_t *cast_qr;
     lv_obj_t *controller_page;
+    dashboard_static_cache_t battery_static_cache;
+    dashboard_static_cache_t fireblade_static_cache;
     lv_obj_t *boot_overlay;
     lv_obj_t *boot_status;
     lv_obj_t *boot_progress;
@@ -436,6 +476,7 @@ typedef struct {
     lv_obj_t *bms_state;
     lv_obj_t *ap_state;
     lv_obj_t *soc;
+    lv_obj_t *soc_panel_fill;
     lv_obj_t *soc_battery_level;
     lv_obj_t *pack_voltage;
     lv_obj_t *current;
@@ -510,6 +551,15 @@ typedef struct {
     char fireblade_gear_unit_buf[8];
     char fireblade_speed_buf[8];
     char fireblade_speed_unit_buf[8];
+    char bms_soc_buf[8];
+    char bms_capacity_buf[40];
+    char bms_pack_voltage_buf[24];
+    char bms_current_buf[24];
+    char bms_cell_stat_buf[DASHBOARD_CELL_STAT_COUNT][16];
+    char bms_error_buf[16];
+    char bms_status_buf[16];
+    char bms_range_buf[8];
+    char bms_temperature_buf[ESP_BMS_BMS_TEMP_MAX_COUNT][8];
     char speed_soc_buf[8];
     char speed_consumption_buf[20];
     char speed_controller_temp_buf[16];
@@ -519,6 +569,8 @@ typedef struct {
     lv_point_precise_t fireblade_tick_points[FIREBLADE_SCALE_LABEL_COUNT][2];
     lv_point_precise_t fireblade_needle_black_points[3];
     lv_point_precise_t fireblade_needle_red_points[3];
+    lv_point_t fireblade_needle_center;
+    int32_t fireblade_needle_radius;
     uint32_t fireblade_needle_signature;
     bool fireblade_needle_signature_valid;
     uint32_t speed_art_signature;
@@ -540,6 +592,8 @@ typedef struct {
     bool settling;
     bool controller_page_enabled;
     bool speed_page_renderable;
+    bool native_bms_dashboard;
+    bool native_fireblade_dashboard;
     bool boot_active;
     bool page_scroll_gesture_active;
     bool page_scroll_throw_frozen;
@@ -574,6 +628,7 @@ typedef struct {
     uint8_t settings_bms_view;
     uint8_t settings_ble_source;
     uint8_t settings_controller_view;
+    uint8_t settings_gps_view;
     uint8_t settings_system_view;
     uint8_t settings_system_slider_kind;
     uint8_t settings_calibration_target_index;
@@ -783,6 +838,115 @@ static void clear_style(lv_obj_t *obj)
     lv_obj_clear_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
 }
 
+static bool dashboard_native_landscape_enabled(void)
+{
+    return s_ui.width == (int32_t)DASHBOARD_STATIC_CACHE_WIDTH &&
+           s_ui.height == (int32_t)DASHBOARD_STATIC_CACHE_HEIGHT;
+}
+
+static void *dashboard_static_cache_alloc(size_t bytes)
+{
+#if ESP_BMS_LVGL_UI_SIMULATOR
+    return lv_malloc(bytes);
+#else
+    return heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#endif
+}
+
+static void dashboard_static_cache_free(void *pixels)
+{
+    if (!pixels) {
+        return;
+    }
+#if ESP_BMS_LVGL_UI_SIMULATOR
+    lv_free(pixels);
+#else
+    heap_caps_free(pixels);
+#endif
+}
+
+static bool dashboard_static_cache_enabled(void)
+{
+#if LV_USE_SNAPSHOT && (ESP_BMS_LVGL_UI_SIMULATOR || defined(CONFIG_IDF_TARGET_ESP32S3))
+    return dashboard_native_landscape_enabled();
+#else
+    return false;
+#endif
+}
+
+static void dashboard_static_cache_release_one(dashboard_static_cache_t *cache)
+{
+    if (!cache) {
+        return;
+    }
+    if (cache->pixels) {
+        lv_image_cache_drop(&cache->draw_buf);
+        dashboard_static_cache_free(cache->pixels);
+    }
+    memset(cache, 0, sizeof(*cache));
+}
+
+static void dashboard_static_cache_release(void)
+{
+    dashboard_static_cache_release_one(&s_ui.battery_static_cache);
+    dashboard_static_cache_release_one(&s_ui.fireblade_static_cache);
+}
+
+static bool dashboard_static_cache_finalize(dashboard_static_cache_t *cache,
+                                            lv_obj_t *page,
+                                            lv_obj_t *static_layer,
+                                            const char *name)
+{
+#if LV_USE_SNAPSHOT
+    if (!dashboard_static_cache_enabled() || !cache || !page || !static_layer) {
+        return false;
+    }
+
+    cache->pixels = dashboard_static_cache_alloc(DASHBOARD_STATIC_CACHE_BYTES);
+    if (!cache->pixels) {
+        ESP_LOGW(TAG, "dashboard_cache name=%s cache=off reason=psram", name);
+        return false;
+    }
+    if (lv_draw_buf_init(&cache->draw_buf,
+                         DASHBOARD_STATIC_CACHE_WIDTH,
+                         DASHBOARD_STATIC_CACHE_HEIGHT,
+                         LV_COLOR_FORMAT_RGB565,
+                         LV_STRIDE_AUTO,
+                         cache->pixels,
+                         DASHBOARD_STATIC_CACHE_BYTES) != LV_RESULT_OK ||
+        lv_snapshot_take_to_draw_buf(static_layer,
+                                     LV_COLOR_FORMAT_RGB565,
+                                     &cache->draw_buf) != LV_RESULT_OK) {
+        ESP_LOGW(TAG, "dashboard_cache name=%s cache=off reason=snapshot", name);
+        dashboard_static_cache_release_one(cache);
+        return false;
+    }
+
+    cache->image = lv_image_create(page);
+    clear_style(cache->image);
+    lv_image_set_src(cache->image, &cache->draw_buf);
+    lv_obj_set_pos(cache->image, 0, 0);
+    lv_obj_set_size(cache->image,
+                    DASHBOARD_STATIC_CACHE_WIDTH,
+                    DASHBOARD_STATIC_CACHE_HEIGHT);
+    lv_obj_clear_flag(cache->image, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_move_background(cache->image);
+    lv_obj_delete(static_layer);
+    cache->active = true;
+    ESP_LOGI(TAG,
+             "dashboard_cache name=%s cache=on bytes=%u",
+             name,
+             (unsigned)DASHBOARD_STATIC_CACHE_BYTES);
+    return true;
+#else
+    (void)cache;
+    (void)page;
+    (void)static_layer;
+    (void)name;
+    return false;
+#endif
+}
+
 static lv_obj_t *panel(lv_obj_t *parent, int32_t x, int32_t y, int32_t w, int32_t h, lv_color_t color)
 {
     lv_obj_t *obj = lv_obj_create(parent);
@@ -835,18 +999,6 @@ static lv_obj_t *dashboard_viewport(lv_obj_t *parent, bool portrait)
     lv_obj_set_pos(viewport, 0, 0);
     lv_obj_set_size(viewport, layout_w, layout_h);
     lv_obj_clear_flag(viewport, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
-
-    if (s_ui.width != layout_w || s_ui.height != layout_h) {
-        /* ponytail: scale legacy fixed dashboards; use native responsive geometry for new panel sizes. */
-        lv_obj_set_style_transform_pivot_x(viewport, 0, LV_PART_MAIN);
-        lv_obj_set_style_transform_pivot_y(viewport, 0, LV_PART_MAIN);
-        lv_obj_set_style_transform_scale_x(viewport,
-                                           (s_ui.width * 256 + layout_w - 1) / layout_w,
-                                           LV_PART_MAIN);
-        lv_obj_set_style_transform_scale_y(viewport,
-                                           (s_ui.height * 256 + layout_h - 1) / layout_h,
-                                           LV_PART_MAIN);
-    }
     return viewport;
 }
 
@@ -936,12 +1088,437 @@ static void dashboard_thermometer_icon(lv_obj_t *parent, int32_t center_x, int32
     lv_obj_set_style_bg_opa(bulb, LV_OPA_COVER, LV_PART_MAIN);
 }
 
+static bms_native_layout_t bms_native_layout(void)
+{
+    const int32_t width = s_ui.width;
+    const int32_t height = s_ui.height;
+    const int32_t margin = width / 40;
+    const int32_t gap = width / 60;
+    const int32_t content_w = width - (margin * 2);
+    const int32_t top_h = (height * 5) / 16;
+    const int32_t middle_y = margin + top_h + gap;
+    const int32_t middle_h = (height * 9) / 32;
+    const int32_t bottom_y = middle_y + middle_h + gap;
+    bms_native_layout_t layout = {
+        .margin = margin,
+        .gap = gap,
+        .content_w = content_w,
+        .top_y = margin,
+        .top_h = top_h,
+        .top_w = (content_w - gap) / 2,
+        .right_x = margin + ((content_w - gap) / 2) + gap,
+        .middle_y = middle_y,
+        .middle_h = middle_h,
+        .status_w = ((content_w - gap) * 2) / 5,
+        .cell_x = margin + (((content_w - gap) * 2) / 5) + gap,
+        .cell_w = content_w - (((content_w - gap) * 2) / 5) - gap,
+        .bottom_y = bottom_y,
+        .bottom_h = height - bottom_y - margin,
+    };
+    return layout;
+}
+
+static lv_obj_t *dashboard_native_layer(lv_obj_t *parent,
+                                        int32_t x,
+                                        int32_t y,
+                                        int32_t width,
+                                        int32_t height)
+{
+    lv_obj_t *layer = lv_obj_create(parent);
+    clear_style(layer);
+    lv_obj_set_pos(layer, x, y);
+    lv_obj_set_size(layer, width, height);
+    lv_obj_set_style_bg_opa(layer, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_clear_flag(layer, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    return layer;
+}
+
+static void bms_native_static_label(lv_obj_t *parent,
+                                    const char *text,
+                                    int32_t x,
+                                    int32_t y,
+                                    int32_t width,
+                                    int32_t height,
+                                    const lv_font_t *font,
+                                    lv_color_t color,
+                                    lv_text_align_t align)
+{
+    lv_obj_t *obj = label(parent, x, y, width, height, font);
+    lv_label_set_text(obj, text);
+    lv_obj_set_style_text_color(obj, color, LV_PART_MAIN);
+    lv_obj_set_style_text_align(obj, align, LV_PART_MAIN);
+}
+
+static void bms_native_battery_icon_rect(const bms_native_layout_t *layout,
+                                         int32_t *x,
+                                         int32_t *y,
+                                         int32_t *width,
+                                         int32_t *height)
+{
+    *width = layout->top_w / 2;
+    *height = layout->top_h / 4;
+    *x = layout->margin + (layout->top_w - *width) / 2;
+    *y = layout->top_y + (layout->top_h / 2);
+}
+
+static void bms_native_static_battery_icon(lv_obj_t *parent,
+                                            const bms_native_layout_t *layout)
+{
+    int32_t x = 0;
+    int32_t y = 0;
+    int32_t width = 0;
+    int32_t height = 0;
+    bms_native_battery_icon_rect(layout, &x, &y, &width, &height);
+    lv_obj_t *body = lv_obj_create(parent);
+    clear_style(body);
+    lv_obj_set_pos(body, x, y);
+    lv_obj_set_size(body, width, height);
+    lv_obj_set_style_radius(body, 3, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(body, COLOR_DASHBOARD_PANEL, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(body, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(body, 2, LV_PART_MAIN);
+    lv_obj_set_style_border_color(body, COLOR_WHITE, LV_PART_MAIN);
+    lv_obj_set_style_border_opa(body, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_t *terminal = lv_obj_create(parent);
+    clear_style(terminal);
+    lv_obj_set_pos(terminal, x + width, y + ((height - 8) / 2));
+    lv_obj_set_size(terminal, 5, 8);
+    lv_obj_set_style_radius(terminal, 1, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(terminal, COLOR_WHITE, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(terminal, LV_OPA_COVER, LV_PART_MAIN);
+}
+
+static void create_native_bms_dashboard(void)
+{
+    const bms_native_layout_t layout = bms_native_layout();
+    s_ui.native_bms_dashboard = true;
+
+    lv_obj_t *static_layer = dashboard_native_layer(s_ui.battery_page,
+                                                     0,
+                                                     0,
+                                                     s_ui.width,
+                                                     s_ui.height);
+    lv_obj_set_style_bg_color(static_layer, COLOR_DASHBOARD_BG, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(static_layer, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_t *soc_panel = dashboard_panel(static_layer,
+                                          layout.margin,
+                                          layout.top_y,
+                                          layout.top_w,
+                                          layout.top_h,
+                                          COLOR_DASHBOARD_SOC_PANEL,
+                                          COLOR_DASHBOARD_SOC_BORDER);
+    lv_obj_t *pack_panel = dashboard_panel(static_layer,
+                                           layout.right_x,
+                                           layout.top_y,
+                                           layout.top_w,
+                                           layout.top_h,
+                                           COLOR_DASHBOARD_PANEL,
+                                           COLOR_DASHBOARD_BORDER);
+    lv_obj_t *status_panel = dashboard_panel(static_layer,
+                                             layout.margin,
+                                             layout.middle_y,
+                                             layout.status_w,
+                                             layout.middle_h,
+                                             COLOR_DASHBOARD_PANEL,
+                                             COLOR_DASHBOARD_BORDER);
+    lv_obj_t *cell_panel = dashboard_panel(static_layer,
+                                           layout.cell_x,
+                                           layout.middle_y,
+                                           layout.cell_w,
+                                           layout.middle_h,
+                                           COLOR_DASHBOARD_PANEL,
+                                           COLOR_DASHBOARD_BORDER);
+    lv_obj_t *temp_panel = dashboard_panel(static_layer,
+                                           layout.margin,
+                                           layout.bottom_y,
+                                           layout.content_w,
+                                           layout.bottom_h,
+                                           COLOR_DASHBOARD_PANEL,
+                                           COLOR_DASHBOARD_BORDER);
+
+    bms_native_static_label(soc_panel,
+                            "电量",
+                            8,
+                            6,
+                            layout.top_w - 16,
+                            18,
+                            &settings_zh_13,
+                            COLOR_MUTED,
+                            LV_TEXT_ALIGN_LEFT);
+    bms_native_static_label(pack_panel,
+                            "电压",
+                            8,
+                            6,
+                            layout.top_w - 16,
+                            18,
+                            &settings_zh_13,
+                            COLOR_MUTED,
+                            LV_TEXT_ALIGN_LEFT);
+    dashboard_separator(pack_panel, 12, layout.top_h / 2, layout.top_w - 24);
+    bms_native_static_label(pack_panel,
+                            "电流",
+                            8,
+                            (layout.top_h / 2) + 5,
+                            layout.top_w - 16,
+                            18,
+                            &settings_zh_13,
+                            COLOR_MUTED,
+                            LV_TEXT_ALIGN_LEFT);
+    bms_native_static_battery_icon(static_layer, &layout);
+
+    bms_native_static_label(status_panel,
+                            "BLE STATUS",
+                            6,
+                            5,
+                            (layout.status_w / 2) - 12,
+                            16,
+                            &lv_font_montserrat_14,
+                            COLOR_MUTED,
+                            LV_TEXT_ALIGN_CENTER);
+    lv_obj_t *range_separator = dashboard_separator(status_panel,
+                                                     layout.status_w / 2,
+                                                     8,
+                                                     1);
+    lv_obj_set_height(range_separator, layout.middle_h - 16);
+    bms_native_static_label(status_panel,
+                            "剩余里程",
+                            (layout.status_w / 2) + 6,
+                            6,
+                            (layout.status_w / 2) - 12,
+                            16,
+                            &settings_zh_13,
+                            COLOR_MUTED,
+                            LV_TEXT_ALIGN_CENTER);
+    bms_native_static_label(status_panel,
+                            "km",
+                            (layout.status_w / 2) + 8,
+                            layout.middle_h - 23,
+                            (layout.status_w / 2) - 16,
+                            16,
+                            &lv_font_montserrat_14,
+                            COLOR_ACCENT,
+                            LV_TEXT_ALIGN_CENTER);
+
+    bms_native_static_label(cell_panel,
+                            "单体电压",
+                            8,
+                            5,
+                            layout.cell_w - 16,
+                            16,
+                            &settings_zh_13,
+                            COLOR_MUTED,
+                            LV_TEXT_ALIGN_LEFT);
+    static const char *const cell_keys[] = { "MAX", "MIN", "DELTA", "AVG" };
+    const int32_t cell_row_h = (layout.middle_h - 23) / (int32_t)DASHBOARD_CELL_STAT_COUNT;
+    for (uint8_t index = 0; index < DASHBOARD_CELL_STAT_COUNT; ++index) {
+        const int32_t row_y = 22 + ((int32_t)index * cell_row_h);
+        bms_native_static_label(cell_panel,
+                                cell_keys[index],
+                                8,
+                                row_y,
+                                64,
+                                cell_row_h,
+                                &lv_font_montserrat_14,
+                                COLOR_MUTED,
+                                LV_TEXT_ALIGN_LEFT);
+        if (index + 1U < DASHBOARD_CELL_STAT_COUNT) {
+            dashboard_separator(cell_panel, 8, row_y + cell_row_h - 1, layout.cell_w - 16);
+        }
+    }
+
+    bms_native_static_label(temp_panel,
+                            "温度",
+                            8,
+                            5,
+                            layout.content_w - 16,
+                            16,
+                            &settings_zh_13,
+                            COLOR_MUTED,
+                            LV_TEXT_ALIGN_LEFT);
+    const int32_t temp_col_w = layout.content_w / (int32_t)ESP_BMS_BMS_TEMP_MAX_COUNT;
+    for (uint8_t index = 0; index < ESP_BMS_BMS_TEMP_MAX_COUNT; ++index) {
+        const int32_t col_x = (int32_t)index * temp_col_w;
+        bms_native_static_label(temp_panel,
+                                DASHBOARD_TEMP_KEYS[index],
+                                col_x,
+                                25,
+                                temp_col_w,
+                                18,
+                                &lv_font_montserrat_14,
+                                COLOR_MUTED,
+                                LV_TEXT_ALIGN_CENTER);
+        dashboard_thermometer_icon(temp_panel, col_x + (temp_col_w / 2), 44);
+    }
+
+    (void)dashboard_static_cache_finalize(&s_ui.battery_static_cache,
+                                           s_ui.battery_page,
+                                           static_layer,
+                                           "bms");
+
+    lv_obj_t *dynamic_layer = dashboard_native_layer(s_ui.battery_page,
+                                                      0,
+                                                      0,
+                                                      s_ui.width,
+                                                      s_ui.height);
+    s_ui.soc_panel_fill = lv_obj_create(dynamic_layer);
+    clear_style(s_ui.soc_panel_fill);
+    lv_obj_set_pos(s_ui.soc_panel_fill, layout.margin, layout.top_y);
+    lv_obj_set_size(s_ui.soc_panel_fill, layout.top_w, 3);
+    lv_obj_set_style_bg_color(s_ui.soc_panel_fill, COLOR_SOC, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_ui.soc_panel_fill, LV_OPA_COVER, LV_PART_MAIN);
+
+    lv_obj_t *soc_dynamic = dashboard_native_layer(dynamic_layer,
+                                                    layout.margin,
+                                                    layout.top_y,
+                                                    layout.top_w,
+                                                    layout.top_h);
+    s_ui.soc = label(soc_dynamic,
+                     6,
+                     24,
+                     layout.top_w - 12,
+                     34,
+                     &lv_font_montserrat_28);
+    s_ui.capacity = label(soc_dynamic,
+                          6,
+                          layout.top_h - 25,
+                          layout.top_w - 12,
+                          18,
+                          &lv_font_montserrat_14);
+    int32_t icon_x = 0;
+    int32_t icon_y = 0;
+    int32_t icon_w = 0;
+    int32_t icon_h = 0;
+    bms_native_battery_icon_rect(&layout, &icon_x, &icon_y, &icon_w, &icon_h);
+    s_ui.soc_battery_level = lv_obj_create(dynamic_layer);
+    clear_style(s_ui.soc_battery_level);
+    lv_obj_set_pos(s_ui.soc_battery_level, icon_x + 2, icon_y + 2);
+    lv_obj_set_size(s_ui.soc_battery_level, icon_w - 4, icon_h - 4);
+    s_dashboard_battery_inner_w = icon_w - 4;
+    lv_obj_set_style_radius(s_ui.soc_battery_level, 1, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s_ui.soc_battery_level, COLOR_WHITE, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_ui.soc_battery_level, LV_OPA_COVER, LV_PART_MAIN);
+    for (int32_t index = 1; index < 5; ++index) {
+        lv_obj_t *divider = dashboard_separator(dynamic_layer,
+                                                icon_x + ((icon_w * index) / 5),
+                                                icon_y + 2,
+                                                1);
+        lv_obj_set_height(divider, icon_h - 4);
+    }
+
+    lv_obj_t *pack_dynamic = dashboard_native_layer(dynamic_layer,
+                                                     layout.right_x,
+                                                     layout.top_y,
+                                                     layout.top_w,
+                                                     layout.top_h);
+    s_ui.pack_voltage = label(pack_dynamic,
+                              8,
+                              25,
+                              layout.top_w - 16,
+                              32,
+                              &lv_font_montserrat_28);
+    s_ui.current = label(pack_dynamic,
+                         8,
+                         (layout.top_h / 2) + 23,
+                         layout.top_w - 16,
+                         32,
+                         &lv_font_montserrat_28);
+
+    lv_obj_t *status_dynamic = dashboard_native_layer(dynamic_layer,
+                                                       layout.margin,
+                                                       layout.middle_y,
+                                                       layout.status_w,
+                                                       layout.middle_h);
+    s_ui.bms_error = label(status_dynamic,
+                           4,
+                           4,
+                           (layout.status_w / 2) - 8,
+                           16,
+                           &settings_zh_10);
+    s_ui.bms_status_ok = label(status_dynamic,
+                               4,
+                               29,
+                               (layout.status_w / 2) - 8,
+                               28,
+                               &settings_zh_16);
+    s_ui.remaining_range_value = label(status_dynamic,
+                                       (layout.status_w / 2) + 7,
+                                       28,
+                                       (layout.status_w / 2) - 14,
+                                       34,
+                                       &lv_font_montserrat_28);
+
+    lv_obj_t *cell_dynamic = dashboard_native_layer(dynamic_layer,
+                                                     layout.cell_x,
+                                                     layout.middle_y,
+                                                     layout.cell_w,
+                                                     layout.middle_h);
+    for (uint8_t index = 0; index < DASHBOARD_CELL_STAT_COUNT; ++index) {
+        const int32_t row_y = 22 + ((int32_t)index * cell_row_h);
+        s_ui.cell_stat_values[index] = label(cell_dynamic,
+                                             78,
+                                             row_y,
+                                             layout.cell_w - 88,
+                                             cell_row_h,
+                                             &lv_font_montserrat_14);
+    }
+
+    lv_obj_t *temp_dynamic = dashboard_native_layer(dynamic_layer,
+                                                     layout.margin,
+                                                     layout.bottom_y,
+                                                     layout.content_w,
+                                                     layout.bottom_h);
+    for (uint8_t index = 0; index < ESP_BMS_BMS_TEMP_MAX_COUNT; ++index) {
+        const int32_t col_x = (int32_t)index * temp_col_w;
+        s_ui.temperature_values[index] = label(temp_dynamic,
+                                               col_x,
+                                               59,
+                                               temp_col_w,
+                                               20,
+                                               &lv_font_montserrat_14);
+    }
+
+    lv_obj_set_style_text_align(s_ui.soc, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_align(s_ui.capacity, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_align(s_ui.pack_voltage, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_align(s_ui.current, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_align(s_ui.bms_error, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_align(s_ui.bms_status_ok, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_align(s_ui.remaining_range_value, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_line_space(s_ui.bms_error, 1, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.soc, COLOR_WHITE, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.capacity, COLOR_WHITE, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.pack_voltage, COLOR_WHITE, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.current, COLOR_WHITE, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.bms_status_ok, COLOR_ACCENT, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.remaining_range_value, COLOR_WHITE, LV_PART_MAIN);
+    for (uint8_t index = 0; index < DASHBOARD_CELL_STAT_COUNT; ++index) {
+        lv_obj_set_style_text_align(s_ui.cell_stat_values[index], LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
+        lv_obj_set_style_text_color(s_ui.cell_stat_values[index], COLOR_DASHBOARD_VALUE,
+                                    LV_PART_MAIN);
+    }
+    for (uint8_t index = 0; index < ESP_BMS_BMS_TEMP_MAX_COUNT; ++index) {
+        lv_obj_set_style_text_align(s_ui.temperature_values[index], LV_TEXT_ALIGN_CENTER,
+                                    LV_PART_MAIN);
+        lv_obj_set_style_text_color(s_ui.temperature_values[index], COLOR_DASHBOARD_VALUE,
+                                    LV_PART_MAIN);
+    }
+}
+
 static void label_set_text_if_changed(lv_obj_t *obj, const char *text)
 {
     const char *current = lv_label_get_text(obj);
     if (!current || strcmp(current, text) != 0) {
         lv_label_set_text(obj, text);
     }
+}
+
+static void bms_label_set(lv_obj_t *obj, char *buffer, size_t buffer_len, const char *text)
+{
+    if (!obj || !buffer || buffer_len == 0U || !text || strcmp(buffer, text) == 0) {
+        return;
+    }
+    (void)snprintf(buffer, buffer_len, "%s", text);
+    lv_label_set_text_static(obj, buffer);
 }
 
 static void label_set_text_fmt_if_changed(lv_obj_t *obj, const char *fmt, ...)
@@ -1391,7 +1968,8 @@ static void update_dashboard_soc_fill(uint8_t soc_percent, bool valid, bool char
     }
 
     const uint8_t soc = valid ? (soc_percent > 100U ? 100U : soc_percent) : 0U;
-    lv_obj_set_style_bg_color(lv_obj_get_parent(s_ui.soc),
+    lv_obj_t *fill = s_ui.soc_panel_fill ? s_ui.soc_panel_fill : lv_obj_get_parent(s_ui.soc);
+    lv_obj_set_style_bg_color(fill,
                               dashboard_soc_fill_color(soc, valid, charging),
                               LV_PART_MAIN);
 }
@@ -2312,6 +2890,7 @@ typedef enum {
     SETTINGS_DETAIL_HOTSPOT,
     SETTINGS_DETAIL_BLUETOOTH,
     SETTINGS_DETAIL_BMS,
+    SETTINGS_DETAIL_GPS,
     SETTINGS_DETAIL_CONTROLLER,
     SETTINGS_DETAIL_SYSTEM,
     SETTINGS_DETAIL_ABOUT,
@@ -2364,10 +2943,11 @@ static lv_obj_t *settings_detail_row(lv_obj_t *parent,
                                      const settings_detail_row_t *row);
 static void settings_show_bluetooth_detail(void);
 static void settings_show_bms_detail(void);
+static void settings_show_gps_detail(void);
 static void settings_show_preset_range_edit(void);
 static void settings_show_controller_detail(void);
 static void settings_show_speed_unit_picker(void);
-#if ESP_BMS_FEATURE_GPS || ESP_BMS_FEATURE_CONTROLLER
+#if ESP_BMS_FEATURE_GPS && ESP_BMS_FEATURE_CONTROLLER
 static void settings_show_speed_source_picker(void);
 #endif
 static void settings_show_system_view(settings_system_view_t view);
@@ -2406,8 +2986,11 @@ static const settings_option_t SETTINGS_OPTIONS[] = {
 #if ESP_BMS_FEATURE_BMS
     { SETTINGS_DETAIL_BMS, "保护板设置", "扫描绑定", LV_SYMBOL_CHARGE, &lv_font_montserrat_24 },
 #endif
-#if ESP_BMS_FEATURE_CONTROLLER || ESP_BMS_FEATURE_GPS
-    { SETTINGS_DETAIL_CONTROLLER, "速度仪表", "GPS / FarDriver", "C", &lv_font_montserrat_24 },
+#if ESP_BMS_FEATURE_GPS
+    { SETTINGS_DETAIL_GPS, "GPS", "定位与速度", LV_SYMBOL_GPS, &lv_font_montserrat_24 },
+#endif
+#if ESP_BMS_FEATURE_CONTROLLER
+    { SETTINGS_DETAIL_CONTROLLER, "控制器", "FarDriver", "C", &lv_font_montserrat_24 },
 #endif
     { SETTINGS_DETAIL_SYSTEM, "系统", "显示与控制", LV_SYMBOL_SETTINGS, &lv_font_montserrat_24 },
     { SETTINGS_DETAIL_ABOUT, "关于本机", "设备信息", "i", &lv_font_montserrat_24 },
@@ -3025,6 +3608,8 @@ static void settings_navigation_set_hidden(bool hidden, bool animated)
     const bool tertiary_view =
         (s_ui.settings_detail_id == (uint8_t)SETTINGS_DETAIL_BMS &&
          s_ui.settings_bms_view != (uint8_t)SETTINGS_BMS_VIEW_ROOT) ||
+        (s_ui.settings_detail_id == (uint8_t)SETTINGS_DETAIL_GPS &&
+         s_ui.settings_gps_view != (uint8_t)SETTINGS_GPS_VIEW_ROOT) ||
         (s_ui.settings_detail_id == (uint8_t)SETTINGS_DETAIL_CONTROLLER &&
          s_ui.settings_controller_view != (uint8_t)SETTINGS_CONTROLLER_VIEW_ROOT) ||
         (s_ui.settings_detail_id == (uint8_t)SETTINGS_DETAIL_SYSTEM &&
@@ -3141,6 +3726,7 @@ static void settings_show_root(void)
     }
     s_ui.settings_detail_id = (uint8_t)SETTINGS_DETAIL_NONE;
     s_ui.settings_bms_view = (uint8_t)SETTINGS_BMS_VIEW_ROOT;
+    s_ui.settings_gps_view = (uint8_t)SETTINGS_GPS_VIEW_ROOT;
     s_ui.settings_controller_view = (uint8_t)SETTINGS_CONTROLLER_VIEW_ROOT;
     s_ui.settings_bms_ble_status = NULL;
     UI_SET_FLAG(SETTINGS_SWIPE_TRACKING, false);
@@ -3197,6 +3783,12 @@ static void settings_navigate_back(void)
     if (s_ui.settings_detail_id == (uint8_t)SETTINGS_DETAIL_BMS &&
         s_ui.settings_bms_view != (uint8_t)SETTINGS_BMS_VIEW_ROOT) {
         settings_show_bms_detail();
+        settings_navigation_set_hidden(false, false);
+        return;
+    }
+    if (s_ui.settings_detail_id == (uint8_t)SETTINGS_DETAIL_GPS &&
+        s_ui.settings_gps_view != (uint8_t)SETTINGS_GPS_VIEW_ROOT) {
+        settings_show_gps_detail();
         settings_navigation_set_hidden(false, false);
         return;
     }
@@ -4501,7 +5093,7 @@ static const char *const SETTINGS_SPEED_UNIT_LABELS[] = {
     "mph",
 };
 
-#if ESP_BMS_FEATURE_GPS || ESP_BMS_FEATURE_CONTROLLER
+#if ESP_BMS_FEATURE_GPS && ESP_BMS_FEATURE_CONTROLLER
 typedef struct {
     esp_bms_speed_source_t source;
     const char *label;
@@ -4555,7 +5147,11 @@ static void settings_show_speed_unit_picker(void)
                                ? 1U
                                : 0U;
 
-    s_ui.settings_controller_view = (uint8_t)SETTINGS_CONTROLLER_VIEW_SPEED_UNIT_LIST;
+    if (s_ui.settings_detail_id == (uint8_t)SETTINGS_DETAIL_GPS) {
+        s_ui.settings_gps_view = (uint8_t)SETTINGS_GPS_VIEW_SPEED_UNIT_LIST;
+    } else {
+        s_ui.settings_controller_view = (uint8_t)SETTINGS_CONTROLLER_VIEW_SPEED_UNIT_LIST;
+    }
     s_ui.settings_bms_ble_status = NULL;
     lv_obj_clean(s_ui.settings_detail);
     label_set_text_if_changed(s_ui.settings_detail_title, "速度单位");
@@ -4609,7 +5205,7 @@ static void settings_show_speed_unit_picker(void)
     }
 }
 
-#if ESP_BMS_FEATURE_GPS || ESP_BMS_FEATURE_CONTROLLER
+#if ESP_BMS_FEATURE_GPS && ESP_BMS_FEATURE_CONTROLLER
 static void settings_speed_source_button_event_cb(lv_event_t *event)
 {
     if (lv_event_get_code(event) != LV_EVENT_CLICKED || UI_FLAG(SETTINGS_SWIPE_CONSUMED)) {
@@ -4647,7 +5243,11 @@ static void settings_show_speed_source_picker(void)
     const esp_bms_dashboard_snapshot_t *snapshot = settings_current_snapshot();
     const esp_bms_speed_source_t current = snapshot->speed_source;
 
-    s_ui.settings_controller_view = (uint8_t)SETTINGS_CONTROLLER_VIEW_SPEED_SOURCE_LIST;
+    if (s_ui.settings_detail_id == (uint8_t)SETTINGS_DETAIL_GPS) {
+        s_ui.settings_gps_view = (uint8_t)SETTINGS_GPS_VIEW_SPEED_SOURCE_LIST;
+    } else {
+        s_ui.settings_controller_view = (uint8_t)SETTINGS_CONTROLLER_VIEW_SPEED_SOURCE_LIST;
+    }
     s_ui.settings_bms_ble_status = NULL;
     lv_obj_clean(s_ui.settings_detail);
     label_set_text_if_changed(s_ui.settings_detail_title, "速度来源");
@@ -4725,7 +5325,7 @@ static lv_obj_t *settings_speed_unit_row(lv_obj_t *parent,
     return box;
 }
 
-#if ESP_BMS_FEATURE_GPS || ESP_BMS_FEATURE_CONTROLLER
+#if ESP_BMS_FEATURE_GPS && ESP_BMS_FEATURE_CONTROLLER
 static lv_obj_t *settings_speed_source_row(lv_obj_t *parent,
                                            int32_t y,
                                            int32_t w,
@@ -4770,6 +5370,72 @@ static void settings_controller_style_row(lv_obj_t *parent,
     lv_obj_set_style_text_color(arrow, COLOR_SETTINGS_ACCENT, LV_PART_MAIN);
 }
 
+static const char *settings_gps_module_status(const esp_bms_dashboard_snapshot_t *snapshot)
+{
+    if (snapshot->gps_module_state == (uint8_t)ESP_BMS_GPS_MODULE_AVAILABLE) {
+        return "READY";
+    }
+    return snapshot->gps_module_state == (uint8_t)ESP_BMS_GPS_MODULE_PROBING ? "CHECK" :
+                                                                            "OFFLINE";
+}
+
+static void settings_show_gps_detail(void)
+{
+    const int32_t card_x = SETTINGS_LIST_MARGIN_X;
+    const int32_t card_w = s_ui.width - (SETTINGS_LIST_MARGIN_X * 2);
+    const int32_t row_h = s_ui.width < s_ui.height ? SETTINGS_DETAIL_ROW_H_PORTRAIT :
+                                                     SETTINGS_DETAIL_ROW_H_LANDSCAPE;
+    const esp_bms_dashboard_snapshot_t *snapshot = settings_current_snapshot();
+    char local_time[12] = { 0 };
+    const settings_detail_row_t rows[] = {
+        { "状态", settings_gps_module_status(snapshot), ESP_BMS_LVGL_ACTION_NONE,
+          SETTINGS_SYSTEM_VIEW_ROOT },
+        { "定位", SNAPSHOT_FLAG(snapshot, GPS_FIX_VALID) ? "FIX" : "NO FIX",
+          ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
+        { "TIME", local_time, ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
+    };
+
+    if (snapshot->gps_local_time_valid) {
+        (void)snprintf(local_time, sizeof(local_time), "%02u:%02u",
+                       snapshot->gps_local_hour, snapshot->gps_local_minute);
+    } else {
+        (void)snprintf(local_time, sizeof(local_time), "--:--");
+    }
+
+    lv_obj_clean(s_ui.settings_detail);
+    s_ui.settings_detail_id = (uint8_t)SETTINGS_DETAIL_GPS;
+    s_ui.settings_gps_view = (uint8_t)SETTINGS_GPS_VIEW_ROOT;
+    s_ui.settings_bms_ble_status = NULL;
+    label_set_text_if_changed(s_ui.settings_detail_title, "GPS");
+
+    const size_t row_count = ARRAY_SIZE(rows) + 1U
+#if ESP_BMS_FEATURE_GPS && ESP_BMS_FEATURE_CONTROLLER
+                             + 1U
+#endif
+        ;
+    lv_obj_t *card = settings_list_card(s_ui.settings_detail, card_x, 12, card_w, row_h,
+                                        row_count);
+    size_t row_index = 0U;
+    for (size_t index = 0U; index < ARRAY_SIZE(rows); ++index) {
+        settings_detail_row(card, 0, (int32_t)row_index++ * row_h, card_w, row_h, &rows[index]);
+    }
+    settings_speed_unit_row(card,
+                            (int32_t)row_index++ * row_h,
+                            card_w,
+                            row_h,
+                            snapshot->speed_unit == ESP_BMS_SPEED_UNIT_MPH ? "mph" : "km/h");
+#if ESP_BMS_FEATURE_GPS && ESP_BMS_FEATURE_CONTROLLER
+    settings_speed_source_row(card,
+                              (int32_t)row_index * row_h,
+                              card_w,
+                              row_h,
+                              snapshot->speed_source == ESP_BMS_SPEED_SOURCE_CONTROLLER ?
+                                  "控制器" : "GPS");
+#endif
+    lv_obj_update_layout(s_ui.settings_detail);
+    lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
+}
+
 static void settings_show_controller_detail(void)
 {
     const int32_t card_x = SETTINGS_LIST_MARGIN_X;
@@ -4778,15 +5444,12 @@ static void settings_show_controller_detail(void)
                                                      SETTINGS_DETAIL_ROW_H_LANDSCAPE;
     const esp_bms_dashboard_snapshot_t *snapshot = settings_current_snapshot();
     const bool online = SNAPSHOT_FLAG(snapshot, CONTROLLER_ONLINE);
-    const bool gps_available =
-        snapshot->gps_module_state == (uint8_t)ESP_BMS_GPS_MODULE_AVAILABLE;
     const bool controller_synced =
         snapshot->controller_param_source ==
         (uint8_t)ESP_BMS_CONTROLLER_PARAM_SOURCE_CONTROLLER;
     const bool values_editable = online && !controller_synced;
-    const size_t main_row_count = online ? 6U : 4U;
+    const size_t main_row_count = online ? 5U : 3U;
     char ble_status[ESP_BMS_BMS_SCAN_NAME_LEN + 1U] = { 0 };
-    char speed_source[40] = { 0 };
     char tire[48] = { 0 };
     char ratio[40] = { 0 };
 
@@ -4797,75 +5460,11 @@ static void settings_show_controller_detail(void)
     label_set_text_if_changed(s_ui.settings_detail_title, "速度仪表");
     lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
 
-#if !ESP_BMS_FEATURE_CONTROLLER
-#if ESP_BMS_FEATURE_GPS
-    const settings_detail_row_t gps_status_row = {
-        "速度来源",
-        snapshot->gps_module_state == (uint8_t)ESP_BMS_GPS_MODULE_AVAILABLE ? "GPS"
-                                                                          : "GPS 未检测到",
-        ESP_BMS_LVGL_ACTION_NONE,
-        SETTINGS_SYSTEM_VIEW_ROOT,
-    };
-    lv_obj_t *card = settings_list_card(s_ui.settings_detail,
-                                        card_x,
-                                        12,
-                                        card_w,
-                                        row_h,
-                                        3U);
-    settings_speed_source_row(card, 0, card_w, row_h, gps_status_row.subtitle);
-    settings_controller_style_row(card,
-                                  row_h,
-                                  card_w,
-                                  row_h,
-                                  settings_dashboard_style_label(
-                                      speed_dashboard_style_from_snapshot(snapshot)));
-    settings_speed_unit_row(card,
-                            row_h * 2,
-                            card_w,
-                            row_h,
-                            snapshot->speed_unit == ESP_BMS_SPEED_UNIT_MPH ? "mph" : "km/h");
-    lv_obj_update_layout(s_ui.settings_detail);
-    lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
-    return;
-#else
-    lv_obj_t *card = settings_list_card(s_ui.settings_detail,
-                                        card_x,
-                                        12,
-                                        card_w,
-                                        row_h,
-                                        2U);
-    settings_controller_style_row(card,
-                                  0,
-                                  card_w,
-                                  row_h,
-                                  settings_dashboard_style_label(
-                                      speed_dashboard_style_from_snapshot(snapshot)));
-    settings_speed_unit_row(card,
-                            row_h,
-                            card_w,
-                            row_h,
-                            snapshot->speed_unit == ESP_BMS_SPEED_UNIT_MPH ? "mph" : "km/h");
-    lv_obj_update_layout(s_ui.settings_detail);
-    lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
-    return;
-#endif
-#else
-
     settings_bms_ble_format_status(ble_status,
                                    sizeof(ble_status),
                                    snapshot,
                                    SETTINGS_BLE_SOURCE_CONTROLLER,
                                    false);
-    if (snapshot->speed_source == ESP_BMS_SPEED_SOURCE_CONTROLLER) {
-        (void)snprintf(speed_source,
-                       sizeof(speed_source),
-                       !gps_available ? "控制器 / GPS 未检测到"
-                                      : online ? "控制器" : "控制器 / 离线·当前 GPS");
-    } else if (!gps_available) {
-        (void)snprintf(speed_source, sizeof(speed_source), "GPS 未检测到");
-    } else {
-        (void)snprintf(speed_source, sizeof(speed_source), "GPS");
-    }
     const settings_detail_row_t rows[] = {
         { "控制器连接", ble_status,
           ESP_BMS_LVGL_ACTION_START_CONTROLLER_BIND, SETTINGS_SYSTEM_VIEW_ROOT },
@@ -4881,11 +5480,6 @@ static void settings_show_controller_detail(void)
                                         row_h,
                                         main_row_count);
     size_t visible_index = 0U;
-    settings_speed_source_row(card,
-                              (int32_t)visible_index++ * row_h,
-                              card_w,
-                              row_h,
-                              speed_source);
     settings_controller_style_row(card,
                                   (int32_t)visible_index++ * row_h,
                                   card_w,
@@ -4958,7 +5552,6 @@ static void settings_show_controller_detail(void)
     settings_detail_row(type_card, 0, 0, card_w, row_h, &type_row);
     lv_obj_update_layout(s_ui.settings_detail);
     lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
-#endif
 }
 
 static bool settings_detail_action_uses_switch(esp_bms_lvgl_action_t action)
@@ -5995,6 +6588,10 @@ static void settings_show_detail(settings_detail_id_t detail_id)
         settings_show_bms_detail();
         return;
     }
+    if (detail_id == SETTINGS_DETAIL_GPS) {
+        settings_show_gps_detail();
+        return;
+    }
     if (detail_id == SETTINGS_DETAIL_CONTROLLER) {
         settings_show_controller_detail();
         return;
@@ -6842,6 +7439,7 @@ static void set_cast_page(const esp_bms_dashboard_snapshot_t *snapshot)
 
 static void set_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
 {
+    char soc_text[8];
     char voltage[24];
     char current[24];
     char ah[40];
@@ -6874,12 +7472,13 @@ static void set_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
         } else {
             (void)snprintf(ah, sizeof(ah), "--/--Ah");
         }
-        label_set_text_fmt_if_changed(s_ui.soc, "%u %%", soc);
+        (void)snprintf(soc_text, sizeof(soc_text), "%u %%", (unsigned)soc_percent);
     } else {
         (void)snprintf(ah, sizeof(ah), "--/--Ah");
-        label_set_text_if_changed(s_ui.soc, "--");
+        (void)snprintf(soc_text, sizeof(soc_text), "--");
     }
-    label_set_text_if_changed(s_ui.capacity, ah);
+    bms_label_set(s_ui.soc, s_ui.bms_soc_buf, sizeof(s_ui.bms_soc_buf), soc_text);
+    bms_label_set(s_ui.capacity, s_ui.bms_capacity_buf, sizeof(s_ui.bms_capacity_buf), ah);
 
     const bool current_valid = SNAPSHOT_FLAG(snapshot, CURRENT_VALID);
     format_mv(voltage, sizeof(voltage), SNAPSHOT_FLAG(snapshot, PACK_VOLTAGE_VALID), snapshot->pack_voltage_mv);
@@ -6888,8 +7487,11 @@ static void set_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
     const bool charging = current_valid && display_current_deci_amps < 0;
     update_dashboard_soc_fill(soc_percent, soc_valid, charging);
     update_dashboard_battery_icon(soc_percent, soc_valid, charging);
-    label_set_text_if_changed(s_ui.pack_voltage, voltage);
-    label_set_text_if_changed(s_ui.current, current);
+    bms_label_set(s_ui.pack_voltage,
+                  s_ui.bms_pack_voltage_buf,
+                  sizeof(s_ui.bms_pack_voltage_buf),
+                  voltage);
+    bms_label_set(s_ui.current, s_ui.bms_current_buf, sizeof(s_ui.bms_current_buf), current);
 
     format_cell_v(min_cell, sizeof(min_cell), SNAPSHOT_FLAG(snapshot, MIN_CELL_VALID), snapshot->min_cell_voltage_mv);
     format_cell_v(avg_cell, sizeof(avg_cell), SNAPSHOT_FLAG(snapshot, AVERAGE_CELL_VALID), snapshot->average_cell_voltage_mv);
@@ -6903,14 +7505,23 @@ static void set_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
     } else {
         (void)snprintf(delta_cell, sizeof(delta_cell), "--");
     }
-    label_set_text_if_changed(s_ui.cell_stat_values[0], max_cell);
-    label_set_text_if_changed(s_ui.cell_stat_values[1], min_cell);
-    label_set_text_if_changed(s_ui.cell_stat_values[2], delta_cell);
-    label_set_text_if_changed(s_ui.cell_stat_values[3], avg_cell);
+    bms_label_set(s_ui.cell_stat_values[0],
+                  s_ui.bms_cell_stat_buf[0], sizeof(s_ui.bms_cell_stat_buf[0]), max_cell);
+    bms_label_set(s_ui.cell_stat_values[1],
+                  s_ui.bms_cell_stat_buf[1], sizeof(s_ui.bms_cell_stat_buf[1]), min_cell);
+    bms_label_set(s_ui.cell_stat_values[2],
+                  s_ui.bms_cell_stat_buf[2], sizeof(s_ui.bms_cell_stat_buf[2]), delta_cell);
+    bms_label_set(s_ui.cell_stat_values[3],
+                  s_ui.bms_cell_stat_buf[3], sizeof(s_ui.bms_cell_stat_buf[3]), avg_cell);
 
     const bool portrait = s_ui.width < s_ui.height;
-    const int32_t status_area_height = portrait ? 52 : 70;
-    const int32_t status_width = portrait ? 100 : 68;
+    const bms_native_layout_t native_layout = bms_native_layout();
+    const int32_t status_area_height = s_ui.native_bms_dashboard
+                                           ? native_layout.middle_h
+                                           : (portrait ? 52 : 70);
+    const int32_t status_width = s_ui.native_bms_dashboard
+                                     ? (native_layout.status_w / 2) - 8
+                                     : (portrait ? 100 : 68);
     const int32_t title_height = (int32_t)settings_zh_10.line_height + 1;
     const char *status_title = "BLE STATUS";
     const char *status_value = "未连接";
@@ -6930,11 +7541,14 @@ static void set_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
         status_color = COLOR_WARN;
     }
     const int32_t status_value_height = (int32_t)status_value_font->line_height + 1;
-    label_set_text_if_changed(s_ui.bms_error, status_title);
+    bms_label_set(s_ui.bms_error, s_ui.bms_error_buf, sizeof(s_ui.bms_error_buf), status_title);
     label_set_text_color_if_changed(s_ui.bms_error, status_color);
     lv_obj_set_pos(s_ui.bms_error, 4, 4);
     lv_obj_set_size(s_ui.bms_error, status_width, title_height);
-    label_set_text_if_changed(s_ui.bms_status_ok, status_value);
+    bms_label_set(s_ui.bms_status_ok,
+                  s_ui.bms_status_buf,
+                  sizeof(s_ui.bms_status_buf),
+                  status_value);
     label_set_text_color_if_changed(s_ui.bms_status_ok, status_color);
     lv_obj_set_style_text_font(s_ui.bms_status_ok, status_value_font, LV_PART_MAIN);
     lv_obj_set_pos(s_ui.bms_status_ok,
@@ -6942,12 +7556,14 @@ static void set_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
                    (status_area_height - status_value_height) / 2);
     lv_obj_set_size(s_ui.bms_status_ok, status_width, status_value_height);
     if (snapshot->remaining_range_valid) {
-        label_set_text_fmt_if_changed(s_ui.remaining_range_value,
-                                      "%u",
-                                      snapshot->remaining_range_km);
+        (void)snprintf(s_ui.bms_range_buf,
+                       sizeof(s_ui.bms_range_buf),
+                       "%u",
+                       (unsigned)snapshot->remaining_range_km);
     } else {
-        label_set_text_if_changed(s_ui.remaining_range_value, "--");
+        (void)snprintf(s_ui.bms_range_buf, sizeof(s_ui.bms_range_buf), "--");
     }
+    lv_label_set_text_static(s_ui.remaining_range_value, s_ui.bms_range_buf);
 
     format_temp_c(t1, sizeof(t1), esp_bms_dashboard_snapshot_temperature_valid(snapshot, 0U), snapshot->bms_temperature_celsius[0]);
     format_temp_c(t2, sizeof(t2), esp_bms_dashboard_snapshot_temperature_valid(snapshot, 1U), snapshot->bms_temperature_celsius[1]);
@@ -6955,12 +7571,18 @@ static void set_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
     format_temp_c(t4, sizeof(t4), esp_bms_dashboard_snapshot_temperature_valid(snapshot, 3U), snapshot->bms_temperature_celsius[3]);
     format_temp_c(mos, sizeof(mos), esp_bms_dashboard_snapshot_temperature_valid(snapshot, 4U), snapshot->bms_temperature_celsius[4]);
     format_temp_c(bal, sizeof(bal), esp_bms_dashboard_snapshot_temperature_valid(snapshot, 5U), snapshot->bms_temperature_celsius[5]);
-    label_set_text_if_changed(s_ui.temperature_values[0], t1);
-    label_set_text_if_changed(s_ui.temperature_values[1], t2);
-    label_set_text_if_changed(s_ui.temperature_values[2], t3);
-    label_set_text_if_changed(s_ui.temperature_values[3], t4);
-    label_set_text_if_changed(s_ui.temperature_values[4], bal);
-    label_set_text_if_changed(s_ui.temperature_values[5], mos);
+    bms_label_set(s_ui.temperature_values[0],
+                  s_ui.bms_temperature_buf[0], sizeof(s_ui.bms_temperature_buf[0]), t1);
+    bms_label_set(s_ui.temperature_values[1],
+                  s_ui.bms_temperature_buf[1], sizeof(s_ui.bms_temperature_buf[1]), t2);
+    bms_label_set(s_ui.temperature_values[2],
+                  s_ui.bms_temperature_buf[2], sizeof(s_ui.bms_temperature_buf[2]), t3);
+    bms_label_set(s_ui.temperature_values[3],
+                  s_ui.bms_temperature_buf[3], sizeof(s_ui.bms_temperature_buf[3]), t4);
+    bms_label_set(s_ui.temperature_values[4],
+                  s_ui.bms_temperature_buf[4], sizeof(s_ui.bms_temperature_buf[4]), bal);
+    bms_label_set(s_ui.temperature_values[5],
+                  s_ui.bms_temperature_buf[5], sizeof(s_ui.bms_temperature_buf[5]), mos);
 
     set_setup_ap(snapshot);
     set_quick_brightness_value(snapshot->brightness_percent, false, true);
@@ -7376,10 +7998,7 @@ static bool settings_controller_view_changed(const esp_bms_dashboard_snapshot_t 
                                              bool had_previous)
 {
     return !had_previous ||
-           previous->gps_module_state != current->gps_module_state ||
            previous->speed_unit != current->speed_unit ||
-           previous->speed_source != current->speed_source ||
-           previous->active_speed_source != current->active_speed_source ||
            previous->speed_dashboard_style != current->speed_dashboard_style ||
            SNAPSHOT_FLAG(previous, CONTROLLER_PAGE_ENABLED) !=
                SNAPSHOT_FLAG(current, CONTROLLER_PAGE_ENABLED) ||
@@ -7794,7 +8413,11 @@ static void fireblade_add_scale(lv_obj_t *parent, lv_point_t center, int32_t rad
 
 static void fireblade_add_needle(lv_obj_t *parent, lv_point_t center, int32_t radius)
 {
+    const lv_point_t start =
+        fireblade_circle_point(center, FIREBLADE_NEEDLE_HUB_RADIUS, FIREBLADE_ARC_START_ANGLE);
     const lv_point_t tip = fireblade_circle_point(center, radius + 1, FIREBLADE_ARC_START_ANGLE);
+    s_ui.fireblade_needle_center = center;
+    s_ui.fireblade_needle_radius = radius + 1;
     memset(s_ui.fireblade_needle_black_points, 0, sizeof(s_ui.fireblade_needle_black_points));
     memset(s_ui.fireblade_needle_red_points, 0, sizeof(s_ui.fireblade_needle_red_points));
     s_ui.fireblade_needle_black =
@@ -7807,25 +8430,16 @@ static void fireblade_add_needle(lv_obj_t *parent, lv_point_t center, int32_t ra
                                   COLOR_FIREBLADE_RED);
     fireblade_needle_line_set(s_ui.fireblade_needle_black,
                               s_ui.fireblade_needle_black_points,
-                              center,
+                              start,
                               tip);
     fireblade_needle_line_set(s_ui.fireblade_needle_red,
                               s_ui.fireblade_needle_red_points,
-                              center,
+                              start,
                               tip);
 }
 
-static void fireblade_add_gear(lv_obj_t *parent, lv_point_t center)
+static void fireblade_add_gear_circle(lv_obj_t *parent, lv_point_t center)
 {
-    s_ui.fireblade_gear_unit = fireblade_label(parent,
-                                               s_ui.fireblade_gear_unit_buf,
-                                               center.x - 32,
-                                               center.y - 55,
-                                               64,
-                                               16,
-                                               &settings_zh_10,
-                                               COLOR_FIREBLADE_BLACK,
-                                               LV_TEXT_ALIGN_CENTER);
     lv_obj_t *circle = fireblade_panel(parent,
                                        center.x - 29,
                                        center.y - 29,
@@ -7836,6 +8450,19 @@ static void fireblade_add_gear(lv_obj_t *parent, lv_point_t center)
     lv_obj_set_style_border_width(circle, 1, LV_PART_MAIN);
     lv_obj_set_style_border_color(circle, COLOR_FIREBLADE_GEAR_BORDER, LV_PART_MAIN);
     lv_obj_set_style_border_opa(circle, LV_OPA_COVER, LV_PART_MAIN);
+}
+
+static void fireblade_add_gear_dynamic(lv_obj_t *parent, lv_point_t center)
+{
+    s_ui.fireblade_gear_unit = fireblade_label(parent,
+                                               s_ui.fireblade_gear_unit_buf,
+                                               center.x - 32,
+                                               center.y - 55,
+                                               64,
+                                               16,
+                                               &settings_zh_10,
+                                               COLOR_FIREBLADE_BLACK,
+                                               LV_TEXT_ALIGN_CENTER);
     s_ui.fireblade_gear = fireblade_label(parent,
                                           s_ui.fireblade_gear_buf,
                                           center.x - 28,
@@ -7845,6 +8472,207 @@ static void fireblade_add_gear(lv_obj_t *parent, lv_point_t center)
                                           &lv_font_montserrat_48,
                                           COLOR_FIREBLADE_GREEN,
                                           LV_TEXT_ALIGN_CENTER);
+}
+
+static void fireblade_add_gear(lv_obj_t *parent, lv_point_t center)
+{
+    fireblade_add_gear_circle(parent, center);
+    fireblade_add_gear_dynamic(parent, center);
+}
+
+static void fireblade_native_title(lv_obj_t *parent,
+                                   int32_t x,
+                                   int32_t y,
+                                   int32_t width,
+                                   const char *text)
+{
+    (void)fireblade_panel(parent, x, y, width, 20, COLOR_FIREBLADE_GRAY, 0);
+    (void)fireblade_label(parent,
+                          text,
+                          x + 7,
+                          y + 3,
+                          width - 10,
+                          15,
+                          &settings_zh_13,
+                          COLOR_FIREBLADE_BLACK,
+                          LV_TEXT_ALIGN_LEFT);
+}
+
+static void fireblade_create_native_landscape(lv_obj_t *page)
+{
+    const int32_t width = s_ui.width;
+    const int32_t height = s_ui.height;
+    const int32_t bridge_h = (height * 27) / 100;
+    const int32_t side_w = (width * 26) / 100;
+    const int32_t center_x = (width * 53) / 100;
+    const int32_t center_y = (height * 51) / 100;
+    const int32_t radius = LV_MIN((height * 45) / 100, (width * 30) / 100);
+    const int32_t metric_x = 8;
+    const int32_t metric_w = side_w - 12;
+    const int32_t metric_y[] = {
+        bridge_h + 8,
+        bridge_h + 60,
+        bridge_h + 112,
+        bridge_h + 164,
+    };
+    const lv_point_t center = speed_dashboard_point(center_x, center_y);
+    const lv_point_t gear_center = speed_dashboard_point(center.x, center.y - 6);
+
+    s_ui.native_fireblade_dashboard = true;
+    lv_obj_t *static_layer = dashboard_native_layer(page, 0, 0, width, height);
+    lv_obj_set_style_bg_color(static_layer, COLOR_WHITE, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(static_layer, LV_OPA_COVER, LV_PART_MAIN);
+    (void)fireblade_panel(static_layer, 0, 0, width, bridge_h, COLOR_FIREBLADE_BRIDGE, 0);
+    (void)fireblade_panel(static_layer,
+                          width - 90,
+                          bridge_h + 4,
+                          82,
+                          38,
+                          COLOR_FIREBLADE_MODE,
+                          0);
+    (void)fireblade_panel(static_layer,
+                          center.x - radius,
+                          center.y - radius,
+                          radius * 2,
+                          radius * 2,
+                          COLOR_WHITE,
+                          LV_RADIUS_CIRCLE);
+    fireblade_native_title(static_layer, 0, metric_y[0], metric_w, "电耗");
+    fireblade_native_title(static_layer, 0, metric_y[1], metric_w, "剩余");
+    fireblade_native_title(static_layer, 0, metric_y[2], metric_w, "均速");
+    fireblade_native_title(static_layer, 0, metric_y[3], metric_w, "日期");
+    fireblade_add_scale(static_layer, center, radius - 10);
+    fireblade_add_gear_circle(static_layer, gear_center);
+
+    (void)fireblade_label(static_layer, "控", 10, bridge_h / 2 - 12, 18, 12,
+                          &settings_zh_10, COLOR_WHITE, LV_TEXT_ALIGN_LEFT);
+    (void)fireblade_label(static_layer, "电机", 10, bridge_h / 2 + 12, 26, 12,
+                          &settings_zh_10, COLOR_WHITE, LV_TEXT_ALIGN_LEFT);
+    (void)fireblade_label(static_layer, "MODE", width - 74, bridge_h + 10, 42, 12,
+                          &settings_zh_10, COLOR_WHITE, LV_TEXT_ALIGN_LEFT);
+    (void)fireblade_label(static_layer, "1", width - 60, bridge_h + 24, 22, 14,
+                          &fireblade_info_digits_12, COLOR_WHITE, LV_TEXT_ALIGN_CENTER);
+    (void)fireblade_label(static_layer, "km", metric_x + metric_w - 28, metric_y[1] + 34,
+                          28, 10, &fireblade_info_units_8, COLOR_FIREBLADE_BLACK,
+                          LV_TEXT_ALIGN_LEFT);
+
+    (void)dashboard_static_cache_finalize(&s_ui.fireblade_static_cache,
+                                           page,
+                                           static_layer,
+                                           "fireblade");
+
+    lv_obj_t *dynamic_layer = dashboard_native_layer(page, 0, 0, width, height);
+    s_ui.fireblade_time = fireblade_label(dynamic_layer,
+                                          s_ui.fireblade_time_buf,
+                                          10,
+                                          10,
+                                          100,
+                                          24,
+                                          &settings_zh_16,
+                                          COLOR_WHITE,
+                                          LV_TEXT_ALIGN_LEFT);
+    s_ui.fireblade_controller_temp = fireblade_label(dynamic_layer,
+                                                      s_ui.fireblade_controller_temp_buf,
+                                                      44,
+                                                      bridge_h / 2 - 12,
+                                                      44,
+                                                      12,
+                                                      &settings_zh_10,
+                                                      COLOR_WHITE,
+                                                      LV_TEXT_ALIGN_RIGHT);
+    s_ui.fireblade_motor_temp = fireblade_label(dynamic_layer,
+                                                 s_ui.fireblade_motor_temp_buf,
+                                                 44,
+                                                 bridge_h / 2 + 12,
+                                                 44,
+                                                 12,
+                                                 &settings_zh_10,
+                                                 COLOR_WHITE,
+                                                 LV_TEXT_ALIGN_RIGHT);
+    s_ui.fireblade_soc = fireblade_label(dynamic_layer,
+                                         s_ui.fireblade_soc_buf,
+                                         width - 116,
+                                         10,
+                                         104,
+                                         28,
+                                         &lv_font_montserrat_28,
+                                         COLOR_WHITE,
+                                         LV_TEXT_ALIGN_RIGHT);
+    s_ui.fireblade_consumption = fireblade_label(dynamic_layer,
+                                                 s_ui.fireblade_consumption_buf,
+                                                 metric_x,
+                                                 metric_y[0] + 25,
+                                                 metric_w,
+                                                 16,
+                                                 &fireblade_info_digits_12,
+                                                 COLOR_FIREBLADE_BLACK,
+                                                 LV_TEXT_ALIGN_CENTER);
+    s_ui.fireblade_consumption_unit = fireblade_label(dynamic_layer,
+                                                      s_ui.fireblade_consumption_unit_buf,
+                                                      metric_x,
+                                                      metric_y[0] + 42,
+                                                      metric_w,
+                                                      10,
+                                                      &fireblade_info_units_8,
+                                                      COLOR_FIREBLADE_BLACK,
+                                                      LV_TEXT_ALIGN_CENTER);
+    s_ui.fireblade_range = fireblade_label(dynamic_layer,
+                                           s_ui.fireblade_range_buf,
+                                           metric_x,
+                                           metric_y[1] + 25,
+                                           metric_w - 28,
+                                           16,
+                                           &fireblade_info_digits_12,
+                                           COLOR_FIREBLADE_BLACK,
+                                           LV_TEXT_ALIGN_RIGHT);
+    s_ui.fireblade_average_speed = fireblade_label(dynamic_layer,
+                                                   s_ui.fireblade_average_speed_buf,
+                                                   metric_x,
+                                                   metric_y[2] + 25,
+                                                   metric_w - 34,
+                                                   16,
+                                                   &fireblade_info_digits_12,
+                                                   COLOR_FIREBLADE_BLACK,
+                                                   LV_TEXT_ALIGN_RIGHT);
+    s_ui.fireblade_average_speed_unit = fireblade_label(dynamic_layer,
+                                                        s_ui.fireblade_average_speed_unit_buf,
+                                                        metric_x + metric_w - 32,
+                                                        metric_y[2] + 29,
+                                                        32,
+                                                        10,
+                                                        &fireblade_info_units_8,
+                                                        COLOR_FIREBLADE_BLACK,
+                                                        LV_TEXT_ALIGN_LEFT);
+    s_ui.fireblade_date = fireblade_label(dynamic_layer,
+                                          s_ui.fireblade_date_buf,
+                                          metric_x,
+                                          metric_y[3] + 26,
+                                          metric_w,
+                                          14,
+                                          &settings_zh_10,
+                                          COLOR_FIREBLADE_BLACK,
+                                          LV_TEXT_ALIGN_CENTER);
+
+    fireblade_add_needle(dynamic_layer, center, radius - 10);
+    fireblade_add_gear_dynamic(dynamic_layer, gear_center);
+    s_ui.fireblade_speed = fireblade_label(dynamic_layer,
+                                           s_ui.fireblade_speed_buf,
+                                           center.x + 18,
+                                           center.y + 16,
+                                           radius - 10,
+                                           68,
+                                           &fireblade_digits_64,
+                                           COLOR_FIREBLADE_BLACK,
+                                           LV_TEXT_ALIGN_RIGHT);
+    s_ui.fireblade_speed_unit = fireblade_label(dynamic_layer,
+                                                s_ui.fireblade_speed_unit_buf,
+                                                center.x + 48,
+                                                center.y + 82,
+                                                radius - 22,
+                                                18,
+                                                &lv_font_montserrat_14,
+                                                COLOR_FIREBLADE_BLACK,
+                                                LV_TEXT_ALIGN_CENTER);
 }
 
 static void fireblade_create_landscape(lv_obj_t *parent)
@@ -8269,20 +9097,22 @@ static void set_fireblade_dashboard(const esp_bms_dashboard_snapshot_t *snapshot
         s_ui.fireblade_needle_signature != needle_signature) {
         s_ui.fireblade_needle_signature = needle_signature;
         s_ui.fireblade_needle_signature_valid = true;
-        const bool portrait = s_ui.width < s_ui.height;
-        const lv_point_t center = portrait ? speed_dashboard_point(124, 145)
-                                           : speed_dashboard_point(166, 120);
         const int32_t angle =
             FIREBLADE_ARC_START_ANGLE +
             (int32_t)(speed * FIREBLADE_ARC_SWEEP_ANGLE / maximum_speed);
-        const lv_point_t tip = fireblade_circle_point(center, 103, angle);
+        const lv_point_t tip = fireblade_circle_point(s_ui.fireblade_needle_center,
+                                                       s_ui.fireblade_needle_radius,
+                                                       angle);
+        const lv_point_t start = fireblade_circle_point(s_ui.fireblade_needle_center,
+                                                         FIREBLADE_NEEDLE_HUB_RADIUS,
+                                                         angle);
         fireblade_needle_line_set(s_ui.fireblade_needle_black,
                                   s_ui.fireblade_needle_black_points,
-                                  center,
+                                  start,
                                   tip);
         fireblade_needle_line_set(s_ui.fireblade_needle_red,
                                   s_ui.fireblade_needle_red_points,
-                                  center,
+                                  start,
                                   tip);
     }
 }
@@ -8301,11 +9131,15 @@ static void create_fireblade_dashboard(void)
     lv_obj_clear_flag(s_ui.fireblade_page, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
     s_ui.fireblade_needle_signature_valid = false;
     const bool portrait = s_ui.width < s_ui.height;
-    lv_obj_t *viewport = dashboard_viewport(s_ui.fireblade_page, portrait);
-    if (portrait) {
-        fireblade_create_portrait(viewport);
+    if (dashboard_native_landscape_enabled()) {
+        fireblade_create_native_landscape(s_ui.fireblade_page);
     } else {
+        lv_obj_t *viewport = dashboard_viewport(s_ui.fireblade_page, portrait);
+        if (portrait) {
+        fireblade_create_portrait(viewport);
+        } else {
         fireblade_create_landscape(viewport);
+        }
     }
 }
 #endif
@@ -9073,6 +9907,16 @@ static void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapsho
                                       previous_preset_range_km != snapshot->preset_range_km;
     const bool controller_view_changed =
         settings_controller_view_changed(&s_ui.last_snapshot, snapshot, had_last_snapshot);
+    const bool gps_view_changed = !had_last_snapshot ||
+                                  s_ui.last_snapshot.gps_module_state != snapshot->gps_module_state ||
+                                  SNAPSHOT_FLAG(&s_ui.last_snapshot, GPS_FIX_VALID) !=
+                                      SNAPSHOT_FLAG(snapshot, GPS_FIX_VALID) ||
+                                  s_ui.last_snapshot.gps_local_time_valid !=
+                                      snapshot->gps_local_time_valid ||
+                                  s_ui.last_snapshot.gps_local_hour != snapshot->gps_local_hour ||
+                                  s_ui.last_snapshot.gps_local_minute != snapshot->gps_local_minute ||
+                                  s_ui.last_snapshot.speed_unit != snapshot->speed_unit ||
+                                  s_ui.last_snapshot.speed_source != snapshot->speed_source;
     const bool controller_ble_changed =
         !had_last_snapshot ||
         SNAPSHOT_FLAG(&s_ui.last_snapshot, CONTROLLER_ONLINE) !=
@@ -9146,15 +9990,26 @@ static void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapsho
         } else if (s_ui.settings_controller_view ==
                        (uint8_t)SETTINGS_CONTROLLER_VIEW_SPEED_UNIT_LIST) {
             settings_show_speed_unit_picker();
-#if ESP_BMS_FEATURE_GPS || ESP_BMS_FEATURE_CONTROLLER
+#if ESP_BMS_FEATURE_GPS && ESP_BMS_FEATURE_CONTROLLER
         } else if (s_ui.settings_controller_view ==
-                       (uint8_t)SETTINGS_CONTROLLER_VIEW_SPEED_SOURCE_LIST) {
+                   (uint8_t)SETTINGS_CONTROLLER_VIEW_SPEED_SOURCE_LIST) {
             settings_show_speed_source_picker();
 #endif
         } else if (s_ui.settings_controller_view ==
                        (uint8_t)SETTINGS_CONTROLLER_VIEW_BLE_LIST &&
                    controller_ble_changed) {
             settings_show_bms_ble_popup(SETTINGS_BLE_SOURCE_CONTROLLER, false);
+        }
+    }
+    if (s_ui.settings_detail_id == (uint8_t)SETTINGS_DETAIL_GPS && gps_view_changed) {
+        if (s_ui.settings_gps_view == (uint8_t)SETTINGS_GPS_VIEW_ROOT) {
+            settings_show_gps_detail();
+        } else if (s_ui.settings_gps_view == (uint8_t)SETTINGS_GPS_VIEW_SPEED_UNIT_LIST) {
+            settings_show_speed_unit_picker();
+#if ESP_BMS_FEATURE_GPS && ESP_BMS_FEATURE_CONTROLLER
+        } else if (s_ui.settings_gps_view == (uint8_t)SETTINGS_GPS_VIEW_SPEED_SOURCE_LIST) {
+            settings_show_speed_source_picker();
+#endif
         }
     }
     if (s_ui.settings_detail_id == (uint8_t)SETTINGS_DETAIL_SYSTEM &&
@@ -9816,6 +10671,9 @@ static void create_screen(lv_display_t *display)
     snprintf(s_ui.speed_gear_buf, sizeof(s_ui.speed_gear_buf), "1");
     memset(s_ui.speed_scale_buf, 0, sizeof(s_ui.speed_scale_buf));
     create_gps_dashboard();
+#if ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
+    create_fireblade_dashboard();
+#endif
 
 #if ESP_BMS_FEATURE_CAST
     s_ui.cast_page = lv_obj_create(s_ui.pages);
@@ -9846,6 +10704,9 @@ static void create_screen(lv_display_t *display)
     s_ui.cast_qr = NULL;
 #endif
 
+    if (dashboard_native_landscape_enabled()) {
+        create_native_bms_dashboard();
+    } else {
     lv_obj_t *battery_viewport = dashboard_viewport(s_ui.battery_page, portrait);
     if (portrait) {
         lv_obj_t *soc_panel = dashboard_panel(battery_viewport,
@@ -10032,6 +10893,7 @@ static void create_screen(lv_display_t *display)
     lv_obj_set_style_text_color(s_ui.remaining_range_title, COLOR_MUTED, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_ui.remaining_range_value, COLOR_WHITE, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_ui.remaining_range_unit, COLOR_ACCENT, LV_PART_MAIN);
+    }
 
     s_ui.staging_screen = lv_obj_create(NULL);
     s_ui.settings_page = lv_obj_create(s_ui.staging_screen);
@@ -10644,6 +11506,7 @@ static esp_err_t rebuild_screen_if_needed(const esp_bms_dashboard_snapshot_t *sn
     if (old_root) {
         lv_obj_delete(old_root);
     }
+    dashboard_static_cache_release();
 
     memset(&s_ui, 0, sizeof(s_ui));
     s_ui.display = display;
@@ -10851,6 +11714,12 @@ esp_bms_lvgl_data_source_t esp_bms_lvgl_ui_stable_data_source(void)
     }
 }
 
+bool esp_bms_lvgl_ui_drag_active(void)
+{
+    return UI_FLAG(INITIALIZED) &&
+           (UI_FLAG(DRAGGING) || UI_FLAG(SETTLING) || s_ui.page_scroll_gesture_active);
+}
+
 esp_err_t esp_bms_lvgl_ui_take_action_event(esp_bms_lvgl_action_event_t *event)
 {
     ESP_RETURN_ON_FALSE(event, ESP_ERR_INVALID_ARG, TAG, "action event output is required");
@@ -10871,6 +11740,36 @@ esp_err_t esp_bms_lvgl_ui_take_action(esp_bms_lvgl_action_t *action)
 }
 
 #if ESP_BMS_LVGL_UI_SIMULATOR
+static uint32_t simulator_object_count(const lv_obj_t *obj)
+{
+    if (!obj) {
+        return 0U;
+    }
+    uint32_t count = 1U;
+    const uint32_t child_count = lv_obj_get_child_count(obj);
+    for (uint32_t index = 0U; index < child_count; ++index) {
+        count += simulator_object_count(lv_obj_get_child(obj, index));
+    }
+    return count;
+}
+
+uint32_t esp_bms_lvgl_ui_simulator_object_count(void)
+{
+    return simulator_object_count(s_ui.root);
+}
+
+uint8_t esp_bms_lvgl_ui_simulator_static_cache_count(void)
+{
+    return (uint8_t)((s_ui.battery_static_cache.active ? 1U : 0U) +
+                     (s_ui.fireblade_static_cache.active ? 1U : 0U));
+}
+
+bool esp_bms_lvgl_ui_simulator_snapshot_matches(const esp_bms_dashboard_snapshot_t *snapshot)
+{
+    return snapshot && UI_FLAG(LAST_SNAPSHOT_VALID) && !UI_FLAG(DEFERRED_SNAPSHOT_VALID) &&
+           memcmp(&s_ui.last_snapshot, snapshot, sizeof(s_ui.last_snapshot)) == 0;
+}
+
 bool esp_bms_lvgl_ui_simulator_boot_animation_preview_active(void)
 {
     return s_ui.settings_boot_preview_timer != NULL;
@@ -10885,6 +11784,54 @@ bool esp_bms_lvgl_ui_simulator_boot_animation_settings_visible(void)
                (uint8_t)SETTINGS_SYSTEM_VIEW_BOOT_ANIMATION &&
            s_ui.settings_boot_preview_button &&
            !lv_obj_has_flag(s_ui.settings_boot_preview_button, LV_OBJ_FLAG_HIDDEN);
+}
+
+bool esp_bms_lvgl_ui_simulator_gps_settings_visible(void)
+{
+    return UI_FLAG(INITIALIZED) && s_ui.settings_page &&
+           !lv_obj_has_flag(s_ui.settings_page, LV_OBJ_FLAG_HIDDEN) &&
+           s_ui.settings_detail_id == (uint8_t)SETTINGS_DETAIL_GPS;
+}
+
+esp_err_t esp_bms_lvgl_ui_simulator_open_gps_settings(void)
+{
+#if !ESP_BMS_FEATURE_GPS
+    return ESP_ERR_INVALID_STATE;
+#else
+    ESP_RETURN_ON_FALSE(UI_FLAG(INITIALIZED), ESP_ERR_INVALID_STATE, TAG,
+                        "UI is not initialized");
+    show_settings_view();
+    settings_show_detail(SETTINGS_DETAIL_GPS);
+    ESP_RETURN_ON_FALSE(esp_bms_lvgl_ui_simulator_gps_settings_visible(),
+                        ESP_ERR_INVALID_STATE, TAG, "GPS settings did not open");
+    return ESP_OK;
+#endif
+}
+
+bool esp_bms_lvgl_ui_simulator_gps_settings_smoke(void)
+{
+#if !ESP_BMS_FEATURE_GPS
+    return false;
+#else
+    if (esp_bms_lvgl_ui_simulator_open_gps_settings() != ESP_OK) {
+        return false;
+    }
+    settings_show_speed_unit_picker();
+    settings_navigate_back();
+    if (!esp_bms_lvgl_ui_simulator_gps_settings_visible() ||
+        s_ui.settings_gps_view != (uint8_t)SETTINGS_GPS_VIEW_ROOT) {
+        return false;
+    }
+#if ESP_BMS_FEATURE_CONTROLLER
+    settings_show_speed_source_picker();
+    settings_navigate_back();
+    if (!esp_bms_lvgl_ui_simulator_gps_settings_visible() ||
+        s_ui.settings_gps_view != (uint8_t)SETTINGS_GPS_VIEW_ROOT) {
+        return false;
+    }
+#endif
+    return true;
+#endif
 }
 
 esp_err_t esp_bms_lvgl_ui_simulator_open_boot_animation_settings(void)

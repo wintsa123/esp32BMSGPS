@@ -2,15 +2,16 @@ menu "ESP BMS LVGL UI"
 
     config ESP_BMS_LVGL_UI_DRAG_FULL_INVALIDATE
         bool "Invalidate full dashboard viewport while page scrolling"
-        default y
+        default n
         help
             Invalidate the entire dashboard viewport after page x-position
             changes during LVGL native horizontal scroll and snap animations.
             This makes moving pages redraw as one surface instead of letting
             individual labels/widgets refresh in separate invalidation chunks.
 
-            Disable this only when hardware logs show the extra redraw work
-            causes worse latency than the partial-object invalidation path.
+            Keep this disabled for normal images. Enable it only for A/B
+            diagnosis when the native partial-object invalidation path shows
+            visible artifacts on hardware.
 
     config ESP_BMS_LVGL_UI_DRAG_DIAGNOSTICS
         bool "Enable LVGL page scroll diagnostics"

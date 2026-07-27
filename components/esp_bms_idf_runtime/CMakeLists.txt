@@ -6,7 +6,7 @@ if(DEFINED ENV{ESP_BMS_PROFILE_FILE} AND NOT "$ENV{ESP_BMS_PROFILE_FILE}" STREQU
 endif()
 
 set(ESP_BMS_RUNTIME_REQUIRES
-    driver esp_adc esp_bms_lvgl_bridge esp_bms_lvgl_ui esp_fardriver_protocol
+    driver esp_adc esp_bms_display_service esp_fardriver_protocol
     esp_http_server esp_hw_support esp_timer nvs_flash
 )
 if(NOT DEFINED ESP_BMS_FEATURE_BLE)

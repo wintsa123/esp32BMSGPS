@@ -1007,7 +1007,7 @@ write_profile() {
     [[ -n "$display_cmake_component" && "$display_cmake_component" != esp_lcd ]] && profile_driver_requires="$display_cmake_component"
     [[ -n "$touch_cmake_component" ]] && profile_driver_requires="${profile_driver_requires:+${profile_driver_requires};}${touch_cmake_component}"
     write_profile_component_manifest "$temporary/generated/idf_component.yml"
-    main_requires="esp_bms_idf_runtime;esp_bms_lvgl_bridge;esp_bms_lvgl_ui;lvgl;esp_lvgl_adapter"
+    main_requires="esp_bms_idf_runtime;esp_bms_display_service;esp_bms_lvgl_bridge;esp_bms_lvgl_ui;lvgl;esp_lvgl_adapter"
     audio_feature=0
     ble_feature=0
     csv_has "$MCU_CAPABILITIES" BLE && ble_feature=1

@@ -14,6 +14,7 @@
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_panel_vendor.h"
 #include "esp_lcd_touch.h"
+#include "esp_timer.h"
 #if ESP_BMS_PROFILE_TOUCH_FT5X06
 #include "esp_lcd_touch_ft5x06.h"
 #endif
@@ -119,6 +120,86 @@ static TickType_t s_touch_last_log_tick;
 static TickType_t s_touch_last_filter_log_tick;
 static bool s_touch_read_callback_logged;
 static bool s_touch_was_pressed;
+static esp_bms_lvgl_bridge_metrics_t s_metrics;
+static int64_t s_render_started_us;
+static int64_t s_flush_started_us;
+static int64_t s_flush_wait_started_us;
+
+static void bridge_metrics_record_interval(int64_t started_us,
+                                           int64_t finished_us,
+                                           uint32_t *count,
+                                           uint64_t *total_us,
+                                           uint32_t *max_us)
+{
+    if (started_us <= 0 || finished_us < started_us) {
+        return;
+    }
+    const uint64_t elapsed_us = (uint64_t)(finished_us - started_us);
+    const uint32_t clamped_us = elapsed_us > UINT32_MAX ? UINT32_MAX : (uint32_t)elapsed_us;
+    ++*count;
+    *total_us += elapsed_us;
+    if (clamped_us > *max_us) {
+        *max_us = clamped_us;
+    }
+}
+
+static void bridge_metrics_event_cb(lv_event_t *event)
+{
+    const lv_event_code_t code = lv_event_get_code(event);
+    const int64_t now_us = esp_timer_get_time();
+
+    switch (code) {
+    case LV_EVENT_INVALIDATE_AREA:
+        {
+            const lv_area_t *area = lv_event_get_invalidated_area(event);
+            if (!area) {
+                return;
+            }
+            const int64_t width = (int64_t)area->x2 - area->x1 + 1;
+            const int64_t height = (int64_t)area->y2 - area->y1 + 1;
+            if (width > 0 && height > 0) {
+                ++s_metrics.invalidated_area_count;
+                s_metrics.invalidated_pixel_count += (uint64_t)width * (uint64_t)height;
+            }
+        }
+        break;
+    case LV_EVENT_RENDER_START:
+        s_render_started_us = now_us;
+        break;
+    case LV_EVENT_RENDER_READY:
+        bridge_metrics_record_interval(s_render_started_us,
+                                       now_us,
+                                       &s_metrics.render_count,
+                                       &s_metrics.render_total_us,
+                                       &s_metrics.render_max_us);
+        s_render_started_us = 0;
+        break;
+    case LV_EVENT_FLUSH_START:
+        s_flush_started_us = now_us;
+        break;
+    case LV_EVENT_FLUSH_FINISH:
+        bridge_metrics_record_interval(s_flush_started_us,
+                                       now_us,
+                                       &s_metrics.flush_count,
+                                       &s_metrics.flush_total_us,
+                                       &s_metrics.flush_max_us);
+        s_flush_started_us = 0;
+        break;
+    case LV_EVENT_FLUSH_WAIT_START:
+        s_flush_wait_started_us = now_us;
+        break;
+    case LV_EVENT_FLUSH_WAIT_FINISH:
+        bridge_metrics_record_interval(s_flush_wait_started_us,
+                                       now_us,
+                                       &s_metrics.flush_wait_count,
+                                       &s_metrics.flush_wait_total_us,
+                                       &s_metrics.flush_wait_max_us);
+        s_flush_wait_started_us = 0;
+        break;
+    default:
+        break;
+    }
+}
 
 typedef struct {
     uint16_t x[TOUCH_FILTER_HISTORY_COUNT];
@@ -1286,6 +1367,14 @@ esp_err_t esp_bms_lvgl_bridge_init(const esp_bms_lvgl_bridge_config_t *config)
     display_config.profile.require_double_buffer = use_double_buffer;
     s_display = esp_lv_adapter_register_display(&display_config);
     ESP_RETURN_ON_FALSE(s_display, ESP_FAIL, TAG, "register adapter display failed");
+    esp_bms_lvgl_bridge_reset_metrics();
+    lv_display_add_event_cb(s_display, bridge_metrics_event_cb, LV_EVENT_INVALIDATE_AREA, NULL);
+    lv_display_add_event_cb(s_display, bridge_metrics_event_cb, LV_EVENT_RENDER_START, NULL);
+    lv_display_add_event_cb(s_display, bridge_metrics_event_cb, LV_EVENT_RENDER_READY, NULL);
+    lv_display_add_event_cb(s_display, bridge_metrics_event_cb, LV_EVENT_FLUSH_START, NULL);
+    lv_display_add_event_cb(s_display, bridge_metrics_event_cb, LV_EVENT_FLUSH_FINISH, NULL);
+    lv_display_add_event_cb(s_display, bridge_metrics_event_cb, LV_EVENT_FLUSH_WAIT_START, NULL);
+    lv_display_add_event_cb(s_display, bridge_metrics_event_cb, LV_EVENT_FLUSH_WAIT_FINISH, NULL);
 #if ESP_BMS_PROFILE_PANEL_ST7796
     /* ESP32-S3 I80 16-bit DMA sends the low-address byte on D[15:8] (big-endian
      * wire order).  LVGL renders RGB565 in native little-endian, so we byte-swap
@@ -1361,6 +1450,21 @@ lv_display_t *esp_bms_lvgl_bridge_get_display(void)
 lv_indev_t *esp_bms_lvgl_bridge_get_touch(void)
 {
     return s_touch_indev;
+}
+
+void esp_bms_lvgl_bridge_reset_metrics(void)
+{
+    memset(&s_metrics, 0, sizeof(s_metrics));
+    s_render_started_us = 0;
+    s_flush_started_us = 0;
+    s_flush_wait_started_us = 0;
+}
+
+void esp_bms_lvgl_bridge_get_metrics(esp_bms_lvgl_bridge_metrics_t *metrics)
+{
+    if (metrics) {
+        *metrics = s_metrics;
+    }
 }
 
 esp_err_t esp_bms_lvgl_bridge_load_touch_calibration(void)

@@ -1,5 +1,5 @@
 set(ESP_BMS_MAIN_REQUIRES_DEFAULT
-    esp_bms_audio_feedback esp_bms_bms_ble esp_bms_controller_ble esp_bms_gps esp_bms_idf_runtime esp_bms_lvgl_bridge esp_bms_network esp_bms_ota
+    esp_bms_audio_feedback esp_bms_bms_ble esp_bms_controller_ble esp_bms_display_service esp_bms_gps esp_bms_idf_runtime esp_bms_lvgl_bridge esp_bms_network esp_bms_ota
     esp_bms_lvgl_ui lvgl esp_lvgl_adapter
 )
 

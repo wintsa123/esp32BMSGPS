@@ -10,7 +10,8 @@ normal sdkconfig/build directory.
 
 Options:
   --double-buffer       Also enable CONFIG_ESP_BMS_LVGL_BRIDGE_DOUBLE_BUFFER.
-  --no-full-invalidate  Disable full dashboard invalidation for A/B testing.
+  --full-invalidate     Enable full dashboard invalidation for A/B testing.
+  --no-full-invalidate  Use native partial invalidation (the default).
   --build-dir DIR       Override the diagnostic build directory.
   --sdkconfig FILE      Override the generated diagnostic sdkconfig path.
   -h, --help            Show this help.
@@ -18,7 +19,7 @@ Options:
 Examples:
   scripts/esp-idf-drag-diag.sh build
   scripts/esp-idf-drag-diag.sh -p /dev/ttyUSB0 flash monitor
-  scripts/esp-idf-drag-diag.sh --no-full-invalidate build
+  scripts/esp-idf-drag-diag.sh --full-invalidate build
   scripts/esp-idf-drag-diag.sh --double-buffer build
 USAGE
 }
@@ -27,7 +28,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 build_dir=""
 sdkconfig_path=""
 double_buffer=false
-full_invalidate=true
+full_invalidate=false
 idf_args=()
 
 while [[ $# -gt 0 ]]; do
@@ -38,6 +39,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --no-full-invalidate)
             full_invalidate=false
+            shift
+            ;;
+        --full-invalidate)
+            full_invalidate=true
             shift
             ;;
         --build-dir)
@@ -93,8 +98,8 @@ if [[ -z "$sdkconfig_path" ]]; then
 fi
 
 sdkconfig_defaults="config/sdkconfig/sdkconfig.defaults;config/sdkconfig/sdkconfig.defaults.dragdiag"
-if [[ "$full_invalidate" == false ]]; then
-    sdkconfig_defaults="${sdkconfig_defaults};config/sdkconfig/sdkconfig.defaults.dragdiag-no-full-invalidate"
+if [[ "$full_invalidate" == true ]]; then
+    sdkconfig_defaults="${sdkconfig_defaults};config/sdkconfig/sdkconfig.defaults.dragdiag-full-invalidate"
 fi
 if [[ "$double_buffer" == true ]]; then
     sdkconfig_defaults="${sdkconfig_defaults};config/sdkconfig/sdkconfig.defaults.dragdiag-double-buffer"

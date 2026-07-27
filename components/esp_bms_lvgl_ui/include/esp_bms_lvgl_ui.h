@@ -398,6 +398,7 @@ esp_err_t esp_bms_lvgl_ui_set_page(esp_bms_lvgl_page_t page, bool animated);
 bool esp_bms_lvgl_ui_speed_dashboard_style_available(esp_bms_speed_dashboard_style_t style);
 esp_bms_speed_dashboard_style_t esp_bms_lvgl_ui_default_speed_dashboard_style(void);
 esp_bms_lvgl_data_source_t esp_bms_lvgl_ui_stable_data_source(void);
+bool esp_bms_lvgl_ui_drag_active(void);
 esp_err_t esp_bms_lvgl_ui_take_action_event(esp_bms_lvgl_action_event_t *event);
 esp_err_t esp_bms_lvgl_ui_take_action(esp_bms_lvgl_action_t *action);
 
@@ -406,6 +407,12 @@ esp_err_t esp_bms_lvgl_ui_simulator_open_boot_animation_settings(void);
 esp_err_t esp_bms_lvgl_ui_simulator_play_boot_animation(void);
 bool esp_bms_lvgl_ui_simulator_boot_animation_preview_active(void);
 bool esp_bms_lvgl_ui_simulator_boot_animation_settings_visible(void);
+esp_err_t esp_bms_lvgl_ui_simulator_open_gps_settings(void);
+bool esp_bms_lvgl_ui_simulator_gps_settings_visible(void);
+bool esp_bms_lvgl_ui_simulator_gps_settings_smoke(void);
+uint32_t esp_bms_lvgl_ui_simulator_object_count(void);
+uint8_t esp_bms_lvgl_ui_simulator_static_cache_count(void);
+bool esp_bms_lvgl_ui_simulator_snapshot_matches(const esp_bms_dashboard_snapshot_t *snapshot);
 #endif
 
 #ifdef __cplusplus

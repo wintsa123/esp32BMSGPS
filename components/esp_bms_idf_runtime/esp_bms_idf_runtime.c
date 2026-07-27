@@ -1,6 +1,6 @@
 #include "esp_bms_idf_runtime.h"
 
-#include "esp_bms_lvgl_bridge.h"
+#include "esp_bms_display_service.h"
 #include "esp_bms_profile_hardware.h"
 #if ESP_BMS_FEATURE_OTA
 #include "esp_bms_ota.h"
@@ -1146,7 +1146,7 @@ static bool runtime_speed_source_matches_policy(uint8_t speed_source)
 
 static bool runtime_speed_dashboard_style_matches_policy(int32_t style)
 {
-    return esp_bms_lvgl_ui_speed_dashboard_style_available(
+    return esp_bms_display_service_speed_dashboard_style_available(
         (esp_bms_speed_dashboard_style_t)style);
 }
 
@@ -1348,7 +1348,7 @@ static void runtime_reset_state(esp_bms_idf_runtime_t *runtime)
     runtime->snapshot.speed_unit = ESP_BMS_SPEED_UNIT_KMH;
     runtime->snapshot.speed_source = ESP_BMS_SPEED_SOURCE_GPS;
     runtime->snapshot.active_speed_source = ESP_BMS_SPEED_SOURCE_GPS;
-    runtime->snapshot.speed_dashboard_style = esp_bms_lvgl_ui_default_speed_dashboard_style();
+    runtime->snapshot.speed_dashboard_style = esp_bms_display_service_default_speed_dashboard_style();
 #if ESP_BMS_FEATURE_GPS
     runtime->snapshot.gps_module_state = (uint8_t)ESP_BMS_GPS_MODULE_PROBING;
 #else
@@ -1647,7 +1647,7 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
     uint8_t speed_unit = 0;
     uint8_t speed_source = (uint8_t)ESP_BMS_SPEED_SOURCE_GPS;
     uint8_t speed_dashboard_style =
-        (uint8_t)esp_bms_lvgl_ui_default_speed_dashboard_style();
+        (uint8_t)esp_bms_display_service_default_speed_dashboard_style();
     uint8_t boot_animation_style = (uint8_t)ESP_BMS_BOOT_ANIMATION_CHARGE;
     uint8_t language = 0;
     uint8_t bms_type = (uint8_t)ESP_BMS_IDF_BMS_TYPE_ANT;
@@ -1773,7 +1773,7 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
         ESP_LOGW(TAG,
                  "[display] saved dashboard style %u is unavailable; using the configured default",
                  speed_dashboard_style);
-        speed_dashboard_style = (uint8_t)esp_bms_lvgl_ui_default_speed_dashboard_style();
+        speed_dashboard_style = (uint8_t)esp_bms_display_service_default_speed_dashboard_style();
         dashboard_style_migration_needed = true;
     }
 
@@ -2900,11 +2900,18 @@ esp_err_t esp_bms_idf_runtime_http_cast_ws_handler(httpd_req_t *req)
         esp_bms_idf_runtime_stop_cast(runtime, "block out of bounds");
         return ESP_ERR_INVALID_SIZE;
     }
-    ESP_RETURN_ON_ERROR(esp_bms_lvgl_bridge_lock(-1), TAG, "lock display for cast failed");
-    const esp_err_t ret = esp_bms_lvgl_bridge_write_rgb565(x, y, width, height,
-                                                           &message[CAST_BLOCK_HEADER_BYTES], pixel_bytes);
-    esp_bms_lvgl_bridge_unlock();
-    return ret;
+    const esp_bms_display_service_command_t command = {
+        .kind = ESP_BMS_DISPLAY_SERVICE_COMMAND_WRITE_RGB565,
+        .data.rgb565 = {
+            .x = x,
+            .y = y,
+            .width = width,
+            .height = height,
+            .pixels = &message[CAST_BLOCK_HEADER_BYTES],
+            .pixel_bytes = pixel_bytes,
+        },
+    };
+    return esp_bms_display_service_submit_command(&command, 1000U);
 }
 
 esp_err_t esp_bms_idf_runtime_http_api_handler(httpd_req_t *req)
@@ -4187,7 +4194,7 @@ bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,
         runtime_project_controller_snapshot(runtime);
         return true;
     case ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_PAGE:
-        if (!esp_bms_lvgl_ui_speed_dashboard_style_available(
+        if (!esp_bms_display_service_speed_dashboard_style_available(
                 ESP_BMS_SPEED_DASHBOARD_STYLE_CONTROLLER)) {
             return false;
         }
@@ -4195,7 +4202,7 @@ bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,
         runtime->snapshot.speed_dashboard_style =
             runtime->controller_page_enabled
                 ? ESP_BMS_SPEED_DASHBOARD_STYLE_CONTROLLER
-                : esp_bms_lvgl_ui_default_speed_dashboard_style();
+                : esp_bms_display_service_default_speed_dashboard_style();
         if (runtime->controller_page_enabled) {
             runtime->controller_connection_enabled = true;
             (void)esp_bms_idf_runtime_start_controller_ble_if_enabled(runtime);

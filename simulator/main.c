@@ -743,9 +743,109 @@ static bool run_settings_boot_preview_smoke(
     return esp_bms_lvgl_ui_update(&app->snapshot) == ESP_OK;
 }
 
+#if ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
+static bool run_native_dashboard_transition(host_app_t *app,
+                                            esp_bms_lvgl_page_t page,
+                                            uint32_t *snapshot_updates)
+{
+    if (esp_bms_lvgl_ui_set_page(page, true) != ESP_OK) {
+        return false;
+    }
+
+    bool saw_scroll = esp_bms_lvgl_ui_drag_active();
+    for (uint32_t frame = 0U; frame < 180U; ++frame) {
+        app->speed_kmh_deci = (uint16_t)((*snapshot_updates * 37U) % 1801U);
+        app->snapshot.controller_gear = (uint8_t)((*snapshot_updates % 6U) + 1U);
+        app->snapshot.gps_local_minute = (uint8_t)(*snapshot_updates % 60U);
+        refresh_speed_snapshot(app);
+        if (esp_bms_lvgl_ui_update(&app->snapshot) != ESP_OK) {
+            return false;
+        }
+        ++*snapshot_updates;
+        lv_timer_handler();
+        saw_scroll = saw_scroll || esp_bms_lvgl_ui_drag_active();
+        if (!esp_bms_lvgl_ui_drag_active()) {
+            return saw_scroll && esp_bms_lvgl_ui_simulator_snapshot_matches(&app->snapshot);
+        }
+        lv_delay_ms(4);
+    }
+    return false;
+}
+
+static bool run_native_dashboard_stress(host_app_t *app)
+{
+    if (lv_display_get_horizontal_resolution(app->display) != 480 ||
+        lv_display_get_vertical_resolution(app->display) != 320) {
+        return true;
+    }
+
+    app->snapshot.speed_dashboard_style = ESP_BMS_SPEED_DASHBOARD_STYLE_HONDA_FIREBLADE;
+    refresh_speed_snapshot(app);
+    if (esp_bms_lvgl_ui_update(&app->snapshot) != ESP_OK ||
+        esp_bms_lvgl_ui_set_page(ESP_BMS_LVGL_PAGE_BATTERY, false) != ESP_OK ||
+        esp_bms_lvgl_ui_simulator_static_cache_count() != 2U) {
+        return false;
+    }
+
+    const uint32_t baseline_objects = esp_bms_lvgl_ui_simulator_object_count();
+    uint32_t snapshot_updates = 0U;
+    for (uint32_t cycle = 0U; cycle < 6U; ++cycle) {
+        const esp_bms_lvgl_page_t page = (cycle & 1U) == 0U
+                                             ? ESP_BMS_LVGL_PAGE_GPS
+                                             : ESP_BMS_LVGL_PAGE_BATTERY;
+        if (!run_native_dashboard_transition(app, page, &snapshot_updates) ||
+            esp_bms_lvgl_ui_simulator_object_count() != baseline_objects) {
+            return false;
+        }
+    }
+
+    rotate_display(app);
+    if (esp_bms_lvgl_ui_update(&app->snapshot) != ESP_OK ||
+        esp_bms_lvgl_ui_simulator_static_cache_count() != 0U) {
+        return false;
+    }
+    rotate_display(app);
+    const bool passed = esp_bms_lvgl_ui_update(&app->snapshot) == ESP_OK &&
+                        esp_bms_lvgl_ui_simulator_static_cache_count() == 2U &&
+                        esp_bms_lvgl_ui_simulator_object_count() == baseline_objects &&
+                        esp_bms_lvgl_ui_simulator_snapshot_matches(&app->snapshot) &&
+                        snapshot_updates >= 300U;
+    if (passed) {
+        printf("native carousel stress passed: %u deferred snapshots\n", snapshot_updates);
+    }
+    return passed;
+}
+#endif
+
 static bool run_headless_feature_matrix(host_app_t *app)
 {
     if (!speed_source_matrix_passes() || !run_capability_matrix(app)) {
+        return false;
+    }
+#if ESP_BMS_FEATURE_GPS
+    if (!esp_bms_lvgl_ui_simulator_gps_settings_smoke() ||
+        !esp_bms_lvgl_ui_simulator_gps_settings_visible()) {
+        fputs("GPS settings navigation smoke failed\n", stderr);
+        return false;
+    }
+    app->snapshot.gps_module_state = (uint8_t)ESP_BMS_GPS_MODULE_UNAVAILABLE;
+    app->snapshot.gps_local_minute = (uint8_t)((app->snapshot.gps_local_minute + 1U) % 60U);
+    snapshot_flag_set(&app->snapshot, ESP_BMS_DASHBOARD_FLAG_GPS_FIX_VALID, false);
+    refresh_speed_snapshot(app);
+    if (esp_bms_lvgl_ui_update(&app->snapshot) != ESP_OK ||
+        !esp_bms_lvgl_ui_simulator_gps_settings_visible()) {
+        fputs("GPS settings refresh smoke failed\n", stderr);
+        return false;
+    }
+#else
+    if (esp_bms_lvgl_ui_simulator_open_gps_settings() != ESP_ERR_INVALID_STATE ||
+        esp_bms_lvgl_ui_simulator_gps_settings_visible()) {
+        fputs("GPS settings should be unavailable\n", stderr);
+        return false;
+    }
+#endif
+    init_snapshot(app);
+    if (esp_bms_lvgl_ui_update(&app->snapshot) != ESP_OK) {
         return false;
     }
     if (!run_boot_style_smoke(app,
@@ -772,15 +872,21 @@ static bool run_headless_feature_matrix(host_app_t *app)
         return false;
     }
     init_snapshot(app);
-    return esp_bms_lvgl_ui_update(&app->snapshot) == ESP_OK;
+    if (esp_bms_lvgl_ui_update(&app->snapshot) != ESP_OK) {
+        return false;
+    }
+#if ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
+    return run_native_dashboard_stress(app);
+#else
+    return true;
+#endif
 }
 
 int main(int argc, char **argv)
 {
-    bool portrait = false;
     bool headless = false;
-    int32_t display_width = 320;
-    int32_t display_height = 240;
+    int32_t display_width = 480;
+    int32_t display_height = 320;
     bool run_ok = true;
     int preview_boot_style = -1;
     uint8_t preview_boot_progress = 50U;
@@ -790,7 +896,6 @@ int main(int argc, char **argv)
     const char *screenshot_path = NULL;
     for (int index = 1; index < argc; ++index) {
         if (strcmp(argv[index], "--portrait") == 0) {
-            portrait = true;
             display_width = 240;
             display_height = 320;
         } else if (strcmp(argv[index], "--resolution") == 0 && index + 1 < argc) {
@@ -798,7 +903,6 @@ int main(int argc, char **argv)
                 fputs("--resolution 必须为 64..1920 范围内的 WIDTHxHEIGHT\n", stderr);
                 return 2;
             }
-            portrait = display_width < display_height;
         } else if (strcmp(argv[index], "--headless") == 0) {
             headless = true;
         } else if (strcmp(argv[index], "--screenshot") == 0 && index + 1 < argc) {
@@ -976,13 +1080,16 @@ int main(int argc, char **argv)
         esp_bms_lvgl_ui_boot_finish(&app.snapshot) != ESP_OK) {
         run_ok = false;
     }
+    const int32_t final_display_width = lv_display_get_horizontal_resolution(app.display);
+    const int32_t final_display_height = lv_display_get_vertical_resolution(app.display);
     SDL_DelEventWatch(sdl_event_watch, &app);
     if (!app.sdl_quit_seen) {
         lv_deinit();
     }
     if (headless && frame == frame_limit) {
-        printf("headless smoke passed: %s, %u frames\n",
-               portrait ? "240x320" : "320x240",
+        printf("headless smoke passed: %ldx%ld, %u frames\n",
+               (long)final_display_width,
+               (long)final_display_height,
                frame);
         if (!screenshot_path) {
             puts("GPS/controller capability matrix: passed");

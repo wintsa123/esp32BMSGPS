@@ -22,7 +22,8 @@
     "07-13-speed-dashboard-v4-source-selection",
     "07-13-speed-dashboard-v4-stability-polish",
     "07-15-speed-dashboard-record-zero-hundred-simulator-ui",
-    "07-15-fix-gps-protocol-validation-agnss"
+    "07-15-fix-gps-protocol-validation-agnss",
+    "07-27-gps-settings-entry"
   ],
   "parent": null,
   "relatedFiles": [],

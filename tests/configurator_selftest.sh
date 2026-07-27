@@ -9,7 +9,29 @@ trap 'rm -rf "${work_dir}" "${profile_dir}"' EXIT
 
 rg -Fq 'default y if SPIRAM' "${repo_root}/components/esp_bms_lvgl_bridge/Kconfig"
 rg -qx 'CONFIG_ESP_BMS_LVGL_BRIDGE_DOUBLE_BUFFER=y' "${repo_root}/config/sdkconfig/sdkconfig.defaults.esp32s3"
+rg -qx 'CONFIG_ESP_BMS_LVGL_BRIDGE_SPI_DRAW_BUFFER_HEIGHT=120' "${repo_root}/config/sdkconfig/sdkconfig.defaults.esp32s3"
+rg -qx 'CONFIG_LV_USE_SNAPSHOT=y' "${repo_root}/config/sdkconfig/sdkconfig.defaults.esp32s3"
+rg -Fq '#define LV_USE_SNAPSHOT 1' "${repo_root}/simulator/lv_conf.h"
 rg -qx '# CONFIG_ESP_BMS_LVGL_BRIDGE_DOUBLE_BUFFER is not set' "${repo_root}/config/sdkconfig/sdkconfig.defaults"
+rg -Fq 'default n' "${repo_root}/components/esp_bms_lvgl_ui/Kconfig"
+rg -qx '# CONFIG_ESP_BMS_LVGL_UI_DRAG_FULL_INVALIDATE is not set' "${repo_root}/config/sdkconfig/sdkconfig.defaults"
+rg -qx '# CONFIG_ESP_BMS_LVGL_UI_DRAG_FULL_INVALIDATE is not set' "${repo_root}/config/sdkconfig/sdkconfig.defaults.esp32s3"
+rg -qx 'CONFIG_ESP_BMS_LVGL_UI_DRAG_FULL_INVALIDATE=y' "${repo_root}/config/sdkconfig/sdkconfig.defaults.dragdiag-full-invalidate"
+! rg -q 'transform_scale' "${repo_root}/components/esp_bms_lvgl_ui/esp_bms_lvgl_ui.c"
+rg -Fq 'DASHBOARD_STATIC_CACHE_BYTES == 307200U' "${repo_root}/components/esp_bms_lvgl_ui/esp_bms_lvgl_ui.c"
+rg -Fq 'dashboard_static_cache_finalize(&s_ui.battery_static_cache' "${repo_root}/components/esp_bms_lvgl_ui/esp_bms_lvgl_ui.c"
+rg -Fq 'dashboard_static_cache_finalize(&s_ui.fireblade_static_cache' "${repo_root}/components/esp_bms_lvgl_ui/esp_bms_lvgl_ui.c"
+rg -Fq '#define DISPLAY_SERVICE_COMMAND_QUEUE_LENGTH 12U' "${repo_root}/components/esp_bms_display_service/esp_bms_display_service.c"
+rg -Fq '#define DISPLAY_SERVICE_ACTION_QUEUE_LENGTH 16U' "${repo_root}/components/esp_bms_display_service/esp_bms_display_service.c"
+rg -Fq 'xQueueCreateStatic(1,' "${repo_root}/components/esp_bms_display_service/esp_bms_display_service.c"
+! rg -Fq 'xQueueCreate(' "${repo_root}/components/esp_bms_display_service/esp_bms_display_service.c"
+! rg -q 'esp_bms_lvgl_bridge_(init|start|lock|unlock|set_brightness|set_rotation|write_rgb565)' "${repo_root}/main/idf_main.c"
+! rg -q 'esp_bms_lvgl_ui_(init|update|boot_|show_dashboard|set_page)' "${repo_root}/main/idf_main.c"
+! rg -q 'esp_bms_lvgl_(bridge|ui)_' "${repo_root}/components/esp_bms_idf_runtime/esp_bms_idf_runtime.c"
+rg -qx 'PIXEL_CLOCK_HZ=20000000' "${repo_root}/firmware/catalog/display/st7796u-i80.env"
+rg -qx 'PIXEL_CLOCK_HZ=10000000' "${repo_root}/firmware/catalog/display/st7796-4p0-i80.env"
+rg -qx 'PIXEL_CLOCK_HZ=10000000' "${repo_root}/firmware/catalog/display/st7796-6p0-i80.env"
+rg -qx 'PIXEL_CLOCK_HZ=10000000' "${repo_root}/firmware/catalog/display/st7796-7p0-i80.env"
 
 expect_fail() {
     local expected="$1"
@@ -284,6 +306,29 @@ done
 printf '%s\n' "$@" >"${FAKE_IDF_ARGS:?}"
 EOF
 chmod +x "$fake_idf_root/bin/idf.py"
+
+IDF_PATH="$fake_idf_root" \
+    FAKE_IDF_ARGS="${work_dir}/dragdiag-default.args" \
+    "${repo_root}/scripts/esp-idf-drag-diag.sh" \
+    --build-dir "${work_dir}/dragdiag-default" \
+    --sdkconfig "${work_dir}/dragdiag-default.sdkconfig" build >/dev/null
+rg -Fx -- '-DSDKCONFIG_DEFAULTS=config/sdkconfig/sdkconfig.defaults;config/sdkconfig/sdkconfig.defaults.dragdiag' "${work_dir}/dragdiag-default.args"
+
+IDF_PATH="$fake_idf_root" \
+    FAKE_IDF_ARGS="${work_dir}/dragdiag-full.args" \
+    "${repo_root}/scripts/esp-idf-drag-diag.sh" \
+    --full-invalidate \
+    --build-dir "${work_dir}/dragdiag-full" \
+    --sdkconfig "${work_dir}/dragdiag-full.sdkconfig" build >/dev/null
+rg -Fx -- '-DSDKCONFIG_DEFAULTS=config/sdkconfig/sdkconfig.defaults;config/sdkconfig/sdkconfig.defaults.dragdiag;config/sdkconfig/sdkconfig.defaults.dragdiag-full-invalidate' "${work_dir}/dragdiag-full.args"
+
+IDF_PATH="$fake_idf_root" \
+    FAKE_IDF_ARGS="${work_dir}/dragdiag-compat.args" \
+    "${repo_root}/scripts/esp-idf-drag-diag.sh" \
+    --no-full-invalidate \
+    --build-dir "${work_dir}/dragdiag-compat" \
+    --sdkconfig "${work_dir}/dragdiag-compat.sdkconfig" build >/dev/null
+rg -Fx -- '-DSDKCONFIG_DEFAULTS=config/sdkconfig/sdkconfig.defaults;config/sdkconfig/sdkconfig.defaults.dragdiag' "${work_dir}/dragdiag-compat.args"
 
 IDF_PATH="$fake_idf_root" \
     FIRMWARE_BUILD_ROOT="${work_dir}/dashboard-fireblade-build" \

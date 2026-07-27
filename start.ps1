@@ -847,7 +847,7 @@ function Write-Profile([System.Collections.IDictionary]$Config) {
         $Manifest += "    version: `"$($InputRecord.VERSION)`""
     }
     Write-Utf8NoBom (Join-Path $Temp 'generated/idf_component.yml') (($Manifest -join "`n") + "`n")
-    $MainRequires = @('esp_bms_idf_runtime', 'esp_bms_lvgl_bridge', 'esp_bms_lvgl_ui', 'lvgl', 'esp_lvgl_adapter')
+    $MainRequires = @('esp_bms_idf_runtime', 'esp_bms_display_service', 'esp_bms_lvgl_bridge', 'esp_bms_lvgl_ui', 'lvgl', 'esp_lvgl_adapter')
     $AudioFeature = 0
     $BleFeature = if (Test-CsvContains $script:MCUCapabilities 'BLE') { 1 } else { 0 }
     $BmsFeature = 0

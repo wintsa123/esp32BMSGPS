@@ -18,7 +18,9 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [],
+  "children": [
+    "07-27-gt1151q-native-gestures-calibration"
+  ],
   "parent": "07-21-multi-mcu-trimmable-firmware-s3",
   "relatedFiles": [],
   "notes": "",

@@ -1,16 +1,16 @@
 #include "esp_bms_module_registry.h"
+#include "esp_bms_display_service.h"
 #include "esp_bms_idf_runtime.h"
-#include "esp_bms_lvgl_bridge.h"
 #include "esp_bms_profile_hardware.h"
-#include "esp_bms_lvgl_ui.h"
 #include "esp_check.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "lvgl.h"
 #include "nvs.h"
+
+#include <stdio.h>
 
 static const char *TAG = "bms_idf_main";
 
@@ -112,14 +112,15 @@ static void log_heap_state(const char *stage)
 
 static void boot_animation_update(uint8_t progress_percent, const char *status_text)
 {
-    esp_err_t ret = esp_bms_lvgl_bridge_lock(-1);
-    if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "LVGL lock failed during boot animation: %s",
-                 esp_err_to_name(ret));
-        return;
-    }
-    ret = esp_bms_lvgl_ui_boot_update(progress_percent, status_text);
-    esp_bms_lvgl_bridge_unlock();
+    esp_bms_display_service_command_t command = {
+        .kind = ESP_BMS_DISPLAY_SERVICE_COMMAND_BOOT_UPDATE,
+        .data.boot_update.progress_percent = progress_percent,
+    };
+    (void)snprintf(command.data.boot_update.status_text,
+                   sizeof(command.data.boot_update.status_text),
+                   "%s",
+                   status_text && status_text[0] != '\0' ? status_text : "BOOT");
+    const esp_err_t ret = esp_bms_display_service_submit_command(&command, 1000U);
     if (ret != ESP_OK) {
         ESP_LOGW(TAG, "boot animation update failed: %s", esp_err_to_name(ret));
     }
@@ -161,24 +162,9 @@ void app_main(void)
     }
 
     config.rotation = bridge_rotation_from_runtime(runtime.display_rotation);
-    ESP_ERROR_CHECK(esp_bms_lvgl_bridge_init(&config));
-    ESP_ERROR_CHECK(esp_bms_lvgl_bridge_set_brightness(runtime.brightness_percent));
-    log_heap_state("lvgl_bridge");
-
-    const esp_err_t touch_calibration_load_ret =
-        esp_bms_lvgl_bridge_load_touch_calibration();
-    if (touch_calibration_load_ret != ESP_OK) {
-        ESP_LOGW(TAG, "touch calibration load failed: %s",
-                 esp_err_to_name(touch_calibration_load_ret));
-    }
-
-    ESP_LOGI(TAG, "waiting for LVGL lock before UI creation");
-    ESP_ERROR_CHECK(esp_bms_lvgl_bridge_lock(-1));
-    ESP_LOGI(TAG, "LVGL lock acquired; creating UI screen");
-    ESP_ERROR_CHECK(esp_bms_lvgl_ui_init(esp_bms_lvgl_bridge_get_display()));
-    ESP_ERROR_CHECK(esp_bms_lvgl_ui_boot_start(&runtime.snapshot));
-    esp_bms_lvgl_bridge_unlock();
-    ESP_ERROR_CHECK(esp_bms_lvgl_bridge_start());
+    ESP_ERROR_CHECK(esp_bms_display_service_start(&config,
+                                                   runtime.brightness_percent,
+                                                   &runtime.snapshot));
     log_heap_state("first_ui");
 
     ESP_LOGI(TAG, "display path initialized");
@@ -224,11 +210,12 @@ void app_main(void)
     boot_animation_update(100U, "SYSTEM READY");
     vTaskDelay(pdMS_TO_TICKS(BOOT_READY_HOLD_MS));
 
-    esp_err_t boot_finish_ret = esp_bms_lvgl_bridge_lock(-1);
-    if (boot_finish_ret == ESP_OK) {
-        boot_finish_ret = esp_bms_lvgl_ui_boot_finish(&runtime.snapshot);
-        esp_bms_lvgl_bridge_unlock();
-    }
+    const esp_bms_display_service_command_t boot_finish_command = {
+        .kind = ESP_BMS_DISPLAY_SERVICE_COMMAND_BOOT_FINISH,
+        .data.boot_finish.snapshot = runtime.snapshot,
+    };
+    const esp_err_t boot_finish_ret =
+        esp_bms_display_service_submit_command(&boot_finish_command, 1000U);
     if (boot_finish_ret != ESP_OK) {
         ESP_LOGE(TAG, "boot animation finish failed: %s",
                  esp_err_to_name(boot_finish_ret));
@@ -255,22 +242,17 @@ void app_main(void)
         esp_bms_module_registry_play_connection_audio(connection_audio_events,
                                                        runtime.volume_percent);
 
-        esp_err_t ret = esp_bms_lvgl_bridge_lock(-1);
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "LVGL lock failed while handling UI action: %s", esp_err_to_name(ret));
-            continue;
-        }
+        esp_err_t ret = ESP_OK;
         const bool http_config_changed =
             esp_bms_idf_runtime_apply_pending_http_config(&runtime);
         esp_bms_lvgl_action_event_t action_event = { 0 };
-        ret = esp_bms_lvgl_ui_take_action_event(&action_event);
+        ret = esp_bms_display_service_take_action_event(&action_event);
         if (ret != ESP_OK) {
             ESP_LOGE(TAG, "take UI action failed: %s", esp_err_to_name(ret));
-            esp_bms_lvgl_bridge_unlock();
             continue;
         }
         esp_bms_idf_runtime_set_active_data_source(&runtime,
-                                                   esp_bms_lvgl_ui_stable_data_source());
+                                                   esp_bms_display_service_stable_data_source());
         const esp_bms_lvgl_action_t action = action_event.action;
         const bool http_config_applied =
             esp_bms_idf_runtime_flag_get(&runtime, ESP_BMS_IDF_RUNTIME_FLAG_HTTP_CONFIG_APPLIED);
@@ -298,41 +280,14 @@ void app_main(void)
              setup_ap_enabled &&
              (setup_ap_started || http_server_started)) ||
             (setup_ap_idle_elapsed_ms >= SETUP_AP_IDLE_TIMEOUT_MS);
-        const bool touch_calibration_action =
-            action == ESP_BMS_LVGL_ACTION_START_TOUCH_CALIBRATION ||
-            action == ESP_BMS_LVGL_ACTION_ADD_TOUCH_CALIBRATION_SAMPLE ||
-            action == ESP_BMS_LVGL_ACTION_CANCEL_TOUCH_CALIBRATION;
-        bool action_changed = false;
-        if (action == ESP_BMS_LVGL_ACTION_START_TOUCH_CALIBRATION) {
-            ret = esp_bms_lvgl_bridge_begin_touch_calibration();
-            if (ret != ESP_OK) {
-                ESP_LOGE(TAG, "start touch calibration failed: %s", esp_err_to_name(ret));
-                ESP_ERROR_CHECK_WITHOUT_ABORT(esp_bms_lvgl_ui_touch_calibration_result(false));
-            }
-        } else if (action == ESP_BMS_LVGL_ACTION_ADD_TOUCH_CALIBRATION_SAMPLE) {
-            bool finished = false;
-            ret = esp_bms_lvgl_bridge_add_touch_calibration_sample(
-                action_event.touch_target_index,
-                action_event.touch_observed_x,
-                action_event.touch_observed_y,
-                action_event.touch_target_x,
-                action_event.touch_target_y,
-                &finished);
-            if (ret != ESP_OK || finished) {
-                if (ret != ESP_OK) {
-                    ESP_LOGE(TAG, "touch calibration sample failed: %s", esp_err_to_name(ret));
-                }
-                ESP_ERROR_CHECK_WITHOUT_ABORT(
-                    esp_bms_lvgl_ui_touch_calibration_result(ret == ESP_OK && finished));
-            }
-        } else if (action == ESP_BMS_LVGL_ACTION_CANCEL_TOUCH_CALIBRATION) {
-            esp_bms_lvgl_bridge_cancel_touch_calibration();
-        } else {
-            action_changed = esp_bms_idf_runtime_apply_action_event(&runtime, &action_event);
-        }
-        if (!touch_calibration_action && action == ESP_BMS_LVGL_ACTION_RESTORE_DEFAULTS &&
-            action_changed) {
-            const esp_err_t reset_ret = esp_bms_lvgl_bridge_reset_touch_calibration();
+        const bool action_changed =
+            esp_bms_idf_runtime_apply_action_event(&runtime, &action_event);
+        if (action == ESP_BMS_LVGL_ACTION_RESTORE_DEFAULTS && action_changed) {
+            const esp_bms_display_service_command_t reset_calibration_command = {
+                .kind = ESP_BMS_DISPLAY_SERVICE_COMMAND_RESET_TOUCH_CALIBRATION,
+            };
+            const esp_err_t reset_ret =
+                esp_bms_display_service_submit_command(&reset_calibration_command, 1000U);
             if (reset_ret != ESP_OK) {
                 ESP_LOGW(TAG, "reset touch calibration failed: %s", esp_err_to_name(reset_ret));
             }
@@ -340,7 +295,11 @@ void app_main(void)
         bool display_apply_failed = false;
         if ((tick_changed || module_tick_changed || action_changed || http_config_changed) &&
             runtime.brightness_percent != previous_brightness) {
-            ret = esp_bms_lvgl_bridge_set_brightness(runtime.brightness_percent);
+            const esp_bms_display_service_command_t brightness_command = {
+                .kind = ESP_BMS_DISPLAY_SERVICE_COMMAND_SET_BRIGHTNESS,
+                .data.brightness.percent = runtime.brightness_percent,
+            };
+            ret = esp_bms_display_service_submit_command(&brightness_command, 1000U);
             if (ret != ESP_OK) {
                 ESP_LOGE(TAG, "apply brightness action failed: %s", esp_err_to_name(ret));
                 runtime.brightness_percent = previous_brightness;
@@ -350,7 +309,11 @@ void app_main(void)
         }
         if ((tick_changed || module_tick_changed || action_changed || http_config_changed) &&
             runtime.display_rotation != previous_rotation) {
-            ret = esp_bms_lvgl_bridge_set_rotation(bridge_rotation_from_runtime(runtime.display_rotation));
+            const esp_bms_display_service_command_t rotation_command = {
+                .kind = ESP_BMS_DISPLAY_SERVICE_COMMAND_SET_ROTATION,
+                .data.rotation.rotation = bridge_rotation_from_runtime(runtime.display_rotation),
+            };
+            ret = esp_bms_display_service_submit_command(&rotation_command, 1000U);
             if (ret != ESP_OK) {
                 ESP_LOGE(TAG, "apply rotation action failed: %s", esp_err_to_name(ret));
                 runtime.display_rotation = previous_rotation;
@@ -359,14 +322,17 @@ void app_main(void)
         }
         if (tick_changed || module_tick_changed || action_changed || http_config_changed ||
             display_apply_failed) {
-            ret = esp_bms_lvgl_ui_update(&runtime.snapshot);
+            ret = esp_bms_display_service_publish_snapshot(&runtime.snapshot);
             if (ret != ESP_OK) {
                 ESP_LOGE(TAG, "update UI after action failed: %s", esp_err_to_name(ret));
                 display_apply_failed = true;
             }
         }
         if (http_config_applied && !display_apply_failed) {
-            ret = esp_bms_lvgl_ui_show_dashboard();
+            const esp_bms_display_service_command_t show_dashboard_command = {
+                .kind = ESP_BMS_DISPLAY_SERVICE_COMMAND_SHOW_DASHBOARD,
+            };
+            ret = esp_bms_display_service_submit_command(&show_dashboard_command, 1000U);
             if (ret == ESP_OK) {
                 esp_bms_idf_runtime_flag_set(&runtime,
                                              ESP_BMS_IDF_RUNTIME_FLAG_HTTP_CONFIG_APPLIED,
@@ -378,12 +344,22 @@ void app_main(void)
         }
 #if ESP_BMS_FEATURE_CAST
         if (!display_apply_failed && cast_ui_active != runtime.snapshot.cast_active) {
-            ret = esp_bms_lvgl_ui_show_dashboard();
+            const esp_bms_display_service_command_t show_dashboard_command = {
+                .kind = ESP_BMS_DISPLAY_SERVICE_COMMAND_SHOW_DASHBOARD,
+            };
+            ret = esp_bms_display_service_submit_command(&show_dashboard_command, 1000U);
             if (ret == ESP_OK) {
                 const esp_bms_lvgl_page_t target_page = runtime.snapshot.cast_active
                                                             ? ESP_BMS_LVGL_PAGE_CAST
                                                             : ESP_BMS_LVGL_PAGE_BATTERY;
-                ret = esp_bms_lvgl_ui_set_page(target_page, false);
+                const esp_bms_display_service_command_t page_command = {
+                    .kind = ESP_BMS_DISPLAY_SERVICE_COMMAND_SET_PAGE,
+                    .data.page = {
+                        .page = target_page,
+                        .animated = false,
+                    },
+                };
+                ret = esp_bms_display_service_submit_command(&page_command, 1000U);
             }
             if (ret == ESP_OK) {
                 cast_ui_active = runtime.snapshot.cast_active;
@@ -429,8 +405,6 @@ void app_main(void)
         if (controller_settings_save_requested && !display_apply_failed) {
             should_save_display_settings = true;
         }
-        esp_bms_lvgl_bridge_unlock();
-
         if (esp_bms_lvgl_action_event_flag_get(&action_event,
                                                ESP_BMS_LVGL_ACTION_EVENT_FLAG_VOLUME_FEEDBACK_VALID)) {
             esp_bms_module_registry_play_volume_audio(action_event.volume_feedback_percent);
@@ -466,16 +440,10 @@ void app_main(void)
                 ESP_LOGE(TAG, "setup services stop failed: %s", esp_err_to_name(ret));
             }
             log_heap_state("setup_stop_after");
-            ret = esp_bms_lvgl_bridge_lock(-1);
-            if (ret == ESP_OK) {
-                const esp_err_t update_ret = esp_bms_lvgl_ui_update(&runtime.snapshot);
-                if (update_ret != ESP_OK) {
-                    ESP_LOGE(TAG, "update UI after setup service stop failed: %s",
-                             esp_err_to_name(update_ret));
-                }
-                esp_bms_lvgl_bridge_unlock();
-            } else {
-                ESP_LOGE(TAG, "LVGL lock after setup service stop failed: %s", esp_err_to_name(ret));
+            ret = esp_bms_display_service_publish_snapshot(&runtime.snapshot);
+            if (ret != ESP_OK) {
+                ESP_LOGE(TAG, "update UI after setup service stop failed: %s",
+                         esp_err_to_name(ret));
             }
         }
 
@@ -499,15 +467,9 @@ void app_main(void)
                 }
                 log_heap_state("setup_http_after");
             }
-            ret = esp_bms_lvgl_bridge_lock(-1);
-            if (ret == ESP_OK) {
-                const esp_err_t update_ret = esp_bms_lvgl_ui_update(&runtime.snapshot);
-                if (update_ret != ESP_OK) {
-                    ESP_LOGE(TAG, "update UI after setup service action failed: %s", esp_err_to_name(update_ret));
-                }
-                esp_bms_lvgl_bridge_unlock();
-            } else {
-                ESP_LOGE(TAG, "LVGL lock after setup service action failed: %s", esp_err_to_name(ret));
+            ret = esp_bms_display_service_publish_snapshot(&runtime.snapshot);
+            if (ret != ESP_OK) {
+                ESP_LOGE(TAG, "update UI after setup service action failed: %s", esp_err_to_name(ret));
             }
         }
 

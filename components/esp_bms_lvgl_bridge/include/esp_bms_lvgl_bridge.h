@@ -94,6 +94,20 @@ typedef struct {
     uint32_t power_on_delay_ms;
 } esp_bms_lvgl_bridge_config_t;
 
+typedef struct {
+    uint32_t invalidated_area_count;
+    uint64_t invalidated_pixel_count;
+    uint32_t render_count;
+    uint64_t render_total_us;
+    uint32_t render_max_us;
+    uint32_t flush_count;
+    uint64_t flush_total_us;
+    uint32_t flush_max_us;
+    uint32_t flush_wait_count;
+    uint64_t flush_wait_total_us;
+    uint32_t flush_wait_max_us;
+} esp_bms_lvgl_bridge_metrics_t;
+
 esp_err_t esp_bms_lvgl_bridge_init(const esp_bms_lvgl_bridge_config_t *config);
 esp_err_t esp_bms_lvgl_bridge_start(void);
 esp_err_t esp_bms_lvgl_bridge_set_brightness(uint8_t percent);
@@ -119,6 +133,9 @@ esp_err_t esp_bms_lvgl_bridge_write_rgb565(uint16_t x,
                                            size_t pixel_bytes);
 lv_display_t *esp_bms_lvgl_bridge_get_display(void);
 lv_indev_t *esp_bms_lvgl_bridge_get_touch(void);
+/* Call these while holding the bridge lock. */
+void esp_bms_lvgl_bridge_reset_metrics(void);
+void esp_bms_lvgl_bridge_get_metrics(esp_bms_lvgl_bridge_metrics_t *metrics);
 
 #ifdef __cplusplus
 }

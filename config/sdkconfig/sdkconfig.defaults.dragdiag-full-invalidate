@@ -1,0 +1,4 @@
+# Overlay for comparing full dashboard invalidation against the normal native
+# partial-invalidation path during drag diagnostics.
+
+CONFIG_ESP_BMS_LVGL_UI_DRAG_FULL_INVALIDATE=y

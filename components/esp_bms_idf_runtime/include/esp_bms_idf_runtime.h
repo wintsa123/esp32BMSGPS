@@ -6,7 +6,7 @@
 #include "esp_err.h"
 #include "esp_http_server.h"
 #include "esp_adc/adc_oneshot.h"
-#include "esp_bms_lvgl_ui.h"
+#include "esp_bms_display_service.h"
 #include "esp_bms_ride_records.h"
 #include "esp_bms_speed_dashboard.h"
 #include "esp_fardriver_protocol.h"

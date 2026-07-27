@@ -580,8 +580,9 @@ touch_canonical_to_display(x, y, &display_x, &display_y);
   `components/esp_bms_idf_runtime/CMakeLists.txt`.
 - Use bounded buffers and explicit length checks for HTTP JSON parsing and
   response formatting.
-- Do not mutate LVGL/display hardware from the HTTP server task. Queue changes
-  and apply them from the main runtime loop.
+- Do not mutate LVGL/display hardware from the HTTP server task. Submit display
+  work to `esp_bms_display_service`; the service owns the bridge, UI, LVGL lock,
+  and timer loop.
 - Setup AP / HTTP service tasks must not preempt the LVGL adapter or the main
   runtime action loop; keep HTTP priority below the action loop and capture
   bounded heap snapshots around AP client joins and Web API requests when
@@ -729,6 +730,94 @@ if (action == ESP_BMS_LVGL_ACTION_ENABLE_WIFI_REPROVISIONING) {
 - Do not move hot code, the LVGL worker stack, or existing ARGB8888 canvases
   into PSRAM solely for FPS. Double buffering overlaps rendering with panel DMA
   but cannot exceed the display-bus limit.
+
+## Scenario: Single-Owner LVGL Display Service
+
+### 1. Scope / Trigger
+
+- Apply when changing firmware display initialization, runtime snapshots, UI
+  actions, brightness, rotation, touch calibration, or RGB565 cast blocks.
+- The S3 carousel path has one LVGL owner so concurrent main/runtime/HTTP
+  access cannot race the adapter or redraw during a drag.
+
+### 2. Signatures
+
+- `esp_bms_display_service_start(config, brightness, snapshot)` starts the
+  static display task and initializes bridge plus UI there.
+- `esp_bms_display_service_publish_snapshot(snapshot)` is the runtime telemetry
+  entry point; `esp_bms_display_service_submit_command(command, timeout_ms)`
+  carries display commands; `esp_bms_display_service_take_action_event(event)`
+  returns UI actions to runtime.
+- Commands are `ESP_BMS_DISPLAY_SERVICE_COMMAND_*`, including brightness,
+  rotation, dashboard/page selection, calibration, boot state, and RGB565.
+
+### 3. Contracts
+
+- Only `esp_bms_display_service` calls `lv_*`, `esp_bms_lvgl_ui_*`,
+  `esp_bms_lvgl_bridge_*`, or `lv_timer_handler()` in firmware runtime.
+  `esp_lv_adapter_start()` remains unused; the service runs the sole timer loop.
+- Snapshots use a depth-one static overwrite queue. A drag/settle retains only
+  the newest snapshot and applies it once after the gesture completes.
+- Commands and action events use bounded static queues. RGB565 input is only
+  dereferenced while its synchronous command is pending; callers must not pass
+  a buffer that expires before `submit_command()` returns.
+- S3 BMS and Fireblade static RGB565 images and the 480x120 draw buffers are
+  created at UI initialization/rebuild and reused. Gesture and telemetry paths
+  must not allocate or free them.
+- `drag_perf` logs P95 handler time plus render/flush/DMA wait, invalidation,
+  queue delay, and PSRAM/DMA minimum-free counters after a drag session.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required response |
+| --- | --- |
+| Main/runtime/HTTP directly calls bridge, UI, LVGL, or an LVGL lock | Reject the change; express it as a display-service command or snapshot. |
+| Snapshot arrives during drag or settle | Overwrite the pending snapshot; do not rebuild dynamic widgets mid-gesture. |
+| Static cache allocation or snapshot creation fails | Log `dashboard_cache ... cache=off`, retain the object-tree fallback, and do not claim the FPS target. |
+| Display command times out or returns an error | Log `esp_err_to_name(ret)`, retain the previous persisted setting, and keep the runtime loop alive. |
+| Hardware I80 clock is unstable at 20 MHz | Keep the service/cache changes and roll only the ST7796U catalog clock back to 10 MHz. |
+
+### 5. Good / Base / Bad Cases
+
+- Good: a WebSocket cast block uses `submit_command()` and the service writes it
+  while holding the adapter lock.
+- Base: the runtime publishes a new telemetry snapshot and returns immediately.
+- Bad: an HTTP handler takes the LVGL lock, invokes `write_rgb565()`, or starts
+  a second adapter worker.
+
+### 6. Tests Required
+
+- `tests/configurator_selftest.sh` asserts S3 480x120 buffers, snapshot cache
+  enablement, static queues, the 20 MHz ST7796U-only clock, and no direct
+  main/runtime LVGL bridge/UI calls.
+- Build and run the 480x320 Fireblade simulator stress path; assert two
+  307200-byte caches, rotation rebuild stability, deferred latest-snapshot
+  replay, and no object growth.
+- Build the selected S3 profile, then flash through RFC2217 and check slow
+  drag/fling/snap, three cold boots, full touch coverage, and `drag_perf` P95.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```c
+esp_bms_lvgl_bridge_lock(-1);
+esp_bms_lvgl_bridge_write_rgb565(x, y, width, height, pixels, bytes);
+esp_bms_lvgl_bridge_unlock();
+```
+
+#### Correct
+
+```c
+const esp_bms_display_service_command_t command = {
+    .kind = ESP_BMS_DISPLAY_SERVICE_COMMAND_WRITE_RGB565,
+    .data.rgb565 = {
+        .x = x, .y = y, .width = width, .height = height,
+        .pixels = pixels, .pixel_bytes = bytes,
+    },
+};
+return esp_bms_display_service_submit_command(&command, 1000U);
+```
 
 ## Scenario: Cross-Component C Flag Storage
 
