@@ -538,3 +538,36 @@ Scaled settings controls only for S3 logical resolutions, added the 18px setting
 ### Next Steps
 
 - None - task complete
+
+
+## Session 17: GPS 一级设置入口
+
+**Date**: 2026-07-27
+**Task**: GPS 一级设置入口
+**Branch**: `main`
+
+### Summary
+
+新增独立 GPS 一级设置入口与详情页，完成 GPS/控制器裁剪矩阵、横竖屏模拟器、主机自测、ESP-IDF S3 构建及 RFC2217 刷写验证；并确认原生手势返回兼容。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `591d4703` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
