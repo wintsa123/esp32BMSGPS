@@ -1173,6 +1173,7 @@ static bool bms_stop(esp_bms_idf_runtime_t *runtime)
                         RUNTIME_FLAG(runtime, BMS_BIND_ACTIVE);
     RUNTIME_SET_FLAG(runtime, BMS_BIND_ACTIVE, false);
     RUNTIME_SET_FLAG(runtime, BMS_SCAN_REQUESTED, false);
+    RUNTIME_SET_FLAG(runtime, BMS_SCAN_ACTIVE, false);
     if (ble_gap_disc_active()) {
         (void)ble_gap_disc_cancel();
     }
