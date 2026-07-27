@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 19
-- **Last Active**: 2026-07-27
+- **Total Sessions**: 20
+- **Last Active**: 2026-07-28
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~639 | Active |
+| `journal-1.md` | ~672 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 20 | 2026-07-28 | 优化轮播切页黑场过渡 | `642794e5` | `main` |
 | 19 | 2026-07-27 | 实现 ANT BMS 真实容量估算 | `456b5920` | `main` |
 | 18 | 2026-07-27 | 资源占用诊断日志 | `6497be2d` | `main` |
 | 17 | 2026-07-27 | GPS 一级设置入口 | `591d4703` | `main` |

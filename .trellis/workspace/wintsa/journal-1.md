@@ -637,3 +637,36 @@ Scaled settings controls only for S3 logical resolutions, added the 18px setting
 ### Next Steps
 
 - None - task complete
+
+
+## Session 20: 优化轮播切页黑场过渡
+
+**Date**: 2026-07-28
+**Task**: 优化轮播切页黑场过渡
+**Branch**: `main`
+
+### Summary
+
+实现黑场标题跟手切页；无头 LVGL 模拟器与 ESP32 profile 构建通过，RFC2217 桥超时而未完成实机确认。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `642794e5` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
