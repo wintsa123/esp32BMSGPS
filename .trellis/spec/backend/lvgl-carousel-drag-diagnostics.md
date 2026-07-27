@@ -71,3 +71,66 @@ scripts/esp-idf-drag-diag.sh build  # silently forces full viewport redraw
 scripts/esp-idf-drag-diag.sh build
 scripts/esp-idf-drag-diag.sh --full-invalidate build
 ```
+
+## Scenario: Blackout Carousel Transition
+
+### 1. Scope / Trigger
+
+- Apply when changing `page_scroll_event_cb()`, `page_transition_*()`, or the
+  carousel's drag-time rendering strategy in `esp_bms_lvgl_ui.c`.
+
+### 2. Signatures
+
+- `page_transition_show(esp_bms_lvgl_page_t from)`
+- `page_transition_update(esp_bms_lvgl_page_t from, int32_t drag_x)`
+- `page_transition_hide(void)`
+
+### 3. Contracts
+
+- At drag start, display an opaque `COLOR_DASHBOARD_BG` floating layer and
+  hide `battery_page`, `gps_page`, and `cast_page`; the layer uses the existing
+  `settings_zh_16` font subset for only the two centered page titles.
+- During the drag, move those two labels only. Derive the adjacent title from
+  the existing page mapping and omit it at the first/last carousel boundary.
+- While the layer is visible, do not invalidate the dashboard viewport. Restore
+  every hidden page and flush the deferred snapshot after the normal snap path
+  or any early `finish_page_scroll_state()` cleanup.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required response |
+| --- | --- |
+| A complex page remains visible during drag | Reject the change; it defeats the draw-cost reduction. |
+| An edge drag displays an empty target title | Reject the change; preserve the single current title. |
+| Settings, lock, or an aborted drag leaves the layer visible | Reject the change; route cleanup through `page_transition_hide()`. |
+
+### 5. Good / Base / Bad Cases
+
+- Good: BMS-to-Speed drag shows `BMS` and `仪表`; on snap, the complete Speed
+  page returns.
+- Base: a below-threshold drag returns the original complete page.
+- Bad: moving dashboard widgets under a translucent cover or caching a full
+  page bitmap during each gesture.
+
+### 6. Tests Required
+
+- Run the headless LVGL simulator and assert opaque black, title direction,
+  boundary behavior, and page restoration in its native gesture smoke test.
+- Build the affected profile, then flash it and inspect slow drag, cancel,
+  snap, and first/last-page drags on hardware.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```c
+invalidate_dashboard_viewport();  // redraws complex dashboard every drag frame
+```
+
+#### Correct
+
+```c
+if (!page_transition_active()) {
+    invalidate_dashboard_viewport();
+}
+```
