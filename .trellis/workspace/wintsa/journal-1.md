@@ -571,3 +571,36 @@ Scaled settings controls only for S3 logical resolutions, added the 18px setting
 ### Next Steps
 
 - None - task complete
+
+
+## Session 18: 资源占用诊断日志
+
+**Date**: 2026-07-27
+**Task**: 资源占用诊断日志
+**Branch**: `main`
+
+### Summary
+
+新增按 UI action 关联的 CPU 与内存资源窗口日志，启用运行时统计配置；ESP32 与 ESP32-S3 构建通过，S3 设备烧录在 stub 阶段阻塞，未完成校验。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6497be2d` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

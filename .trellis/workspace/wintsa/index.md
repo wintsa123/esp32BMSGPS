@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 17
+- **Total Sessions**: 18
 - **Last Active**: 2026-07-27
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~573 | Active |
+| `journal-1.md` | ~606 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 18 | 2026-07-27 | 资源占用诊断日志 | `6497be2d` | `main` |
 | 17 | 2026-07-27 | GPS 一级设置入口 | `591d4703` | `main` |
 | 16 | 2026-07-27 | Adjust S3 settings control sizing | `0e182e32` | `main` |
 | 15 | 2026-07-26 | PSRAM LVGL 帧率优化 | `00139dcf` | `main` |
