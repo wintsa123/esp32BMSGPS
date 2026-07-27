@@ -604,3 +604,36 @@ Scaled settings controls only for S3 logical resolutions, added the 18px setting
 ### Next Steps
 
 - None - task complete
+
+
+## Session 19: 实现 ANT BMS 真实容量估算
+
+**Date**: 2026-07-27
+**Task**: 实现 ANT BMS 真实容量估算
+**Branch**: `main`
+
+### Summary
+
+新增 ANT 新旧协议总循环 mAh 解析、基于 SOC 区间的容量估算和 NVS 身份隔离；本地 Web 与 Vercel 设置页显示三态结果。已完成主机自测、Vercel 构建、ESP32-S3 构建、RFC2217 刷写与启动日志验证。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `456b5920` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
