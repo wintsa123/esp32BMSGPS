@@ -397,6 +397,10 @@ typedef struct {
     lv_obj_t *page_transition_battery;
     lv_obj_t *page_transition_gps;
     lv_obj_t *page_transition_cast;
+    lv_obj_t *page_transition_battery_card;
+    lv_obj_t *page_transition_gps_card;
+    lv_obj_t *page_transition_cast_card;
+    lv_obj_t *page_transition_anim_card;
     lv_obj_t *cast_qr;
     lv_obj_t *controller_page;
     dashboard_static_cache_t battery_static_cache;
@@ -606,8 +610,18 @@ typedef struct {
     bool native_bms_dashboard;
     bool native_fireblade_dashboard;
     bool boot_active;
+    bool page_transition_expanding;
+    bool page_scroll_programmatic;
     bool page_scroll_gesture_active;
     bool page_scroll_throw_frozen;
+    int32_t page_transition_anim_from_x;
+    int32_t page_transition_anim_from_y;
+    int32_t page_transition_anim_from_w;
+    int32_t page_transition_anim_from_h;
+    int32_t page_transition_anim_to_x;
+    int32_t page_transition_anim_to_y;
+    int32_t page_transition_anim_to_w;
+    int32_t page_transition_anim_to_h;
     int32_t drag_start_pages_x;
     int32_t drag_pages_dx;
     int32_t drag_release_pages_dx;
@@ -816,6 +830,10 @@ static const lv_color_t COLOR_SETTINGS_BORDER = LV_COLOR_MAKE(0x32, 0x32, 0x32);
 static const lv_color_t COLOR_SETTINGS_TEXT = LV_COLOR_MAKE(0xff, 0xff, 0xff);
 static const lv_color_t COLOR_SETTINGS_MUTED = LV_COLOR_MAKE(0xff, 0xff, 0xff);
 static const lv_color_t COLOR_SETTINGS_ACCENT = LV_COLOR_MAKE(0xff, 0xff, 0xff);
+
+#define PAGE_TRANSITION_CARD_MARGIN 8
+#define PAGE_TRANSITION_CARD_RADIUS 8
+#define PAGE_TRANSITION_CARD_ANIM_MS 100U
 static const lv_color_t COLOR_SWITCH_ACTIVE = LV_COLOR_MAKE(0x34, 0xc7, 0x59);
 static const uint8_t DASHBOARD_CELL_STAT_KEY_BITMAPS[DASHBOARD_CELL_STAT_COUNT]
                                                    [DASHBOARD_CELL_KEY_BITMAP_BYTES] = {
@@ -10282,12 +10300,150 @@ static bool page_transition_active(void)
            !lv_obj_has_flag(s_ui.page_transition_battery, LV_OBJ_FLAG_HIDDEN);
 }
 
+static lv_obj_t *page_transition_card_for_page(esp_bms_lvgl_page_t page)
+{
+    switch (page) {
+    case ESP_BMS_LVGL_PAGE_BATTERY:
+        return s_ui.page_transition_battery_card;
+    case ESP_BMS_LVGL_PAGE_CONTROLLER:
+    case ESP_BMS_LVGL_PAGE_GPS:
+        return s_ui.page_transition_gps_card;
+    case ESP_BMS_LVGL_PAGE_CAST:
+        return s_ui.page_transition_cast_card;
+    default:
+        return NULL;
+    }
+}
+
+static void page_transition_card_set_rect(lv_obj_t *card,
+                                          int32_t x,
+                                          int32_t y,
+                                          int32_t width,
+                                          int32_t height)
+{
+    if (!card) {
+        return;
+    }
+    lv_obj_set_pos(card, x, y);
+    lv_obj_set_size(card, width, height);
+}
+
+static void page_transition_card_set_full(lv_obj_t *card)
+{
+    page_transition_card_set_rect(card, 0, 0, s_ui.width, s_ui.height);
+}
+
+static void page_transition_card_set_compact(lv_obj_t *card)
+{
+    page_transition_card_set_rect(card,
+                                  PAGE_TRANSITION_CARD_MARGIN,
+                                  PAGE_TRANSITION_CARD_MARGIN,
+                                  s_ui.width - (PAGE_TRANSITION_CARD_MARGIN * 2),
+                                  s_ui.height - (PAGE_TRANSITION_CARD_MARGIN * 2));
+}
+
+static void page_transition_card_anim_cb(void *var, int32_t value)
+{
+    lv_obj_t *card = (lv_obj_t *)var;
+    if (card != s_ui.page_transition_anim_card) {
+        return;
+    }
+    page_transition_card_set_rect(
+        card,
+        s_ui.page_transition_anim_from_x +
+            ((s_ui.page_transition_anim_to_x - s_ui.page_transition_anim_from_x) * value) / 100,
+        s_ui.page_transition_anim_from_y +
+            ((s_ui.page_transition_anim_to_y - s_ui.page_transition_anim_from_y) * value) / 100,
+        s_ui.page_transition_anim_from_w +
+            ((s_ui.page_transition_anim_to_w - s_ui.page_transition_anim_from_w) * value) / 100,
+        s_ui.page_transition_anim_from_h +
+            ((s_ui.page_transition_anim_to_h - s_ui.page_transition_anim_from_h) * value) / 100);
+}
+
+static void page_transition_card_animation_cancel(void)
+{
+    if (s_ui.page_transition_anim_card) {
+        lv_anim_delete(s_ui.page_transition_anim_card, page_transition_card_anim_cb);
+    }
+    s_ui.page_transition_anim_card = NULL;
+    s_ui.page_transition_expanding = false;
+}
+
+static void page_transition_hide(void);
+
+static void page_transition_card_anim_completed_cb(lv_anim_t *anim)
+{
+    if (lv_anim_get_user_data(anim) != s_ui.page_transition_anim_card) {
+        return;
+    }
+    const bool expanding = s_ui.page_transition_expanding;
+    s_ui.page_transition_anim_card = NULL;
+    s_ui.page_transition_expanding = false;
+    if (expanding) {
+        page_transition_hide();
+        UI_SET_FLAG(SETTLING, false);
+        flush_deferred_dashboard_snapshot();
+    }
+}
+
+static void page_transition_card_animate(lv_obj_t *card, bool expanding)
+{
+    if (!card) {
+        return;
+    }
+
+    lv_obj_update_layout(card);
+    page_transition_card_animation_cancel();
+    s_ui.page_transition_anim_card = card;
+    s_ui.page_transition_expanding = expanding;
+    s_ui.page_transition_anim_from_x = lv_obj_get_x(card);
+    s_ui.page_transition_anim_from_y = lv_obj_get_y(card);
+    s_ui.page_transition_anim_from_w = lv_obj_get_width(card);
+    s_ui.page_transition_anim_from_h = lv_obj_get_height(card);
+    s_ui.page_transition_anim_to_x = expanding ? 0 : PAGE_TRANSITION_CARD_MARGIN;
+    s_ui.page_transition_anim_to_y = expanding ? 0 : PAGE_TRANSITION_CARD_MARGIN;
+    s_ui.page_transition_anim_to_w = expanding
+                                         ? s_ui.width
+                                         : s_ui.width - (PAGE_TRANSITION_CARD_MARGIN * 2);
+    s_ui.page_transition_anim_to_h = expanding
+                                         ? s_ui.height
+                                         : s_ui.height - (PAGE_TRANSITION_CARD_MARGIN * 2);
+    if (s_ui.page_transition_anim_from_x == s_ui.page_transition_anim_to_x &&
+        s_ui.page_transition_anim_from_y == s_ui.page_transition_anim_to_y &&
+        s_ui.page_transition_anim_from_w == s_ui.page_transition_anim_to_w &&
+        s_ui.page_transition_anim_from_h == s_ui.page_transition_anim_to_h) {
+        if (expanding) {
+            s_ui.page_transition_anim_card = NULL;
+            s_ui.page_transition_expanding = false;
+            page_transition_hide();
+            UI_SET_FLAG(SETTLING, false);
+            flush_deferred_dashboard_snapshot();
+        }
+        return;
+    }
+
+    lv_anim_t anim;
+    lv_anim_init(&anim);
+    lv_anim_set_var(&anim, card);
+    lv_anim_set_values(&anim, 0, 100);
+    lv_anim_set_duration(&anim, PAGE_TRANSITION_CARD_ANIM_MS);
+    lv_anim_set_path_cb(&anim, lv_anim_path_ease_out);
+    lv_anim_set_exec_cb(&anim, page_transition_card_anim_cb);
+    lv_anim_set_completed_cb(&anim, page_transition_card_anim_completed_cb);
+    lv_anim_set_user_data(&anim, card);
+    lv_anim_start(&anim);
+}
+
 static void page_transition_hide(void)
 {
+    page_transition_card_animation_cancel();
     if (!s_ui.page_transition_battery) {
         return;
     }
 
+    page_transition_card_set_full(s_ui.page_transition_battery_card);
+    page_transition_card_set_full(s_ui.page_transition_gps_card);
+    page_transition_card_set_full(s_ui.page_transition_cast_card);
     set_obj_hidden(s_ui.battery_page, false);
     set_obj_hidden(s_ui.gps_page, false);
     set_obj_hidden(s_ui.cast_page, false);
@@ -10302,6 +10458,9 @@ static void page_transition_show(void)
         UI_FLAG(QUICK_PANEL_OPEN) || s_ui.boot_active) {
         return;
     }
+    if (page_transition_active()) {
+        return;
+    }
 
     lv_obj_set_x(s_ui.page_transition_battery,
                  page_target_scroll_x(ESP_BMS_LVGL_PAGE_BATTERY));
@@ -10314,9 +10473,46 @@ static void page_transition_show(void)
     set_obj_hidden(s_ui.page_transition_battery, false);
     set_obj_hidden(s_ui.page_transition_gps, false);
     set_obj_hidden(s_ui.page_transition_cast, false);
+    page_transition_card_set_full(s_ui.page_transition_battery_card);
+    page_transition_card_set_full(s_ui.page_transition_gps_card);
+    page_transition_card_set_full(s_ui.page_transition_cast_card);
+    lv_obj_t *current_card = page_transition_card_for_page(s_ui.page);
+    if (current_card != s_ui.page_transition_battery_card) {
+        page_transition_card_set_compact(s_ui.page_transition_battery_card);
+    }
+    if (current_card != s_ui.page_transition_gps_card) {
+        page_transition_card_set_compact(s_ui.page_transition_gps_card);
+    }
+    if (current_card != s_ui.page_transition_cast_card) {
+        page_transition_card_set_compact(s_ui.page_transition_cast_card);
+    }
     set_obj_hidden(s_ui.battery_page, true);
     set_obj_hidden(s_ui.gps_page, true);
     set_obj_hidden(s_ui.cast_page, true);
+    page_transition_card_animate(current_card, false);
+}
+
+static void page_transition_expand(esp_bms_lvgl_page_t page)
+{
+    if (!page_transition_active()) {
+        UI_SET_FLAG(SETTLING, false);
+        flush_deferred_dashboard_snapshot();
+        return;
+    }
+
+    lv_obj_t *card = page_transition_card_for_page(page);
+    if (!card) {
+        page_transition_hide();
+        UI_SET_FLAG(SETTLING, false);
+        flush_deferred_dashboard_snapshot();
+        return;
+    }
+
+    if (card == s_ui.page_transition_anim_card && !s_ui.page_transition_expanding) {
+        page_transition_card_set_compact(card);
+    }
+    UI_SET_FLAG(SETTLING, true);
+    page_transition_card_animate(card, true);
 }
 
 static lv_obj_t *page_transition_page_create(lv_obj_t *parent,
@@ -10326,21 +10522,47 @@ static lv_obj_t *page_transition_page_create(lv_obj_t *parent,
     clear_style(transition);
     lv_obj_set_pos(transition, page_target_scroll_x(page), 0);
     lv_obj_set_size(transition, s_ui.width, s_ui.height);
-    lv_obj_set_style_bg_color(transition, COLOR_DASHBOARD_BG, LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(transition, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(transition, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_add_flag(transition, LV_OBJ_FLAG_SNAPPABLE | LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(transition, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
 
-    const int32_t title_y = (s_ui.height - settings_zh_16.line_height) / 2;
-    lv_obj_t *title = label(transition,
+    lv_obj_t *card = lv_obj_create(transition);
+    clear_style(card);
+    page_transition_card_set_full(card);
+    lv_obj_set_style_bg_color(card, COLOR_DASHBOARD_BG, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(card, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
+    lv_obj_set_style_border_opa(card, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(card, PAGE_TRANSITION_CARD_RADIUS, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(card, 0, LV_PART_MAIN);
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *title = label(card,
                             0,
-                            title_y,
-                            s_ui.width,
+                            0,
+                            lv_pct(100),
                             settings_zh_16.line_height,
                             &settings_zh_16);
     lv_label_set_text(title, page_transition_title(page));
     lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(title, COLOR_WHITE, LV_PART_MAIN);
+    lv_obj_align(title, LV_ALIGN_CENTER, 0, 0);
+
+    switch (page) {
+    case ESP_BMS_LVGL_PAGE_BATTERY:
+        s_ui.page_transition_battery_card = card;
+        break;
+    case ESP_BMS_LVGL_PAGE_CONTROLLER:
+    case ESP_BMS_LVGL_PAGE_GPS:
+        s_ui.page_transition_gps_card = card;
+        break;
+    case ESP_BMS_LVGL_PAGE_CAST:
+        s_ui.page_transition_cast_card = card;
+        break;
+    default:
+        break;
+    }
     return transition;
 }
 
@@ -10392,6 +10614,7 @@ static void move_to_page(esp_bms_lvgl_page_t page, bool animated)
     if (page == ESP_BMS_LVGL_PAGE_CAST && !ESP_BMS_FEATURE_CAST) {
         page = ESP_BMS_LVGL_PAGE_BATTERY;
     }
+    s_ui.page_scroll_programmatic = !animated;
     lv_obj_stop_scroll_anim(s_ui.pages);
     const int32_t target_x = page_target_scroll_x(page);
     const int32_t current_x = lv_obj_get_scroll_x(s_ui.pages);
@@ -10400,6 +10623,7 @@ static void move_to_page(esp_bms_lvgl_page_t page, bool animated)
         UI_SET_FLAG(DRAGGING, false);
         UI_SET_FLAG(SETTLING, false);
         flush_deferred_dashboard_snapshot();
+        s_ui.page_scroll_programmatic = false;
         return;
     }
 
@@ -10410,6 +10634,7 @@ static void move_to_page(esp_bms_lvgl_page_t page, bool animated)
     if (!animated) {
         flush_deferred_dashboard_snapshot();
     }
+    s_ui.page_scroll_programmatic = false;
 }
 
 static void screen_unlock_timer_cancel(void)
@@ -10729,6 +10954,9 @@ static void page_scroll_event_cb(lv_event_t *event)
     if (lv_event_get_target(event) != s_ui.pages) {
         return;
     }
+    if (s_ui.page_scroll_programmatic) {
+        return;
+    }
 
     const lv_event_code_t code = lv_event_get_code(event);
     if (code == LV_EVENT_SCROLL_BEGIN) {
@@ -10853,9 +11081,7 @@ static void page_scroll_event_cb(lv_event_t *event)
             lv_obj_scroll_to_x(s_ui.pages, target_x, LV_ANIM_ON);
             return;
         }
-        UI_SET_FLAG(SETTLING, false);
-        page_transition_hide();
-        flush_deferred_dashboard_snapshot();
+        page_transition_expand(target);
     }
 }
 
@@ -12310,6 +12536,7 @@ static bool simulator_tree_has_label(lv_obj_t *obj, const char *text)
 static bool simulator_page_transition_smoke(void)
 {
     if (!s_ui.pages || !s_ui.page_transition_battery || !s_ui.page_transition_gps ||
+        !s_ui.page_transition_battery_card || !s_ui.page_transition_gps_card ||
         !s_ui.battery_page || !s_ui.gps_page) {
         return false;
     }
@@ -12322,9 +12549,14 @@ static bool simulator_page_transition_smoke(void)
                                : page_target_scroll_x(ESP_BMS_LVGL_PAGE_GPS);
     const bool transition_pages =
         page_transition_active() &&
-        lv_color_eq(lv_obj_get_style_bg_color(s_ui.page_transition_battery, LV_PART_MAIN),
+        lv_obj_get_style_bg_opa(s_ui.page_transition_battery, LV_PART_MAIN) == LV_OPA_TRANSP &&
+        lv_color_eq(lv_obj_get_style_bg_color(s_ui.page_transition_battery_card, LV_PART_MAIN),
                     COLOR_DASHBOARD_BG) &&
-        lv_obj_get_style_bg_opa(s_ui.page_transition_battery, LV_PART_MAIN) == LV_OPA_COVER &&
+        lv_obj_get_style_bg_opa(s_ui.page_transition_battery_card, LV_PART_MAIN) == LV_OPA_COVER &&
+        lv_obj_get_x(s_ui.page_transition_battery_card) == 0 &&
+        lv_obj_get_y(s_ui.page_transition_battery_card) == 0 &&
+        lv_obj_get_width(s_ui.page_transition_battery_card) == s_ui.width &&
+        lv_obj_get_height(s_ui.page_transition_battery_card) == s_ui.height &&
         lv_obj_has_flag(s_ui.battery_page, LV_OBJ_FLAG_HIDDEN) &&
         lv_obj_has_flag(s_ui.gps_page, LV_OBJ_FLAG_HIDDEN) &&
         !lv_obj_has_flag(s_ui.page_transition_battery, LV_OBJ_FLAG_HIDDEN) &&
@@ -12334,8 +12566,24 @@ static bool simulator_page_transition_smoke(void)
         (!s_ui.page_transition_cast ||
          simulator_tree_has_label(s_ui.page_transition_cast, "投屏"));
     const bool scroll_bounds_preserved = lv_obj_get_scroll_right(s_ui.pages) == last_x;
-    page_transition_hide();
+    lv_timer_handler();
+    lv_delay_ms(PAGE_TRANSITION_CARD_ANIM_MS + 20U);
+    lv_timer_handler();
+    lv_obj_update_layout(s_ui.pages);
+    const bool compact =
+        lv_obj_get_x(s_ui.page_transition_battery_card) == PAGE_TRANSITION_CARD_MARGIN &&
+        lv_obj_get_y(s_ui.page_transition_battery_card) == PAGE_TRANSITION_CARD_MARGIN &&
+        lv_obj_get_width(s_ui.page_transition_battery_card) ==
+            s_ui.width - (PAGE_TRANSITION_CARD_MARGIN * 2) &&
+        lv_obj_get_height(s_ui.page_transition_battery_card) ==
+            s_ui.height - (PAGE_TRANSITION_CARD_MARGIN * 2);
+    page_transition_expand(ESP_BMS_LVGL_PAGE_BATTERY);
+    const bool expanding = UI_FLAG(SETTLING) && page_transition_active();
+    lv_timer_handler();
+    lv_delay_ms(PAGE_TRANSITION_CARD_ANIM_MS + 20U);
+    lv_timer_handler();
     const bool restored = !page_transition_active() &&
+                          !UI_FLAG(SETTLING) &&
                           !lv_obj_has_flag(s_ui.battery_page, LV_OBJ_FLAG_HIDDEN) &&
                           !lv_obj_has_flag(s_ui.gps_page, LV_OBJ_FLAG_HIDDEN) &&
                           (!s_ui.cast_page ||
@@ -12348,7 +12596,7 @@ static bool simulator_page_transition_smoke(void)
                            lv_obj_has_flag(s_ui.page_transition_cast,
                                            LV_OBJ_FLAG_HIDDEN));
     move_to_page(ESP_BMS_LVGL_PAGE_BATTERY, false);
-    return transition_pages && scroll_bounds_preserved && restored;
+    return transition_pages && scroll_bounds_preserved && compact && expanding && restored;
 }
 
 bool esp_bms_lvgl_ui_simulator_native_gesture_smoke(void)
