@@ -324,7 +324,7 @@ _Static_assert(sizeof(esp_bms_boot_animation_style_t) == 4 &&
                    ESP_BMS_BOOT_ANIMATION_CHARGE == 0 &&
                    ESP_BMS_BOOT_ANIMATION_GAUGE_SWEEP == 1,
                "esp_bms_boot_animation_style_t ABI changed; update runtime consumers too");
-_Static_assert(sizeof(esp_bms_dashboard_snapshot_t) == 1096,
+_Static_assert(sizeof(esp_bms_dashboard_snapshot_t) == 1100,
                "dashboard snapshot ABI size changed; update all C consumers too");
 _Static_assert(ESP_BMS_LVGL_ACTION_NONE == 0,
                "esp_bms_lvgl_action_t value changed; update C action consumers too");
@@ -4514,6 +4514,7 @@ static void settings_show_bms_detail(void)
                                                      SETTINGS_DETAIL_ROW_H_LANDSCAPE;
     char ble_status[ESP_BMS_BMS_SCAN_NAME_LEN + 1U] = { 0 };
     char preset_range[16] = { 0 };
+    char capacity_estimate[16] = { 0 };
 
     s_ui.settings_bms_view = (uint8_t)SETTINGS_BMS_VIEW_ROOT;
     s_ui.settings_controller_view = (uint8_t)SETTINGS_CONTROLLER_VIEW_ROOT;
@@ -4557,12 +4558,29 @@ static void settings_show_bms_detail(void)
         ESP_BMS_LVGL_ACTION_NONE,
         SETTINGS_SYSTEM_VIEW_ROOT,
     };
+    const bool capacity_supported = snapshot->bms_type == 0U || snapshot->bms_type == 1U ||
+                                    snapshot->bms_type == 3U || snapshot->bms_type == 4U;
+    const char *capacity_subtitle = capacity_supported ? "估算中" : "ANT / JK / DALY / YY";
+    if (capacity_supported && snapshot->bms_capacity_estimate_mah > 0U) {
+        (void)snprintf(capacity_estimate,
+                       sizeof(capacity_estimate),
+                       "%lu.%01lu Ah",
+                       (unsigned long)(snapshot->bms_capacity_estimate_mah / 1000U),
+                       (unsigned long)((snapshot->bms_capacity_estimate_mah % 1000U) / 100U));
+        capacity_subtitle = capacity_estimate;
+    }
+    const settings_detail_row_t capacity_estimate_row = {
+        "容量估算",
+        capacity_subtitle,
+        ESP_BMS_LVGL_ACTION_NONE,
+        SETTINGS_SYSTEM_VIEW_ROOT,
+    };
     lv_obj_t *list_card = settings_list_card(s_ui.settings_detail,
                                              card_x,
                                              12,
                                              card_w,
                                              row_h,
-                                             3);
+                                             4);
     settings_detail_row(list_card,
                         0,
                         0,
@@ -4598,6 +4616,16 @@ static void settings_show_bms_detail(void)
     lv_obj_align(arrow, LV_ALIGN_RIGHT_MID, -10, 0);
     lv_obj_set_style_text_align(arrow, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(arrow, COLOR_SETTINGS_ACCENT, LV_PART_MAIN);
+
+    lv_obj_t *capacity_box = settings_detail_row(list_card,
+                                                  0,
+                                                  row_h * 3,
+                                                  card_w,
+                                                  row_h,
+                                                  &capacity_estimate_row);
+    lv_obj_remove_flag(capacity_box, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_state(capacity_box, LV_STATE_DISABLED);
+    lv_obj_set_style_opa(capacity_box, LV_OPA_50, LV_PART_MAIN);
 }
 
 static const char CONTROLLER_RIM_OPTIONS[] =
@@ -10075,6 +10103,7 @@ static void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapsho
     const uint8_t previous_boot_animation_style =
         s_ui.last_snapshot.boot_animation_style;
     const uint16_t previous_preset_range_km = s_ui.last_snapshot.preset_range_km;
+    const uint32_t previous_capacity_estimate_mah = s_ui.last_snapshot.bms_capacity_estimate_mah;
     const bool previous_bluetooth_enabled = SNAPSHOT_FLAG(&s_ui.last_snapshot, BLUETOOTH_ENABLED);
     const bool previous_bluetooth_advertising = SNAPSHOT_FLAG(&s_ui.last_snapshot, BLUETOOTH_ADVERTISING);
     const bool previous_bluetooth_connected = SNAPSHOT_FLAG(&s_ui.last_snapshot, BLUETOOTH_CONNECTED);
@@ -10100,6 +10129,9 @@ static void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapsho
                                             snapshot->bms_scan_candidate_count);
     const bool preset_range_changed = !had_last_snapshot ||
                                       previous_preset_range_km != snapshot->preset_range_km;
+    const bool capacity_estimate_changed = !had_last_snapshot ||
+                                           previous_capacity_estimate_mah !=
+                                               snapshot->bms_capacity_estimate_mah;
     const bool controller_view_changed =
         settings_controller_view_changed(&s_ui.last_snapshot, snapshot, had_last_snapshot);
     const bool dashboard_view_changed = !had_last_snapshot ||
@@ -10184,7 +10216,7 @@ static void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapsho
             settings_show_bms_type_picker();
         } else if (s_ui.settings_bms_view == (uint8_t)SETTINGS_BMS_VIEW_ROOT &&
                    (bms_scan_candidates_changed || bms_online_changed || bms_type_changed ||
-                    preset_range_changed)) {
+                    preset_range_changed || capacity_estimate_changed)) {
             settings_show_bms_detail();
         }
     }

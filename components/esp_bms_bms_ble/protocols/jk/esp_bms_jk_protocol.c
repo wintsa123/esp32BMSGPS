@@ -1,5 +1,6 @@
 #include "esp_bms_jk_protocol.h"
 
+#include <limits.h>
 #include <string.h>
 
 static uint16_t read_u16_le(const uint8_t *data, size_t offset)
@@ -114,6 +115,12 @@ static bool decode_jk02_cell_info(const uint8_t frame[ESP_BMS_JK_FRAME_LEN],
     telemetry->soc_percent = frame[141U + dynamic];
     telemetry->capacity_remaining_mah = read_u32_le(frame, 142U + dynamic);
     telemetry->total_capacity_mah = read_u32_le(frame, 146U + dynamic);
+    const uint32_t total_charge_deci_ah = read_u32_le(frame, 154U + dynamic);
+    if (total_charge_deci_ah > UINT32_MAX / 100U) {
+        return false;
+    }
+    telemetry->total_cycle_mah = total_charge_deci_ah * 100U;
+    telemetry->total_cycle_valid = true;
     telemetry->protection_mask = cell_slots == 32U ? read_u32_le(frame, 166U) : read_u16_le(frame, 136U);
     telemetry->balancing_supported = true;
     telemetry->balancing_active = frame[140U + dynamic] != 0U;

@@ -1,6 +1,7 @@
 #include "esp_bms_jk_protocol.h"
 
 #include <assert.h>
+#include <limits.h>
 #include <string.h>
 
 static void put_u32_le(uint8_t *data, size_t offset, uint32_t value)
@@ -49,6 +50,7 @@ static void build_jk02_frame(uint8_t frame[ESP_BMS_JK_FRAME_LEN], uint8_t cells,
     frame[141U + dynamic] = 76U;
     put_u32_le(frame, 142U + dynamic, 320000U);
     put_u32_le(frame, 146U + dynamic, 400000U);
+    put_u32_le(frame, 154U + dynamic, 1234U);
     if (dynamic == 0U) {
         frame[130] = 0x2CU;
         frame[131] = 0x01U;
@@ -79,6 +81,7 @@ int main(void)
     assert(esp_bms_jk_feed(stream, &stream_len, sizeof(stream), frame + 100U, sizeof(frame) - 100U, &telemetry));
     assert(telemetry.pack_voltage_mv == 52800U && telemetry.current_deci_amps == -12 &&
            telemetry.protection_mask == 0x12345678U && telemetry.soc_percent == 76U &&
+           telemetry.total_cycle_valid && telemetry.total_cycle_mah == 123400U &&
            telemetry.balancing_supported && telemetry.balancing_active);
 
     stream_len = 0U;
@@ -86,7 +89,13 @@ int main(void)
     assert(esp_bms_jk_feed(stream, &stream_len, sizeof(stream), frame, sizeof(frame), &telemetry));
     assert(telemetry.pack_voltage_mv == 52800U && telemetry.current_deci_amps == -12 &&
            telemetry.protection_mask == 0x1234U && telemetry.soc_percent == 76U &&
+           telemetry.total_cycle_valid && telemetry.total_cycle_mah == 123400U &&
            telemetry.balancing_supported && !telemetry.balancing_active);
+
+    stream_len = 0U;
+    put_u32_le(frame, 154U, UINT32_MAX);
+    set_checksum(frame);
+    assert(!esp_bms_jk_feed(stream, &stream_len, sizeof(stream), frame, sizeof(frame), &telemetry));
 
     stream_len = 0U;
     init_frame(frame);

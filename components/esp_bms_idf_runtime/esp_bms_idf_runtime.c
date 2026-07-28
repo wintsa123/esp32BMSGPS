@@ -1199,6 +1199,14 @@ static bool runtime_bms_type_matches_policy(uint8_t bms_type)
     return bms_type <= (uint8_t)ESP_BMS_IDF_BMS_TYPE_YANYANG;
 }
 
+static bool runtime_bms_supports_capacity_estimate(uint8_t bms_type)
+{
+    return bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_ANT ||
+           bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_JK ||
+           bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_DALY ||
+           bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_YANYANG;
+}
+
 static bool runtime_select_bms_type(esp_bms_idf_runtime_t *runtime, esp_bms_idf_bms_type_t bms_type)
 {
     if (!runtime || !runtime_bms_type_matches_policy((uint8_t)bms_type)) {
@@ -1211,6 +1219,7 @@ static bool runtime_select_bms_type(esp_bms_idf_runtime_t *runtime, esp_bms_idf_
 
     runtime->bms_type = (uint8_t)bms_type;
     runtime->snapshot.bms_type = runtime->bms_type;
+    runtime->snapshot.bms_capacity_estimate_mah = 0U;
     runtime_set_error(runtime, runtime_bms_type_status_text(bms_type));
     if (runtime->bms_ble_driver && runtime->bms_ble_driver->stop) {
         (void)runtime->bms_ble_driver->stop(runtime);
@@ -1655,7 +1664,7 @@ static bool runtime_capacity_estimate_blob_valid(const runtime_capacity_estimate
 {
     return blob && blob->magic == CAPACITY_ESTIMATE_MAGIC &&
            blob->version == CAPACITY_ESTIMATE_VERSION &&
-           blob->bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_ANT &&
+           runtime_bms_supports_capacity_estimate(blob->bms_type) &&
            blob->bms_mac[sizeof(blob->bms_mac) - 1U] == '\0' &&
            (blob->ready == 0U ||
             (blob->ready == 1U && blob->estimate_mah > 0U && blob->sample_count > 0U &&
@@ -1739,33 +1748,33 @@ static esp_err_t runtime_save_capacity_estimate(esp_bms_idf_runtime_t *runtime,
 
 static bool runtime_capacity_estimate_identity_matches(const esp_bms_idf_runtime_t *runtime)
 {
-    return runtime->bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_ANT &&
+    return runtime_bms_supports_capacity_estimate(runtime->bms_type) &&
            runtime->bms_bound_mac[0] != '\0' &&
            runtime->capacity_estimate_bms_type == runtime->bms_type &&
            strcmp(runtime->capacity_estimate_bms_mac, runtime->bms_bound_mac) == 0;
 }
 
-bool esp_bms_idf_runtime_observe_bms_capacity(esp_bms_idf_runtime_t *runtime,
-                                               bool new_connection,
-                                               uint32_t total_cycle_mah,
-                                               uint16_t soc_percent)
+static bool runtime_capacity_estimate_reset_identity(esp_bms_idf_runtime_t *runtime)
 {
-    if (!runtime || runtime->bms_type != (uint8_t)ESP_BMS_IDF_BMS_TYPE_ANT ||
-        runtime->bms_bound_mac[0] == '\0' || !runtime->capacity_estimate_lock ||
-        xSemaphoreTake(runtime->capacity_estimate_lock, pdMS_TO_TICKS(100)) != pdTRUE) {
+    if (runtime_capacity_estimate_identity_matches(runtime)) {
         return false;
     }
+    esp_bms_capacity_estimate_reset(&runtime->capacity_estimate);
+    esp_bms_capacity_integrator_reset(&runtime->capacity_integrator, 0U);
+    runtime->capacity_estimate_bms_type = runtime->bms_type;
+    runtime_copy_snapshot_text(runtime->capacity_estimate_bms_mac,
+                               sizeof(runtime->capacity_estimate_bms_mac),
+                               runtime->bms_bound_mac);
+    return true;
+}
 
-    bool changed = false;
-    if (!runtime_capacity_estimate_identity_matches(runtime)) {
-        esp_bms_capacity_estimate_reset(&runtime->capacity_estimate);
-        runtime->capacity_estimate_bms_type = runtime->bms_type;
-        runtime_copy_snapshot_text(runtime->capacity_estimate_bms_mac,
-                                   sizeof(runtime->capacity_estimate_bms_mac),
-                                   runtime->bms_bound_mac);
-        changed = true;
-    }
-    if (new_connection) {
+static bool runtime_observe_bms_capacity_locked(esp_bms_idf_runtime_t *runtime,
+                                                bool reset_anchor,
+                                                uint32_t total_cycle_mah,
+                                                uint16_t soc_percent,
+                                                bool changed)
+{
+    if (reset_anchor) {
         esp_bms_capacity_estimate_reset_anchor(&runtime->capacity_estimate);
     }
     const esp_bms_capacity_estimate_result_t result =
@@ -1779,8 +1788,62 @@ bool esp_bms_idf_runtime_observe_bms_capacity(esp_bms_idf_runtime_t *runtime,
         runtime->capacity_estimate_generation++;
         runtime->capacity_estimate_retry_after_us = 0;
     }
+    runtime->snapshot.bms_capacity_estimate_mah = runtime->capacity_estimate.ready
+                                                       ? runtime->capacity_estimate.estimate_mah
+                                                       : 0U;
     xSemaphoreGive(runtime->capacity_estimate_lock);
     return changed;
+}
+
+bool esp_bms_idf_runtime_observe_bms_capacity(esp_bms_idf_runtime_t *runtime,
+                                               bool new_connection,
+                                               uint32_t total_cycle_mah,
+                                               uint16_t soc_percent)
+{
+    if (!runtime || !runtime_bms_supports_capacity_estimate(runtime->bms_type) ||
+        runtime->bms_bound_mac[0] == '\0' || !runtime->capacity_estimate_lock ||
+        xSemaphoreTake(runtime->capacity_estimate_lock, pdMS_TO_TICKS(100)) != pdTRUE) {
+        return false;
+    }
+
+    return runtime_observe_bms_capacity_locked(runtime,
+                                               new_connection,
+                                               total_cycle_mah,
+                                               soc_percent,
+                                               runtime_capacity_estimate_reset_identity(runtime));
+}
+
+bool esp_bms_idf_runtime_observe_bms_capacity_from_current(esp_bms_idf_runtime_t *runtime,
+                                                            bool new_connection,
+                                                            int16_t current_deci_amps,
+                                                            uint16_t soc_percent)
+{
+    if (!runtime || !runtime_bms_supports_capacity_estimate(runtime->bms_type) ||
+        runtime->bms_bound_mac[0] == '\0' || soc_percent > 100U ||
+        !runtime->capacity_estimate_lock ||
+        xSemaphoreTake(runtime->capacity_estimate_lock, pdMS_TO_TICKS(100)) != pdTRUE) {
+        return false;
+    }
+
+    const bool changed = runtime_capacity_estimate_reset_identity(runtime);
+    if (!runtime->capacity_integrator.initialized) {
+        esp_bms_capacity_integrator_reset(&runtime->capacity_integrator,
+                                          runtime->capacity_estimate.last_accepted_cycle_mah);
+    }
+    if (new_connection) {
+        esp_bms_capacity_integrator_reset_anchor(&runtime->capacity_integrator);
+    }
+    const esp_bms_capacity_integrator_result_t integration =
+        esp_bms_capacity_integrator_observe(&runtime->capacity_integrator,
+                                            esp_timer_get_time(),
+                                            current_deci_amps);
+    return runtime_observe_bms_capacity_locked(
+        runtime,
+        new_connection || integration == ESP_BMS_CAPACITY_INTEGRATOR_REANCHORED ||
+            integration == ESP_BMS_CAPACITY_INTEGRATOR_DISCONTINUITY,
+        runtime->capacity_integrator.total_cycle_mah,
+        soc_percent,
+        changed);
 }
 
 static void runtime_persist_capacity_estimate(esp_bms_idf_runtime_t *runtime)
@@ -2534,7 +2597,7 @@ static esp_err_t runtime_http_status_handler(httpd_req_t *req, esp_bms_idf_runti
     char temperatures[80] = { 0 };
     bool capacity_ready = false;
     uint32_t capacity_estimate_mah = 0U;
-    if (runtime->bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_ANT &&
+    if (runtime_bms_supports_capacity_estimate(runtime->bms_type) &&
         runtime->capacity_estimate_lock &&
         xSemaphoreTake(runtime->capacity_estimate_lock, pdMS_TO_TICKS(100)) == pdTRUE) {
         capacity_ready = runtime_capacity_estimate_identity_matches(runtime) &&
@@ -2581,7 +2644,7 @@ static esp_err_t runtime_http_status_handler(httpd_req_t *req, esp_bms_idf_runti
     }
 
     char json[HTTP_JSON_MAX_LEN] = { 0 };
-    const char *capacity_state = runtime->bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_ANT
+    const char *capacity_state = runtime_bms_supports_capacity_estimate(runtime->bms_type)
                                      ? capacity_ready ? "ready" : "estimating"
                                      : "unsupported";
     const int written = snprintf(json,
@@ -3547,6 +3610,7 @@ static bool runtime_apply_pending_http_bms_bind(esp_bms_idf_runtime_t *runtime)
         runtime_copy_snapshot_text(runtime->bms_bound_name,
                                    sizeof(runtime->bms_bound_name),
                                    selected_name);
+        runtime->snapshot.bms_capacity_estimate_mah = 0U;
     } else if (selected_name[0] != '\0') {
         runtime_copy_snapshot_text(runtime->bms_bound_name,
                                    sizeof(runtime->bms_bound_name),

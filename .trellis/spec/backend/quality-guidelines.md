@@ -1765,60 +1765,83 @@ where `<font>` is the descriptor defined in the same file. The scan must return
 no self-references; the legacy profile build and a cold-boot WDT observation are
 required after changing generated or hand-maintained font descriptors.
 
-## Scenario: ANT BMS Real Capacity Estimate
+## Scenario: Supported BMS Real Capacity Estimate
 
 ### 1. Scope / Trigger
 
-- Apply when changing ANT total-cycle decoding, the capacity estimator, its
-  `esp_bms` NVS state, or the capacity fields in `/api/status`.
+- Apply when changing ANT/JK native total-cycle decoding, Daly/Yanyang local
+  current integration, the capacity estimator, its `esp_bms` NVS state, or
+  the capacity fields in `/api/status`.
 
 ### 2. Signatures
 
-- Telemetry: `total_cycle_mah` with `total_cycle_valid`.
+- Native telemetry: `total_cycle_mah` with `total_cycle_valid` for ANT and JK.
+- Local integration: `esp_bms_capacity_integrator_observe(state, now_us,
+  current_deci_amps)` for Daly and Yanyang; it returns a synthetic monotonic
+  `total_cycle_mah`.
 - API: `bms_capacity_estimate_mah` (`number|null`) and
   `bms_capacity_estimate_state` (`ready`, `estimating`, or `unsupported`).
-- NVS: versioned `cap_est` blob, bound to ANT BMS MAC.
+- NVS: versioned `cap_est` blob, bound to BMS type and MAC.
 
 ### 3. Contracts
 
 - Decode ANT new total-cycle mAh as little-endian at dynamic offset
   `58 + 2 * cells + 2 * temperatures`; decode old ANT as big-endian at `83`.
+- Decode JK cumulative cycle capacity using its protocol-confirmed raw `0.1 Ah`
+  value; `raw * 100` is mAh. Do not substitute cycle count or rated capacity.
+- Daly and Yanyang do not have a verified cumulative-Ah field. Integrate only a
+  validated, non-partial status frame with nonzero pack voltage and `SOC <= 100`:
+  `abs(current_deci_amps) * delta_us / 36000000` mAh. Keep the integer
+  remainder, ignore magnitudes below `0.5 A`, and do not add an interval that
+  is non-positive or longer than three seconds.
 - Only accept a sample after a monotonic total-cycle increase of at least
   `1000 mAh` and a SOC span of at least `20` points. Re-anchor, without
   sampling, for delayed SOC correction or a direction reversal.
-- A changed MAC or reduced total-cycle counter clears the old estimate. Persist
-  only an accepted estimate or a cleared identity; never persist raw frames.
+- A reconnect or rejected local interval re-anchors the SOC estimator without
+  discarding an already credible estimate. A changed type/MAC or reduced
+  native counter clears the old estimate. For a matching Daly/Yanyang identity
+  after reboot, seed the integrator from `last_accepted_cycle_mah`; persist only
+  an accepted estimate or a cleared identity, never per-frame integration data.
+- The result is usable Ah estimated from the BMS SOC, not voltage, rated Ah,
+  energy density, or state of health. This is mandatory for flat LFP voltage
+  plateaus.
 
 ### 4. Validation & Error Matrix
 
 | Condition | Required response |
 | --- | --- |
-| Non-ANT BMS | `unsupported`, null estimate |
-| ANT without enough credible data | `estimating`, null estimate |
+| JBD or an unsupported BMS | `unsupported`, null estimate |
+| ANT/JK/Daly/Yanyang without enough credible data | `estimating`, null estimate |
 | Delayed SOC correction | Re-anchor and retain any credible estimate |
-| Counter regression | Clear estimate and persist the reset state |
+| Native counter regression | Clear estimate and persist the reset state |
+| Daly/Yanyang frame is partial, invalid, SOC > 100, or gap > 3 s | Do not integrate; re-anchor on a gap |
+| Daly/Yanyang type or bound MAC changes | Clear the estimate and local integrator before the next sample |
 
 ### 5. Good / Base / Bad Cases
 
-- Good: a 20% partial charge with a 10 Ah cycle increase estimates 50 Ah.
+- Good: a 20% partial charge with a 10 Ah native or locally integrated cycle
+  increase estimates 50 Ah.
 - Base: a user never reaches 0% or 100%; a credible partial interval is enough.
-- Bad: use a delayed SOC recalculation as throughput or reuse another BMS MAC's
-  result.
+- Bad: use pack voltage, remaining/rated capacity, a delayed SOC recalculation,
+  or another BMS identity as throughput.
 
 ### 6. Tests Required
 
-- Run `./scripts/run-host-selftests.sh`; assert both ANT frame layouts and the
-  delayed-SOC, reversal, partial-interval, and counter-reset estimator cases.
-- Run the Vercel typecheck/build when changing its BMS setting presentation.
-- Build, flash through RFC2217, and capture a boot log. With a bound ANT BMS,
-  confirm `estimating` changes to `ready` only after an eligible interval.
+- Run `./scripts/run-host-selftests.sh`; assert both ANT frame layouts, JK
+  cycle-capacity scaling, Daly/Yanyang signed current, and positive/negative
+  current integration, remainder, deadband, gap, and counter-reset cases.
+- Run both LVGL simulator orientations when changing the disabled BMS settings
+  row; ANT/JK/Daly/Yanyang show `估算中` or Ah, while JBD stays unsupported.
+- Build the `oldesp32` profile, flash through RFC2217, and inspect boot output
+  when the selected profile exposes it. With a bound supported BMS, confirm
+  `estimating` changes to `ready` only after an eligible interval.
 
 ### 7. Wrong vs Correct
 
 #### Wrong
 
 ```c
-estimate_mah = cycle_delta_mah * 100 / (old_soc - new_soc); /* stale SOC */
+estimate_mah = pack_voltage_mv * 100 / soc_span; /* voltage is not throughput */
 ```
 
 #### Correct

@@ -52,7 +52,8 @@ int main(void)
     esp_bms_bms_telemetry_t telemetry = { 0 };
     assert(!esp_bms_daly_feed(stream, &stream_len, sizeof(stream), frame, 64U, &telemetry));
     assert(esp_bms_daly_feed(stream, &stream_len, sizeof(stream), frame + 64U, sizeof(frame) - 64U, &telemetry));
-    assert(telemetry.pack_voltage_mv == 52000U && telemetry.soc_percent == 78U);
+    assert(telemetry.pack_voltage_mv == 52000U && telemetry.current_deci_amps == 123 &&
+           telemetry.soc_percent == 78U);
     frame[128U] ^= 1U;
     stream_len = 0U;
     assert(!esp_bms_daly_feed(stream, &stream_len, sizeof(stream), frame, sizeof(frame), &telemetry));

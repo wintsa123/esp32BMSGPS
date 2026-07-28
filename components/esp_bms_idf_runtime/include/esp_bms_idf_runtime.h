@@ -131,6 +131,7 @@ struct esp_bms_idf_runtime {
     esp_bms_dashboard_snapshot_t snapshot;
     esp_bms_ride_records_t ride_records;
     esp_bms_capacity_estimate_t capacity_estimate;
+    esp_bms_capacity_integrator_t capacity_integrator;
     adc_oneshot_unit_handle_t battery_adc;
     adc_channel_t battery_adc_channel;
     uint32_t tick_count;
@@ -270,6 +271,10 @@ bool esp_bms_idf_runtime_observe_bms_capacity(esp_bms_idf_runtime_t *runtime,
                                                bool new_connection,
                                                uint32_t total_cycle_mah,
                                                uint16_t soc_percent);
+bool esp_bms_idf_runtime_observe_bms_capacity_from_current(esp_bms_idf_runtime_t *runtime,
+                                                            bool new_connection,
+                                                            int16_t current_deci_amps,
+                                                            uint16_t soc_percent);
 void esp_bms_idf_runtime_register_bms_ble_driver(
     esp_bms_idf_runtime_t *runtime,
     const esp_bms_idf_runtime_bms_ble_driver_t *driver);

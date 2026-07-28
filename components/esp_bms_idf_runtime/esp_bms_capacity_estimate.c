@@ -33,6 +33,67 @@ void esp_bms_capacity_estimate_reset_anchor(esp_bms_capacity_estimate_t *state)
     }
 }
 
+void esp_bms_capacity_integrator_reset(esp_bms_capacity_integrator_t *state,
+                                       uint32_t total_cycle_mah)
+{
+    if (!state) {
+        return;
+    }
+    memset(state, 0, sizeof(*state));
+    state->total_cycle_mah = total_cycle_mah;
+    state->initialized = true;
+}
+
+void esp_bms_capacity_integrator_reset_anchor(esp_bms_capacity_integrator_t *state)
+{
+    if (state) {
+        state->last_sample_valid = false;
+    }
+}
+
+esp_bms_capacity_integrator_result_t esp_bms_capacity_integrator_observe(
+    esp_bms_capacity_integrator_t *state,
+    int64_t now_us,
+    int16_t current_deci_amps)
+{
+    if (!state) {
+        return ESP_BMS_CAPACITY_INTEGRATOR_NO_CHANGE;
+    }
+    if (!state->initialized) {
+        esp_bms_capacity_integrator_reset(state, 0U);
+    }
+    if (!state->last_sample_valid) {
+        state->last_sample_us = now_us;
+        state->last_sample_valid = true;
+        return ESP_BMS_CAPACITY_INTEGRATOR_REANCHORED;
+    }
+
+    const int64_t delta_us = now_us - state->last_sample_us;
+    state->last_sample_us = now_us;
+    if (delta_us <= 0 || delta_us > ESP_BMS_CAPACITY_INTEGRATOR_MAX_INTERVAL_US) {
+        return ESP_BMS_CAPACITY_INTEGRATOR_DISCONTINUITY;
+    }
+
+    const int32_t current = current_deci_amps;
+    const uint32_t magnitude = (uint32_t)(current < 0 ? -current : current);
+    if (magnitude < ESP_BMS_CAPACITY_INTEGRATOR_DEADBAND_DECI_AMPS) {
+        return ESP_BMS_CAPACITY_INTEGRATOR_NO_CHANGE;
+    }
+
+    const uint64_t numerator = (uint64_t)magnitude * (uint64_t)delta_us +
+                               state->fractional_deci_amp_us;
+    const uint64_t delta_mah = numerator / ESP_BMS_CAPACITY_INTEGRATOR_MAH_DIVISOR;
+    state->fractional_deci_amp_us = numerator % ESP_BMS_CAPACITY_INTEGRATOR_MAH_DIVISOR;
+    if (delta_mah > (uint64_t)(UINT32_MAX - state->total_cycle_mah)) {
+        state->total_cycle_mah = 0U;
+        state->fractional_deci_amp_us = 0U;
+        return ESP_BMS_CAPACITY_INTEGRATOR_DISCONTINUITY;
+    }
+    state->total_cycle_mah += (uint32_t)delta_mah;
+    return delta_mah == 0U ? ESP_BMS_CAPACITY_INTEGRATOR_NO_CHANGE :
+                             ESP_BMS_CAPACITY_INTEGRATOR_UPDATED;
+}
+
 esp_bms_capacity_estimate_result_t esp_bms_capacity_estimate_observe(
     esp_bms_capacity_estimate_t *state,
     uint32_t total_cycle_mah,

@@ -276,11 +276,20 @@ static bool bms_apply_telemetry(esp_bms_idf_runtime_t *runtime,
     }
     runtime->bms_telemetry_last_us = esp_timer_get_time();
     if (!telemetry->partial && telemetry->total_cycle_valid &&
-        runtime->bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_ANT) {
+        (runtime->bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_ANT ||
+         runtime->bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_JK)) {
         (void)esp_bms_idf_runtime_observe_bms_capacity(runtime,
                                                         new_connection,
                                                         telemetry->total_cycle_mah,
                                                         telemetry->soc_percent);
+    } else if (!telemetry->partial && telemetry->pack_voltage_mv != 0U &&
+               telemetry->soc_percent <= 100U &&
+               (runtime->bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_DALY ||
+                runtime->bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_YANYANG)) {
+        (void)esp_bms_idf_runtime_observe_bms_capacity_from_current(runtime,
+                                                                     new_connection,
+                                                                     telemetry->current_deci_amps,
+                                                                     telemetry->soc_percent);
     }
     bms_set_info(runtime, "BMS OK");
     if (!telemetry->partial && telemetry->pack_voltage_mv != 0U && telemetry->soc_percent <= 100U) {

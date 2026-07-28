@@ -272,6 +272,7 @@ typedef struct {
     uint32_t pack_voltage_mv;
     uint32_t total_capacity_mah;
     uint32_t capacity_remaining_mah;
+    uint32_t bms_capacity_estimate_mah;
     uint32_t bms_running_time_seconds;
     uint32_t local_battery_mv;
     esp_bms_speed_unit_t speed_unit;
