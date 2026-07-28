@@ -496,6 +496,7 @@ typedef struct {
     lv_obj_t *cell_stats;
     lv_obj_t *cell_stat_values[DASHBOARD_CELL_STAT_COUNT];
     lv_obj_t *bms_safety_values[ESP_BMS_BMS_SAFETY_COUNT];
+    lv_obj_t *bms_safety_checks[ESP_BMS_BMS_SAFETY_COUNT];
     lv_obj_t *bms_error;
     lv_obj_t *bms_status_ok;
     lv_obj_t *remaining_range_separator;
@@ -1232,25 +1233,31 @@ static void bms_native_static_label(lv_obj_t *parent,
     lv_obj_set_style_text_align(obj, align, LV_PART_MAIN);
 }
 
-static void bms_native_safety_check(lv_obj_t *parent, int32_t x, int32_t y)
+static void bms_native_safety_icon(lv_obj_t *parent, int32_t x, int32_t y)
 {
-    static const lv_point_precise_t check_points[] = {
-        { 2, 6 }, { 5, 9 }, { 10, 3 },
-    };
     lv_obj_t *circle = lv_obj_create(parent);
     clear_style(circle);
     lv_obj_set_pos(circle, x, y);
     lv_obj_set_size(circle, 12, 12);
     lv_obj_set_style_radius(circle, LV_RADIUS_CIRCLE, LV_PART_MAIN);
     lv_obj_set_style_border_width(circle, 1, LV_PART_MAIN);
-    lv_obj_set_style_border_color(circle, COLOR_STATUS_OK, LV_PART_MAIN);
+    lv_obj_set_style_border_color(circle, COLOR_MUTED, LV_PART_MAIN);
     lv_obj_set_style_border_opa(circle, LV_OPA_COVER, LV_PART_MAIN);
+}
 
-    lv_obj_t *check = lv_line_create(circle);
+static lv_obj_t *bms_native_safety_check(lv_obj_t *parent, int32_t x, int32_t y)
+{
+    static const lv_point_precise_t check_points[] = {
+        { 2, 5 }, { 5, 8 }, { 10, 2 },
+    };
+    lv_obj_t *check = lv_line_create(parent);
     lv_line_set_points(check, check_points, ARRAY_SIZE(check_points));
+    lv_obj_set_pos(check, x, y);
+    lv_obj_set_size(check, 12, 12);
     lv_obj_set_style_line_width(check, 2, LV_PART_MAIN);
     lv_obj_set_style_line_color(check, COLOR_STATUS_OK, LV_PART_MAIN);
     lv_obj_set_style_line_rounded(check, true, LV_PART_MAIN);
+    return check;
 }
 
 static void create_native_bms_dashboard(void)
@@ -1312,13 +1319,23 @@ static void create_native_bms_dashboard(void)
                             &settings_zh_10,
                             COLOR_DASHBOARD_TITLE,
                             LV_TEXT_ALIGN_LEFT);
-    dashboard_separator(soc_panel, 10, left_h - 48, layout.left_w - 20);
+    dashboard_separator(soc_panel, 10, left_h - 68, layout.left_w - 20);
+    bms_native_static_label(soc_panel,
+                            "使用天数",
+                            10,
+                            left_h - 64,
+                            layout.left_w - 20,
+                            12,
+                            &settings_zh_10,
+                            COLOR_DASHBOARD_TITLE,
+                            LV_TEXT_ALIGN_RIGHT);
+    dashboard_separator(soc_panel, 10, left_h - 36, layout.left_w - 20);
     bms_native_static_label(soc_panel,
                             "电池容量",
                             10,
-                            left_h - 40,
+                            left_h - 32,
                             layout.left_w - 20,
-                            14,
+                            12,
                             &settings_zh_10,
                             COLOR_DASHBOARD_TITLE,
                             LV_TEXT_ALIGN_LEFT);
@@ -1331,24 +1348,6 @@ static void create_native_bms_dashboard(void)
                             &settings_zh_10,
                             COLOR_DASHBOARD_TITLE,
                             LV_TEXT_ALIGN_LEFT);
-    bms_native_static_label(electrical_panel,
-                            "当前电压",
-                            0,
-                            24,
-                            layout.right_w / 2,
-                            14,
-                            &settings_zh_10,
-                            COLOR_MUTED,
-                            LV_TEXT_ALIGN_CENTER);
-    bms_native_static_label(electrical_panel,
-                            "当前电流",
-                            layout.right_w / 2,
-                            24,
-                            layout.right_w / 2,
-                            14,
-                            &settings_zh_10,
-                            COLOR_MUTED,
-                            LV_TEXT_ALIGN_CENTER);
     lv_obj_t *electrical_separator =
         dashboard_separator(electrical_panel, layout.right_w / 2, 22, 1);
     lv_obj_set_height(electrical_separator, layout.electrical_h - 30);
@@ -1408,9 +1407,9 @@ static void create_native_bms_dashboard(void)
         const int32_t col_x = (int32_t)(index % 2U) * safety_col_w;
         const int32_t row_y = 24 + (int32_t)(index / 2U) * safety_row_h;
         const int32_t text_y = row_y + (safety_row_h - safety_text_h) / 2;
-        bms_native_safety_check(safety_panel,
-                                col_x + 12,
-                                row_y + (safety_row_h - 12) / 2);
+        bms_native_safety_icon(safety_panel,
+                               col_x + 12,
+                               row_y + (safety_row_h - 12) / 2);
         bms_native_static_label(safety_panel,
                                 BMS_SAFETY_KEYS[index],
                                 col_x + 28,
@@ -1455,15 +1454,15 @@ static void create_native_bms_dashboard(void)
                      &lv_font_montserrat_28);
     s_ui.capacity = label(dynamic_layer,
                           layout.margin + 8,
-                          layout.top_y + left_h - 26,
+                          layout.top_y + left_h - 18,
                           layout.left_w - 16,
                           18,
                           &lv_font_montserrat_14);
     s_ui.bms_running_time = label(dynamic_layer,
                                   layout.margin + 10,
-                                  layout.top_y + left_h - 66,
+                                  layout.top_y + left_h - 50,
                                   layout.left_w - 20,
-                                  14,
+                                  12,
                                   &settings_zh_10);
 
     s_ui.pack_voltage = label(dynamic_layer,
@@ -1506,6 +1505,10 @@ static void create_native_bms_dashboard(void)
                                               38,
                                               safety_text_h,
                                               &settings_zh_10);
+        s_ui.bms_safety_checks[index] =
+            bms_native_safety_check(dynamic_layer,
+                                    layout.margin + col_x + 12,
+                                    layout.safety_y + row_y + (safety_row_h - 12) / 2);
     }
 
     lv_obj_set_style_text_align(s_ui.soc, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
@@ -1576,6 +1579,21 @@ static void bms_native_set_safety_status(const esp_bms_dashboard_snapshot_t *sna
                       sizeof(s_ui.bms_safety_buf[index]),
                       text);
         label_set_text_color_if_changed(s_ui.bms_safety_values[index], color);
+        lv_obj_t *check = s_ui.bms_safety_checks[index];
+        const bool show_check = supported &&
+                                (bit == ESP_BMS_BMS_SAFETY_BALANCING ? active : !active);
+        if (check) {
+            if (show_check) {
+                lv_obj_clear_flag(check, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_set_style_line_color(check,
+                                            bit == ESP_BMS_BMS_SAFETY_BALANCING
+                                                ? COLOR_ACCENT
+                                                : COLOR_STATUS_OK,
+                                            LV_PART_MAIN);
+            } else {
+                lv_obj_add_flag(check, LV_OBJ_FLAG_HIDDEN);
+            }
+        }
     }
 }
 
@@ -7601,11 +7619,10 @@ static void set_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
         const uint32_t seconds = snapshot->bms_running_time_seconds;
         (void)snprintf(running_time,
                        sizeof(running_time),
-                       "%lu天%02lu时%02lu分%02lu秒",
+                       "%lu天%02lu时%02lu分",
                        (unsigned long)(seconds / 86400U),
                        (unsigned long)((seconds / 3600U) % 24U),
-                       (unsigned long)((seconds / 60U) % 60U),
-                       (unsigned long)(seconds % 60U));
+                       (unsigned long)((seconds / 60U) % 60U));
     } else {
         (void)snprintf(running_time, sizeof(running_time), "--");
     }
