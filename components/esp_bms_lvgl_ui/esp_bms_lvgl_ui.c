@@ -141,6 +141,9 @@ LV_FONT_DECLARE(settings_zh_18);
 #define FIREBLADE_SCALE_LABEL_COUNT ((FIREBLADE_SPEED_TICK_COUNT / 2U) + 1U)
 #define FIREBLADE_GEAR_RADIUS 29
 #define BOOT_CHARGE_SEGMENT_COUNT 10U
+#define BOOT_BRAND_PART_COUNT 12U
+#define BOOT_GAUGE_BMW_RR_PERCENT 32U
+#define BOOT_GAUGE_BRAND_INTRO_PERCENT 40U
 #define DASHBOARD_CELL_KEY_BITMAP_W 28
 #define DASHBOARD_CELL_KEY_BITMAP_H 16
 #define DASHBOARD_CELL_KEY_BITMAP_BYTES \
@@ -255,6 +258,14 @@ typedef struct {
 } dashboard_static_cache_t;
 
 typedef struct {
+    lv_obj_t *obj;
+    int16_t x;
+    int16_t y;
+    int16_t width;
+    int16_t height;
+} boot_brand_part_t;
+
+typedef struct {
     int32_t margin;
     int32_t gap;
     int32_t content_w;
@@ -322,7 +333,9 @@ _Static_assert(sizeof(esp_bms_gps_module_state_t) == 4 &&
                "esp_bms_gps_module_state_t ABI changed; update runtime consumers too");
 _Static_assert(sizeof(esp_bms_boot_animation_style_t) == 4 &&
                    ESP_BMS_BOOT_ANIMATION_CHARGE == 0 &&
-                   ESP_BMS_BOOT_ANIMATION_GAUGE_SWEEP == 1,
+                   ESP_BMS_BOOT_ANIMATION_GAUGE_SWEEP == 1 &&
+                   ESP_BMS_BOOT_ANIMATION_GAUGE_S1000RR == 1 &&
+                   ESP_BMS_BOOT_ANIMATION_GAUGE_HONDA_FIREBLADE == 2,
                "esp_bms_boot_animation_style_t ABI changed; update runtime consumers too");
 _Static_assert(sizeof(esp_bms_dashboard_snapshot_t) == 1100,
                "dashboard snapshot ABI size changed; update all C consumers too");
@@ -409,6 +422,9 @@ typedef struct {
     lv_obj_t *boot_status;
     lv_obj_t *boot_progress;
     lv_obj_t *boot_scan_line;
+    lv_obj_t *boot_brand_mark;
+    lv_obj_t *boot_rr_mark;
+    boot_brand_part_t boot_brand_parts[BOOT_BRAND_PART_COUNT];
     lv_obj_t *boot_charge_segments[BOOT_CHARGE_SEGMENT_COUNT];
     lv_obj_t *settings_page;
     lv_obj_t *settings_root;
@@ -490,7 +506,9 @@ typedef struct {
     lv_obj_t *soc_arc;
     lv_obj_t *soc_battery_level;
     lv_obj_t *pack_voltage;
+    lv_obj_t *pack_voltage_unit;
     lv_obj_t *current;
+    lv_obj_t *current_unit;
     lv_obj_t *capacity;
     lv_obj_t *bms_running_time;
     lv_obj_t *cell_stats;
@@ -814,12 +832,12 @@ static const lv_image_dsc_t SPEED_DASHBOARD_STATIC_LANDSCAPE = {
 #if ESP_BMS_FEATURE_GPS
 static const lv_color_t COLOR_SPEED_GPS_OK = LV_COLOR_MAKE(0x43, 0xe3, 0x36);
 #endif
+static const lv_color_t COLOR_FIREBLADE_RED = LV_COLOR_MAKE(0xf4, 0x18, 0x25);
 #if ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
 static const lv_color_t COLOR_FIREBLADE_BLACK = LV_COLOR_MAKE(0x05, 0x05, 0x05);
 static const lv_color_t COLOR_FIREBLADE_BRIDGE = LV_COLOR_MAKE(0x33, 0x33, 0x33);
 static const lv_color_t COLOR_FIREBLADE_MODE = LV_COLOR_MAKE(0x7f, 0x7f, 0x7e);
 static const lv_color_t COLOR_FIREBLADE_GRAY = LV_COLOR_MAKE(0xdf, 0xe0, 0xe2);
-static const lv_color_t COLOR_FIREBLADE_RED = LV_COLOR_MAKE(0xf4, 0x18, 0x25);
 static const lv_color_t COLOR_FIREBLADE_DANGER_BG = LV_COLOR_MAKE(0xff, 0xcf, 0xcf);
 static const lv_color_t COLOR_FIREBLADE_GREEN = LV_COLOR_MAKE(0x08, 0xa8, 0x13);
 static const lv_color_t COLOR_FIREBLADE_GEAR_BORDER = LV_COLOR_MAKE(0xc8, 0xc8, 0xc8);
@@ -1459,6 +1477,46 @@ static void create_native_bms_dashboard(void)
                      layout.left_w,
                      34,
                      &lv_font_montserrat_28);
+#if LV_USE_FLEX
+    lv_obj_t *range_group = dashboard_native_layer(
+        dynamic_layer,
+        layout.margin,
+        layout.top_y + 24 + (soc_ring_size - 34) / 2 + 36,
+        layout.left_w,
+        18);
+    lv_obj_set_flex_flow(range_group, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(range_group,
+                          LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_END,
+                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(range_group, 1, LV_PART_MAIN);
+    s_ui.remaining_range_value = label(range_group,
+                                       0,
+                                       0,
+                                       LV_SIZE_CONTENT,
+                                       18,
+                                       &lv_font_montserrat_14);
+    s_ui.remaining_range_unit = label(range_group,
+                                      0,
+                                      0,
+                                      LV_SIZE_CONTENT,
+                                      LV_SIZE_CONTENT,
+                                      &settings_zh_10);
+#else
+    s_ui.remaining_range_value = label(dynamic_layer,
+                                       layout.margin,
+                                       layout.top_y + 24 + (soc_ring_size - 34) / 2 + 36,
+                                       layout.left_w - 18,
+                                       18,
+                                       &lv_font_montserrat_14);
+    s_ui.remaining_range_unit = label(dynamic_layer,
+                                      layout.margin + layout.left_w - 18,
+                                      layout.top_y + 24 + (soc_ring_size - 34) / 2 + 40,
+                                      18,
+                                      12,
+                                      &settings_zh_10);
+#endif
+    lv_label_set_text_static(s_ui.remaining_range_unit, "km");
     s_ui.capacity = label(dynamic_layer,
                           layout.margin + 8,
                           layout.top_y + left_h - 18,
@@ -1472,18 +1530,86 @@ static void create_native_bms_dashboard(void)
                                   18,
                                   &settings_zh_13);
 
+    const int32_t electrical_value_w = layout.right_w / 2;
+#if LV_USE_FLEX
+    const bool native_bms_480 = s_ui.width == 480 && s_ui.height == 320;
+    const int32_t electrical_group_w =
+        native_bms_480 ? electrical_value_w - 16 : electrical_value_w;
+    const int32_t electrical_group_x = native_bms_480 ? 8 : 0;
+    const int32_t electrical_group_y = native_bms_480 ? -2 : 0;
+    lv_obj_t *voltage_group = dashboard_native_layer(dynamic_layer,
+                                                      layout.right_x + electrical_group_x,
+                                                      electrical_value_y + electrical_group_y,
+                                                      electrical_group_w,
+                                                      32);
+    lv_obj_set_flex_flow(voltage_group, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(voltage_group,
+                          LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_END,
+                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(voltage_group, 2, LV_PART_MAIN);
+    s_ui.pack_voltage = label(voltage_group,
+                              0,
+                              0,
+                              LV_SIZE_CONTENT,
+                              32,
+                              &lv_font_montserrat_28);
+    s_ui.pack_voltage_unit = label(voltage_group,
+                                   0,
+                                   0,
+                                   LV_SIZE_CONTENT,
+                                   LV_SIZE_CONTENT,
+                                   &settings_zh_16);
+    lv_label_set_text_static(s_ui.pack_voltage_unit, "V");
+
+    lv_obj_t *current_group = dashboard_native_layer(dynamic_layer,
+                                                      layout.right_x + electrical_value_w +
+                                                          electrical_group_x,
+                                                      electrical_value_y + electrical_group_y,
+                                                      electrical_group_w,
+                                                      32);
+    lv_obj_set_flex_flow(current_group, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(current_group,
+                          LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_END,
+                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(current_group, 2, LV_PART_MAIN);
+    s_ui.current = label(current_group, 0, 0, LV_SIZE_CONTENT, 32, &lv_font_montserrat_28);
+    s_ui.current_unit = label(current_group,
+                              0,
+                              0,
+                              LV_SIZE_CONTENT,
+                              LV_SIZE_CONTENT,
+                              &settings_zh_16);
+    lv_label_set_text_static(s_ui.current_unit, "A");
+#else
     s_ui.pack_voltage = label(dynamic_layer,
                               layout.right_x,
                               electrical_value_y,
-                              layout.right_w / 2,
+                              electrical_value_w - 18,
                               32,
                               &lv_font_montserrat_28);
+    s_ui.pack_voltage_unit = label(dynamic_layer,
+                                   layout.right_x + electrical_value_w - 18,
+                                   electrical_value_y + 13,
+                                   16,
+                                   16,
+                                   &lv_font_montserrat_14);
+    lv_label_set_text_static(s_ui.pack_voltage_unit, "V");
     s_ui.current = label(dynamic_layer,
-                         layout.right_x + (layout.right_w / 2),
+                         layout.right_x + electrical_value_w,
                          electrical_value_y,
-                         layout.right_w / 2,
+                         electrical_value_w - 18,
                          32,
                          &lv_font_montserrat_28);
+    s_ui.current_unit = label(dynamic_layer,
+                              layout.right_x + layout.right_w - 18,
+                              electrical_value_y + 13,
+                              16,
+                              16,
+                              &lv_font_montserrat_14);
+    lv_label_set_text_static(s_ui.current_unit, "A");
+#endif
 
     for (uint8_t index = 0U; index < DASHBOARD_CELL_STAT_COUNT; ++index) {
         s_ui.cell_stat_values[index] = label(dynamic_layer,
@@ -1523,11 +1649,17 @@ static void create_native_bms_dashboard(void)
     lv_obj_set_style_text_align(s_ui.bms_running_time, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_align(s_ui.pack_voltage, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_align(s_ui.current, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_align(s_ui.remaining_range_value, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
+    lv_obj_set_style_text_align(s_ui.remaining_range_unit, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_ui.soc, COLOR_WHITE, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_ui.capacity, COLOR_WHITE, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_ui.bms_running_time, COLOR_WHITE, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_ui.pack_voltage, COLOR_WHITE, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.pack_voltage_unit, COLOR_WHITE, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_ui.current, COLOR_WHITE, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.current_unit, COLOR_WHITE, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.remaining_range_value, COLOR_WHITE, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.remaining_range_unit, COLOR_ACCENT, LV_PART_MAIN);
     const lv_color_t bms_value_color =
         s_ui.native_bms_dashboard ? COLOR_WHITE : COLOR_DASHBOARD_VALUE;
     for (uint8_t index = 0U; index < DASHBOARD_CELL_STAT_COUNT; ++index) {
@@ -1549,8 +1681,7 @@ static void create_native_bms_dashboard(void)
 static void create_native_bms_portrait_dashboard(void)
 {
     static const char *const cell_keys[] = { "高", "低", "压差", "均" };
-    static const char *const temp_keys[] = { "T1", "T2", "T3", "T4", "MOS", "BAL" };
-    static const uint8_t temp_value_index[] = { 0U, 1U, 2U, 3U, 5U, 4U };
+    static const char *const temp_keys[] = { "T1", "T2", "T3", "T4", "BAL", "MOS" };
     const int32_t margin = 8;
     const int32_t content_w = s_ui.width - (margin * 2);
     const int32_t soc_y = 8;
@@ -1669,15 +1800,15 @@ static void create_native_bms_portrait_dashboard(void)
         }
     }
 
-    const int32_t temp_col_w = content_w / 2;
+    const int32_t temp_col_w = content_w / 3;
     for (uint8_t index = 0U; index < ESP_BMS_BMS_TEMP_MAX_COUNT; ++index) {
-        const int32_t column = (int32_t)index / 3;
-        const int32_t row = (int32_t)index % 3;
+        const int32_t column = (int32_t)index % 3;
+        const int32_t row = (int32_t)index / 3;
         bms_native_static_label(temp_panel,
                                 temp_keys[index],
-                                column * temp_col_w + 12,
-                                4 + row * 21,
-                                42,
+                                column * temp_col_w + 8,
+                                7 + row * 30,
+                                34,
                                 14,
                                 &settings_zh_10,
                                 COLOR_MUTED,
@@ -1685,7 +1816,7 @@ static void create_native_bms_portrait_dashboard(void)
         if (row > 0) {
             dashboard_separator(temp_panel,
                                 column * temp_col_w + 8,
-                                4 + row * 21 - 2,
+                                7 + row * 30 - 3,
                                 temp_col_w - 16);
         }
     }
@@ -1780,16 +1911,14 @@ static void create_native_bms_portrait_dashboard(void)
                                              &lv_font_montserrat_14);
     }
     for (uint8_t index = 0U; index < ESP_BMS_BMS_TEMP_MAX_COUNT; ++index) {
-        const int32_t position = (int32_t)index;
-        const int32_t column = position / 3;
-        const int32_t row = position % 3;
-        const uint8_t value_index = temp_value_index[index];
-        s_ui.temperature_values[value_index] = label(dynamic_layer,
-                                                      margin + column * temp_col_w + 54,
-                                                      temp_y + 4 + row * 21,
-                                                      temp_col_w - 66,
-                                                      14,
-                                                      &lv_font_montserrat_14);
+        const int32_t column = (int32_t)index % 3;
+        const int32_t row = (int32_t)index / 3;
+        s_ui.temperature_values[index] = label(dynamic_layer,
+                                               margin + column * temp_col_w + 40,
+                                               temp_y + 7 + row * 30,
+                                               temp_col_w - 48,
+                                               14,
+                                               &lv_font_montserrat_14);
     }
     s_ui.capacity = label(dynamic_layer,
                           margin,
@@ -1797,6 +1926,31 @@ static void create_native_bms_portrait_dashboard(void)
                           metric_col_w,
                           18,
                           &settings_zh_13);
+#if LV_USE_FLEX
+    lv_obj_t *range_group = dashboard_native_layer(dynamic_layer,
+                                                    margin + metric_col_w,
+                                                    metric_y + 24,
+                                                    metric_col_w,
+                                                    18);
+    lv_obj_set_flex_flow(range_group, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(range_group,
+                          LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_END,
+                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(range_group, 1, LV_PART_MAIN);
+    s_ui.remaining_range_value = label(range_group,
+                                       0,
+                                       0,
+                                       LV_SIZE_CONTENT,
+                                       18,
+                                       &lv_font_montserrat_14);
+    s_ui.remaining_range_unit = label(range_group,
+                                      0,
+                                      0,
+                                      LV_SIZE_CONTENT,
+                                      LV_SIZE_CONTENT,
+                                      &settings_zh_10);
+#else
     s_ui.remaining_range_value = label(dynamic_layer,
                                        margin + metric_col_w,
                                        metric_y + 24,
@@ -1809,6 +1963,7 @@ static void create_native_bms_portrait_dashboard(void)
                                       20,
                                       16,
                                       &settings_zh_10);
+#endif
     lv_label_set_text(s_ui.remaining_range_unit, "km");
     s_ui.bms_running_time = label(dynamic_layer,
                                   margin + metric_col_w * 2,
@@ -1836,8 +1991,13 @@ static void create_native_bms_portrait_dashboard(void)
     lv_obj_set_style_text_align(s_ui.pack_voltage, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_align(s_ui.current, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_align(s_ui.capacity, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+#if LV_USE_FLEX
+    lv_obj_set_style_text_align(s_ui.remaining_range_value, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
+    lv_obj_set_style_text_align(s_ui.remaining_range_unit, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
+#else
     lv_obj_set_style_text_align(s_ui.remaining_range_value, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
     lv_obj_set_style_text_align(s_ui.remaining_range_unit, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
+#endif
     lv_obj_set_style_text_align(s_ui.bms_running_time, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_ui.soc, COLOR_WHITE, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_ui.pack_voltage, COLOR_WHITE, LV_PART_MAIN);
@@ -3435,7 +3595,7 @@ static const settings_detail_row_t SETTINGS_SYSTEM_ROWS[] = {
     { "音量", "调节提示音量", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_VOLUME },
 #endif
     { "调节条位置", "中间", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_LEVEL_POSITION },
-    { "启动动画", "电量充能 / 机车扫表", ESP_BMS_LVGL_ACTION_NONE,
+    { "启动动画", "电量 / BMW / HONDA", ESP_BMS_LVGL_ACTION_NONE,
       SETTINGS_SYSTEM_VIEW_BOOT_ANIMATION },
     { "屏幕校准", "校准触摸位置", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_TOUCH_CALIBRATION },
     { "旋转屏幕", "点击操作", ESP_BMS_LVGL_ACTION_ROTATE_DISPLAY, SETTINGS_SYSTEM_VIEW_ROOT },
@@ -6756,10 +6916,37 @@ static void settings_show_touch_calibration(void)
     }
 }
 
-static const char *const SETTINGS_BOOT_ANIMATION_LABELS[] = {
-    "电量充能",
-    "机车扫表",
+typedef struct {
+    esp_bms_boot_animation_style_t style;
+    const char *label;
+} settings_boot_animation_option_t;
+
+static const settings_boot_animation_option_t SETTINGS_BOOT_ANIMATION_OPTIONS[] = {
+    { ESP_BMS_BOOT_ANIMATION_CHARGE, "电量充能" },
+    { ESP_BMS_BOOT_ANIMATION_GAUGE_S1000RR, "BMW S1000RR" },
+#if ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
+    { ESP_BMS_BOOT_ANIMATION_GAUGE_HONDA_FIREBLADE, "HONDA Fireblade" },
+#endif
 };
+
+static bool boot_animation_style_is_available(uint8_t style)
+{
+    if (style == (uint8_t)ESP_BMS_BOOT_ANIMATION_CHARGE ||
+        style == (uint8_t)ESP_BMS_BOOT_ANIMATION_GAUGE_S1000RR) {
+        return true;
+    }
+#if ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
+    return style == (uint8_t)ESP_BMS_BOOT_ANIMATION_GAUGE_HONDA_FIREBLADE;
+#else
+    return false;
+#endif
+}
+
+static bool boot_animation_style_is_gauge(uint8_t style)
+{
+    return style == (uint8_t)ESP_BMS_BOOT_ANIMATION_GAUGE_S1000RR ||
+           style == (uint8_t)ESP_BMS_BOOT_ANIMATION_GAUGE_HONDA_FIREBLADE;
+}
 
 static void settings_boot_preview_timer_cancel(void)
 {
@@ -6872,11 +7059,11 @@ static void settings_boot_animation_option_event_cb(lv_event_t *event)
     }
 
     const size_t selected = (size_t)(uintptr_t)lv_event_get_user_data(event);
-    if (selected >= ARRAY_SIZE(SETTINGS_BOOT_ANIMATION_LABELS)) {
+    if (!boot_animation_style_is_available((uint8_t)selected)) {
         return;
     }
-    const size_t current = settings_current_snapshot()->boot_animation_style <=
-                                   (uint8_t)ESP_BMS_BOOT_ANIMATION_GAUGE_SWEEP
+    const size_t current = boot_animation_style_is_available(
+                               settings_current_snapshot()->boot_animation_style)
                                ? settings_current_snapshot()->boot_animation_style
                                : (size_t)ESP_BMS_BOOT_ANIMATION_CHARGE;
     if (selected != current) {
@@ -6896,12 +7083,13 @@ static void settings_show_boot_animation_picker(void)
                                      SETTINGS_CHOICE_ROW_H_LANDSCAPE;
     const int32_t gap = settings_scaled_px(portrait ? 8 : 6);
     const uint8_t saved_style = settings_current_snapshot()->boot_animation_style;
-    const size_t current = saved_style <= (uint8_t)ESP_BMS_BOOT_ANIMATION_GAUGE_SWEEP
+    const size_t current = boot_animation_style_is_available(saved_style)
                                ? saved_style
                                : (size_t)ESP_BMS_BOOT_ANIMATION_CHARGE;
 
-    for (size_t index = 0; index < ARRAY_SIZE(SETTINGS_BOOT_ANIMATION_LABELS); ++index) {
-        const bool active = index == current;
+    for (size_t index = 0; index < ARRAY_SIZE(SETTINGS_BOOT_ANIMATION_OPTIONS); ++index) {
+        const settings_boot_animation_option_t *option = &SETTINGS_BOOT_ANIMATION_OPTIONS[index];
+        const bool active = option->style == current;
         lv_obj_t *row = panel(s_ui.settings_detail,
                               card_x,
                               settings_scaled_px(12) + ((int32_t)index * (row_h + gap)),
@@ -6920,7 +7108,7 @@ static void settings_show_boot_animation_picker(void)
         lv_obj_add_event_cb(row,
                             settings_boot_animation_option_event_cb,
                             LV_EVENT_CLICKED,
-                            (void *)(uintptr_t)index);
+                            (void *)(uintptr_t)option->style);
 
         const lv_font_t *text_font = settings_title_font();
         const int32_t text_h = (int32_t)text_font->line_height + 4;
@@ -6930,7 +7118,7 @@ static void settings_show_boot_animation_picker(void)
                                card_w - 52,
                                text_h,
                                text_font);
-        lv_label_set_text(text, SETTINGS_BOOT_ANIMATION_LABELS[index]);
+        lv_label_set_text(text, option->label);
         lv_obj_set_style_text_color(text,
                                     active ? COLOR_SWITCH_ACTIVE : COLOR_SETTINGS_TEXT,
                                     LV_PART_MAIN);
@@ -8000,6 +8188,16 @@ static void set_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
             current[1] = ' ';
         }
     }
+    if (bms_native_landscape_enabled()) {
+        if (SNAPSHOT_FLAG(snapshot, PACK_VOLTAGE_VALID)) {
+            voltage[strlen(voltage) - 1U] = '\0';
+        }
+        if (current_valid) {
+            current[strlen(current) - 1U] = '\0';
+        }
+        set_obj_hidden(s_ui.pack_voltage_unit, !SNAPSHOT_FLAG(snapshot, PACK_VOLTAGE_VALID));
+        set_obj_hidden(s_ui.current_unit, !current_valid);
+    }
     const bool charging = current_valid && display_current_deci_amps < 0;
     if (s_ui.soc_arc) {
         lv_arc_set_value(s_ui.soc_arc, soc_valid ? soc_percent : 0U);
@@ -8347,10 +8545,10 @@ static void create_controller_dashboard(void)
         lv_obj_set_style_text_align(power_title, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
         s_ui.controller_power = controller_dashboard_label(stats_panel,
                                                            s_ui.controller_power_buf,
-                                                           30, 35, 50,
+                                                           30, 31, 50,
                                                            value_font->line_height, value_font,
                                                            COLOR_TEXT);
-        (void)controller_dashboard_label(stats_panel, "kW", 84, 40, 34,
+        (void)controller_dashboard_label(stats_panel, "kW", 84, 36, 34,
                                          unit_font->line_height, unit_font, COLOR_CONTROLLER_VALUE);
         lv_obj_t *rpm_title = controller_dashboard_label(stats_panel, "RPM", cell_w + 10, 8,
                                                           cell_w - 20,
@@ -8359,10 +8557,10 @@ static void create_controller_dashboard(void)
         lv_obj_set_style_text_align(rpm_title, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
         s_ui.controller_rpm = controller_dashboard_label(stats_panel,
                                                          s_ui.controller_rpm_buf,
-                                                         cell_w + 17, 35, 68,
+                                                         cell_w + 17, 31, 68,
                                                          value_font->line_height, value_font,
                                                          COLOR_TEXT);
-        (void)controller_dashboard_label(stats_panel, "RPM", cell_w + 89, 40, 42,
+        (void)controller_dashboard_label(stats_panel, "RPM", cell_w + 89, 36, 42,
                                          unit_font->line_height, unit_font, COLOR_CONTROLLER_VALUE);
 
         lv_obj_t *controller_title = controller_dashboard_label(stats_panel, "CTRL", 10,
@@ -8372,10 +8570,10 @@ static void create_controller_dashboard(void)
         lv_obj_set_style_text_align(controller_title, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
         s_ui.controller_temp = controller_dashboard_label(stats_panel,
                                                           s_ui.controller_temp_buf,
-                                                          42, row_h + 35, 40,
+                                                          42, row_h + 31, 40,
                                                           value_font->line_height, value_font,
                                                           COLOR_TEXT);
-        (void)controller_dashboard_label(stats_panel, "C", 86, row_h + 40, 20,
+        (void)controller_dashboard_label(stats_panel, "C", 86, row_h + 36, 20,
                                          unit_font->line_height, unit_font, COLOR_CONTROLLER_VALUE);
         lv_obj_t *motor_title = controller_dashboard_label(stats_panel, "MOTOR", cell_w + 10,
                                                            row_h + 8, cell_w - 20,
@@ -8384,10 +8582,10 @@ static void create_controller_dashboard(void)
         lv_obj_set_style_text_align(motor_title, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
         s_ui.controller_motor_temp = controller_dashboard_label(stats_panel,
                                                                 s_ui.controller_motor_temp_buf,
-                                                                cell_w + 42, row_h + 35, 40,
+                                                                cell_w + 42, row_h + 31, 40,
                                                                 value_font->line_height, value_font,
                                                                 COLOR_TEXT);
-        (void)controller_dashboard_label(stats_panel, "C", cell_w + 86, row_h + 40, 20,
+        (void)controller_dashboard_label(stats_panel, "C", cell_w + 86, row_h + 36, 20,
                                          unit_font->line_height, unit_font, COLOR_CONTROLLER_VALUE);
     } else if (native_landscape) {
         const int32_t col_w = stats_w / 4;
@@ -12504,8 +12702,55 @@ static lv_obj_t *boot_line(lv_obj_t *parent,
     return line;
 }
 
+static void boot_gauge_brand_spin_anim_cb(void *obj, int32_t angle)
+{
+    (void)obj;
+    const int32_t phase = angle % 3600;
+    const int32_t half_turn = phase % 1800;
+    const int32_t edge = half_turn <= 900 ? half_turn : 1800 - half_turn;
+    const int32_t scale_x = 256 - ((edge * 196) / 900);
+    const int32_t scale_y = 256 - ((edge * 16) / 900);
+    const int32_t perspective = (phase < 1800 ? 1 : -1) * ((edge * 16) / 900);
+    const int32_t center_x = s_ui.width / 2;
+    const int32_t center_y = s_ui.height / 2;
+
+    for (uint32_t index = 0U; index < BOOT_BRAND_PART_COUNT; ++index) {
+        const boot_brand_part_t *part = &s_ui.boot_brand_parts[index];
+        if (!part->obj) {
+            continue;
+        }
+        const int32_t width = (part->width * scale_x) / 256;
+        const int32_t height = (part->height * scale_y) / 256;
+        const int32_t part_center_x = part->x + part->width / 2;
+        const int32_t part_center_y = part->y + part->height / 2;
+        const int32_t x = center_x + ((part_center_x - center_x) * scale_x) / 256 - width / 2 +
+                          ((part_center_y - center_y) * perspective) / 64;
+        const int32_t y = center_y + ((part_center_y - center_y) * scale_y) / 256 - height / 2;
+        lv_obj_set_pos(part->obj, x, y);
+        lv_obj_set_size(part->obj, width > 0 ? width : 1, height > 0 ? height : 1);
+    }
+}
+
+static void boot_gauge_brand_set_hidden(bool hidden)
+{
+    for (uint32_t index = 0U; index < BOOT_BRAND_PART_COUNT; ++index) {
+        set_obj_hidden(s_ui.boot_brand_parts[index].obj, hidden);
+    }
+}
+
+static void boot_gauge_brand_hide(void)
+{
+    if (!s_ui.boot_brand_mark) {
+        return;
+    }
+    lv_anim_delete(s_ui.boot_brand_mark, boot_gauge_brand_spin_anim_cb);
+    boot_gauge_brand_spin_anim_cb(s_ui.boot_brand_mark, 0);
+    boot_gauge_brand_set_hidden(true);
+}
+
 static void boot_overlay_delete(void)
 {
+    boot_gauge_brand_hide();
     if (s_ui.boot_overlay) {
         lv_obj_delete(s_ui.boot_overlay);
     }
@@ -12513,6 +12758,9 @@ static void boot_overlay_delete(void)
     s_ui.boot_status = NULL;
     s_ui.boot_progress = NULL;
     s_ui.boot_scan_line = NULL;
+    s_ui.boot_brand_mark = NULL;
+    s_ui.boot_rr_mark = NULL;
+    memset(s_ui.boot_brand_parts, 0, sizeof(s_ui.boot_brand_parts));
     memset(s_ui.boot_charge_segments, 0, sizeof(s_ui.boot_charge_segments));
 }
 
@@ -12657,57 +12905,266 @@ static void boot_charge_create(void)
     lv_obj_move_foreground(s_ui.boot_scan_line);
 }
 
+static bool boot_gauge_brand_part_register(lv_obj_t *obj,
+                                           int32_t x,
+                                           int32_t y,
+                                           int32_t width,
+                                           int32_t height)
+{
+    for (uint32_t index = 0U; index < BOOT_BRAND_PART_COUNT; ++index) {
+        boot_brand_part_t *part = &s_ui.boot_brand_parts[index];
+        if (part->obj) {
+            continue;
+        }
+        part->obj = obj;
+        part->x = (int16_t)x;
+        part->y = (int16_t)y;
+        part->width = (int16_t)width;
+        part->height = (int16_t)height;
+        return true;
+    }
+    return false;
+}
+
+static lv_obj_t *boot_gauge_brand_part_create(lv_obj_t *parent,
+                                               int32_t x,
+                                               int32_t y,
+                                               int32_t width,
+                                               int32_t height,
+                                               lv_color_t color,
+                                               int32_t radius)
+{
+    lv_obj_t *part = boot_line(parent, x, y, width, height, color, LV_OPA_COVER);
+    if (!boot_gauge_brand_part_register(part, x, y, width, height)) {
+        lv_obj_delete(part);
+        return NULL;
+    }
+    lv_obj_set_style_radius(part, radius, LV_PART_MAIN);
+    return part;
+}
+
+static lv_obj_t *boot_gauge_brand_label_create(lv_obj_t *parent,
+                                                int32_t x,
+                                                int32_t y,
+                                                int32_t width,
+                                                int32_t height,
+                                                const char *text,
+                                                const lv_font_t *font,
+                                                lv_color_t color)
+{
+    lv_obj_t *part = label(parent, x, y, width, height, font);
+    if (!boot_gauge_brand_part_register(part, x, y, width, height)) {
+        lv_obj_delete(part);
+        return NULL;
+    }
+    lv_label_set_text_static(part, text);
+    lv_obj_set_style_text_color(part, color, LV_PART_MAIN);
+    lv_obj_set_style_text_align(part, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    return part;
+}
+
+static lv_obj_t *boot_gauge_bmw_badge_create(lv_obj_t *parent, int32_t size)
+{
+    const int32_t x = (s_ui.width - size) / 2;
+    const int32_t y = (s_ui.height - size) / 2;
+    const int32_t face = size - 38;
+    const int32_t inner = face + 6;
+    const int32_t tile = face / 2;
+    const int32_t face_x = x + (size - face) / 2;
+    const int32_t face_y = y + (size - face) / 2;
+    const int32_t label_h = (int32_t)lv_font_montserrat_14.line_height;
+    lv_obj_t *mark = boot_gauge_brand_part_create(parent,
+                                                   x,
+                                                   y,
+                                                   size,
+                                                   size,
+                                                   COLOR_DASHBOARD_BG,
+                                                   LV_RADIUS_CIRCLE);
+    lv_obj_set_style_border_width(mark, 3, LV_PART_MAIN);
+    lv_obj_set_style_border_color(mark, COLOR_MUTED, LV_PART_MAIN);
+    lv_obj_set_style_border_opa(mark, LV_OPA_COVER, LV_PART_MAIN);
+    (void)boot_gauge_brand_part_create(parent,
+                                       x + (size - inner) / 2,
+                                       y + (size - inner) / 2,
+                                       inner,
+                                       inner,
+                                       COLOR_MUTED,
+                                       LV_RADIUS_CIRCLE);
+    (void)boot_gauge_brand_part_create(parent,
+                                       face_x - 2,
+                                       face_y - 2,
+                                       face + 4,
+                                       face + 4,
+                                       COLOR_WHITE,
+                                       LV_RADIUS_CIRCLE);
+    (void)boot_gauge_brand_part_create(parent, face_x, face_y, tile, tile,
+                                       COLOR_BOOT_BLUE, 0);
+    (void)boot_gauge_brand_part_create(parent, face_x + tile, face_y + tile, tile, tile,
+                                       COLOR_BOOT_BLUE, 0);
+    (void)boot_gauge_brand_part_create(parent,
+                                       face_x + tile - 1,
+                                       face_y,
+                                       2,
+                                       face,
+                                       COLOR_MUTED,
+                                       0);
+    (void)boot_gauge_brand_part_create(parent,
+                                       face_x,
+                                       face_y + tile - 1,
+                                       face,
+                                       2,
+                                       COLOR_MUTED,
+                                       0);
+    (void)boot_gauge_brand_label_create(parent,
+                                        x + 8,
+                                        y + size / 3 - label_h / 2,
+                                        16,
+                                        label_h,
+                                        "B",
+                                        &lv_font_montserrat_14,
+                                        COLOR_WHITE);
+    (void)boot_gauge_brand_label_create(parent,
+                                        x + size / 2 - 8,
+                                        y + 2,
+                                        16,
+                                        label_h,
+                                        "M",
+                                        &lv_font_montserrat_14,
+                                        COLOR_WHITE);
+    (void)boot_gauge_brand_label_create(parent,
+                                        x + size - 24,
+                                        y + size / 3 - label_h / 2,
+                                        16,
+                                        label_h,
+                                        "W",
+                                        &lv_font_montserrat_14,
+                                        COLOR_WHITE);
+    return mark;
+}
+
+static lv_obj_t *boot_gauge_honda_badge_create(lv_obj_t *parent,
+                                                int32_t width,
+                                                int32_t height)
+{
+    const int32_t x = (s_ui.width - width) / 2;
+    const int32_t y = (s_ui.height - height) / 2;
+    const int32_t base_y = y + height - 18;
+    lv_obj_t *mark = boot_gauge_brand_part_create(parent, x + 8, base_y,
+                                                   width - 16, 8,
+                                                   COLOR_FIREBLADE_RED, LV_RADIUS_CIRCLE);
+    (void)boot_gauge_brand_part_create(parent, x + 15, base_y - 6, width / 3, 7,
+                                        COLOR_FIREBLADE_RED, LV_RADIUS_CIRCLE);
+    (void)boot_gauge_brand_part_create(parent, x + width / 4, base_y - 12, width / 2, 7,
+                                        COLOR_FIREBLADE_RED, LV_RADIUS_CIRCLE);
+    (void)boot_gauge_brand_part_create(parent, x + width / 2 - 4, base_y - 18,
+                                        width / 2 - 8, 7, COLOR_FIREBLADE_RED,
+                                        LV_RADIUS_CIRCLE);
+    (void)boot_gauge_brand_part_create(parent, x + (width * 2) / 3 - 8, base_y - 24,
+                                        width / 3, 7, COLOR_FIREBLADE_RED, LV_RADIUS_CIRCLE);
+    (void)boot_gauge_brand_part_create(parent, x + width - width / 3, base_y - 30,
+                                        width / 5, 7, COLOR_FIREBLADE_RED, LV_RADIUS_CIRCLE);
+    return mark;
+}
+
+static lv_obj_t *boot_gauge_rr_mark_create(lv_obj_t *parent)
+{
+    const int32_t width = s_ui.width < 280 ? 108 : 132;
+    const int32_t height = (int32_t)lv_font_montserrat_48.line_height + 4;
+    lv_obj_t *mark = label(parent,
+                           (s_ui.width - width) / 2,
+                           (s_ui.height - height) / 2,
+                           width,
+                           height,
+                           &lv_font_montserrat_48);
+    lv_label_set_text_static(mark, "RR");
+    lv_obj_set_style_text_align(mark, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(mark, COLOR_BOOT_BLUE, LV_PART_MAIN);
+    lv_obj_set_style_text_letter_space(mark, 3, LV_PART_MAIN);
+    set_obj_hidden(mark, true);
+    return mark;
+}
+
 static void boot_gauge_hud_create(void)
 {
     lv_obj_t *overlay = boot_overlay_create(false);
-    const int32_t hud_h = 36;
-    lv_obj_t *hud = panel(overlay,
-                          8,
-                          s_ui.height - hud_h - 8,
-                          s_ui.width - 16,
-                          hud_h,
-                          COLOR_PANEL_ALT);
-    lv_obj_set_style_radius(hud, 3, LV_PART_MAIN);
-    lv_obj_set_style_border_width(hud, 1, LV_PART_MAIN);
-    lv_obj_set_style_border_color(hud, COLOR_BOOT_CYAN, LV_PART_MAIN);
-    lv_obj_set_style_border_opa(hud, LV_OPA_COVER, LV_PART_MAIN);
+    const bool honda = s_ui.boot_animation_style ==
+                       (uint8_t)ESP_BMS_BOOT_ANIMATION_GAUGE_HONDA_FIREBLADE;
+    const int32_t mark_w = honda ? (s_ui.width < 280 ? 132 : 160)
+                                 : (s_ui.width < 280 ? 96 : 112);
+    const int32_t mark_h = honda ? 92 : mark_w;
+    lv_obj_t *mark = honda ? boot_gauge_honda_badge_create(overlay, mark_w, mark_h)
+                            : boot_gauge_bmw_badge_create(overlay, mark_w);
+    if (!mark) {
+        return;
+    }
+    s_ui.boot_brand_mark = mark;
+    if (!honda) {
+        s_ui.boot_rr_mark = boot_gauge_rr_mark_create(overlay);
+    }
 
-    s_ui.boot_status = label(hud,
-                             10,
-                             9,
-                             s_ui.width - 92,
-                             18,
-                             &lv_font_montserrat_14);
-    snprintf(s_ui.boot_status_buf, sizeof(s_ui.boot_status_buf), "POWER ON");
-    lv_label_set_text_static(s_ui.boot_status, s_ui.boot_status_buf);
-    lv_obj_set_style_text_color(s_ui.boot_status, COLOR_BOOT_CYAN, LV_PART_MAIN);
-    lv_obj_set_style_text_letter_space(s_ui.boot_status, 1, LV_PART_MAIN);
+    lv_anim_t anim;
+    lv_anim_init(&anim);
+    lv_anim_set_var(&anim, mark);
+    lv_anim_set_values(&anim, 0, 3600);
+    lv_anim_set_duration(&anim, 900);
+    lv_anim_set_path_cb(&anim, lv_anim_path_linear);
+    lv_anim_set_exec_cb(&anim, boot_gauge_brand_spin_anim_cb);
+    lv_anim_set_repeat_count(&anim, LV_ANIM_REPEAT_INFINITE);
+    lv_anim_start(&anim);
+}
 
-    s_ui.boot_progress = label(hud,
-                               s_ui.width - 88,
-                               9,
-                               58,
-                               18,
-                               &lv_font_montserrat_14);
-    snprintf(s_ui.boot_progress_buf, sizeof(s_ui.boot_progress_buf), "0%%");
-    lv_label_set_text_static(s_ui.boot_progress, s_ui.boot_progress_buf);
-    lv_obj_set_style_text_align(s_ui.boot_progress, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
-    lv_obj_set_style_text_color(s_ui.boot_progress, COLOR_TEXT, LV_PART_MAIN);
+static esp_bms_speed_dashboard_style_t boot_gauge_dashboard_style(void)
+{
+#if ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
+    if (s_ui.boot_animation_style ==
+        (uint8_t)ESP_BMS_BOOT_ANIMATION_GAUGE_HONDA_FIREBLADE) {
+        return ESP_BMS_SPEED_DASHBOARD_STYLE_HONDA_FIREBLADE;
+    }
+#endif
+    return ESP_BMS_SPEED_DASHBOARD_STYLE_S1000RR;
+}
+
+static uint32_t boot_gauge_sweep_progress(uint8_t progress_percent)
+{
+    if (progress_percent <= BOOT_GAUGE_BRAND_INTRO_PERCENT) {
+        return 0U;
+    }
+    return ((uint32_t)(progress_percent - BOOT_GAUGE_BRAND_INTRO_PERCENT) * 100U) /
+           (100U - BOOT_GAUGE_BRAND_INTRO_PERCENT);
+}
+
+static uint16_t boot_gauge_demo_speed(uint8_t progress_percent)
+{
+    const uint16_t maximum = s_ui.boot_speed_unit == ESP_BMS_SPEED_UNIT_MPH
+                                 ? 1200U
+                                 : 1800U;
+    const uint32_t sweep_progress = boot_gauge_sweep_progress(progress_percent);
+    const uint32_t phase = sweep_progress <= 50U
+                               ? sweep_progress * 2U
+                               : (100U - sweep_progress) * 2U;
+    return (uint16_t)(((uint32_t)maximum * phase) / 100U);
+}
+
+static void boot_gauge_dashboard_set_visible(bool visible)
+{
+    const bool fireblade = s_ui.boot_dashboard_style ==
+                           ESP_BMS_SPEED_DASHBOARD_STYLE_HONDA_FIREBLADE;
+    set_obj_hidden(s_ui.speed_art, fireblade || !visible);
+    set_obj_hidden(s_ui.fireblade_page, !fireblade || !visible);
 }
 
 static void boot_gauge_apply(uint8_t progress_percent)
 {
     esp_bms_dashboard_snapshot_t demo = s_ui.last_snapshot;
-    const uint16_t maximum = s_ui.boot_speed_unit == ESP_BMS_SPEED_UNIT_MPH
-                                 ? 1200U
-                                 : 1800U;
-    const uint32_t phase = progress_percent <= 50U
-                               ? (uint32_t)progress_percent * 2U
-                               : (uint32_t)(100U - progress_percent) * 2U;
+    const bool intro = progress_percent < BOOT_GAUGE_BRAND_INTRO_PERCENT;
+    const bool rr_intro = s_ui.boot_animation_style ==
+                              (uint8_t)ESP_BMS_BOOT_ANIMATION_GAUGE_S1000RR &&
+                          progress_percent >= BOOT_GAUGE_BMW_RR_PERCENT && intro;
+    const bool brand_intro = intro && !rr_intro;
 
     demo.speed_unit = s_ui.boot_speed_unit;
     demo.speed_dashboard_style = s_ui.boot_dashboard_style;
-    demo.speed_deci_units = (uint16_t)(((uint32_t)maximum * phase) / 100U);
+    demo.speed_deci_units = boot_gauge_demo_speed(progress_percent);
     demo.gps_module_state = (uint8_t)ESP_BMS_GPS_MODULE_AVAILABLE;
     esp_bms_dashboard_snapshot_flag_set(
         &demo, ESP_BMS_DASHBOARD_FLAG_CONTROLLER_PAGE_ENABLED, false);
@@ -12715,8 +13172,20 @@ static void boot_gauge_apply(uint8_t progress_percent)
         &demo, ESP_BMS_DASHBOARD_FLAG_GPS_FIX_VALID, true);
     esp_bms_dashboard_snapshot_flag_set(
         &demo, ESP_BMS_DASHBOARD_FLAG_SPEED_VALID, true);
-    speed_dashboard_style_apply(&demo);
-    set_gps_dashboard(&demo);
+    s_ui.last_snapshot = demo;
+    speed_dashboard_style_apply(&s_ui.last_snapshot);
+    set_gps_dashboard(&s_ui.last_snapshot);
+    lv_obj_move_foreground(s_ui.boot_overlay);
+    lv_obj_set_style_bg_opa(s_ui.boot_overlay,
+                            intro ? LV_OPA_COVER : LV_OPA_TRANSP,
+                            LV_PART_MAIN);
+    boot_gauge_dashboard_set_visible(!intro);
+    set_obj_hidden(s_ui.boot_rr_mark, !rr_intro);
+    if (brand_intro) {
+        boot_gauge_brand_set_hidden(false);
+    } else {
+        boot_gauge_brand_hide();
+    }
 }
 
 static esp_err_t rebuild_screen_if_needed(const esp_bms_dashboard_snapshot_t *snapshot)
@@ -12833,23 +13302,16 @@ esp_err_t esp_bms_lvgl_ui_boot_start(const esp_bms_dashboard_snapshot_t *snapsho
                         "rebuild boot UI failed");
 
     const uint8_t configured_style = snapshot->boot_animation_style;
-    s_ui.boot_animation_style =
-        configured_style <= (uint8_t)ESP_BMS_BOOT_ANIMATION_GAUGE_SWEEP
-            ? configured_style
-            : (uint8_t)ESP_BMS_BOOT_ANIMATION_CHARGE;
-    const esp_bms_speed_dashboard_style_t configured_dashboard_style =
-        speed_dashboard_style_from_snapshot(snapshot);
-    s_ui.boot_dashboard_style =
-        configured_dashboard_style == ESP_BMS_SPEED_DASHBOARD_STYLE_HONDA_FIREBLADE
-            ? ESP_BMS_SPEED_DASHBOARD_STYLE_HONDA_FIREBLADE
-            : ESP_BMS_SPEED_DASHBOARD_STYLE_S1000RR;
+    s_ui.boot_animation_style = boot_animation_style_is_available(configured_style)
+                                    ? configured_style
+                                    : (uint8_t)ESP_BMS_BOOT_ANIMATION_CHARGE;
+    s_ui.boot_dashboard_style = boot_gauge_dashboard_style();
     s_ui.boot_speed_unit = snapshot->speed_unit;
     s_ui.boot_active = true;
     apply_dashboard_snapshot(snapshot);
     show_dashboard_view();
 
-    if (s_ui.boot_animation_style ==
-        (uint8_t)ESP_BMS_BOOT_ANIMATION_GAUGE_SWEEP) {
+    if (boot_animation_style_is_gauge(s_ui.boot_animation_style)) {
         move_to_page(ESP_BMS_LVGL_PAGE_GPS, false);
         boot_gauge_hud_create();
     } else {
@@ -12867,21 +13329,19 @@ esp_err_t esp_bms_lvgl_ui_boot_update(uint8_t progress_percent, const char *stat
                         ESP_ERR_INVALID_STATE, TAG, "boot animation is not active");
 
     const uint8_t progress = progress_percent > 100U ? 100U : progress_percent;
-    char progress_text[sizeof(s_ui.boot_progress_buf)] = { 0 };
-    (void)snprintf(progress_text, sizeof(progress_text), "%u%%", (unsigned)progress);
-    gps_label_set(s_ui.boot_progress,
-                  s_ui.boot_progress_buf,
-                  sizeof(s_ui.boot_progress_buf),
-                  progress_text);
-    gps_label_set(s_ui.boot_status,
-                  s_ui.boot_status_buf,
-                  sizeof(s_ui.boot_status_buf),
-                  status_text && status_text[0] != '\0' ? status_text : "BOOT");
-
-    if (s_ui.boot_animation_style ==
-        (uint8_t)ESP_BMS_BOOT_ANIMATION_GAUGE_SWEEP) {
+    if (boot_animation_style_is_gauge(s_ui.boot_animation_style)) {
         boot_gauge_apply(progress);
     } else {
+        char progress_text[sizeof(s_ui.boot_progress_buf)] = { 0 };
+        (void)snprintf(progress_text, sizeof(progress_text), "%u%%", (unsigned)progress);
+        gps_label_set(s_ui.boot_progress,
+                      s_ui.boot_progress_buf,
+                      sizeof(s_ui.boot_progress_buf),
+                      progress_text);
+        gps_label_set(s_ui.boot_status,
+                      s_ui.boot_status_buf,
+                      sizeof(s_ui.boot_status_buf),
+                      status_text && status_text[0] != '\0' ? status_text : "BOOT");
         const uint32_t filled = progress == 0U
                                     ? 0U
                                     : (((uint32_t)progress * BOOT_CHARGE_SEGMENT_COUNT) + 99U) /
@@ -13312,12 +13772,76 @@ static bool simulator_native_speed_dashboard_smoke(void)
     return controller_ready && fireblade_ready;
 }
 
+static bool simulator_native_bms_landscape_smoke(void)
+{
+    if (s_ui.width != 480 || s_ui.height != 320) {
+        return true;
+    }
+    return s_ui.native_bms_dashboard && s_ui.pack_voltage_unit && s_ui.current_unit &&
+           strcmp(lv_label_get_text(s_ui.pack_voltage_unit), "V") == 0 &&
+           strcmp(lv_label_get_text(s_ui.current_unit), "A") == 0;
+}
+
+bool esp_bms_lvgl_ui_simulator_boot_gauge_matches(
+    esp_bms_boot_animation_style_t animation_style,
+    uint8_t progress_percent)
+{
+    const bool intro = progress_percent < BOOT_GAUGE_BRAND_INTRO_PERCENT;
+    const esp_bms_speed_dashboard_style_t style = boot_gauge_dashboard_style();
+    const bool fireblade = style == ESP_BMS_SPEED_DASHBOARD_STYLE_HONDA_FIREBLADE;
+    const bool rr_intro = animation_style == ESP_BMS_BOOT_ANIMATION_GAUGE_S1000RR &&
+                          progress_percent >= BOOT_GAUGE_BMW_RR_PERCENT && intro;
+    const bool brand_intro = intro && !rr_intro;
+    const bool dashboard_matches = intro
+                                       ? (fireblade
+                                              ? s_ui.fireblade_page &&
+                                                    lv_obj_has_flag(s_ui.fireblade_page,
+                                                                    LV_OBJ_FLAG_HIDDEN)
+                                              : s_ui.speed_art &&
+                                                    lv_obj_has_flag(s_ui.speed_art,
+                                                                    LV_OBJ_FLAG_HIDDEN))
+                                       : fireblade
+                                       ? s_ui.fireblade_page &&
+                                             !lv_obj_has_flag(s_ui.fireblade_page,
+                                                              LV_OBJ_FLAG_HIDDEN) &&
+                                             s_ui.speed_art &&
+                                             lv_obj_has_flag(s_ui.speed_art,
+                                                             LV_OBJ_FLAG_HIDDEN)
+                                       : s_ui.speed_art &&
+                                             !lv_obj_has_flag(s_ui.speed_art,
+                                                              LV_OBJ_FLAG_HIDDEN) &&
+                                             (!s_ui.fireblade_page ||
+                                              lv_obj_has_flag(s_ui.fireblade_page,
+                                                              LV_OBJ_FLAG_HIDDEN));
+    const bool brand_matches = s_ui.boot_brand_mark &&
+                               (brand_intro
+                                    ? !lv_obj_has_flag(s_ui.boot_brand_mark, LV_OBJ_FLAG_HIDDEN)
+                                    : lv_obj_has_flag(s_ui.boot_brand_mark, LV_OBJ_FLAG_HIDDEN));
+    const bool rr_matches = animation_style == ESP_BMS_BOOT_ANIMATION_GAUGE_S1000RR
+                                ? s_ui.boot_rr_mark &&
+                                      (rr_intro
+                                           ? !lv_obj_has_flag(s_ui.boot_rr_mark,
+                                                              LV_OBJ_FLAG_HIDDEN)
+                                           : lv_obj_has_flag(s_ui.boot_rr_mark,
+                                                             LV_OBJ_FLAG_HIDDEN))
+                                : !s_ui.boot_rr_mark;
+    const bool overlay_matches = s_ui.boot_overlay &&
+                                 lv_obj_get_style_bg_opa(s_ui.boot_overlay, LV_PART_MAIN) ==
+                                     (intro ? LV_OPA_COVER : LV_OPA_TRANSP);
+    return boot_animation_style_is_gauge((uint8_t)animation_style) && s_ui.boot_active &&
+           s_ui.boot_animation_style == (uint8_t)animation_style &&
+           s_ui.boot_overlay && !s_ui.boot_status && !s_ui.boot_progress &&
+           s_ui.last_snapshot.speed_dashboard_style == style &&
+           s_ui.last_snapshot.speed_deci_units == boot_gauge_demo_speed(progress_percent) &&
+           dashboard_matches && brand_matches && rr_matches && overlay_matches;
+}
+
 bool esp_bms_lvgl_ui_simulator_snapshot_matches(const esp_bms_dashboard_snapshot_t *snapshot)
 {
     return snapshot && UI_FLAG(LAST_SNAPSHOT_VALID) && !UI_FLAG(DEFERRED_SNAPSHOT_VALID) &&
            memcmp(&s_ui.last_snapshot, snapshot, sizeof(s_ui.last_snapshot)) == 0 &&
            simulator_soc_color_smoke() && simulator_native_bms_portrait_smoke() &&
-           simulator_native_speed_dashboard_smoke();
+           simulator_native_bms_landscape_smoke() && simulator_native_speed_dashboard_smoke();
 }
 
 static bool simulator_page_transition_smoke(void)
@@ -13463,7 +13987,12 @@ bool esp_bms_lvgl_ui_simulator_boot_animation_settings_visible(void)
            s_ui.settings_system_view ==
                (uint8_t)SETTINGS_SYSTEM_VIEW_BOOT_ANIMATION &&
            s_ui.settings_boot_preview_button &&
-           !lv_obj_has_flag(s_ui.settings_boot_preview_button, LV_OBJ_FLAG_HIDDEN);
+           !lv_obj_has_flag(s_ui.settings_boot_preview_button, LV_OBJ_FLAG_HIDDEN) &&
+           simulator_tree_has_label(s_ui.settings_detail, "BMW S1000RR") &&
+#if ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
+           simulator_tree_has_label(s_ui.settings_detail, "HONDA Fireblade") &&
+#endif
+           true;
 }
 
 bool esp_bms_lvgl_ui_simulator_gps_settings_visible(void)

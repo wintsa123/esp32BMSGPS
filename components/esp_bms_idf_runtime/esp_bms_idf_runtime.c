@@ -1186,8 +1186,15 @@ static bool runtime_speed_dashboard_style_matches_policy(int32_t style)
 
 static bool runtime_boot_animation_style_matches_policy(int32_t style)
 {
-    return style >= (int32_t)ESP_BMS_BOOT_ANIMATION_CHARGE &&
-           style <= (int32_t)ESP_BMS_BOOT_ANIMATION_GAUGE_SWEEP;
+    if (style == (int32_t)ESP_BMS_BOOT_ANIMATION_CHARGE ||
+        style == (int32_t)ESP_BMS_BOOT_ANIMATION_GAUGE_S1000RR) {
+        return true;
+    }
+#if ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
+    return style == (int32_t)ESP_BMS_BOOT_ANIMATION_GAUGE_HONDA_FIREBLADE;
+#else
+    return false;
+#endif
 }
 
 static bool runtime_language_matches_policy(uint8_t language)
@@ -4582,11 +4589,18 @@ bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,
             return false;
         }
         runtime->snapshot.boot_animation_style = (uint8_t)event->numeric_delta;
-        runtime_set_error(runtime,
-                          runtime->snapshot.boot_animation_style ==
-                                  (uint8_t)ESP_BMS_BOOT_ANIMATION_GAUGE_SWEEP
-                              ? "BOOT GAUGE"
-                              : "BOOT CHARGE");
+        switch ((esp_bms_boot_animation_style_t)runtime->snapshot.boot_animation_style) {
+        case ESP_BMS_BOOT_ANIMATION_GAUGE_HONDA_FIREBLADE:
+            runtime_set_error(runtime, "BOOT HONDA");
+            break;
+        case ESP_BMS_BOOT_ANIMATION_GAUGE_S1000RR:
+            runtime_set_error(runtime, "BOOT BMW");
+            break;
+        case ESP_BMS_BOOT_ANIMATION_CHARGE:
+        default:
+            runtime_set_error(runtime, "BOOT CHARGE");
+            break;
+        }
         return true;
     case ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_SOURCE:
         {

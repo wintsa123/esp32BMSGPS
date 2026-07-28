@@ -176,6 +176,8 @@ typedef enum {
 typedef enum {
     ESP_BMS_BOOT_ANIMATION_CHARGE = 0,
     ESP_BMS_BOOT_ANIMATION_GAUGE_SWEEP = 1,
+    ESP_BMS_BOOT_ANIMATION_GAUGE_S1000RR = ESP_BMS_BOOT_ANIMATION_GAUGE_SWEEP,
+    ESP_BMS_BOOT_ANIMATION_GAUGE_HONDA_FIREBLADE = 2,
 } esp_bms_boot_animation_style_t;
 
 static inline esp_bms_speed_source_t esp_bms_speed_source_resolve(
@@ -428,6 +430,9 @@ bool esp_bms_lvgl_ui_simulator_gps_settings_smoke(void);
 bool esp_bms_lvgl_ui_simulator_settings_scroll_smoke(void);
 uint32_t esp_bms_lvgl_ui_simulator_object_count(void);
 uint8_t esp_bms_lvgl_ui_simulator_static_cache_count(void);
+bool esp_bms_lvgl_ui_simulator_boot_gauge_matches(
+    esp_bms_boot_animation_style_t animation_style,
+    uint8_t progress_percent);
 bool esp_bms_lvgl_ui_simulator_snapshot_matches(const esp_bms_dashboard_snapshot_t *snapshot);
 bool esp_bms_lvgl_ui_simulator_native_gesture_smoke(void);
 #endif

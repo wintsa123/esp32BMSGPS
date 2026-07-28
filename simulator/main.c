@@ -432,7 +432,11 @@ static bool apply_action_event(host_app_t *app, const esp_bms_lvgl_action_event_
         if (esp_bms_lvgl_action_event_flag_get(
                 event, ESP_BMS_LVGL_ACTION_EVENT_FLAG_NUMERIC_DELTA_VALID) &&
             event->numeric_delta >= ESP_BMS_BOOT_ANIMATION_CHARGE &&
-            event->numeric_delta <= ESP_BMS_BOOT_ANIMATION_GAUGE_SWEEP) {
+            (event->numeric_delta <= ESP_BMS_BOOT_ANIMATION_GAUGE_S1000RR
+#if ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
+                || event->numeric_delta == ESP_BMS_BOOT_ANIMATION_GAUGE_HONDA_FIREBLADE
+#endif
+                )) {
             snapshot->boot_animation_style = (uint8_t)event->numeric_delta;
             return true;
         }
@@ -530,7 +534,7 @@ static void print_help(const char *program)
 {
     printf("用法: %s [--portrait] [--resolution WIDTHxHEIGHT] [--headless] [--screenshot FILE.bmp] "
            "[--page battery|controller|gps|cast] "
-           "[--style s1000rr|controller|fireblade] [--boot charge|gauge] "
+           "[--style s1000rr|controller|fireblade] [--boot charge|bmw|honda] "
            "[--boot-progress 0..100]\n",
            program);
     puts("鼠标: 横向拖动=切页（黑场跟手）  下拉=快捷面板");
@@ -661,7 +665,7 @@ static bool run_boot_style_smoke(host_app_t *app,
                                  esp_bms_boot_animation_style_t animation_style,
                                  esp_bms_speed_dashboard_style_t dashboard_style)
 {
-    static const uint8_t progress_steps[] = { 0U, 25U, 50U, 75U, 100U };
+    static const uint8_t progress_steps[] = { 0U, 25U, 32U, 40U, 55U, 70U, 85U, 100U };
     app->snapshot.boot_animation_style = (uint8_t)animation_style;
     app->snapshot.speed_dashboard_style = dashboard_style;
     snapshot_flag_set(&app->snapshot,
@@ -674,7 +678,10 @@ static bool run_boot_style_smoke(host_app_t *app,
          index < sizeof(progress_steps) / sizeof(progress_steps[0]);
          ++index) {
         const char *status = progress_steps[index] == 100U ? "SYSTEM READY" : "GPS CHECK";
-        if (esp_bms_lvgl_ui_boot_update(progress_steps[index], status) != ESP_OK) {
+        if (esp_bms_lvgl_ui_boot_update(progress_steps[index], status) != ESP_OK ||
+            (animation_style != ESP_BMS_BOOT_ANIMATION_CHARGE &&
+             !esp_bms_lvgl_ui_simulator_boot_gauge_matches(animation_style,
+                                                            progress_steps[index]))) {
             return false;
         }
         lv_timer_handler();
@@ -792,6 +799,9 @@ static bool run_native_dashboard_stress(host_app_t *app)
     if (esp_bms_lvgl_ui_update(&app->snapshot) != ESP_OK ||
         esp_bms_lvgl_ui_set_page(ESP_BMS_LVGL_PAGE_BATTERY, false) != ESP_OK ||
         esp_bms_lvgl_ui_simulator_static_cache_count() != 2U) {
+        fprintf(stderr,
+                "native stress setup failed: cache=%u\n",
+                (unsigned)esp_bms_lvgl_ui_simulator_static_cache_count());
         return false;
     }
 
@@ -803,6 +813,11 @@ static bool run_native_dashboard_stress(host_app_t *app)
                                              : ESP_BMS_LVGL_PAGE_BATTERY;
         if (!run_native_dashboard_transition(app, page, &snapshot_updates) ||
             esp_bms_lvgl_ui_simulator_object_count() != baseline_objects) {
+            fprintf(stderr,
+                    "native stress transition failed: cycle=%u objects=%u expected=%u\n",
+                    (unsigned)cycle,
+                    (unsigned)esp_bms_lvgl_ui_simulator_object_count(),
+                    (unsigned)baseline_objects);
             return false;
         }
     }
@@ -810,6 +825,9 @@ static bool run_native_dashboard_stress(host_app_t *app)
     rotate_display(app);
     if (esp_bms_lvgl_ui_update(&app->snapshot) != ESP_OK ||
         esp_bms_lvgl_ui_simulator_static_cache_count() != 0U) {
+        fprintf(stderr,
+                "native stress portrait reset failed: cache=%u\n",
+                (unsigned)esp_bms_lvgl_ui_simulator_static_cache_count());
         return false;
     }
     rotate_display(app);
@@ -820,6 +838,14 @@ static bool run_native_dashboard_stress(host_app_t *app)
                         snapshot_updates >= 300U;
     if (passed) {
         printf("native carousel stress passed: %u deferred snapshots\n", snapshot_updates);
+    } else {
+        fprintf(stderr,
+                "native stress restore failed: cache=%u objects=%u expected=%u snapshot=%d updates=%u\n",
+                (unsigned)esp_bms_lvgl_ui_simulator_static_cache_count(),
+                (unsigned)esp_bms_lvgl_ui_simulator_object_count(),
+                (unsigned)baseline_objects,
+                esp_bms_lvgl_ui_simulator_snapshot_matches(&app->snapshot) ? 1 : 0,
+                (unsigned)snapshot_updates);
     }
     return passed;
 }
@@ -871,25 +897,36 @@ static bool run_headless_feature_matrix(host_app_t *app)
                               ESP_BMS_BOOT_ANIMATION_CHARGE,
                               ESP_BMS_SPEED_DASHBOARD_STYLE_S1000RR) ||
         !run_boot_style_smoke(app,
-                              ESP_BMS_BOOT_ANIMATION_GAUGE_SWEEP,
-                              ESP_BMS_SPEED_DASHBOARD_STYLE_S1000RR)) {
+                              ESP_BMS_BOOT_ANIMATION_GAUGE_S1000RR,
+                              ESP_BMS_SPEED_DASHBOARD_STYLE_HONDA_FIREBLADE)) {
         fputs("S1000RR boot animation smoke failed\n", stderr);
         return false;
     }
 #if ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
     if (!run_boot_style_smoke(app,
-                              ESP_BMS_BOOT_ANIMATION_GAUGE_SWEEP,
-                              ESP_BMS_SPEED_DASHBOARD_STYLE_HONDA_FIREBLADE)) {
+                              ESP_BMS_BOOT_ANIMATION_GAUGE_HONDA_FIREBLADE,
+                              ESP_BMS_SPEED_DASHBOARD_STYLE_S1000RR)) {
         fputs("Fireblade boot animation smoke failed\n", stderr);
         return false;
     }
 #endif
-    if (!run_settings_boot_preview_smoke(app,
-                                         ESP_BMS_BOOT_ANIMATION_CHARGE,
-                                         false) ||
-        !run_settings_boot_preview_smoke(app,
-                                         ESP_BMS_BOOT_ANIMATION_GAUGE_SWEEP,
-                                         true)) {
+    bool settings_preview_ok =
+        run_settings_boot_preview_smoke(app, ESP_BMS_BOOT_ANIMATION_CHARGE, false) &&
+        run_settings_boot_preview_smoke(app,
+                                        ESP_BMS_BOOT_ANIMATION_GAUGE_S1000RR,
+#if ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
+                                        false);
+#else
+                                        true);
+#endif
+#if ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
+    settings_preview_ok = settings_preview_ok &&
+                          run_settings_boot_preview_smoke(
+                              app,
+                              ESP_BMS_BOOT_ANIMATION_GAUGE_HONDA_FIREBLADE,
+                              true);
+#endif
+    if (!settings_preview_ok) {
         fputs("settings boot animation smoke failed\n", stderr);
         return false;
     }
@@ -964,8 +1001,10 @@ int main(int argc, char **argv)
             const char *style = argv[++index];
             if (strcmp(style, "charge") == 0) {
                 preview_boot_style = ESP_BMS_BOOT_ANIMATION_CHARGE;
-            } else if (strcmp(style, "gauge") == 0) {
-                preview_boot_style = ESP_BMS_BOOT_ANIMATION_GAUGE_SWEEP;
+            } else if (strcmp(style, "gauge") == 0 || strcmp(style, "bmw") == 0) {
+                preview_boot_style = ESP_BMS_BOOT_ANIMATION_GAUGE_S1000RR;
+            } else if (strcmp(style, "honda") == 0) {
+                preview_boot_style = ESP_BMS_BOOT_ANIMATION_GAUGE_HONDA_FIREBLADE;
             } else {
                 fprintf(stderr, "未知启动动画: %s\n", style);
                 return 2;

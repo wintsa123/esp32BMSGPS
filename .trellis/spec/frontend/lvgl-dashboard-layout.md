@@ -66,3 +66,20 @@ The gauge overlay is transparent and exists only to hold boot state. Do not
 add status or percentage labels to it, since they obscure both dashboard
 themes. Simulator coverage must check the selected theme page, the demo speed
 at each sweep phase, and the absence of those HUD labels.
+
+### Brand Intro Sequence
+
+`esp_bms_dashboard_snapshot_t.boot_animation_style` selects the boot gauge
+independently of `speed_dashboard_style`. During the opaque opening stage, the
+selected gauge page must remain hidden; create the demo snapshot only for the
+selected boot style.
+
+- BMW S1000RR: show the blue-white BMW roundel with the manual 3D flip through
+  32%, then show blue `RR` through 40%, then reveal the S1000RR energy sweep.
+- Honda Fireblade: show the red wing with the same 3D flip through 40%, then
+  reveal the Fireblade pointer sweep.
+
+Use the registered `boot_brand_parts` geometry for the flip rather than LVGL
+object transforms, and keep the overlay free of `boot_status` and
+`boot_progress`. The simulator must exercise the 32% BMW `RR` boundary and
+the 40% reveal boundary for both styles.
