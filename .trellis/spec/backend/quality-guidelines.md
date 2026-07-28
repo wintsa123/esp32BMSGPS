@@ -1828,3 +1828,71 @@ if (cycle_delta_mah < 1000U || soc_span < 20U) {
     reanchor_without_sampling();
 }
 ```
+
+## Scenario: FarDriver Nordic UART Telemetry Polling
+
+### 1. Scope / Trigger
+
+- Apply when changing FarDriver Nordic UART discovery, CCCD subscription, read
+  polling, notification parsing, or controller telemetry projection.
+
+### 2. Signatures
+
+- Poller: `controller_send_read_request(esp_bms_idf_runtime_t *runtime)`.
+- Telemetry request: existing five-byte FarDriver read frame.
+- Data write: `ble_gattc_write_no_rsp_flat(...)`.
+- Subscription write: `ble_gattc_write_flat(...)` to the CCCD only.
+
+### 3. Contracts
+
+- Send read-only FarDriver polls with Write Without Response; the Android
+  Nordic UART client uses that transport and a response write can leave GAP
+  connected without controller telemetry.
+- Keep the existing address order and advance `controller_poll_index` only
+  when the immediate no-response write call succeeds.
+- On an immediate failure, keep the current address for the next 200 ms retry
+  and log both the address and return code. Do not clear parsed telemetry.
+- A saved `ctl_conn=1` is not a binding. `ctl_mac` must exist before the
+  controller driver scans and connects; rebind from the controller settings
+  when it is absent.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required response |
+| --- | --- |
+| No-response write returns nonzero | Log address and return code; retry the same address. |
+| CCCD subscription is changed to no-response write | Reject the change; keep its response callback path. |
+| `ctl_conn=1` and no `ctl_mac` | Do not expect a scan or connection; bind a discovered FarDriver first. |
+| Valid 16-byte notification | Parse and project telemetry without changing the poll transport. |
+
+### 5. Good / Base / Bad Cases
+
+- Good: CCCD uses `ble_gattc_write_flat`, read polls use
+  `ble_gattc_write_no_rsp_flat`.
+- Base: a failed immediate poll retries the same register on the next period.
+- Bad: treating the controller connection switch as a saved MAC binding, or
+  advancing the poll address after a failed write.
+
+### 6. Tests Required
+
+- Run `tests/fardriver_protocol_selftest.c`, the selected ESP-IDF profile
+  build, and `git diff --check`.
+- Flash through RFC2217. With a bound FarDriver and the controller or speed
+  dashboard visible, confirm telemetry notifications update the dashboard.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```c
+ble_gattc_write_flat(conn, write_handle, request, sizeof(request), callback, runtime);
+```
+
+#### Correct
+
+```c
+int rc = ble_gattc_write_no_rsp_flat(conn, write_handle, request, sizeof(request));
+if (rc == 0) {
+    advance_poll_address();
+}
+```

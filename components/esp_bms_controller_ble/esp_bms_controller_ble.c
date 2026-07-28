@@ -297,15 +297,16 @@ static void controller_send_read_request(esp_bms_idf_runtime_t *runtime)
         runtime->controller_poll_index = 0U;
         return;
     }
-    if (ble_gattc_write_flat(runtime->controller_conn_handle,
-                             runtime->controller_write_char_val_handle,
-                             request,
-                             sizeof(request),
-                             controller_write_cb,
-                             runtime) == 0) {
-        runtime->controller_poll_index = (uint8_t)((runtime->controller_poll_index + 1U) % count);
-        runtime->controller_keepalive_elapsed_ms = 0U;
+    const int rc = ble_gattc_write_no_rsp_flat(runtime->controller_conn_handle,
+                                               runtime->controller_write_char_val_handle,
+                                               request,
+                                               sizeof(request));
+    runtime->controller_keepalive_elapsed_ms = 0U;
+    if (rc != 0) {
+        ESP_LOGW(TAG, "read request failed: address=0x%02X rc=%d", address, rc);
+        return;
     }
+    runtime->controller_poll_index = (uint8_t)((runtime->controller_poll_index + 1U) % count);
 }
 
 static void controller_set_subscription(esp_bms_idf_runtime_t *runtime, bool enabled)
