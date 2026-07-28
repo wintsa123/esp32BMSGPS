@@ -868,3 +868,36 @@ Simplified the native 480x320 BMS dashboard: duration now omits seconds with a t
 ### Next Steps
 
 - None - task complete
+
+
+## Session 27: Add 320x480 BMS portrait dashboard
+
+**Date**: 2026-07-28
+**Task**: Add 320x480 BMS portrait dashboard
+**Branch**: `main`
+
+### Summary
+
+Implemented the native 320x480 BMS dashboard, added snapshot-label smoke coverage, and verified all four simulator orientations.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ca2a4494` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
