@@ -769,3 +769,36 @@ FarDriver Nordic UART 只读轮询改为无响应写；ESP-IDF profile 构建和
 ### Next Steps
 
 - None - task complete
+
+
+## Session 24: 微调轮播黑卡尺寸与转场时长
+
+**Date**: 2026-07-28
+**Task**: 微调轮播黑卡尺寸与转场时长
+**Branch**: `main`
+
+### Summary
+
+黑卡内缩调为 16px，收缩与展开均调为 160ms；横竖屏 LVGL 模拟器、隔离 esp32all 正式固件构建和交互式模拟器重启均完成，未烧录。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3af5e2f3` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
