@@ -82,6 +82,7 @@ target_compile_definitions(esp_bms_lvgl_simulator PRIVATE
     ESP_BMS_FEATURE_AUDIO=${ESP_BMS_FEATURE_AUDIO}
     ESP_BMS_FEATURE_GPS=${ESP_BMS_FEATURE_GPS}
     ESP_BMS_FEATURE_CONTROLLER=${ESP_BMS_FEATURE_CONTROLLER}
+    ESP_BMS_SIMULATOR_RESTART_RUNNER="${REPO_ROOT}/scripts/run-lvgl-simulator.sh"
 )
 target_compile_options(esp_bms_lvgl_simulator PRIVATE -Wall -Wextra)
 target_link_libraries(esp_bms_lvgl_simulator PRIVATE lvgl::lvgl PkgConfig::SDL2 m)

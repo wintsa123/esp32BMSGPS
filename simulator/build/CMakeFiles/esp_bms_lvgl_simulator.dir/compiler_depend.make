@@ -208,6 +208,13 @@ CMakeFiles/esp_bms_lvgl_simulator.dir/main.c.o: /vol1/1000/project/esp32BmsGps/s
   /usr/include/SDL2/SDL_locale.h \
   /usr/include/SDL2/SDL_misc.h \
   /usr/lib/gcc/x86_64-linux-gnu/12/include/stdbool.h \
+  /usr/include/unistd.h \
+  /usr/include/x86_64-linux-gnu/bits/posix_opt.h \
+  /usr/include/x86_64-linux-gnu/bits/environments.h \
+  /usr/include/x86_64-linux-gnu/bits/confname.h \
+  /usr/include/x86_64-linux-gnu/bits/getopt_posix.h \
+  /usr/include/x86_64-linux-gnu/bits/getopt_core.h \
+  /usr/include/x86_64-linux-gnu/bits/unistd_ext.h \
   /vol1/1000/project/esp32BmsGps/components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h \
   /vol1/1000/project/esp32BmsGps/components/esp_bms_lvgl_contract/include/esp_bms_bms_safety.h \
   /vol1/1000/project/esp32BmsGps/components/esp_bms_lvgl_contract/include/esp_bms_lvgl_contract.h \
@@ -6546,8 +6553,6 @@ CMakeFiles/esp_bms_lvgl_simulator.dir/vol1/1000/project/esp32BmsGps/components/e
 
 /usr/include/x86_64-linux-gnu/bits/types/struct_tm.h:
 
-/usr/include/time.h:
-
 /vol1/1000/project/esp32BmsGps/simulator/include/esp_timer.h:
 
 /vol1/1000/project/esp32BmsGps/simulator/include/esp_heap_caps.h:
@@ -6776,6 +6781,14 @@ CMakeFiles/esp_bms_lvgl_simulator.dir/vol1/1000/project/esp32BmsGps/components/e
 
 /vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/misc/lv_bidi.h:
 
+/vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/font/lv_symbol_def.h:
+
+/vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/core/lv_obj.h:
+
+/usr/include/x86_64-linux-gnu/bits/time.h:
+
+/vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/osal/lv_os.h:
+
 /usr/lib/gcc/x86_64-linux-gnu/12/include/mmintrin.h:
 
 /usr/lib/gcc/x86_64-linux-gnu/12/include/xtestintrin.h:
@@ -6868,6 +6881,10 @@ CMakeFiles/esp_bms_lvgl_simulator.dir/vol1/1000/project/esp32BmsGps/components/e
 
 /usr/lib/gcc/x86_64-linux-gnu/12/include/avx2intrin.h:
 
+/vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/misc/lv_text.h:
+
+/usr/lib/gcc/x86_64-linux-gnu/12/include/popcntintrin.h:
+
 /usr/include/x86_64-linux-gnu/bits/pthreadtypes-arch.h:
 
 /vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/drivers/sdl/lv_sdl_mousewheel.h:
@@ -6899,6 +6916,8 @@ CMakeFiles/esp_bms_lvgl_simulator.dir/vol1/1000/project/esp32BmsGps/components/e
 /usr/include/x86_64-linux-gnu/bits/types/struct_timespec.h:
 
 /usr/include/x86_64-linux-gnu/bits/stdint-uintn.h:
+
+/usr/include/unistd.h:
 
 /vol1/1000/project/esp32BmsGps/components/esp_bms_lvgl_ui/fireblade_info_digits_12.c:
 
@@ -6984,6 +7003,10 @@ CMakeFiles/esp_bms_lvgl_simulator.dir/vol1/1000/project/esp32BmsGps/components/e
 
 /usr/include/x86_64-linux-gnu/bits/struct_rwlock.h:
 
+/vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/font/lv_font.h:
+
+/usr/lib/gcc/x86_64-linux-gnu/12/include/hresetintrin.h:
+
 /usr/include/strings.h:
 
 /usr/include/x86_64-linux-gnu/bits/flt-eval-method.h:
@@ -6991,8 +7014,6 @@ CMakeFiles/esp_bms_lvgl_simulator.dir/vol1/1000/project/esp32BmsGps/components/e
 /usr/include/SDL2/SDL_locale.h:
 
 /usr/include/SDL2/SDL.h:
-
-/usr/lib/gcc/x86_64-linux-gnu/12/include/tsxldtrkintrin.h:
 
 /usr/lib/gcc/x86_64-linux-gnu/12/include/adxintrin.h:
 
@@ -7105,8 +7126,6 @@ CMakeFiles/esp_bms_lvgl_simulator.dir/vol1/1000/project/esp32BmsGps/components/e
 /usr/include/x86_64-linux-gnu/bits/types/__fpos64_t.h:
 
 /usr/lib/gcc/x86_64-linux-gnu/12/include/fxsrintrin.h:
-
-/vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/font/lv_symbol_def.h:
 
 /usr/include/stdio.h:
 
@@ -7282,6 +7301,8 @@ CMakeFiles/esp_bms_lvgl_simulator.dir/vol1/1000/project/esp32BmsGps/components/e
 
 /usr/include/SDL2/SDL_keycode.h:
 
+/usr/include/x86_64-linux-gnu/bits/confname.h:
+
 /vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/widgets/arc/lv_arc.h:
 
 /usr/lib/gcc/x86_64-linux-gnu/12/include/amxtileintrin.h:
@@ -7312,6 +7333,8 @@ CMakeFiles/esp_bms_lvgl_simulator.dir/vol1/1000/project/esp32BmsGps/components/e
 
 /usr/include/SDL2/SDL_filesystem.h:
 
+/usr/include/x86_64-linux-gnu/bits/unistd_ext.h:
+
 /usr/include/SDL2/SDL_hints.h:
 
 /usr/include/SDL2/SDL_loadso.h:
@@ -7338,7 +7361,19 @@ CMakeFiles/esp_bms_lvgl_simulator.dir/vol1/1000/project/esp32BmsGps/components/e
 
 /vol1/1000/project/esp32BmsGps/components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h:
 
+/usr/include/x86_64-linux-gnu/bits/environments.h:
+
+/usr/include/time.h:
+
+/usr/include/x86_64-linux-gnu/bits/getopt_posix.h:
+
+/usr/lib/gcc/x86_64-linux-gnu/12/include/tsxldtrkintrin.h:
+
+/usr/include/x86_64-linux-gnu/bits/getopt_core.h:
+
 /usr/lib/gcc/x86_64-linux-gnu/12/include/xsaveintrin.h:
+
+/usr/include/x86_64-linux-gnu/bits/posix_opt.h:
 
 /vol1/1000/project/esp32BmsGps/components/esp_bms_lvgl_contract/include/esp_bms_bms_safety.h:
 
@@ -7365,10 +7400,6 @@ CMakeFiles/esp_bms_lvgl_simulator.dir/vol1/1000/project/esp32BmsGps/components/e
 /usr/lib/gcc/x86_64-linux-gnu/12/include/wmmintrin.h:
 
 /vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/draw/lv_draw_buf.h:
-
-/usr/lib/gcc/x86_64-linux-gnu/12/include/hresetintrin.h:
-
-/vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/font/lv_font.h:
 
 /vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/stdlib/lv_sprintf.h:
 
@@ -7409,13 +7440,3 @@ CMakeFiles/esp_bms_lvgl_simulator.dir/vol1/1000/project/esp32BmsGps/components/e
 /vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/draw/lv_image_dsc.h:
 
 /vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/misc/lv_iter.h:
-
-/usr/include/x86_64-linux-gnu/bits/time.h:
-
-/vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/osal/lv_os.h:
-
-/vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/core/lv_obj.h:
-
-/usr/lib/gcc/x86_64-linux-gnu/12/include/popcntintrin.h:
-
-/vol1/1000/project/esp32BmsGps/managed_components/lvgl__lvgl/src/misc/lv_text.h:

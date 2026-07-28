@@ -8520,13 +8520,14 @@ static void fireblade_add_title_extension(lv_obj_t *parent,
                                           int32_t x,
                                           int32_t y,
                                           int32_t width,
+                                          int32_t height,
                                           bool extend_top)
 {
     static const bool top_marker = true;
     lv_obj_t *extensions = lv_obj_create(parent);
     clear_style(extensions);
     lv_obj_set_pos(extensions, x, y);
-    lv_obj_set_size(extensions, width, 15);
+    lv_obj_set_size(extensions, width, height);
     lv_obj_clear_flag(extensions, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(extensions,
                         fireblade_title_extension_draw_event_cb,
@@ -8536,9 +8537,9 @@ static void fireblade_add_title_extension(lv_obj_t *parent,
 
 static void fireblade_add_title_extensions(lv_obj_t *parent)
 {
-    fireblade_add_title_extension(parent, 64, 66, 12, true);
-    fireblade_add_title_extension(parent, 67, 161, 9, false);
-    fireblade_add_title_extension(parent, 99, 202, 25, false);
+    fireblade_add_title_extension(parent, 64, 66, 12, 15, true);
+    fireblade_add_title_extension(parent, 67, 161, 9, 15, false);
+    fireblade_add_title_extension(parent, 99, 202, 25, 15, false);
 }
 
 static void fireblade_add_scale(lv_obj_t *parent, lv_point_t center, int32_t radius)
@@ -8702,19 +8703,29 @@ static void fireblade_create_native_landscape(lv_obj_t *page)
     const int32_t side_w = (width * 26) / 100;
     const int32_t center_x = width / 2;
     const int32_t center_y = height / 2;
-    const int32_t radius = LV_MIN((height * 45) / 100, (width * 30) / 100);
-    const int32_t metric_x = 8;
+    const int32_t base_radius = LV_MIN((height * 47) / 100, (width * 32) / 100);
+    const int32_t bridge_radius = base_radius + 20;
+    const int32_t speed_radius = base_radius - 10;
+    const int32_t metric_x = 7;
     const int32_t metric_w = side_w - 12;
-    const int32_t controller_temp_y = bridge_h / 2 - 18;
-    const int32_t motor_temp_y = bridge_h / 2 + 5;
-    const int32_t mode_y = bridge_h - 42;
+    const int32_t metric_unit_x = metric_x + 36;
+    const int32_t temperature_value_h = 20;
+    const int32_t motor_temp_y = bridge_h - temperature_value_h;
+    const int32_t controller_temp_y = motor_temp_y - temperature_value_h - 3;
+    const int32_t mode_y = bridge_h + 2;
     const int32_t metric_y[] = {
         bridge_h + 8,
         bridge_h + 60,
         bridge_h + 112,
         bridge_h + 164,
     };
-    static const int32_t metric_title_w[] = { 110, 98, 107, 142 };
+    const int32_t metric_value_y[] = {
+        metric_y[0] + 33,
+        metric_y[1] + 33,
+        metric_y[2] + 33,
+        height - 30,
+    };
+    static const int32_t metric_title_w[] = { 82, 74, 80, 103 };
     const lv_point_t center = speed_dashboard_point(center_x, center_y);
 
     s_ui.native_fireblade_dashboard = true;
@@ -8730,17 +8741,35 @@ static void fireblade_create_native_landscape(lv_obj_t *page)
                           COLOR_FIREBLADE_MODE,
                           0);
     (void)fireblade_panel(static_layer,
-                          center.x - radius,
-                          center.y - radius,
-                          radius * 2,
-                          radius * 2,
+                          center.x - bridge_radius,
+                          center.y - bridge_radius,
+                          bridge_radius * 2,
+                          bridge_radius * 2,
                           COLOR_WHITE,
                           LV_RADIUS_CIRCLE);
     fireblade_native_title(static_layer, 0, metric_y[0], metric_title_w[0], "电耗");
     fireblade_native_title(static_layer, 0, metric_y[1], metric_title_w[1], "剩余");
     fireblade_native_title(static_layer, 0, metric_y[2], metric_title_w[2], "均速");
     fireblade_native_title(static_layer, 0, metric_y[3], metric_title_w[3], "日期");
-    fireblade_add_scale(static_layer, center, radius - 10);
+    fireblade_add_title_extension(static_layer,
+                                  metric_title_w[0] - 1,
+                                  metric_y[0],
+                                  7,
+                                  20,
+                                  true);
+    fireblade_add_title_extension(static_layer,
+                                  metric_title_w[2] - 1,
+                                  metric_y[2],
+                                  6,
+                                  20,
+                                  false);
+    fireblade_add_title_extension(static_layer,
+                                  metric_title_w[3] - 1,
+                                  metric_y[3],
+                                  16,
+                                  20,
+                                  false);
+    fireblade_add_scale(static_layer, center, speed_radius);
 
     (void)fireblade_label(static_layer, "控", 10, controller_temp_y + 1, 22, 18,
                           &settings_zh_13, COLOR_WHITE, LV_TEXT_ALIGN_LEFT);
@@ -8750,8 +8779,8 @@ static void fireblade_create_native_landscape(lv_obj_t *page)
                           &settings_zh_10, COLOR_WHITE, LV_TEXT_ALIGN_LEFT);
     (void)fireblade_label(static_layer, "1", width - 60, mode_y + 24, 22, 14,
                           &fireblade_info_digits_12, COLOR_WHITE, LV_TEXT_ALIGN_CENTER);
-    (void)fireblade_label(static_layer, "km", metric_x + metric_w - 28, metric_y[1] + 34,
-                          28, 10, &fireblade_info_units_8, COLOR_FIREBLADE_BLACK,
+    (void)fireblade_label(static_layer, "km", metric_unit_x, metric_value_y[1] + 6,
+                          24, 10, &fireblade_info_units_8, COLOR_FIREBLADE_BLACK,
                           LV_TEXT_ALIGN_LEFT);
 
     (void)dashboard_static_cache_finalize(&s_ui.fireblade_static_cache,
@@ -8774,7 +8803,7 @@ static void fireblade_create_native_landscape(lv_obj_t *page)
                                                       48,
                                                       controller_temp_y,
                                                       48,
-                                                      20,
+                                                      temperature_value_h,
                                                       &settings_zh_16,
                                                       COLOR_WHITE,
                                                       LV_TEXT_ALIGN_RIGHT);
@@ -8783,7 +8812,7 @@ static void fireblade_create_native_landscape(lv_obj_t *page)
                                                  48,
                                                  motor_temp_y,
                                                  48,
-                                                 20,
+                                                 temperature_value_h,
                                                  &settings_zh_16,
                                                  COLOR_WHITE,
                                                  LV_TEXT_ALIGN_RIGHT);
@@ -8799,44 +8828,44 @@ static void fireblade_create_native_landscape(lv_obj_t *page)
     s_ui.fireblade_consumption = fireblade_label(dynamic_layer,
                                                  s_ui.fireblade_consumption_buf,
                                                  metric_x,
-                                                 metric_y[0] + 25,
-                                                 metric_w,
+                                                 metric_value_y[0],
+                                                 32,
                                                  16,
                                                  &fireblade_info_digits_12,
                                                  COLOR_FIREBLADE_BLACK,
-                                                 LV_TEXT_ALIGN_CENTER);
+                                                 LV_TEXT_ALIGN_LEFT);
     s_ui.fireblade_consumption_unit = fireblade_label(dynamic_layer,
                                                       s_ui.fireblade_consumption_unit_buf,
-                                                      metric_x,
-                                                      metric_y[0] + 42,
-                                                      metric_w,
+                                                      metric_unit_x,
+                                                      metric_value_y[0] + 6,
+                                                      35,
                                                       10,
                                                       &fireblade_info_units_8,
                                                       COLOR_FIREBLADE_BLACK,
-                                                      LV_TEXT_ALIGN_CENTER);
+                                                      LV_TEXT_ALIGN_LEFT);
     s_ui.fireblade_range = fireblade_label(dynamic_layer,
                                            s_ui.fireblade_range_buf,
                                            metric_x,
-                                           metric_y[1] + 25,
-                                           metric_w - 28,
+                                           metric_value_y[1],
+                                           32,
                                            16,
                                            &fireblade_info_digits_12,
                                            COLOR_FIREBLADE_BLACK,
-                                           LV_TEXT_ALIGN_RIGHT);
+                                           LV_TEXT_ALIGN_LEFT);
     s_ui.fireblade_average_speed = fireblade_label(dynamic_layer,
                                                    s_ui.fireblade_average_speed_buf,
                                                    metric_x,
-                                                   metric_y[2] + 25,
-                                                   metric_w - 34,
+                                                   metric_value_y[2],
+                                                   32,
                                                    16,
                                                    &fireblade_info_digits_12,
                                                    COLOR_FIREBLADE_BLACK,
-                                                   LV_TEXT_ALIGN_RIGHT);
+                                                   LV_TEXT_ALIGN_LEFT);
     s_ui.fireblade_average_speed_unit = fireblade_label(dynamic_layer,
                                                         s_ui.fireblade_average_speed_unit_buf,
-                                                        metric_x + metric_w - 32,
-                                                        metric_y[2] + 29,
-                                                        32,
+                                                        metric_unit_x,
+                                                        metric_value_y[2] + 6,
+                                                        35,
                                                         10,
                                                         &fireblade_info_units_8,
                                                         COLOR_FIREBLADE_BLACK,
@@ -8844,14 +8873,14 @@ static void fireblade_create_native_landscape(lv_obj_t *page)
     s_ui.fireblade_date = fireblade_label(dynamic_layer,
                                           s_ui.fireblade_date_buf,
                                           metric_x,
-                                          metric_y[3] + 26,
-                                          metric_w,
+                                          metric_value_y[3],
+                                          metric_w - 8,
                                           14,
                                           &settings_zh_10,
                                           COLOR_FIREBLADE_BLACK,
-                                          LV_TEXT_ALIGN_CENTER);
+                                          LV_TEXT_ALIGN_LEFT);
 
-    fireblade_add_needle(dynamic_layer, center, radius - 10);
+    fireblade_add_needle(dynamic_layer, center, speed_radius);
     lv_obj_t *gear_circle = fireblade_add_gear_circle(dynamic_layer, center);
     lv_obj_set_pos(gear_circle, center.x - 34, center.y - 34);
     lv_obj_set_size(gear_circle, 68, 68);
@@ -8863,7 +8892,7 @@ static void fireblade_create_native_landscape(lv_obj_t *page)
                                            s_ui.fireblade_speed_buf,
                                            center.x + 18,
                                            center.y + 16,
-                                           radius - 10,
+                                           speed_radius,
                                            68,
                                            &fireblade_digits_64,
                                            COLOR_FIREBLADE_BLACK,
@@ -8872,7 +8901,7 @@ static void fireblade_create_native_landscape(lv_obj_t *page)
                                                 s_ui.fireblade_speed_unit_buf,
                                                 center.x + 48,
                                                 center.y + 82,
-                                                radius - 22,
+                                                speed_radius - 12,
                                                 18,
                                                 &lv_font_montserrat_14,
                                                 COLOR_FIREBLADE_BLACK,

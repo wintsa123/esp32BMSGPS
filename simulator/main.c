@@ -264,12 +264,13 @@ static void rotate_display(host_app_t *app)
     lv_display_set_resolution(app->display, height, width);
 }
 
-static void restart_simulator(host_app_t *app)
+static void restart_simulator(const host_app_t *app)
 {
     fflush(NULL);
-    execvp(app->argv[0], app->argv);
+    lv_deinit();
+    execvp(ESP_BMS_SIMULATOR_RESTART_RUNNER, app->argv);
     perror("模拟器热重启失败");
-    app->running = false;
+    exit(EXIT_FAILURE);
 }
 
 static bool apply_command(host_app_t *app, host_command_t command)
@@ -533,7 +534,7 @@ static void print_help(const char *program)
            "[--boot-progress 0..100]\n",
            program);
     puts("鼠标: 横向拖动=切页（黑场跟手）  下拉=快捷面板");
-    puts("快捷键: 上/下=速度  1/2/3/4=页面  f=GPS定位  g=GPS模块  b=BMS  c=控制器  u=单位  e=电耗  r=热重启  q=退出");
+    puts("快捷键: 上/下=速度  1/2/3/4=页面  f=GPS定位  g=GPS模块  b=BMS  c=控制器  u=单位  e=电耗  r=重新构建并重启  q=退出");
 }
 
 static bool parse_resolution(const char *text, int32_t *width, int32_t *height)
