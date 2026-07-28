@@ -831,9 +831,9 @@ static const lv_color_t COLOR_SETTINGS_TEXT = LV_COLOR_MAKE(0xff, 0xff, 0xff);
 static const lv_color_t COLOR_SETTINGS_MUTED = LV_COLOR_MAKE(0xff, 0xff, 0xff);
 static const lv_color_t COLOR_SETTINGS_ACCENT = LV_COLOR_MAKE(0xff, 0xff, 0xff);
 
-#define PAGE_TRANSITION_CARD_MARGIN 8
+#define PAGE_TRANSITION_CARD_MARGIN 16
 #define PAGE_TRANSITION_CARD_RADIUS 8
-#define PAGE_TRANSITION_CARD_ANIM_MS 100U
+#define PAGE_TRANSITION_CARD_ANIM_MS 160U
 static const lv_color_t COLOR_SWITCH_ACTIVE = LV_COLOR_MAKE(0x34, 0xc7, 0x59);
 static const uint8_t DASHBOARD_CELL_STAT_KEY_BITMAPS[DASHBOARD_CELL_STAT_COUNT]
                                                    [DASHBOARD_CELL_KEY_BITMAP_BYTES] = {

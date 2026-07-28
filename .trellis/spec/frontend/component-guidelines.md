@@ -130,7 +130,7 @@ esp_bms_lvgl_ui_simulator_boot_animation_settings_visible();
 - The interactive SDL window initializes `esp_bms_lvgl_ui_init()` with `native_gestures_supported=false`, so the existing `lv_sdl_mouse_create()` pointer device drives the production scroll container and its black title placeholders. `--headless` passes `true` instead, preserving `esp_bms_lvgl_ui_simulator_native_gesture_smoke()` for the device-native gesture path. Do not add a second SDL mouse-to-gesture bridge.
 - Carousel transition smoke must refresh the production card layout before
   reading its x/y/width/height: LVGL stages style geometry until layout runs.
-  Assert full card, 8px-inset card, expansion, restoration, and synchronous
+  Assert full card, 16px-inset card, expansion, restoration, and synchronous
   `set_page(..., false)` behavior in the same production-UI smoke path.
 - Host-only test controls in production UI source must be guarded by `ESP_BMS_LVGL_UI_SIMULATOR`; the simulator CMake target defines it as `1`, while firmware defaults to `0`. The startup-animation play button and its timer are production UI and must remain available in both builds.
 - The startup-animation settings play button calls the production boot start/update/finish path with the current UI snapshot on both desktop and device. Its timer emits no runtime action and is deleted and nulled before root rebuild; completion restores the latest snapshot and reopens the same settings subview.

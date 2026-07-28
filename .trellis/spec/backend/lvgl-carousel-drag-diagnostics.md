@@ -96,13 +96,13 @@ scripts/esp-idf-drag-diag.sh --full-invalidate build
   `page_target_scroll_x()`; it must never be a floating screen overlay.
 - At drag start, reveal those placeholders and hide `battery_page`,
   `gps_page`, and `cast_page`. The active card starts full size and shrinks to
-  an 8px inset in 100ms; the other slot cards are already inset. The full-size
+  a 16px inset in 160ms; the other slot cards are already inset. The full-size
   wrappers preserve the parent scroll extent while the real pages are hidden,
   so LVGL can still drag and snap to every existing slot.
 - During the drag, do not manually move labels. The parent carousel scroll
   moves each centered title naturally; a first/last-page drag cannot reveal a
   nonexistent or empty target slot.
-- `LV_EVENT_SCROLL_END` expands the selected card for 100ms before restoring
+- `LV_EVENT_SCROLL_END` expands the selected card for 160ms before restoring
   the real pages and flushing the deferred snapshot. A below-threshold return
   expands the original card. If a release arrives before the shrink has drawn,
   compact that active card before starting the expansion.
