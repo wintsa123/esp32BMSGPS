@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "esp_bms_lvgl_ui.h"
 #include "esp_bms_speed_dashboard.h"
@@ -23,7 +24,7 @@ typedef enum {
     HOST_COMMAND_TOGGLE_CONTROLLER,
     HOST_COMMAND_TOGGLE_UNIT,
     HOST_COMMAND_TOGGLE_CONSUMPTION,
-    HOST_COMMAND_ROTATE,
+    HOST_COMMAND_RESTART,
     HOST_COMMAND_QUIT,
 } host_command_t;
 
@@ -34,6 +35,7 @@ typedef struct {
     uint16_t controller_speed_kmh_deci;
     int32_t metric_consumption_deci_wh_per_km;
     host_command_t pending_command;
+    char **argv;
     bool running;
     bool sdl_quit_seen;
 } host_app_t;
@@ -231,7 +233,7 @@ static host_command_t command_from_key(SDL_Keycode key)
     case SDLK_e:
         return HOST_COMMAND_TOGGLE_CONSUMPTION;
     case SDLK_r:
-        return HOST_COMMAND_ROTATE;
+        return HOST_COMMAND_RESTART;
     case SDLK_q:
     case SDLK_ESCAPE:
         return HOST_COMMAND_QUIT;
@@ -255,21 +257,19 @@ static int sdl_event_watch(void *userdata, SDL_Event *event)
     return 1;
 }
 
-static void push_key(SDL_Keycode key)
-{
-    SDL_Event event = {
-        .type = SDL_KEYDOWN,
-    };
-    event.key.state = SDL_PRESSED;
-    event.key.keysym.sym = key;
-    (void)SDL_PushEvent(&event);
-}
-
 static void rotate_display(host_app_t *app)
 {
     const int32_t width = lv_display_get_horizontal_resolution(app->display);
     const int32_t height = lv_display_get_vertical_resolution(app->display);
     lv_display_set_resolution(app->display, height, width);
+}
+
+static void restart_simulator(host_app_t *app)
+{
+    fflush(NULL);
+    execvp(app->argv[0], app->argv);
+    perror("模拟器热重启失败");
+    app->running = false;
 }
 
 static bool apply_command(host_app_t *app, host_command_t command)
@@ -343,9 +343,9 @@ static bool apply_command(host_app_t *app, host_command_t command)
         snapshot->average_consumption_valid = !snapshot->average_consumption_valid;
         refresh_speed_snapshot(app);
         return true;
-    case HOST_COMMAND_ROTATE:
-        rotate_display(app);
-        return true;
+    case HOST_COMMAND_RESTART:
+        restart_simulator(app);
+        return false;
     case HOST_COMMAND_QUIT:
         app->running = false;
         return false;
@@ -533,7 +533,7 @@ static void print_help(const char *program)
            "[--boot-progress 0..100]\n",
            program);
     puts("鼠标: 横向拖动=切页（黑场跟手）  下拉=快捷面板");
-    puts("快捷键: 上/下=速度  1/2/3/4=页面  f=GPS定位  g=GPS模块  b=BMS  c=控制器  u=单位  e=电耗  r=旋转  q=退出");
+    puts("快捷键: 上/下=速度  1/2/3/4=页面  f=GPS定位  g=GPS模块  b=BMS  c=控制器  u=单位  e=电耗  r=热重启  q=退出");
 }
 
 static bool parse_resolution(const char *text, int32_t *width, int32_t *height)
@@ -989,6 +989,7 @@ int main(int argc, char **argv)
     }
 
     host_app_t app = {
+        .argv = argv,
         .running = true,
     };
     init_snapshot(&app);
@@ -1079,8 +1080,6 @@ int main(int argc, char **argv)
                 }
                 snapshot_changed = true;
                 ++stress_updates;
-            } else if (frame == 310U) {
-                push_key(SDLK_r);
             }
         }
 

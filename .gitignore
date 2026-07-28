@@ -23,6 +23,7 @@
 /release-images/
 /ota-images/
 /logs/
+/androguard.log
 /preview/*
 /docs/hardware/
 /.idf-builds/

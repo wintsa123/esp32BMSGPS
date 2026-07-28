@@ -1248,7 +1248,7 @@ static void bms_native_safety_icon(lv_obj_t *parent, int32_t x, int32_t y)
 static lv_obj_t *bms_native_safety_check(lv_obj_t *parent, int32_t x, int32_t y)
 {
     static const lv_point_precise_t check_points[] = {
-        { 2, 5 }, { 5, 8 }, { 10, 2 },
+        { 2, 6 }, { 5, 9 }, { 10, 3 },
     };
     lv_obj_t *check = lv_line_create(parent);
     lv_line_set_points(check, check_points, ARRAY_SIZE(check_points));
@@ -1319,16 +1319,16 @@ static void create_native_bms_dashboard(void)
                             &settings_zh_10,
                             COLOR_DASHBOARD_TITLE,
                             LV_TEXT_ALIGN_LEFT);
-    dashboard_separator(soc_panel, 10, left_h - 68, layout.left_w - 20);
+    dashboard_separator(soc_panel, 10, left_h - 72, layout.left_w - 20);
     bms_native_static_label(soc_panel,
                             "使用天数",
                             10,
-                            left_h - 64,
+                            left_h - 68,
                             layout.left_w - 20,
                             12,
                             &settings_zh_10,
                             COLOR_DASHBOARD_TITLE,
-                            LV_TEXT_ALIGN_RIGHT);
+                            LV_TEXT_ALIGN_LEFT);
     dashboard_separator(soc_panel, 10, left_h - 36, layout.left_w - 20);
     bms_native_static_label(soc_panel,
                             "电池容量",
@@ -1351,6 +1351,8 @@ static void create_native_bms_dashboard(void)
     lv_obj_t *electrical_separator =
         dashboard_separator(electrical_panel, layout.right_w / 2, 22, 1);
     lv_obj_set_height(electrical_separator, layout.electrical_h - 30);
+    const int32_t electrical_value_y =
+        layout.top_y + 22 + (layout.electrical_h - 22 - 32) / 2;
 
     static const char *const temp_keys[] = {
         "温度1", "温度2", "温度3", "温度4", "MOS温度", "均衡温度",
@@ -1460,20 +1462,20 @@ static void create_native_bms_dashboard(void)
                           &lv_font_montserrat_14);
     s_ui.bms_running_time = label(dynamic_layer,
                                   layout.margin + 10,
-                                  layout.top_y + left_h - 50,
+                                  layout.top_y + left_h - 55,
                                   layout.left_w - 20,
-                                  12,
-                                  &settings_zh_10);
+                                  18,
+                                  &settings_zh_13);
 
     s_ui.pack_voltage = label(dynamic_layer,
                               layout.right_x,
-                              layout.top_y + 39,
+                              electrical_value_y,
                               layout.right_w / 2,
                               32,
                               &lv_font_montserrat_28);
     s_ui.current = label(dynamic_layer,
                          layout.right_x + (layout.right_w / 2),
-                         layout.top_y + 39,
+                         electrical_value_y,
                          layout.right_w / 2,
                          32,
                          &lv_font_montserrat_28);
@@ -1513,7 +1515,7 @@ static void create_native_bms_dashboard(void)
 
     lv_obj_set_style_text_align(s_ui.soc, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_align(s_ui.capacity, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_set_style_text_align(s_ui.bms_running_time, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
+    lv_obj_set_style_text_align(s_ui.bms_running_time, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_align(s_ui.pack_voltage, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_align(s_ui.current, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_ui.soc, COLOR_WHITE, LV_PART_MAIN);
@@ -7663,6 +7665,14 @@ static void set_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
     format_mv(voltage, sizeof(voltage), SNAPSHOT_FLAG(snapshot, PACK_VOLTAGE_VALID), snapshot->pack_voltage_mv);
     const int32_t display_current_deci_amps = -(int32_t)snapshot->current_deci_amps;
     format_deci_amps(current, sizeof(current), current_valid, display_current_deci_amps);
+    if (s_ui.native_bms_dashboard && current_valid &&
+        (current[0] == '+' || current[0] == '-')) {
+        const size_t current_len = strlen(current);
+        if (current_len + 1U < sizeof(current)) {
+            memmove(current + 2, current + 1, current_len);
+            current[1] = ' ';
+        }
+    }
     const bool charging = current_valid && display_current_deci_amps < 0;
     if (s_ui.soc_arc) {
         lv_arc_set_value(s_ui.soc_arc, soc_valid ? soc_percent : 0U);
@@ -8444,7 +8454,10 @@ static void fireblade_needle_line_set(lv_obj_t *needle,
         return;
     }
 
-    const int32_t half_width = needle == s_ui.fireblade_needle_black ? 8 : 4;
+    const bool native_fireblade = s_ui.native_fireblade_dashboard;
+    const int32_t half_width = needle == s_ui.fireblade_needle_black
+                                   ? (native_fireblade ? 7 : 8)
+                                   : (native_fireblade ? 5 : 4);
     const lv_point_t left = speed_dashboard_point(start.x - (dy * half_width / length),
                                                   start.y + (dx * half_width / length));
     const lv_point_t right = speed_dashboard_point(start.x + (dy * half_width / length),
@@ -8620,7 +8633,7 @@ static void fireblade_add_needle(lv_obj_t *parent, lv_point_t center, int32_t ra
                               tip);
 }
 
-static void fireblade_add_gear_circle(lv_obj_t *parent, lv_point_t center)
+static lv_obj_t *fireblade_add_gear_circle(lv_obj_t *parent, lv_point_t center)
 {
     lv_obj_t *circle = fireblade_panel(parent,
                                        center.x - FIREBLADE_GEAR_RADIUS,
@@ -8632,6 +8645,7 @@ static void fireblade_add_gear_circle(lv_obj_t *parent, lv_point_t center)
     lv_obj_set_style_border_width(circle, 1, LV_PART_MAIN);
     lv_obj_set_style_border_color(circle, COLOR_FIREBLADE_GEAR_BORDER, LV_PART_MAIN);
     lv_obj_set_style_border_opa(circle, LV_OPA_COVER, LV_PART_MAIN);
+    return circle;
 }
 
 static void fireblade_add_gear_dynamic(lv_obj_t *parent, lv_point_t center)
@@ -8686,17 +8700,21 @@ static void fireblade_create_native_landscape(lv_obj_t *page)
     const int32_t height = s_ui.height;
     const int32_t bridge_h = (height * 27) / 100;
     const int32_t side_w = (width * 26) / 100;
-    const int32_t center_x = (width * 53) / 100;
-    const int32_t center_y = (height * 51) / 100;
+    const int32_t center_x = width / 2;
+    const int32_t center_y = height / 2;
     const int32_t radius = LV_MIN((height * 45) / 100, (width * 30) / 100);
     const int32_t metric_x = 8;
     const int32_t metric_w = side_w - 12;
+    const int32_t controller_temp_y = bridge_h / 2 - 18;
+    const int32_t motor_temp_y = bridge_h / 2 + 5;
+    const int32_t mode_y = bridge_h - 42;
     const int32_t metric_y[] = {
         bridge_h + 8,
         bridge_h + 60,
         bridge_h + 112,
         bridge_h + 164,
     };
+    static const int32_t metric_title_w[] = { 110, 98, 107, 142 };
     const lv_point_t center = speed_dashboard_point(center_x, center_y);
 
     s_ui.native_fireblade_dashboard = true;
@@ -8706,7 +8724,7 @@ static void fireblade_create_native_landscape(lv_obj_t *page)
     (void)fireblade_panel(static_layer, 0, 0, width, bridge_h, COLOR_FIREBLADE_BRIDGE, 0);
     (void)fireblade_panel(static_layer,
                           width - 90,
-                          bridge_h + 4,
+                          mode_y,
                           82,
                           38,
                           COLOR_FIREBLADE_MODE,
@@ -8718,20 +8736,19 @@ static void fireblade_create_native_landscape(lv_obj_t *page)
                           radius * 2,
                           COLOR_WHITE,
                           LV_RADIUS_CIRCLE);
-    fireblade_native_title(static_layer, 0, metric_y[0], metric_w, "电耗");
-    fireblade_native_title(static_layer, 0, metric_y[1], metric_w, "剩余");
-    fireblade_native_title(static_layer, 0, metric_y[2], metric_w, "均速");
-    fireblade_native_title(static_layer, 0, metric_y[3], metric_w, "日期");
+    fireblade_native_title(static_layer, 0, metric_y[0], metric_title_w[0], "电耗");
+    fireblade_native_title(static_layer, 0, metric_y[1], metric_title_w[1], "剩余");
+    fireblade_native_title(static_layer, 0, metric_y[2], metric_title_w[2], "均速");
+    fireblade_native_title(static_layer, 0, metric_y[3], metric_title_w[3], "日期");
     fireblade_add_scale(static_layer, center, radius - 10);
-    fireblade_add_gear_circle(static_layer, center);
 
-    (void)fireblade_label(static_layer, "控", 10, bridge_h / 2 - 12, 18, 12,
+    (void)fireblade_label(static_layer, "控", 10, controller_temp_y + 1, 22, 18,
+                          &settings_zh_13, COLOR_WHITE, LV_TEXT_ALIGN_LEFT);
+    (void)fireblade_label(static_layer, "电机", 10, motor_temp_y + 1, 32, 18,
+                          &settings_zh_13, COLOR_WHITE, LV_TEXT_ALIGN_LEFT);
+    (void)fireblade_label(static_layer, "MODE", width - 74, mode_y + 10, 42, 12,
                           &settings_zh_10, COLOR_WHITE, LV_TEXT_ALIGN_LEFT);
-    (void)fireblade_label(static_layer, "电机", 10, bridge_h / 2 + 12, 26, 12,
-                          &settings_zh_10, COLOR_WHITE, LV_TEXT_ALIGN_LEFT);
-    (void)fireblade_label(static_layer, "MODE", width - 74, bridge_h + 10, 42, 12,
-                          &settings_zh_10, COLOR_WHITE, LV_TEXT_ALIGN_LEFT);
-    (void)fireblade_label(static_layer, "1", width - 60, bridge_h + 24, 22, 14,
+    (void)fireblade_label(static_layer, "1", width - 60, mode_y + 24, 22, 14,
                           &fireblade_info_digits_12, COLOR_WHITE, LV_TEXT_ALIGN_CENTER);
     (void)fireblade_label(static_layer, "km", metric_x + metric_w - 28, metric_y[1] + 34,
                           28, 10, &fireblade_info_units_8, COLOR_FIREBLADE_BLACK,
@@ -8754,20 +8771,20 @@ static void fireblade_create_native_landscape(lv_obj_t *page)
                                           LV_TEXT_ALIGN_LEFT);
     s_ui.fireblade_controller_temp = fireblade_label(dynamic_layer,
                                                       s_ui.fireblade_controller_temp_buf,
-                                                      44,
-                                                      bridge_h / 2 - 12,
-                                                      44,
-                                                      12,
-                                                      &settings_zh_10,
+                                                      48,
+                                                      controller_temp_y,
+                                                      48,
+                                                      20,
+                                                      &settings_zh_16,
                                                       COLOR_WHITE,
                                                       LV_TEXT_ALIGN_RIGHT);
     s_ui.fireblade_motor_temp = fireblade_label(dynamic_layer,
                                                  s_ui.fireblade_motor_temp_buf,
-                                                 44,
-                                                 bridge_h / 2 + 12,
-                                                 44,
-                                                 12,
-                                                 &settings_zh_10,
+                                                 48,
+                                                 motor_temp_y,
+                                                 48,
+                                                 20,
+                                                 &settings_zh_16,
                                                  COLOR_WHITE,
                                                  LV_TEXT_ALIGN_RIGHT);
     s_ui.fireblade_soc = fireblade_label(dynamic_layer,
@@ -8835,7 +8852,13 @@ static void fireblade_create_native_landscape(lv_obj_t *page)
                                           LV_TEXT_ALIGN_CENTER);
 
     fireblade_add_needle(dynamic_layer, center, radius - 10);
+    lv_obj_t *gear_circle = fireblade_add_gear_circle(dynamic_layer, center);
+    lv_obj_set_pos(gear_circle, center.x - 34, center.y - 34);
+    lv_obj_set_size(gear_circle, 68, 68);
     fireblade_add_gear_dynamic(dynamic_layer, center);
+    lv_obj_set_pos(s_ui.fireblade_gear, center.x - 32, center.y - 24);
+    lv_obj_set_size(s_ui.fireblade_gear, 64, 64);
+    lv_obj_set_style_text_font(s_ui.fireblade_gear, &fireblade_digits_64, LV_PART_MAIN);
     s_ui.fireblade_speed = fireblade_label(dynamic_layer,
                                            s_ui.fireblade_speed_buf,
                                            center.x + 18,

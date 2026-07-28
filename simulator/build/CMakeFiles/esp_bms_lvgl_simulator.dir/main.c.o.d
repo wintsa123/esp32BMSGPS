@@ -170,7 +170,13 @@ CMakeFiles/esp_bms_lvgl_simulator.dir/main.c.o: \
  /usr/include/SDL2/SDL_system.h /usr/include/SDL2/SDL_timer.h \
  /usr/include/SDL2/SDL_version.h /usr/include/SDL2/SDL_locale.h \
  /usr/include/SDL2/SDL_misc.h \
- /usr/lib/gcc/x86_64-linux-gnu/12/include/stdbool.h \
+ /usr/lib/gcc/x86_64-linux-gnu/12/include/stdbool.h /usr/include/unistd.h \
+ /usr/include/x86_64-linux-gnu/bits/posix_opt.h \
+ /usr/include/x86_64-linux-gnu/bits/environments.h \
+ /usr/include/x86_64-linux-gnu/bits/confname.h \
+ /usr/include/x86_64-linux-gnu/bits/getopt_posix.h \
+ /usr/include/x86_64-linux-gnu/bits/getopt_core.h \
+ /usr/include/x86_64-linux-gnu/bits/unistd_ext.h \
  /vol1/1000/project/esp32BmsGps/components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h \
  /vol1/1000/project/esp32BmsGps/components/esp_bms_lvgl_contract/include/esp_bms_bms_safety.h \
  /vol1/1000/project/esp32BmsGps/components/esp_bms_lvgl_contract/include/esp_bms_lvgl_contract.h \
