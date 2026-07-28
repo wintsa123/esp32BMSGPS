@@ -703,3 +703,36 @@ Scaled settings controls only for S3 logical resolutions, added the 18px setting
 ### Next Steps
 
 - None - task complete
+
+
+## Session 22: 修复模拟器鼠标轮播手势
+
+**Date**: 2026-07-28
+**Task**: 修复模拟器鼠标轮播手势
+**Branch**: `main`
+
+### Summary
+
+交互式 SDL 模拟器改用 LVGL 指针滚动，鼠标可驱动黑场轮播；无头模式保留设备原生手势回归，并完成横竖屏模拟器与 ESP-IDF 构建验证。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0abbb47a` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

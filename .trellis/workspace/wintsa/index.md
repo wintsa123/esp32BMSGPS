@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 21
+- **Total Sessions**: 22
 - **Last Active**: 2026-07-28
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~705 | Active |
+| `journal-1.md` | ~738 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 22 | 2026-07-28 | 修复模拟器鼠标轮播手势 | `0abbb47a` | `main` |
 | 21 | 2026-07-28 | 修复黑场轮播占位页 | `1dbabdcf` | `main` |
 | 20 | 2026-07-28 | 优化轮播切页黑场过渡 | `642794e5` | `main` |
 | 19 | 2026-07-27 | 实现 ANT BMS 真实容量估算 | `456b5920` | `main` |
