@@ -8227,27 +8227,38 @@ static void create_controller_dashboard(void)
 {
     const bool portrait = s_ui.width < s_ui.height;
     const bool native_portrait = s_ui.width == 320 && s_ui.height == 480;
+    const bool native_landscape = s_ui.width == 480 && s_ui.height == 320;
+    const bool native_layout = native_portrait || native_landscape;
+    const int32_t frame_margin = native_layout ? 6 : 4;
+    const int32_t panel_margin = native_layout ? 6 : 4;
     lv_obj_t *frame = controller_dashboard_panel(s_ui.controller_page,
-                                                 4,
-                                                 4,
-                                                 s_ui.width - 8,
-                                                 s_ui.height - 8,
+                                                 frame_margin,
+                                                 frame_margin,
+                                                 s_ui.width - frame_margin * 2,
+                                                 s_ui.height - frame_margin * 2,
                                                  COLOR_DASHBOARD_BG,
                                                  COLOR_DASHBOARD_BORDER);
-    const int32_t speed_w = portrait ? s_ui.width - 16 : 210;
-    const int32_t speed_h = native_portrait ? 168 : (portrait ? 120 : 154);
-    const int32_t gear_x = portrait ? 4 : 216;
-    const int32_t gear_y = native_portrait ? 180 : (portrait ? 126 : 4);
-    const int32_t gear_w = portrait ? s_ui.width - 16 : 92;
-    const int32_t gear_h = native_portrait ? 132 : (portrait ? 108 : 154);
-    const int32_t stats_y = native_portrait ? 320 : (portrait ? 236 : 160);
-    const int32_t stats_w = s_ui.width - 16;
-    const int32_t stats_h = native_portrait ? s_ui.height - stats_y - 16 :
-                          (portrait ? 72 : 68);
+    const int32_t speed_w = native_portrait ? 296 :
+                            (native_landscape ? 312 : (portrait ? s_ui.width - 16 : 210));
+    const int32_t speed_h = native_portrait ? 192 :
+                            (native_landscape ? 194 : (portrait ? 120 : 154));
+    const int32_t gear_x = native_portrait ? panel_margin :
+                           (native_landscape ? 328 : (portrait ? 4 : 216));
+    const int32_t gear_y = native_portrait ? 208 :
+                           (native_landscape ? panel_margin : (portrait ? 126 : 4));
+    const int32_t gear_w = native_portrait ? 296 :
+                           (native_landscape ? 134 : (portrait ? s_ui.width - 16 : 92));
+    const int32_t gear_h = native_portrait ? 122 :
+                           (native_landscape ? 194 : (portrait ? 108 : 154));
+    const int32_t stats_y = native_portrait ? 340 :
+                            (native_landscape ? 210 : (portrait ? 236 : 160));
+    const int32_t stats_w = native_layout ? s_ui.width - 24 : s_ui.width - 16;
+    const int32_t stats_h = native_portrait ? 122 :
+                            (native_landscape ? 92 : (portrait ? 72 : 68));
 
     lv_obj_t *speed_panel = controller_dashboard_panel(frame,
-                                                       4,
-                                                       4,
+                                                       panel_margin,
+                                                       panel_margin,
                                                        speed_w,
                                                        speed_h,
                                                        COLOR_DASHBOARD_BG,
@@ -8262,27 +8273,28 @@ static void create_controller_dashboard(void)
     lv_obj_set_style_bg_grad_color(gear_panel, COLOR_DASHBOARD_SOC_PANEL, LV_PART_MAIN);
     lv_obj_set_style_bg_grad_dir(gear_panel, LV_GRAD_DIR_VER, LV_PART_MAIN);
     lv_obj_t *stats_panel = controller_dashboard_panel(frame,
-                                                       4,
+                                                       panel_margin,
                                                        stats_y,
                                                        stats_w,
                                                        stats_h,
                                                        COLOR_DASHBOARD_BG,
                                                        COLOR_DASHBOARD_BORDER);
 
+    const int32_t title_inset = native_layout ? 14 : 8;
     lv_obj_t *speed_title = controller_dashboard_label(speed_panel,
                                                        "SPEED",
-                                                       8,
-                                                       8,
-                                                       speed_w - 16,
+                                                       title_inset,
+                                                       title_inset,
+                                                       speed_w - title_inset * 2,
                                                        lv_font_montserrat_14.line_height,
                                                        &lv_font_montserrat_14,
                                                        COLOR_TEXT);
     lv_obj_set_style_text_align(speed_title, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
     lv_obj_t *gear_title = controller_dashboard_label(gear_panel,
                                                       "GEAR",
-                                                      8,
-                                                      8,
-                                                      gear_w - 16,
+                                                      title_inset,
+                                                      title_inset,
+                                                      gear_w - title_inset * 2,
                                                       lv_font_montserrat_14.line_height,
                                                       &lv_font_montserrat_14,
                                                       COLOR_TEXT);
@@ -8290,18 +8302,21 @@ static void create_controller_dashboard(void)
 
     s_ui.controller_speed = controller_dashboard_label(speed_panel,
                                                        s_ui.controller_speed_buf,
-                                                       4,
-                                                       native_portrait ? 52 : (portrait ? 44 : 58),
-                                                       116,
+                                                       native_portrait ? 42 : (native_landscape ? 44 : 4),
+                                                       native_portrait ? 62 :
+                                                       (native_landscape ? 64 : (portrait ? 44 : 58)),
+                                                       native_layout ? 144 : 116,
                                                        controller_digits_72.line_height,
                                                        &controller_digits_72,
                                                        COLOR_TEXT);
     lv_obj_set_style_text_align(s_ui.controller_speed, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
     s_ui.controller_speed_unit = controller_dashboard_label(speed_panel,
                                                             s_ui.controller_speed_unit_buf,
-                                                            120,
-                                                            native_portrait ? 70 : (portrait ? 62 : 76),
-                                                            speed_w - 124,
+                                                            native_portrait ? 190 :
+                                                            (native_landscape ? 194 : 120),
+                                                            native_portrait ? 82 :
+                                                            (native_landscape ? 90 : (portrait ? 62 : 76)),
+                                                            native_layout ? speed_w - 194 : speed_w - 124,
                                                             lv_font_montserrat_24.line_height,
                                                             &lv_font_montserrat_24,
                                                             COLOR_TEXT);
@@ -8309,15 +8324,128 @@ static void create_controller_dashboard(void)
     s_ui.controller_gear = controller_dashboard_label(gear_panel,
                                                       s_ui.controller_gear_buf,
                                                       2,
-                                                      native_portrait ? 30 : (portrait ? 24 : 58),
+                                                      native_portrait ? 42 :
+                                                      (native_landscape ? 64 : (portrait ? 24 : 58)),
                                                       gear_w - 4,
                                                       controller_digits_72.line_height,
                                                       &controller_digits_72,
                                                       COLOR_TEXT);
 
-    const lv_font_t *value_font = &lv_font_montserrat_14;
+    const lv_font_t *value_font = native_layout ? &lv_font_montserrat_24 :
+                                                  &lv_font_montserrat_14;
     const lv_font_t *unit_font = &lv_font_montserrat_14;
-    if (portrait) {
+    if (native_portrait) {
+        const int32_t cell_w = stats_w / 2;
+        const int32_t row_h = stats_h / 2;
+        controller_dashboard_vertical_separator(stats_panel, cell_w, 4, stats_h - 8);
+        dashboard_separator(stats_panel, 6, row_h, stats_w - 12);
+
+        lv_obj_t *power_title = controller_dashboard_label(stats_panel, "POWER", 10, 8,
+                                                            cell_w - 20,
+                                                            unit_font->line_height, unit_font,
+                                                            COLOR_TEXT);
+        lv_obj_set_style_text_align(power_title, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
+        s_ui.controller_power = controller_dashboard_label(stats_panel,
+                                                           s_ui.controller_power_buf,
+                                                           16, 35, 50,
+                                                           value_font->line_height, value_font,
+                                                           COLOR_TEXT);
+        (void)controller_dashboard_label(stats_panel, "kW", 70, 40, 34,
+                                         unit_font->line_height, unit_font, COLOR_CONTROLLER_VALUE);
+        lv_obj_t *rpm_title = controller_dashboard_label(stats_panel, "RPM", cell_w + 10, 8,
+                                                          cell_w - 20,
+                                                          unit_font->line_height, unit_font,
+                                                          COLOR_TEXT);
+        lv_obj_set_style_text_align(rpm_title, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
+        s_ui.controller_rpm = controller_dashboard_label(stats_panel,
+                                                         s_ui.controller_rpm_buf,
+                                                         cell_w + 4, 35, 68,
+                                                         value_font->line_height, value_font,
+                                                         COLOR_TEXT);
+        (void)controller_dashboard_label(stats_panel, "RPM", cell_w + 76, 40, 42,
+                                         unit_font->line_height, unit_font, COLOR_CONTROLLER_VALUE);
+
+        lv_obj_t *controller_title = controller_dashboard_label(stats_panel, "CTRL", 10,
+                                                                 row_h + 8, cell_w - 20,
+                                                                 unit_font->line_height, unit_font,
+                                                                 COLOR_TEXT);
+        lv_obj_set_style_text_align(controller_title, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
+        s_ui.controller_temp = controller_dashboard_label(stats_panel,
+                                                          s_ui.controller_temp_buf,
+                                                          34, row_h + 35, 40,
+                                                          value_font->line_height, value_font,
+                                                          COLOR_TEXT);
+        (void)controller_dashboard_label(stats_panel, "C", 78, row_h + 40, 20,
+                                         unit_font->line_height, unit_font, COLOR_CONTROLLER_VALUE);
+        lv_obj_t *motor_title = controller_dashboard_label(stats_panel, "MOTOR", cell_w + 10,
+                                                           row_h + 8, cell_w - 20,
+                                                           unit_font->line_height, unit_font,
+                                                           COLOR_TEXT);
+        lv_obj_set_style_text_align(motor_title, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
+        s_ui.controller_motor_temp = controller_dashboard_label(stats_panel,
+                                                                s_ui.controller_motor_temp_buf,
+                                                                cell_w + 34, row_h + 35, 40,
+                                                                value_font->line_height, value_font,
+                                                                COLOR_TEXT);
+        (void)controller_dashboard_label(stats_panel, "C", cell_w + 78, row_h + 40, 20,
+                                         unit_font->line_height, unit_font, COLOR_CONTROLLER_VALUE);
+    } else if (native_landscape) {
+        const int32_t col_w = stats_w / 4;
+        for (int32_t index = 1; index < 4; ++index) {
+            controller_dashboard_vertical_separator(stats_panel,
+                                                    col_w * index,
+                                                    6,
+                                                    stats_h - 12);
+        }
+        lv_obj_t *power_title = controller_dashboard_label(stats_panel, "POWER", 10, 8,
+                                                            col_w - 20,
+                                                            unit_font->line_height, unit_font,
+                                                            COLOR_TEXT);
+        lv_obj_set_style_text_align(power_title, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
+        s_ui.controller_power = controller_dashboard_label(stats_panel,
+                                                           s_ui.controller_power_buf,
+                                                           10, 45, 46,
+                                                           value_font->line_height, value_font,
+                                                           COLOR_TEXT);
+        (void)controller_dashboard_label(stats_panel, "kW", 60, 50, 34,
+                                         unit_font->line_height, unit_font, COLOR_CONTROLLER_VALUE);
+        lv_obj_t *rpm_title = controller_dashboard_label(stats_panel, "RPM", col_w + 10, 8,
+                                                          col_w - 20,
+                                                          unit_font->line_height, unit_font,
+                                                          COLOR_TEXT);
+        lv_obj_set_style_text_align(rpm_title, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
+        s_ui.controller_rpm = controller_dashboard_label(stats_panel,
+                                                         s_ui.controller_rpm_buf,
+                                                         col_w + 4, 45, 68,
+                                                         value_font->line_height, value_font,
+                                                         COLOR_TEXT);
+        (void)controller_dashboard_label(stats_panel, "RPM", col_w + 76, 50, 34,
+                                         unit_font->line_height, unit_font, COLOR_CONTROLLER_VALUE);
+        lv_obj_t *controller_title = controller_dashboard_label(stats_panel, "CTRL", col_w * 2 + 10,
+                                                                 8, col_w - 20,
+                                                                 unit_font->line_height, unit_font,
+                                                                 COLOR_TEXT);
+        lv_obj_set_style_text_align(controller_title, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
+        s_ui.controller_temp = controller_dashboard_label(stats_panel,
+                                                          s_ui.controller_temp_buf,
+                                                          col_w * 2 + 22, 45, 40,
+                                                          value_font->line_height, value_font,
+                                                          COLOR_TEXT);
+        (void)controller_dashboard_label(stats_panel, "C", col_w * 2 + 66, 50, 20,
+                                         unit_font->line_height, unit_font, COLOR_CONTROLLER_VALUE);
+        lv_obj_t *motor_title = controller_dashboard_label(stats_panel, "MOTOR", col_w * 3 + 10,
+                                                           8, col_w - 20,
+                                                           unit_font->line_height, unit_font,
+                                                           COLOR_TEXT);
+        lv_obj_set_style_text_align(motor_title, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
+        s_ui.controller_motor_temp = controller_dashboard_label(stats_panel,
+                                                                s_ui.controller_motor_temp_buf,
+                                                                col_w * 3 + 22, 45, 40,
+                                                                value_font->line_height, value_font,
+                                                                COLOR_TEXT);
+        (void)controller_dashboard_label(stats_panel, "C", col_w * 3 + 66, 50, 20,
+                                         unit_font->line_height, unit_font, COLOR_CONTROLLER_VALUE);
+    } else if (portrait) {
         const int32_t cell_w = stats_w / 2;
         const int32_t row_h = stats_h / 2;
         const int32_t upper_value_y = native_portrait ? 22 : 10;
@@ -13164,7 +13292,10 @@ static bool simulator_native_bms_portrait_smoke(void)
 
 static bool simulator_native_speed_dashboard_smoke(void)
 {
-    if (s_ui.width != 320 || s_ui.height != 480) {
+    const bool native_controller_layout =
+        (s_ui.width == 320 && s_ui.height == 480) ||
+        (s_ui.width == 480 && s_ui.height == 320);
+    if (!native_controller_layout) {
         return true;
     }
     const bool controller_ready =
