@@ -398,6 +398,10 @@ RUN_TESTS=1 ./scripts/build-android-cast.sh
 - The driver cancels discovery, pending GAP connection, or an established GAP
   connection as applicable; it clears `BMS_BIND_ACTIVE` and
   `BMS_SCAN_REQUESTED`, then publishes `BMS OFF`.
+- `stop()` can run after BMS type selection even when no BMS was bound and the
+  NimBLE host was never started. Call `ble_gap_*` only when both
+  `BMS_BLE_READY` and `BMS_BLE_SYNCED` are set; local runtime, telemetry, and
+  snapshot cleanup always runs.
 - Cancelling does not erase the persisted BMS MAC. A later explicit refresh
   can reconnect.
 
@@ -409,19 +413,26 @@ RUN_TESTS=1 ./scripts/build-android-cast.sh
 | Connected discovery stage | Call `ble_gap_terminate()` |
 | Discovery scan active | Call `ble_gap_disc_cancel()` |
 | No active BMS operation | Return unchanged; do not remove binding |
+| NimBLE host not ready or synced | Skip every `ble_gap_*` call, then reset local BMS state safely |
 
 ### 5. Good / Base / Bad Cases
 
 - Good: refresh during `BMS DISC` immediately changes the snapshot to `BMS OFF`
   and does not schedule reconnect.
+- Good: selecting a BMS type with no bound MAC clears local BMS state without
+  initializing or querying NimBLE.
 - Base: refresh while scanning keeps the original scan behavior.
-- Bad: only change the visible label while the NimBLE GAP operation continues.
+- Bad: only change the visible label while the NimBLE GAP operation continues,
+  or query `ble_gap_disc_active()` before the host is ready.
 
 ### 6. Tests Required
 
 - The simulator action dispatcher must map the cancel action to offline BMS
   state.
 - Run the LVGL headless capability matrix and an ESP-IDF legacy profile build.
+- On hardware with no bound MAC, select two different BMS types and assert no
+  Guru Meditation or reset; then verify an active scan or connection still
+  cancels through the appropriate GAP operation.
 
 ### 7. Wrong vs Correct
 
@@ -437,6 +448,24 @@ label_set_text_if_changed(status, "已取消");
 (void)ble_gap_conn_cancel();
 RUNTIME_SET_FLAG(runtime, BMS_BIND_ACTIVE, false);
 bms_set_info(runtime, "BMS OFF");
+```
+
+#### Wrong
+
+```c
+if (ble_gap_disc_active()) {
+    (void)ble_gap_disc_cancel();
+}
+```
+
+#### Correct
+
+```c
+if (RUNTIME_FLAG(runtime, BMS_BLE_READY) && RUNTIME_FLAG(runtime, BMS_BLE_SYNCED)) {
+    if (ble_gap_disc_active()) {
+        (void)ble_gap_disc_cancel();
+    }
+}
 ```
 
 #### Wrong

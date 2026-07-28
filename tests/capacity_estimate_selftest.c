@@ -2,6 +2,18 @@
 
 #include <assert.h>
 
+static esp_bms_capacity_estimate_result_t add_capacity_sample(
+    esp_bms_capacity_estimate_t *state,
+    uint32_t *total_cycle_mah,
+    uint32_t sample_mah)
+{
+    esp_bms_capacity_estimate_reset_anchor(state);
+    assert(esp_bms_capacity_estimate_observe(state, *total_cycle_mah, 50U) ==
+           ESP_BMS_CAPACITY_ESTIMATE_REANCHORED);
+    *total_cycle_mah += sample_mah / 5U;
+    return esp_bms_capacity_estimate_observe(state, *total_cycle_mah, 70U);
+}
+
 static void test_current_integrator(void)
 {
     esp_bms_capacity_integrator_t state = { 0 };
@@ -31,34 +43,45 @@ static void test_current_integrator(void)
     assert(state.total_cycle_mah == 1820U);
 }
 
-int main(void)
+static void test_capacity_history(void)
 {
     esp_bms_capacity_estimate_t state = { 0 };
+    uint32_t total_cycle_mah = 100000U;
 
-    assert(esp_bms_capacity_estimate_observe(&state, 100000U, 50U) ==
-           ESP_BMS_CAPACITY_ESTIMATE_REANCHORED);
-    assert(esp_bms_capacity_estimate_observe(&state, 100000U, 20U) ==
-           ESP_BMS_CAPACITY_ESTIMATE_REANCHORED);
-    assert(!state.ready);
-
-    assert(esp_bms_capacity_estimate_observe(&state, 110000U, 40U) ==
+    assert(add_capacity_sample(&state, &total_cycle_mah, 50000U) ==
            ESP_BMS_CAPACITY_ESTIMATE_UPDATED);
-    assert(state.ready && state.estimate_mah == 50000U);
-
-    esp_bms_capacity_estimate_reset(&state);
-    assert(esp_bms_capacity_estimate_observe(&state, 200000U, 80U) ==
-           ESP_BMS_CAPACITY_ESTIMATE_REANCHORED);
-    assert(esp_bms_capacity_estimate_observe(&state, 209000U, 62U) ==
-           ESP_BMS_CAPACITY_ESTIMATE_NO_CHANGE);
-    assert(esp_bms_capacity_estimate_observe(&state, 210000U, 64U) ==
-           ESP_BMS_CAPACITY_ESTIMATE_REANCHORED);
-    assert(esp_bms_capacity_estimate_observe(&state, 220000U, 84U) ==
+    assert(state.sample_count == 1U && !state.ready && state.estimate_mah == 50000U);
+    assert(add_capacity_sample(&state, &total_cycle_mah, 50000U) ==
            ESP_BMS_CAPACITY_ESTIMATE_UPDATED);
-    assert(state.estimate_mah == 50000U);
+    assert(state.sample_count == 2U && !state.ready);
+    assert(add_capacity_sample(&state, &total_cycle_mah, 50000U) ==
+           ESP_BMS_CAPACITY_ESTIMATE_UPDATED);
+    assert(state.sample_count == 3U && state.ready && state.estimate_mah == 50000U);
+
+    assert(add_capacity_sample(&state, &total_cycle_mah, 80000U) ==
+           ESP_BMS_CAPACITY_ESTIMATE_REANCHORED);
+    assert(state.sample_count == 3U && state.estimate_mah == 50000U);
+
+    for (uint8_t index = 0U; index < 5U; ++index) {
+        assert(add_capacity_sample(&state, &total_cycle_mah, 60000U) ==
+               ESP_BMS_CAPACITY_ESTIMATE_UPDATED);
+    }
+    assert(state.sample_count == ESP_BMS_CAPACITY_ESTIMATE_HISTORY_MAX_COUNT);
+    assert(state.estimate_mah == 56250U);
+
+    assert(add_capacity_sample(&state, &total_cycle_mah, 55000U) ==
+           ESP_BMS_CAPACITY_ESTIMATE_UPDATED);
+    assert(state.sample_count == ESP_BMS_CAPACITY_ESTIMATE_HISTORY_MAX_COUNT);
+    assert(state.estimate_mah == 56875U);
 
     assert(esp_bms_capacity_estimate_observe(&state, 1000U, 40U) ==
            ESP_BMS_CAPACITY_ESTIMATE_CLEARED);
-    assert(!state.ready);
+    assert(!state.ready && state.sample_count == 0U);
+}
+
+int main(void)
+{
+    test_capacity_history();
     test_current_integrator();
     return 0;
 }

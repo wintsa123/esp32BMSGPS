@@ -1779,9 +1779,13 @@ required after changing generated or hand-maintained font descriptors.
 - Local integration: `esp_bms_capacity_integrator_observe(state, now_us,
   current_deci_amps)` for Daly and Yanyang; it returns a synthetic monotonic
   `total_cycle_mah`.
+- Estimator: `esp_bms_capacity_estimate_observe(state, total_cycle_mah,
+  soc_percent)` keeps at most 8 raw mAh samples and exposes the arithmetic
+  mean only after 3 accepted samples.
 - API: `bms_capacity_estimate_mah` (`number|null`) and
   `bms_capacity_estimate_state` (`ready`, `estimating`, or `unsupported`).
-- NVS: versioned `cap_est` blob, bound to BMS type and MAC.
+- NVS: version-2 `bms_cap_est` blob, bound to BMS type and MAC, is statically
+  limited to 80 bytes.
 
 ### 3. Contracts
 
@@ -1802,6 +1806,14 @@ required after changing generated or hand-maintained font descriptors.
   native counter clears the old estimate. For a matching Daly/Yanyang identity
   after reboot, seed the integrator from `last_accepted_cycle_mah`; persist only
   an accepted estimate or a cleared identity, never per-frame integration data.
+- Persist only the fixed 8-entry raw-sample ring plus count, next slot, mean,
+  last accepted cycle capacity, BMS type, and MAC. Version-1 single-value data
+  is incompatible and must be ignored so the estimator relearns safely.
+- Before 3 samples, accept structurally valid samples only to establish a
+  baseline. Thereafter, reject a candidate whose absolute deviation from the
+  sorted-history median is greater than 25%; use 64-bit intermediate arithmetic.
+  A rejection re-anchors the current interval and never writes NVS. At 8
+  samples, replace the next ring slot and recalculate the mean over all 8.
 - The result is usable Ah estimated from the BMS SOC, not voltage, rated Ah,
   energy density, or state of health. This is mandatory for flat LFP voltage
   plateaus.
@@ -1816,23 +1828,30 @@ required after changing generated or hand-maintained font descriptors.
 | Native counter regression | Clear estimate and persist the reset state |
 | Daly/Yanyang frame is partial, invalid, SOC > 100, or gap > 3 s | Do not integrate; re-anchor on a gap |
 | Daly/Yanyang type or bound MAC changes | Clear the estimate and local integrator before the next sample |
+| Fewer than 3 accepted samples | `estimating`, null estimate |
+| Candidate differs from the history median by more than 25% | Re-anchor without updating history or NVS |
+| Missing, malformed, or version-1 `bms_cap_est` blob | Ignore it and begin with an empty history |
 
 ### 5. Good / Base / Bad Cases
 
 - Good: a 20% partial charge with a 10 Ah native or locally integrated cycle
   increase estimates 50 Ah.
 - Base: a user never reaches 0% or 100%; a credible partial interval is enough.
+- Good: after 3 consistent 50 Ah samples, store only 8 values total and reject
+  an 80 Ah candidate without changing the displayed mean.
 - Bad: use pack voltage, remaining/rated capacity, a delayed SOC recalculation,
-  or another BMS identity as throughput.
+  another BMS identity as throughput, or an unbounded NVS history.
 
 ### 6. Tests Required
 
 - Run `./scripts/run-host-selftests.sh`; assert both ANT frame layouts, JK
   cycle-capacity scaling, Daly/Yanyang signed current, and positive/negative
-  current integration, remainder, deadband, gap, and counter-reset cases.
+  current integration, remainder, deadband, gap, and counter-reset cases; also
+  assert 3-sample readiness, 25% outlier rejection, 8-slot replacement, mean,
+  and reset handling.
 - Run both LVGL simulator orientations when changing the disabled BMS settings
   row; ANT/JK/Daly/Yanyang show `估算中` or Ah, while JBD stays unsupported.
-- Build the `oldesp32` profile, flash through RFC2217, and inspect boot output
+- Build the `esp32all` profile, flash through RFC2217, and inspect boot output
   when the selected profile exposes it. With a bound supported BMS, confirm
   `estimating` changes to `ready` only after an eligible interval.
 
@@ -1849,6 +1868,16 @@ estimate_mah = pack_voltage_mv * 100 / soc_span; /* voltage is not throughput */
 ```c
 if (cycle_delta_mah < 1000U || soc_span < 20U) {
     reanchor_without_sampling();
+}
+```
+
+#### Correct Multi-Day History
+
+```c
+if (sample_count >= 3U && deviation_from_median_percent > 25U) {
+    reanchor_without_sampling();
+} else {
+    replace_next_of_eight_samples_and_recalculate_mean();
 }
 ```
 

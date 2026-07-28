@@ -1183,13 +1183,15 @@ static bool bms_stop(esp_bms_idf_runtime_t *runtime)
     RUNTIME_SET_FLAG(runtime, BMS_BIND_ACTIVE, false);
     RUNTIME_SET_FLAG(runtime, BMS_SCAN_REQUESTED, false);
     RUNTIME_SET_FLAG(runtime, BMS_SCAN_ACTIVE, false);
-    if (ble_gap_disc_active()) {
-        (void)ble_gap_disc_cancel();
-    }
-    if (runtime->bms_ble_phase == (uint8_t)BMS_BLE_PHASE_CONNECTING) {
-        (void)ble_gap_conn_cancel();
-    } else if (runtime->bms_conn_handle != 0xFFFFU) {
-        (void)ble_gap_terminate(runtime->bms_conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+    if (RUNTIME_FLAG(runtime, BMS_BLE_READY) && RUNTIME_FLAG(runtime, BMS_BLE_SYNCED)) {
+        if (ble_gap_disc_active()) {
+            (void)ble_gap_disc_cancel();
+        }
+        if (runtime->bms_ble_phase == (uint8_t)BMS_BLE_PHASE_CONNECTING) {
+            (void)ble_gap_conn_cancel();
+        } else if (runtime->bms_conn_handle != 0xFFFFU) {
+            (void)ble_gap_terminate(runtime->bms_conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+        }
     }
     bms_reset_connection_state(runtime, BMS_BLE_PHASE_IDLE);
     bms_clear_telemetry(runtime);

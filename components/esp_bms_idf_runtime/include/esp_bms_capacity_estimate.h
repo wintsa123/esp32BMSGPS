@@ -5,6 +5,9 @@
 
 #define ESP_BMS_CAPACITY_ESTIMATE_MIN_SOC_SPAN 20U
 #define ESP_BMS_CAPACITY_ESTIMATE_MIN_CYCLE_DELTA_MAH 1000U
+#define ESP_BMS_CAPACITY_ESTIMATE_HISTORY_MAX_COUNT 8U
+#define ESP_BMS_CAPACITY_ESTIMATE_READY_SAMPLE_COUNT 3U
+#define ESP_BMS_CAPACITY_ESTIMATE_OUTLIER_PERCENT 25U
 #define ESP_BMS_CAPACITY_INTEGRATOR_DEADBAND_DECI_AMPS 5U
 #define ESP_BMS_CAPACITY_INTEGRATOR_MAX_INTERVAL_US INT64_C(3000000)
 #define ESP_BMS_CAPACITY_INTEGRATOR_MAH_DIVISOR UINT64_C(36000000)
@@ -13,7 +16,9 @@ typedef struct {
     uint32_t estimate_mah;
     uint32_t last_accepted_cycle_mah;
     uint32_t anchor_cycle_mah;
+    uint32_t sample_history_mah[ESP_BMS_CAPACITY_ESTIMATE_HISTORY_MAX_COUNT];
     uint8_t sample_count;
+    uint8_t next_sample_index;
     uint8_t anchor_soc_percent;
     uint8_t last_soc_percent;
     int8_t anchor_direction;

@@ -3,6 +3,63 @@
 #include <limits.h>
 #include <string.h>
 
+static uint32_t sample_history_median(const esp_bms_capacity_estimate_t *state)
+{
+    uint32_t sorted[ESP_BMS_CAPACITY_ESTIMATE_HISTORY_MAX_COUNT];
+    memcpy(sorted, state->sample_history_mah, state->sample_count * sizeof(sorted[0]));
+    for (uint8_t index = 1U; index < state->sample_count; ++index) {
+        const uint32_t value = sorted[index];
+        uint8_t insertion = index;
+        while (insertion > 0U && sorted[insertion - 1U] > value) {
+            sorted[insertion] = sorted[insertion - 1U];
+            insertion--;
+        }
+        sorted[insertion] = value;
+    }
+    const uint8_t middle = state->sample_count / 2U;
+    return (state->sample_count & 1U) != 0U ? sorted[middle] :
+        (uint32_t)(((uint64_t)sorted[middle - 1U] + sorted[middle]) / 2U);
+}
+
+static void sample_history_recalculate(esp_bms_capacity_estimate_t *state)
+{
+    uint64_t total_mah = 0U;
+    for (uint8_t index = 0U; index < state->sample_count; ++index) {
+        total_mah += state->sample_history_mah[index];
+    }
+    state->estimate_mah = state->sample_count == 0U ? 0U :
+        (uint32_t)(total_mah / state->sample_count);
+    state->ready = state->sample_count >= ESP_BMS_CAPACITY_ESTIMATE_READY_SAMPLE_COUNT;
+}
+
+static bool sample_history_rejects(const esp_bms_capacity_estimate_t *state,
+                                   uint32_t candidate_mah)
+{
+    if (state->sample_count < ESP_BMS_CAPACITY_ESTIMATE_READY_SAMPLE_COUNT) {
+        return false;
+    }
+    const uint32_t median_mah = sample_history_median(state);
+    if (median_mah == 0U) {
+        return true;
+    }
+    const uint32_t difference_mah = candidate_mah > median_mah
+                                        ? candidate_mah - median_mah
+                                        : median_mah - candidate_mah;
+    return (uint64_t)difference_mah * 100U >
+           (uint64_t)median_mah * ESP_BMS_CAPACITY_ESTIMATE_OUTLIER_PERCENT;
+}
+
+static void sample_history_add(esp_bms_capacity_estimate_t *state, uint32_t sample_mah)
+{
+    state->sample_history_mah[state->next_sample_index] = sample_mah;
+    if (state->sample_count < ESP_BMS_CAPACITY_ESTIMATE_HISTORY_MAX_COUNT) {
+        state->sample_count++;
+    }
+    state->next_sample_index = (uint8_t)((state->next_sample_index + 1U) %
+                                         ESP_BMS_CAPACITY_ESTIMATE_HISTORY_MAX_COUNT);
+    sample_history_recalculate(state);
+}
+
 static void set_anchor(esp_bms_capacity_estimate_t *state,
                        uint32_t total_cycle_mah,
                        uint8_t soc_percent)
@@ -105,7 +162,7 @@ esp_bms_capacity_estimate_result_t esp_bms_capacity_estimate_observe(
 
     const uint8_t soc = (uint8_t)soc_percent;
     if (!state->anchor_valid) {
-        if (state->ready && total_cycle_mah < state->last_accepted_cycle_mah) {
+        if (state->sample_count > 0U && total_cycle_mah < state->last_accepted_cycle_mah) {
             esp_bms_capacity_estimate_reset(state);
             set_anchor(state, total_cycle_mah, soc);
             return ESP_BMS_CAPACITY_ESTIMATE_CLEARED;
@@ -163,18 +220,11 @@ esp_bms_capacity_estimate_result_t esp_bms_capacity_estimate_observe(
         set_anchor(state, total_cycle_mah, soc);
         return ESP_BMS_CAPACITY_ESTIMATE_REANCHORED;
     }
-    if (!state->ready) {
-        state->estimate_mah = (uint32_t)sample_mah;
-        state->sample_count = 1U;
-        state->ready = true;
-    } else {
-        const uint8_t weight = state->sample_count < 4U ? state->sample_count : 4U;
-        state->estimate_mah = (uint32_t)(((uint64_t)state->estimate_mah * weight + sample_mah) /
-                                         (weight + 1U));
-        if (state->sample_count < 4U) {
-            state->sample_count++;
-        }
+    if (sample_history_rejects(state, (uint32_t)sample_mah)) {
+        set_anchor(state, total_cycle_mah, soc);
+        return ESP_BMS_CAPACITY_ESTIMATE_REANCHORED;
     }
+    sample_history_add(state, (uint32_t)sample_mah);
     state->last_accepted_cycle_mah = total_cycle_mah;
     set_anchor(state, total_cycle_mah, soc);
     return ESP_BMS_CAPACITY_ESTIMATE_UPDATED;

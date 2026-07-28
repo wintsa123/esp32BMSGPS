@@ -77,7 +77,8 @@ static const char *TAG = "bms_idf_runtime";
 #define RIDE_RECORDS_PERSIST_RETRY_US INT64_C(5000000)
 #define CAPACITY_ESTIMATE_NVS_KEY "bms_cap_est"
 #define CAPACITY_ESTIMATE_MAGIC UINT32_C(0x43415031)
-#define CAPACITY_ESTIMATE_VERSION 1U
+#define CAPACITY_ESTIMATE_VERSION 2U
+#define CAPACITY_ESTIMATE_BLOB_MAX_BYTES 80U
 #define CAPACITY_ESTIMATE_PERSIST_RETRY_US INT64_C(5000000)
 #define DISPLAY_NVS_BRIGHTNESS_KEY "disp_bright"
 #define DISPLAY_NVS_VOLUME_KEY "disp_vol"
@@ -1653,22 +1654,45 @@ typedef struct {
     uint32_t magic;
     uint32_t estimate_mah;
     uint32_t last_accepted_cycle_mah;
+    uint32_t sample_history_mah[ESP_BMS_CAPACITY_ESTIMATE_HISTORY_MAX_COUNT];
     char bms_mac[18];
     uint8_t version;
     uint8_t bms_type;
     uint8_t sample_count;
+    uint8_t next_sample_index;
     uint8_t ready;
 } runtime_capacity_estimate_blob_t;
 
+_Static_assert(sizeof(runtime_capacity_estimate_blob_t) <= CAPACITY_ESTIMATE_BLOB_MAX_BYTES,
+               "capacity estimate history must remain compact");
+
 static bool runtime_capacity_estimate_blob_valid(const runtime_capacity_estimate_blob_t *blob)
 {
-    return blob && blob->magic == CAPACITY_ESTIMATE_MAGIC &&
-           blob->version == CAPACITY_ESTIMATE_VERSION &&
-           runtime_bms_supports_capacity_estimate(blob->bms_type) &&
-           blob->bms_mac[sizeof(blob->bms_mac) - 1U] == '\0' &&
-           (blob->ready == 0U ||
-            (blob->ready == 1U && blob->estimate_mah > 0U && blob->sample_count > 0U &&
-             blob->sample_count <= 4U));
+    if (!blob || blob->magic != CAPACITY_ESTIMATE_MAGIC ||
+        blob->version != CAPACITY_ESTIMATE_VERSION ||
+        !runtime_bms_supports_capacity_estimate(blob->bms_type) ||
+        blob->bms_mac[sizeof(blob->bms_mac) - 1U] != '\0' ||
+        blob->sample_count > ESP_BMS_CAPACITY_ESTIMATE_HISTORY_MAX_COUNT ||
+        blob->next_sample_index >= ESP_BMS_CAPACITY_ESTIMATE_HISTORY_MAX_COUNT ||
+        blob->ready > 1U ||
+        (blob->sample_count < ESP_BMS_CAPACITY_ESTIMATE_HISTORY_MAX_COUNT &&
+         blob->next_sample_index != blob->sample_count)) {
+        return false;
+    }
+
+    uint64_t total_mah = 0U;
+    for (uint8_t index = 0U; index < blob->sample_count; ++index) {
+        if (blob->sample_history_mah[index] == 0U) {
+            return false;
+        }
+        total_mah += blob->sample_history_mah[index];
+    }
+    const uint32_t expected_estimate_mah = blob->sample_count == 0U ? 0U :
+        (uint32_t)(total_mah / blob->sample_count);
+    return blob->estimate_mah == expected_estimate_mah &&
+           blob->ready == (blob->sample_count >= ESP_BMS_CAPACITY_ESTIMATE_READY_SAMPLE_COUNT ?
+                               1U :
+                               0U);
 }
 
 static void runtime_capacity_estimate_blob_from_runtime(
@@ -1681,7 +1705,11 @@ static void runtime_capacity_estimate_blob_from_runtime(
     blob->bms_type = runtime->capacity_estimate_bms_type;
     blob->estimate_mah = runtime->capacity_estimate.estimate_mah;
     blob->last_accepted_cycle_mah = runtime->capacity_estimate.last_accepted_cycle_mah;
+    memcpy(blob->sample_history_mah,
+           runtime->capacity_estimate.sample_history_mah,
+           sizeof(blob->sample_history_mah));
     blob->sample_count = runtime->capacity_estimate.sample_count;
+    blob->next_sample_index = runtime->capacity_estimate.next_sample_index;
     blob->ready = runtime->capacity_estimate.ready ? 1U : 0U;
     memcpy(blob->bms_mac, runtime->capacity_estimate_bms_mac, sizeof(blob->bms_mac));
 }
@@ -1715,7 +1743,11 @@ static esp_err_t runtime_load_capacity_estimate(esp_bms_idf_runtime_t *runtime)
     esp_bms_capacity_estimate_reset(&runtime->capacity_estimate);
     runtime->capacity_estimate.estimate_mah = blob.estimate_mah;
     runtime->capacity_estimate.last_accepted_cycle_mah = blob.last_accepted_cycle_mah;
+    memcpy(runtime->capacity_estimate.sample_history_mah,
+           blob.sample_history_mah,
+           sizeof(runtime->capacity_estimate.sample_history_mah));
     runtime->capacity_estimate.sample_count = blob.sample_count;
+    runtime->capacity_estimate.next_sample_index = blob.next_sample_index;
     runtime->capacity_estimate.ready = blob.ready == 1U;
     runtime->capacity_estimate_bms_type = blob.bms_type;
     memcpy(runtime->capacity_estimate_bms_mac,

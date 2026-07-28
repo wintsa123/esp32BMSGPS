@@ -1555,8 +1555,9 @@ static void create_native_bms_portrait_dashboard(void)
     const int32_t content_w = s_ui.width - (margin * 2);
     const int32_t soc_y = 8;
     const int32_t soc_h = 115;
-    const int32_t electrical_y = 131;
+    const int32_t electrical_y = soc_y + soc_h + margin;
     const int32_t electrical_h = 54;
+    const int32_t top_panel_h = electrical_y + electrical_h - soc_y;
     const int32_t cell_y = 193;
     const int32_t cell_h = 54;
     const int32_t temp_y = 255;
@@ -1568,7 +1569,11 @@ static void create_native_bms_portrait_dashboard(void)
     const int32_t safety_col_w = content_w / 2;
     const int32_t safety_row_h = (safety_h - 23) / 4;
     const int32_t safety_text_h = (int32_t)settings_zh_10.line_height;
-    const int32_t soc_ring_size = 78;
+    const int32_t soc_battery_x = margin + 18;
+    const int32_t soc_battery_y = soc_y + 43;
+    const int32_t soc_battery_w = content_w - 40;
+    const int32_t soc_battery_h = 48;
+    const int32_t soc_value_w = 88;
     s_ui.native_bms_dashboard = true;
 
     lv_obj_t *static_layer = dashboard_native_layer(s_ui.battery_page,
@@ -1582,16 +1587,9 @@ static void create_native_bms_portrait_dashboard(void)
                                           margin,
                                           soc_y,
                                           content_w,
-                                          soc_h,
+                                          top_panel_h,
                                           COLOR_DASHBOARD_BG,
                                           COLOR_DASHBOARD_SOC_BORDER);
-    lv_obj_t *electrical_panel = dashboard_panel(static_layer,
-                                                  margin,
-                                                  electrical_y,
-                                                  content_w,
-                                                  electrical_h,
-                                                  COLOR_DASHBOARD_PANEL,
-                                                  COLOR_DASHBOARD_BORDER);
     lv_obj_t *cell_panel = dashboard_panel(static_layer,
                                             margin,
                                             cell_y,
@@ -1630,36 +1628,27 @@ static void create_native_bms_portrait_dashboard(void)
                             &settings_zh_10,
                             COLOR_DASHBOARD_TITLE,
                             LV_TEXT_ALIGN_LEFT);
+    dashboard_separator(soc_panel, 8, electrical_y - soc_y, content_w - 16);
     bms_native_static_label(soc_panel,
-                            "SOC",
-                            0,
-                            87,
-                            content_w,
-                            14,
-                            &settings_zh_10,
-                            COLOR_MUTED,
-                            LV_TEXT_ALIGN_CENTER);
-
-    bms_native_static_label(electrical_panel,
                             "电压",
                             0,
-                            7,
+                            electrical_y - soc_y + 7,
                             content_w / 2,
                             14,
                             &settings_zh_10,
                             COLOR_MUTED,
                             LV_TEXT_ALIGN_CENTER);
-    bms_native_static_label(electrical_panel,
+    bms_native_static_label(soc_panel,
                             "电流",
                             content_w / 2,
-                            7,
+                            electrical_y - soc_y + 7,
                             content_w / 2,
                             14,
                             &settings_zh_10,
                             COLOR_MUTED,
                             LV_TEXT_ALIGN_CENTER);
     lv_obj_t *electrical_separator =
-        dashboard_separator(electrical_panel, content_w / 2, 8, 1);
+        dashboard_separator(soc_panel, content_w / 2, electrical_y - soc_y + 8, 1);
     lv_obj_set_height(electrical_separator, electrical_h - 16);
 
     const int32_t cell_col_w = content_w / (int32_t)DASHBOARD_CELL_STAT_COUNT;
@@ -1757,20 +1746,18 @@ static void create_native_bms_portrait_dashboard(void)
                                                       0,
                                                       s_ui.width,
                                                       s_ui.height);
-    s_ui.soc_arc = lv_arc_create(dynamic_layer);
-    clear_style(s_ui.soc_arc);
-    lv_obj_set_pos(s_ui.soc_arc, (s_ui.width - soc_ring_size) / 2, soc_y + 26);
-    lv_obj_set_size(s_ui.soc_arc, soc_ring_size, soc_ring_size);
-    lv_arc_set_range(s_ui.soc_arc, 0, 100);
-    lv_arc_set_bg_angles(s_ui.soc_arc, 0, 270);
-    lv_arc_set_rotation(s_ui.soc_arc, 135);
-    lv_obj_set_style_arc_width(s_ui.soc_arc, 7, LV_PART_MAIN);
-    lv_obj_set_style_arc_color(s_ui.soc_arc, COLOR_DASHBOARD_BORDER, LV_PART_MAIN);
-    lv_obj_set_style_arc_width(s_ui.soc_arc, 7, LV_PART_INDICATOR);
-    lv_obj_set_style_arc_color(s_ui.soc_arc, COLOR_SOC, LV_PART_INDICATOR);
-    lv_obj_set_style_bg_opa(s_ui.soc_arc, LV_OPA_TRANSP, LV_PART_KNOB);
-    lv_obj_clear_flag(s_ui.soc_arc, LV_OBJ_FLAG_CLICKABLE);
-    s_ui.soc = label(dynamic_layer, 0, soc_y + 51, s_ui.width, 32, &lv_font_montserrat_28);
+    s_ui.soc_arc = NULL;
+    dashboard_battery_icon(dynamic_layer,
+                           soc_battery_x,
+                           soc_battery_y,
+                           soc_battery_w,
+                           soc_battery_h);
+    s_ui.soc = label(dynamic_layer,
+                     s_ui.width - margin - 12 - soc_value_w,
+                     soc_y + 4,
+                     soc_value_w,
+                     32,
+                     &lv_font_montserrat_28);
     s_ui.pack_voltage = label(dynamic_layer,
                               margin,
                               electrical_y + 25,
@@ -1845,7 +1832,7 @@ static void create_native_bms_portrait_dashboard(void)
                                     safety_y + row_y + (safety_row_h - 12) / 2);
     }
 
-    lv_obj_set_style_text_align(s_ui.soc, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_align(s_ui.soc, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
     lv_obj_set_style_text_align(s_ui.pack_voltage, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_align(s_ui.current, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_align(s_ui.capacity, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
@@ -9063,7 +9050,7 @@ static void fireblade_create_native_landscape(lv_obj_t *page)
     const int32_t center_y = height / 2;
     const int32_t base_radius = LV_MIN((height * 47) / 100, (width * 32) / 100);
     const int32_t bridge_radius = base_radius + 20;
-    const int32_t speed_radius = base_radius - 10;
+    const int32_t speed_radius = base_radius - 5;
     const int32_t metric_x = 7;
     const int32_t metric_w = side_w - 12;
     const int32_t metric_unit_x = metric_x + 36;
@@ -9081,7 +9068,7 @@ static void fireblade_create_native_landscape(lv_obj_t *page)
         metric_y[0] + 33,
         metric_y[1] + 33,
         metric_y[2] + 33,
-        height - 30,
+        height - 36,
     };
     static const int32_t metric_title_w[] = { 82, 74, 80, 103 };
     const lv_point_t center = speed_dashboard_point(center_x, center_y);
@@ -9094,7 +9081,7 @@ static void fireblade_create_native_landscape(lv_obj_t *page)
     (void)fireblade_panel(static_layer,
                           width - 90,
                           mode_y,
-                          82,
+                          90,
                           38,
                           COLOR_FIREBLADE_MODE,
                           0);
@@ -9133,12 +9120,10 @@ static void fireblade_create_native_landscape(lv_obj_t *page)
                           &settings_zh_13, COLOR_WHITE, LV_TEXT_ALIGN_LEFT);
     (void)fireblade_label(static_layer, "电机", 10, motor_temp_y + 1, 32, 18,
                           &settings_zh_13, COLOR_WHITE, LV_TEXT_ALIGN_LEFT);
-    (void)fireblade_label(static_layer, "MODE", width - 74, mode_y + 10, 42, 12,
-                          &settings_zh_10, COLOR_WHITE, LV_TEXT_ALIGN_LEFT);
-    (void)fireblade_label(static_layer, "1", width - 60, mode_y + 24, 22, 14,
-                          &fireblade_info_digits_12, COLOR_WHITE, LV_TEXT_ALIGN_CENTER);
+    (void)fireblade_label(static_layer, "MODE 1", width - 82, mode_y + 13, 74, 12,
+                          &settings_zh_10, COLOR_WHITE, LV_TEXT_ALIGN_CENTER);
     (void)fireblade_label(static_layer, "km", metric_unit_x, metric_value_y[1] + 6,
-                          24, 10, &fireblade_info_units_8, COLOR_FIREBLADE_BLACK,
+                          24, 10, &settings_zh_10, COLOR_FIREBLADE_BLACK,
                           LV_TEXT_ALIGN_LEFT);
 
     (void)dashboard_static_cache_finalize(&s_ui.fireblade_static_cache,
@@ -9158,7 +9143,7 @@ static void fireblade_create_native_landscape(lv_obj_t *page)
                                           LV_TEXT_ALIGN_LEFT);
     s_ui.fireblade_controller_temp = fireblade_label(dynamic_layer,
                                                       s_ui.fireblade_controller_temp_buf,
-                                                      48,
+                                                      44,
                                                       controller_temp_y,
                                                       48,
                                                       temperature_value_h,
@@ -9167,7 +9152,7 @@ static void fireblade_create_native_landscape(lv_obj_t *page)
                                                       LV_TEXT_ALIGN_RIGHT);
     s_ui.fireblade_motor_temp = fireblade_label(dynamic_layer,
                                                  s_ui.fireblade_motor_temp_buf,
-                                                 48,
+                                                 44,
                                                  motor_temp_y,
                                                  48,
                                                  temperature_value_h,
@@ -9198,7 +9183,7 @@ static void fireblade_create_native_landscape(lv_obj_t *page)
                                                       metric_value_y[0] + 6,
                                                       35,
                                                       10,
-                                                      &fireblade_info_units_8,
+                                                      &settings_zh_10,
                                                       COLOR_FIREBLADE_BLACK,
                                                       LV_TEXT_ALIGN_LEFT);
     s_ui.fireblade_range = fireblade_label(dynamic_layer,
@@ -9225,7 +9210,7 @@ static void fireblade_create_native_landscape(lv_obj_t *page)
                                                         metric_value_y[2] + 6,
                                                         35,
                                                         10,
-                                                        &fireblade_info_units_8,
+                                                        &settings_zh_10,
                                                         COLOR_FIREBLADE_BLACK,
                                                         LV_TEXT_ALIGN_LEFT);
     s_ui.fireblade_date = fireblade_label(dynamic_layer,
@@ -9264,6 +9249,8 @@ static void fireblade_create_native_landscape(lv_obj_t *page)
                                                 &lv_font_montserrat_14,
                                                 COLOR_FIREBLADE_BLACK,
                                                 LV_TEXT_ALIGN_RIGHT);
+    lv_obj_set_style_transform_scale(s_ui.fireblade_speed, 272, LV_PART_MAIN);
+    lv_obj_set_style_transform_scale(s_ui.fireblade_speed_unit, 304, LV_PART_MAIN);
 }
 
 static void fireblade_create_native_portrait(lv_obj_t *page)
@@ -13166,7 +13153,8 @@ static bool simulator_tree_has_label(lv_obj_t *obj, const char *text)
 static bool simulator_native_bms_portrait_smoke(void)
 {
     return !bms_native_portrait_enabled() ||
-           (s_ui.battery_page && s_ui.soc && s_ui.pack_voltage && s_ui.current &&
+           (s_ui.battery_page && s_ui.soc_battery_level && s_ui.soc && s_ui.pack_voltage &&
+            s_ui.current &&
             s_ui.capacity && s_ui.remaining_range_value && s_ui.bms_running_time &&
             simulator_tree_has_label(s_ui.battery_page, "BMS") &&
             simulator_tree_has_label(s_ui.battery_page, s_ui.bms_capacity_buf) &&
