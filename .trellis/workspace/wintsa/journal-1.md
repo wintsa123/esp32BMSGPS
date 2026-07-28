@@ -802,3 +802,36 @@ FarDriver Nordic UART 只读轮询改为无响应写；ESP-IDF profile 构建和
 ### Next Steps
 
 - None - task complete
+
+
+## Session 25: Refine 480x320 BMS dashboard
+
+**Date**: 2026-07-28
+**Task**: Refine 480x320 BMS dashboard
+**Branch**: `main`
+
+### Summary
+
+Simplified the native 480x320 BMS dashboard: duration now omits seconds with a titled divider, electrical labels are removed, and safety checks render dynamically so balancing standby has no green check. Verified with the SDL simulator and refreshed the preview.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `accfa166` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

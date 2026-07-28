@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 24
+- **Total Sessions**: 25
 - **Last Active**: 2026-07-28
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~804 | Active |
+| `journal-1.md` | ~837 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 25 | 2026-07-28 | Refine 480x320 BMS dashboard | `accfa166` | `main` |
 | 24 | 2026-07-28 | 微调轮播黑卡尺寸与转场时长 | `3af5e2f3` | `main` |
 | 23 | 2026-07-28 | 修复 FarDriver 无响应轮询 | `b083590c` | `main` |
 | 22 | 2026-07-28 | 修复模拟器鼠标轮播手势 | `0abbb47a` | `main` |
