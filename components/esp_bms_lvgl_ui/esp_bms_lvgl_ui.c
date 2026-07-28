@@ -918,6 +918,11 @@ static bool bms_native_landscape_enabled(void)
     return s_ui.width >= 480 && s_ui.height >= 320 && s_ui.width >= s_ui.height;
 }
 
+static bool bms_native_portrait_enabled(void)
+{
+    return s_ui.width == 320 && s_ui.height == 480;
+}
+
 #if LV_USE_SNAPSHOT
 static void *dashboard_static_cache_alloc(size_t bytes)
 {
@@ -1535,6 +1540,333 @@ static void create_native_bms_dashboard(void)
                                     LV_PART_MAIN);
         lv_obj_set_style_text_color(s_ui.temperature_values[index], bms_value_color,
                                     LV_PART_MAIN);
+    }
+    for (uint8_t index = 0U; index < ESP_BMS_BMS_SAFETY_COUNT; ++index) {
+        lv_obj_set_style_text_align(s_ui.bms_safety_values[index], LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
+    }
+}
+
+static void create_native_bms_portrait_dashboard(void)
+{
+    static const char *const cell_keys[] = { "高", "低", "压差", "均" };
+    static const char *const temp_keys[] = { "T1", "T2", "T3", "T4", "MOS", "BAL" };
+    static const uint8_t temp_value_index[] = { 0U, 1U, 2U, 3U, 5U, 4U };
+    const int32_t margin = 8;
+    const int32_t content_w = s_ui.width - (margin * 2);
+    const int32_t soc_y = 8;
+    const int32_t soc_h = 115;
+    const int32_t electrical_y = 131;
+    const int32_t electrical_h = 54;
+    const int32_t cell_y = 193;
+    const int32_t cell_h = 54;
+    const int32_t temp_y = 255;
+    const int32_t temp_h = 68;
+    const int32_t metric_y = 331;
+    const int32_t metric_h = 48;
+    const int32_t safety_y = 387;
+    const int32_t safety_h = s_ui.height - safety_y - margin;
+    const int32_t safety_col_w = content_w / 2;
+    const int32_t safety_row_h = (safety_h - 23) / 4;
+    const int32_t safety_text_h = (int32_t)settings_zh_10.line_height;
+    const int32_t soc_ring_size = 78;
+    s_ui.native_bms_dashboard = true;
+
+    lv_obj_t *static_layer = dashboard_native_layer(s_ui.battery_page,
+                                                     0,
+                                                     0,
+                                                     s_ui.width,
+                                                     s_ui.height);
+    lv_obj_set_style_bg_color(static_layer, COLOR_DASHBOARD_BG, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(static_layer, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_t *soc_panel = dashboard_panel(static_layer,
+                                          margin,
+                                          soc_y,
+                                          content_w,
+                                          soc_h,
+                                          COLOR_DASHBOARD_BG,
+                                          COLOR_DASHBOARD_SOC_BORDER);
+    lv_obj_t *electrical_panel = dashboard_panel(static_layer,
+                                                  margin,
+                                                  electrical_y,
+                                                  content_w,
+                                                  electrical_h,
+                                                  COLOR_DASHBOARD_PANEL,
+                                                  COLOR_DASHBOARD_BORDER);
+    lv_obj_t *cell_panel = dashboard_panel(static_layer,
+                                            margin,
+                                            cell_y,
+                                            content_w,
+                                            cell_h,
+                                            COLOR_DASHBOARD_PANEL,
+                                            COLOR_DASHBOARD_BORDER);
+    lv_obj_t *temp_panel = dashboard_panel(static_layer,
+                                            margin,
+                                            temp_y,
+                                            content_w,
+                                            temp_h,
+                                            COLOR_DASHBOARD_PANEL,
+                                            COLOR_DASHBOARD_BORDER);
+    lv_obj_t *metric_panel = dashboard_panel(static_layer,
+                                              margin,
+                                              metric_y,
+                                              content_w,
+                                              metric_h,
+                                              COLOR_DASHBOARD_PANEL,
+                                              COLOR_DASHBOARD_BORDER);
+    lv_obj_t *safety_panel = dashboard_panel(static_layer,
+                                              margin,
+                                              safety_y,
+                                              content_w,
+                                              safety_h,
+                                              COLOR_DASHBOARD_PANEL,
+                                              COLOR_DASHBOARD_BORDER);
+
+    bms_native_static_label(soc_panel,
+                            "BMS",
+                            12,
+                            8,
+                            48,
+                            14,
+                            &settings_zh_10,
+                            COLOR_DASHBOARD_TITLE,
+                            LV_TEXT_ALIGN_LEFT);
+    bms_native_static_label(soc_panel,
+                            "SOC",
+                            0,
+                            87,
+                            content_w,
+                            14,
+                            &settings_zh_10,
+                            COLOR_MUTED,
+                            LV_TEXT_ALIGN_CENTER);
+
+    bms_native_static_label(electrical_panel,
+                            "电压",
+                            0,
+                            7,
+                            content_w / 2,
+                            14,
+                            &settings_zh_10,
+                            COLOR_MUTED,
+                            LV_TEXT_ALIGN_CENTER);
+    bms_native_static_label(electrical_panel,
+                            "电流",
+                            content_w / 2,
+                            7,
+                            content_w / 2,
+                            14,
+                            &settings_zh_10,
+                            COLOR_MUTED,
+                            LV_TEXT_ALIGN_CENTER);
+    lv_obj_t *electrical_separator =
+        dashboard_separator(electrical_panel, content_w / 2, 8, 1);
+    lv_obj_set_height(electrical_separator, electrical_h - 16);
+
+    const int32_t cell_col_w = content_w / (int32_t)DASHBOARD_CELL_STAT_COUNT;
+    for (uint8_t index = 0U; index < DASHBOARD_CELL_STAT_COUNT; ++index) {
+        const int32_t col_x = (int32_t)index * cell_col_w;
+        bms_native_static_label(cell_panel,
+                                cell_keys[index],
+                                col_x,
+                                7,
+                                cell_col_w,
+                                14,
+                                &settings_zh_10,
+                                COLOR_MUTED,
+                                LV_TEXT_ALIGN_CENTER);
+        if (index + 1U < DASHBOARD_CELL_STAT_COUNT) {
+            lv_obj_t *separator = dashboard_separator(cell_panel, col_x + cell_col_w, 7, 1);
+            lv_obj_set_height(separator, cell_h - 14);
+        }
+    }
+
+    const int32_t temp_col_w = content_w / 2;
+    for (uint8_t index = 0U; index < ESP_BMS_BMS_TEMP_MAX_COUNT; ++index) {
+        const int32_t column = (int32_t)index / 3;
+        const int32_t row = (int32_t)index % 3;
+        bms_native_static_label(temp_panel,
+                                temp_keys[index],
+                                column * temp_col_w + 12,
+                                4 + row * 21,
+                                42,
+                                14,
+                                &settings_zh_10,
+                                COLOR_MUTED,
+                                LV_TEXT_ALIGN_LEFT);
+        if (row > 0) {
+            dashboard_separator(temp_panel,
+                                column * temp_col_w + 8,
+                                4 + row * 21 - 2,
+                                temp_col_w - 16);
+        }
+    }
+
+    static const char *const metric_keys[] = { "容量", "剩余里程", "使用时长" };
+    const int32_t metric_col_w = content_w / 3;
+    for (uint8_t index = 0U; index < ARRAY_SIZE(metric_keys); ++index) {
+        const int32_t col_x = (int32_t)index * metric_col_w;
+        bms_native_static_label(metric_panel,
+                                metric_keys[index],
+                                col_x,
+                                6,
+                                metric_col_w,
+                                12,
+                                &settings_zh_10,
+                                COLOR_MUTED,
+                                LV_TEXT_ALIGN_CENTER);
+        if (index + 1U < ARRAY_SIZE(metric_keys)) {
+            lv_obj_t *separator = dashboard_separator(metric_panel, col_x + metric_col_w, 8, 1);
+            lv_obj_set_height(separator, metric_h - 16);
+        }
+    }
+
+    bms_native_static_label(safety_panel,
+                            "告警与保护",
+                            12,
+                            7,
+                            content_w - 24,
+                            14,
+                            &settings_zh_10,
+                            COLOR_DASHBOARD_TITLE,
+                            LV_TEXT_ALIGN_LEFT);
+    for (uint8_t index = 0U; index < ESP_BMS_BMS_SAFETY_COUNT; ++index) {
+        const int32_t col_x = (int32_t)(index % 2U) * safety_col_w;
+        const int32_t row_y = 23 + (int32_t)(index / 2U) * safety_row_h;
+        const int32_t text_y = row_y + (safety_row_h - safety_text_h) / 2;
+        bms_native_safety_icon(safety_panel,
+                               col_x + 10,
+                               row_y + (safety_row_h - 12) / 2);
+        bms_native_static_label(safety_panel,
+                                BMS_SAFETY_KEYS[index],
+                                col_x + 26,
+                                text_y,
+                                safety_col_w - 72,
+                                safety_text_h,
+                                &settings_zh_10,
+                                COLOR_WHITE,
+                                LV_TEXT_ALIGN_LEFT);
+    }
+
+    (void)dashboard_static_cache_finalize(&s_ui.battery_static_cache,
+                                           s_ui.battery_page,
+                                           static_layer,
+                                           "bms");
+
+    lv_obj_t *dynamic_layer = dashboard_native_layer(s_ui.battery_page,
+                                                      0,
+                                                      0,
+                                                      s_ui.width,
+                                                      s_ui.height);
+    s_ui.soc_arc = lv_arc_create(dynamic_layer);
+    clear_style(s_ui.soc_arc);
+    lv_obj_set_pos(s_ui.soc_arc, (s_ui.width - soc_ring_size) / 2, soc_y + 26);
+    lv_obj_set_size(s_ui.soc_arc, soc_ring_size, soc_ring_size);
+    lv_arc_set_range(s_ui.soc_arc, 0, 100);
+    lv_arc_set_bg_angles(s_ui.soc_arc, 0, 270);
+    lv_arc_set_rotation(s_ui.soc_arc, 135);
+    lv_obj_set_style_arc_width(s_ui.soc_arc, 7, LV_PART_MAIN);
+    lv_obj_set_style_arc_color(s_ui.soc_arc, COLOR_DASHBOARD_BORDER, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(s_ui.soc_arc, 7, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(s_ui.soc_arc, COLOR_SOC, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_opa(s_ui.soc_arc, LV_OPA_TRANSP, LV_PART_KNOB);
+    lv_obj_clear_flag(s_ui.soc_arc, LV_OBJ_FLAG_CLICKABLE);
+    s_ui.soc = label(dynamic_layer, 0, soc_y + 51, s_ui.width, 32, &lv_font_montserrat_28);
+    s_ui.pack_voltage = label(dynamic_layer,
+                              margin,
+                              electrical_y + 25,
+                              content_w / 2,
+                              24,
+                              &lv_font_montserrat_24);
+    s_ui.current = label(dynamic_layer,
+                         margin + (content_w / 2),
+                         electrical_y + 25,
+                         content_w / 2,
+                         24,
+                         &lv_font_montserrat_24);
+
+    for (uint8_t index = 0U; index < DASHBOARD_CELL_STAT_COUNT; ++index) {
+        s_ui.cell_stat_values[index] = label(dynamic_layer,
+                                             margin + (int32_t)index * cell_col_w,
+                                             cell_y + 28,
+                                             cell_col_w,
+                                             18,
+                                             &lv_font_montserrat_14);
+    }
+    for (uint8_t index = 0U; index < ESP_BMS_BMS_TEMP_MAX_COUNT; ++index) {
+        const int32_t position = (int32_t)index;
+        const int32_t column = position / 3;
+        const int32_t row = position % 3;
+        const uint8_t value_index = temp_value_index[index];
+        s_ui.temperature_values[value_index] = label(dynamic_layer,
+                                                      margin + column * temp_col_w + 54,
+                                                      temp_y + 4 + row * 21,
+                                                      temp_col_w - 66,
+                                                      14,
+                                                      &lv_font_montserrat_14);
+    }
+    s_ui.capacity = label(dynamic_layer,
+                          margin,
+                          metric_y + 24,
+                          metric_col_w,
+                          18,
+                          &settings_zh_13);
+    s_ui.remaining_range_value = label(dynamic_layer,
+                                       margin + metric_col_w,
+                                       metric_y + 24,
+                                       metric_col_w - 20,
+                                       18,
+                                       &lv_font_montserrat_14);
+    s_ui.remaining_range_unit = label(dynamic_layer,
+                                      margin + metric_col_w * 2 - 20,
+                                      metric_y + 25,
+                                      20,
+                                      16,
+                                      &settings_zh_10);
+    lv_label_set_text(s_ui.remaining_range_unit, "km");
+    s_ui.bms_running_time = label(dynamic_layer,
+                                  margin + metric_col_w * 2,
+                                  metric_y + 24,
+                                  metric_col_w,
+                                  18,
+                                  &settings_zh_13);
+    for (uint8_t index = 0U; index < ESP_BMS_BMS_SAFETY_COUNT; ++index) {
+        const int32_t col_x = (int32_t)(index % 2U) * safety_col_w;
+        const int32_t row_y = 23 + (int32_t)(index / 2U) * safety_row_h;
+        const int32_t text_y = row_y + (safety_row_h - safety_text_h) / 2;
+        s_ui.bms_safety_values[index] = label(dynamic_layer,
+                                              margin + col_x + safety_col_w - 42,
+                                              safety_y + text_y,
+                                              34,
+                                              safety_text_h,
+                                              &settings_zh_10);
+        s_ui.bms_safety_checks[index] =
+            bms_native_safety_check(dynamic_layer,
+                                    margin + col_x + 10,
+                                    safety_y + row_y + (safety_row_h - 12) / 2);
+    }
+
+    lv_obj_set_style_text_align(s_ui.soc, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_align(s_ui.pack_voltage, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_align(s_ui.current, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_align(s_ui.capacity, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_align(s_ui.remaining_range_value, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
+    lv_obj_set_style_text_align(s_ui.remaining_range_unit, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
+    lv_obj_set_style_text_align(s_ui.bms_running_time, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.soc, COLOR_WHITE, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.pack_voltage, COLOR_WHITE, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.current, COLOR_WHITE, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.capacity, COLOR_WHITE, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.remaining_range_value, COLOR_WHITE, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.remaining_range_unit, COLOR_ACCENT, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.bms_running_time, COLOR_WHITE, LV_PART_MAIN);
+    for (uint8_t index = 0U; index < DASHBOARD_CELL_STAT_COUNT; ++index) {
+        lv_obj_set_style_text_align(s_ui.cell_stat_values[index], LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+        lv_obj_set_style_text_color(s_ui.cell_stat_values[index], COLOR_WHITE, LV_PART_MAIN);
+    }
+    for (uint8_t index = 0U; index < ESP_BMS_BMS_TEMP_MAX_COUNT; ++index) {
+        lv_obj_set_style_text_align(s_ui.temperature_values[index], LV_TEXT_ALIGN_RIGHT,
+                                    LV_PART_MAIN);
+        lv_obj_set_style_text_color(s_ui.temperature_values[index], COLOR_WHITE, LV_PART_MAIN);
     }
     for (uint8_t index = 0U; index < ESP_BMS_BMS_SAFETY_COUNT; ++index) {
         lv_obj_set_style_text_align(s_ui.bms_safety_values[index], LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
@@ -7628,13 +7960,21 @@ static void set_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
         soc_valid = true;
         if (SNAPSHOT_FLAG(snapshot, CAPACITY_REMAINING_VALID) &&
             SNAPSHOT_FLAG(snapshot, TOTAL_CAPACITY_VALID)) {
-            (void)snprintf(ah,
-                           sizeof(ah),
-                           "%lu.%01lu/%lu.%01luAh",
-                           (unsigned long)(snapshot->capacity_remaining_mah / 1000U),
-                           (unsigned long)((snapshot->capacity_remaining_mah % 1000U) / 100U),
-                           (unsigned long)(snapshot->total_capacity_mah / 1000U),
-                           (unsigned long)((snapshot->total_capacity_mah % 1000U) / 100U));
+            if (bms_native_portrait_enabled() && s_ui.native_bms_dashboard) {
+                (void)snprintf(ah,
+                               sizeof(ah),
+                               "%lu.%01luAh",
+                               (unsigned long)(snapshot->capacity_remaining_mah / 1000U),
+                               (unsigned long)((snapshot->capacity_remaining_mah % 1000U) / 100U));
+            } else {
+                (void)snprintf(ah,
+                               sizeof(ah),
+                               "%lu.%01lu/%lu.%01luAh",
+                               (unsigned long)(snapshot->capacity_remaining_mah / 1000U),
+                               (unsigned long)((snapshot->capacity_remaining_mah % 1000U) / 100U),
+                               (unsigned long)(snapshot->total_capacity_mah / 1000U),
+                               (unsigned long)((snapshot->total_capacity_mah % 1000U) / 100U));
+            }
         } else {
             (void)snprintf(ah, sizeof(ah), "--/--Ah");
         }
@@ -7745,6 +8085,17 @@ static void set_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
                        4,
                        (status_area_height - status_value_height) / 2);
         lv_obj_set_size(s_ui.bms_status_ok, status_width, status_value_height);
+        if (snapshot->remaining_range_valid) {
+            (void)snprintf(s_ui.bms_range_buf,
+                           sizeof(s_ui.bms_range_buf),
+                           "%u",
+                           (unsigned)snapshot->remaining_range_km);
+        } else {
+            (void)snprintf(s_ui.bms_range_buf, sizeof(s_ui.bms_range_buf), "--");
+        }
+        lv_label_set_text_static(s_ui.remaining_range_value, s_ui.bms_range_buf);
+    }
+    if (s_ui.native_bms_dashboard && s_ui.remaining_range_value) {
         if (snapshot->remaining_range_valid) {
             (void)snprintf(s_ui.bms_range_buf,
                            sizeof(s_ui.bms_range_buf),
@@ -11315,6 +11666,8 @@ static void create_screen(lv_display_t *display)
 
     if (bms_native_landscape_enabled()) {
         create_native_bms_dashboard();
+    } else if (bms_native_portrait_enabled()) {
+        create_native_bms_portrait_dashboard();
     } else {
     lv_obj_t *battery_viewport = dashboard_viewport(s_ui.battery_page, portrait);
     if (portrait) {
@@ -12609,13 +12962,6 @@ static bool simulator_soc_color_smoke(void)
            lv_color_eq(dashboard_soc_fill_color(0U, false, false), COLOR_PANEL_ALT);
 }
 
-bool esp_bms_lvgl_ui_simulator_snapshot_matches(const esp_bms_dashboard_snapshot_t *snapshot)
-{
-    return snapshot && UI_FLAG(LAST_SNAPSHOT_VALID) && !UI_FLAG(DEFERRED_SNAPSHOT_VALID) &&
-           memcmp(&s_ui.last_snapshot, snapshot, sizeof(s_ui.last_snapshot)) == 0 &&
-           simulator_soc_color_smoke();
-}
-
 static bool simulator_tree_has_label(lv_obj_t *obj, const char *text)
 {
     if (!obj || !text) {
@@ -12632,6 +12978,24 @@ static bool simulator_tree_has_label(lv_obj_t *obj, const char *text)
         }
     }
     return false;
+}
+
+static bool simulator_native_bms_portrait_smoke(void)
+{
+    return !bms_native_portrait_enabled() ||
+           (s_ui.battery_page && s_ui.soc && s_ui.pack_voltage && s_ui.current &&
+            s_ui.capacity && s_ui.remaining_range_value && s_ui.bms_running_time &&
+            simulator_tree_has_label(s_ui.battery_page, "BMS") &&
+            simulator_tree_has_label(s_ui.battery_page, s_ui.bms_capacity_buf) &&
+            simulator_tree_has_label(s_ui.battery_page, s_ui.bms_range_buf) &&
+            simulator_tree_has_label(s_ui.battery_page, s_ui.bms_running_time_buf));
+}
+
+bool esp_bms_lvgl_ui_simulator_snapshot_matches(const esp_bms_dashboard_snapshot_t *snapshot)
+{
+    return snapshot && UI_FLAG(LAST_SNAPSHOT_VALID) && !UI_FLAG(DEFERRED_SNAPSHOT_VALID) &&
+           memcmp(&s_ui.last_snapshot, snapshot, sizeof(s_ui.last_snapshot)) == 0 &&
+           simulator_soc_color_smoke() && simulator_native_bms_portrait_smoke();
 }
 
 static bool simulator_page_transition_smoke(void)

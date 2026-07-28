@@ -77,6 +77,7 @@ Questions to answer:
 - The portrait SOC capacity label is 100px wide and the firmware only enables Montserrat 14/24. Format it as one-decimal `remaining/totalAh` (for example `59.4/80.0Ah`) so it fits without enabling another font or clipping.
 - Keep voltage/current and cell-stat separators at 1px. Temperature columns use fixed small thermometer primitives so all six `T1`-`T4`/`BAL`/`MOS` columns remain stable in 240x320 and 320x240 layouts.
 - Render dashboard previews through `preview/lvgl_render_compat.py`; the local LVGL 9 MicroPython binding initializes through module `__init__()` rather than `lv.init()`.
+- The S3 rotated BMS dashboard is a separate native layout only at logical `320x480`: select it with `bms_native_portrait_enabled()`, do not stretch the 240x320 `dashboard_viewport()`. Reuse the existing BMS snapshot labels and buffers, including a native-path update for remaining range; the simulator's `esp_bms_lvgl_ui_simulator_snapshot_matches()` must assert the BMS, capacity, range, and runtime labels after a 320x480 snapshot refresh.
 
 ### LVGL Controller Dashboard Visuals
 

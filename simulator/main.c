@@ -897,6 +897,10 @@ static bool run_headless_feature_matrix(host_app_t *app)
     if (esp_bms_lvgl_ui_update(&app->snapshot) != ESP_OK) {
         return false;
     }
+    if (!esp_bms_lvgl_ui_simulator_snapshot_matches(&app->snapshot)) {
+        fputs("BMS dashboard snapshot smoke failed\n", stderr);
+        return false;
+    }
 #if ESP_BMS_FEATURE_DASHBOARD_FIREBLADE && \
     (ESP_BMS_FEATURE_GPS || ESP_BMS_FEATURE_CONTROLLER)
     return run_native_dashboard_stress(app);
