@@ -8347,10 +8347,10 @@ static void create_controller_dashboard(void)
         lv_obj_set_style_text_align(power_title, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
         s_ui.controller_power = controller_dashboard_label(stats_panel,
                                                            s_ui.controller_power_buf,
-                                                           16, 35, 50,
+                                                           30, 35, 50,
                                                            value_font->line_height, value_font,
                                                            COLOR_TEXT);
-        (void)controller_dashboard_label(stats_panel, "kW", 70, 40, 34,
+        (void)controller_dashboard_label(stats_panel, "kW", 84, 40, 34,
                                          unit_font->line_height, unit_font, COLOR_CONTROLLER_VALUE);
         lv_obj_t *rpm_title = controller_dashboard_label(stats_panel, "RPM", cell_w + 10, 8,
                                                           cell_w - 20,
@@ -8359,10 +8359,10 @@ static void create_controller_dashboard(void)
         lv_obj_set_style_text_align(rpm_title, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
         s_ui.controller_rpm = controller_dashboard_label(stats_panel,
                                                          s_ui.controller_rpm_buf,
-                                                         cell_w + 4, 35, 68,
+                                                         cell_w + 17, 35, 68,
                                                          value_font->line_height, value_font,
                                                          COLOR_TEXT);
-        (void)controller_dashboard_label(stats_panel, "RPM", cell_w + 76, 40, 42,
+        (void)controller_dashboard_label(stats_panel, "RPM", cell_w + 89, 40, 42,
                                          unit_font->line_height, unit_font, COLOR_CONTROLLER_VALUE);
 
         lv_obj_t *controller_title = controller_dashboard_label(stats_panel, "CTRL", 10,
@@ -8372,10 +8372,10 @@ static void create_controller_dashboard(void)
         lv_obj_set_style_text_align(controller_title, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
         s_ui.controller_temp = controller_dashboard_label(stats_panel,
                                                           s_ui.controller_temp_buf,
-                                                          34, row_h + 35, 40,
+                                                          42, row_h + 35, 40,
                                                           value_font->line_height, value_font,
                                                           COLOR_TEXT);
-        (void)controller_dashboard_label(stats_panel, "C", 78, row_h + 40, 20,
+        (void)controller_dashboard_label(stats_panel, "C", 86, row_h + 40, 20,
                                          unit_font->line_height, unit_font, COLOR_CONTROLLER_VALUE);
         lv_obj_t *motor_title = controller_dashboard_label(stats_panel, "MOTOR", cell_w + 10,
                                                            row_h + 8, cell_w - 20,
@@ -8384,10 +8384,10 @@ static void create_controller_dashboard(void)
         lv_obj_set_style_text_align(motor_title, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
         s_ui.controller_motor_temp = controller_dashboard_label(stats_panel,
                                                                 s_ui.controller_motor_temp_buf,
-                                                                cell_w + 34, row_h + 35, 40,
+                                                                cell_w + 42, row_h + 35, 40,
                                                                 value_font->line_height, value_font,
                                                                 COLOR_TEXT);
-        (void)controller_dashboard_label(stats_panel, "C", cell_w + 78, row_h + 40, 20,
+        (void)controller_dashboard_label(stats_panel, "C", cell_w + 86, row_h + 40, 20,
                                          unit_font->line_height, unit_font, COLOR_CONTROLLER_VALUE);
     } else if (native_landscape) {
         const int32_t col_w = stats_w / 4;
