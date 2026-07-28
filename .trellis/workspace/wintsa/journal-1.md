@@ -835,3 +835,36 @@ Simplified the native 480x320 BMS dashboard: duration now omits seconds with a t
 ### Next Steps
 
 - None - task complete
+
+
+## Session 26: BMS 容量估算
+
+**Date**: 2026-07-28
+**Task**: BMS 容量估算
+**Branch**: `main`
+
+### Summary
+
+实现 JK 原生累计充电容量与 Daly/彦阳基于有效遥测电流的真实容量估算；完成主机自检、旧 ESP32 profile 编译、LVGL 横竖屏渲染，并通过 RFC2217 对 MAC 20:e7:c8:5f:ab:a4 完成镜像写入及哈希校验。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b1fdce71` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
