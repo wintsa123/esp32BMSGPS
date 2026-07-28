@@ -736,3 +736,36 @@ Scaled settings controls only for S3 logical resolutions, added the 18px setting
 ### Next Steps
 
 - None - task complete
+
+
+## Session 23: 修复 FarDriver 无响应轮询
+
+**Date**: 2026-07-28
+**Task**: 修复 FarDriver 无响应轮询
+**Branch**: `main`
+
+### Summary
+
+FarDriver Nordic UART 只读轮询改为无响应写；ESP-IDF profile 构建和 RFC2217 刷写通过。设备 NVS 未保存 ctl_mac，需重新绑定后确认实时遥测。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b083590c` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
