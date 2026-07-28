@@ -127,6 +127,7 @@ esp_bms_lvgl_ui_simulator_boot_animation_settings_visible();
 - Compile `components/esp_bms_lvgl_ui/esp_bms_lvgl_ui.c`, its production font sources, the LVGL contract, repository LVGL 9.5.0, and system SDL2. Do not copy page, widget, drawing, or gesture logic into a host-only UI.
 - Host compatibility headers may implement only ESP-IDF APIs directly referenced by the UI component. The simulator must not enter the ESP-IDF component graph or change firmware configuration.
 - `--portrait` starts at 240x320; the default starts at 320x240. `--headless` sets SDL's dummy video driver before `lv_init()` and runs a fixed smoke sequence.
+- The interactive SDL window initializes `esp_bms_lvgl_ui_init()` with `native_gestures_supported=false`, so the existing `lv_sdl_mouse_create()` pointer device drives the production scroll container and its black title placeholders. `--headless` passes `true` instead, preserving `esp_bms_lvgl_ui_simulator_native_gesture_smoke()` for the device-native gesture path. Do not add a second SDL mouse-to-gesture bridge.
 - Host-only test controls in production UI source must be guarded by `ESP_BMS_LVGL_UI_SIMULATOR`; the simulator CMake target defines it as `1`, while firmware defaults to `0`. The startup-animation play button and its timer are production UI and must remain available in both builds.
 - The startup-animation settings play button calls the production boot start/update/finish path with the current UI snapshot on both desktop and device. Its timer emits no runtime action and is deleted and nulled before root rebuild; completion restores the latest snapshot and reopens the same settings subview.
 
@@ -140,7 +141,7 @@ esp_bms_lvgl_ui_simulator_boot_animation_settings_visible();
 
 #### 5. Good / Base / Bad Cases
 
-- Good: use the simulator window for mouse gestures and settings actions, then confirm color and touch behavior on the ST7789 hardware.
+- Good: use the simulator window for LVGL pointer scrolling (horizontal carousel / downward quick panel) and settings actions, then confirm color and touch behavior on the ST7789 hardware.
 - Base: run both headless orientations in CI or a TTY to catch build, initialization, snapshot, event, and rotation regressions.
 - Bad: accept a separately redrawn Python preview as proof that production LVGL geometry or gestures work.
 

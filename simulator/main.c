@@ -532,6 +532,7 @@ static void print_help(const char *program)
            "[--style s1000rr|controller|fireblade] [--boot charge|gauge] "
            "[--boot-progress 0..100]\n",
            program);
+    puts("鼠标: 横向拖动=切页（黑场跟手）  下拉=快捷面板");
     puts("快捷键: 上/下=速度  1/2/3/4=页面  f=GPS定位  g=GPS模块  b=BMS  c=控制器  u=单位  e=电耗  r=旋转  q=退出");
 }
 
@@ -911,7 +912,7 @@ int main(int argc, char **argv)
     bool run_ok = true;
     int preview_boot_style = -1;
     uint8_t preview_boot_progress = 50U;
-    esp_bms_lvgl_page_t preview_page = ESP_BMS_LVGL_PAGE_GPS;
+    esp_bms_lvgl_page_t preview_page = ESP_BMS_LVGL_PAGE_BATTERY;
     esp_bms_speed_dashboard_style_t preview_dashboard_style =
         ESP_BMS_SPEED_DASHBOARD_STYLE_HONDA_FIREBLADE;
     const char *screenshot_path = NULL;
@@ -1011,7 +1012,7 @@ int main(int argc, char **argv)
     lv_indev_set_display(mouse, app.display);
     SDL_AddEventWatch(sdl_event_watch, &app);
 
-    if (esp_bms_lvgl_ui_init(app.display, false, true) != ESP_OK ||
+    if (esp_bms_lvgl_ui_init(app.display, false, headless) != ESP_OK ||
         esp_bms_lvgl_ui_update(&app.snapshot) != ESP_OK) {
         fputs("真实 UI 初始化失败\n", stderr);
         SDL_DelEventWatch(sdl_event_watch, &app);
