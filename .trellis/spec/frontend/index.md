@@ -20,6 +20,7 @@ This directory contains guidelines for frontend development. Fill in each file w
 | [State Management](./state-management.md) | Local state, global state, server state | To fill |
 | [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | To fill |
 | [Type Safety](./type-safety.md) | Type patterns, validation | To fill |
+| [LVGL Dashboard Layout](./lvgl-dashboard-layout.md) | Native display-size dashboard rules | Active |
 
 ---
 
