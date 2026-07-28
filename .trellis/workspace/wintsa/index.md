@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 27
+- **Total Sessions**: 28
 - **Last Active**: 2026-07-28
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~903 | Active |
+| `journal-1.md` | ~936 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 28 | 2026-07-28 | 优化控制器与火刃竖屏仪表 | `51d9af98` | `main` |
 | 27 | 2026-07-28 | Add 320x480 BMS portrait dashboard | `ca2a4494` | `main` |
 | 26 | 2026-07-28 | BMS 容量估算 | `b1fdce71` | `main` |
 | 25 | 2026-07-28 | Refine 480x320 BMS dashboard | `accfa166` | `main` |

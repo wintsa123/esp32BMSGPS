@@ -901,3 +901,36 @@ Implemented the native 320x480 BMS dashboard, added snapshot-label smoke coverag
 ### Next Steps
 
 - None - task complete
+
+
+## Session 28: 优化控制器与火刃竖屏仪表
+
+**Date**: 2026-07-28
+**Task**: 优化控制器与火刃竖屏仪表
+**Branch**: `main`
+
+### Summary
+
+为控制器和火刃建立 320x480 原生竖屏布局；同步优化 240x320 顶栏、温度、档位层级、指针边框与速度单位对齐，完成三种分辨率模拟器回归。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `51d9af98` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
