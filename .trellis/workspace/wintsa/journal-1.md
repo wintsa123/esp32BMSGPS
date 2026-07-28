@@ -934,3 +934,36 @@ Implemented the native 320x480 BMS dashboard, added snapshot-label smoke coverag
 ### Next Steps
 
 - None - task complete
+
+
+## Session 29: S3 控制器仪表原生布局
+
+**Date**: 2026-07-28
+**Task**: S3 控制器仪表原生布局
+**Branch**: `main`
+
+### Summary
+
+生成并确认 480x320 与 320x480 控制器预览；同步原生 LVGL 布局、模拟器双尺寸 smoke check 和前端布局规范。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `cf6ae1da` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
