@@ -967,3 +967,36 @@ Implemented the native 320x480 BMS dashboard, added snapshot-label smoke coverag
 ### Next Steps
 
 - None - task complete
+
+
+## Session 30: FarDriver controller gear displays
+
+**Date**: 2026-07-29
+**Task**: FarDriver controller gear displays
+**Branch**: `main`
+
+### Summary
+
+Verified the Android APK compact-frame gear field, mapped N/D/R across all dashboards, added regression coverage, and validated simulator plus ESP32 profile build.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `516f2994` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
