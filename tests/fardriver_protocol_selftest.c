@@ -40,16 +40,19 @@ int main(void)
                                     .fallback_gear_ratio_centi = 400U };
     uint8_t frame[ESP_FARDRIVER_FRAME_LEN] = { 0 };
 
-    frame[0] = 0xAAU;
-    frame[1] = 0U;
-    frame[4] = 0x08U;
-    frame[6] = 0x12U;
-    frame[7] = 0xC0U;
-    finish_compact_frame(frame);
-    assert(esp_fardriver_parse_frame(&state, frame, sizeof(frame)));
-    assert(state.rpm_valid && state.rpm == 4800U);
-    assert(state.gear_valid && state.gear == 2U);
-    assert(state.speed_valid && state.speed_deci_kmh == 972U);
+    for (uint8_t gear = 0U; gear < 4U; ++gear) {
+        memset(frame, 0, sizeof(frame));
+        frame[0] = 0xAAU;
+        frame[1] = 0U;
+        frame[4] = (uint8_t)(0xA8U | gear);
+        frame[6] = 0x12U;
+        frame[7] = 0xC0U;
+        finish_compact_frame(frame);
+        assert(esp_fardriver_parse_frame(&state, frame, sizeof(frame)));
+        assert(state.rpm_valid && state.rpm == 4800U);
+        assert(state.gear_valid && state.gear == gear);
+        assert(state.speed_valid && state.speed_deci_kmh == 972U);
+    }
 
     memset(frame, 0, sizeof(frame));
     frame[0] = 0xAAU;

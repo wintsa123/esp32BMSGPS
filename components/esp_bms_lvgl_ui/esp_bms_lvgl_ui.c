@@ -18,6 +18,23 @@ static const char *TAG = "bms_lvgl_ui";
 
 LV_FONT_DECLARE(bluetoothon);
 LV_FONT_DECLARE(wlanJZ);
+static const char *controller_gear_text(uint8_t gear, bool controller_online, bool gear_valid)
+{
+    if (!controller_online || !gear_valid) {
+        return "-";
+    }
+    switch (gear) {
+    case 0U:
+        return "N";
+    case 1U:
+        return "D";
+    case 2U:
+        return "R";
+    default:
+        return "-";
+    }
+}
+
 #if ESP_BMS_FEATURE_DASHBOARD_CONTROLLER
 LV_FONT_DECLARE(controller_digits_72);
 #endif
@@ -8350,10 +8367,11 @@ static void set_controller_dashboard(const esp_bms_dashboard_snapshot_t *snapsho
     controller_label_set(s_ui.controller_speed_unit, s_ui.controller_speed_unit_buf,
                          sizeof(s_ui.controller_speed_unit_buf),
                          snapshot->speed_unit == ESP_BMS_SPEED_UNIT_MPH ? "mph" : "km/h");
-    snprintf(text, sizeof(text), SNAPSHOT_FLAG(snapshot, CONTROLLER_GEAR_VALID) ? "%u" : "-",
-             snapshot->controller_gear);
     controller_label_set(s_ui.controller_gear, s_ui.controller_gear_buf,
-                         sizeof(s_ui.controller_gear_buf), text);
+                         sizeof(s_ui.controller_gear_buf),
+                         controller_gear_text(snapshot->controller_gear,
+                                              SNAPSHOT_FLAG(snapshot, CONTROLLER_ONLINE),
+                                              SNAPSHOT_FLAG(snapshot, CONTROLLER_GEAR_VALID)));
     if (SNAPSHOT_FLAG(snapshot, CONTROLLER_POWER_VALID)) {
         snprintf(text, sizeof(text), "%ld.%01ld",
                  (long)(snapshot->controller_power_w / 1000),
@@ -8525,8 +8543,8 @@ static void create_controller_dashboard(void)
                                                       native_portrait ? 42 :
                                                       (native_landscape ? 64 : (portrait ? 24 : 58)),
                                                       gear_w - 4,
-                                                      controller_digits_72.line_height,
-                                                      &controller_digits_72,
+                                                      lv_font_montserrat_48.line_height,
+                                                      &lv_font_montserrat_48,
                                                       COLOR_TEXT);
 
     const lv_font_t *value_font = native_layout ? &lv_font_montserrat_24 :
@@ -9556,7 +9574,7 @@ static void fireblade_create_native_landscape(lv_obj_t *page)
     fireblade_add_gear_dynamic(dynamic_layer, center);
     lv_obj_set_pos(s_ui.fireblade_gear, center.x - 32, center.y - 24);
     lv_obj_set_size(s_ui.fireblade_gear, 64, 64);
-    lv_obj_set_style_text_font(s_ui.fireblade_gear, &fireblade_digits_64, LV_PART_MAIN);
+    lv_obj_set_style_text_font(s_ui.fireblade_gear, &lv_font_montserrat_48, LV_PART_MAIN);
     s_ui.fireblade_speed = fireblade_label(dynamic_layer,
                                            s_ui.fireblade_speed_buf,
                                            center.x + 18,
@@ -9700,7 +9718,7 @@ static void fireblade_create_native_portrait(lv_obj_t *page)
     fireblade_add_gear_dynamic(page, center);
     lv_obj_set_pos(s_ui.fireblade_gear, center.x - 32, center.y - 24);
     lv_obj_set_size(s_ui.fireblade_gear, 64, 64);
-    lv_obj_set_style_text_font(s_ui.fireblade_gear, &fireblade_digits_64, LV_PART_MAIN);
+    lv_obj_set_style_text_font(s_ui.fireblade_gear, &lv_font_montserrat_48, LV_PART_MAIN);
     s_ui.fireblade_speed = fireblade_label(page,
                                            s_ui.fireblade_speed_buf,
                                            center.x + 14,
@@ -10138,12 +10156,12 @@ static void set_fireblade_dashboard(const esp_bms_dashboard_snapshot_t *snapshot
                       text);
     }
 
-    const bool gear_valid = controller_online && SNAPSHOT_FLAG(snapshot, CONTROLLER_GEAR_VALID);
-    snprintf(text, sizeof(text), "%u", gear_valid ? snapshot->controller_gear : 1U);
     gps_label_set(s_ui.fireblade_gear,
                   s_ui.fireblade_gear_buf,
                   sizeof(s_ui.fireblade_gear_buf),
-                  text);
+                  controller_gear_text(snapshot->controller_gear,
+                                       controller_online,
+                                       SNAPSHOT_FLAG(snapshot, CONTROLLER_GEAR_VALID)));
     gps_label_set(s_ui.fireblade_gear_unit,
                   s_ui.fireblade_gear_unit_buf,
                   sizeof(s_ui.fireblade_gear_unit_buf),
@@ -10807,7 +10825,6 @@ static void set_gps_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
                                          SNAPSHOT_FLAG(snapshot, CONTROLLER_TEMP_VALID);
     const bool motor_temp_visible = controller_online &&
                                     SNAPSHOT_FLAG(snapshot, MOTOR_TEMP_VALID);
-    const bool gear_valid = controller_online && SNAPSHOT_FLAG(snapshot, CONTROLLER_GEAR_VALID);
     if (controller_temp_visible) {
         snprintf(text, sizeof(text), "%dC", snapshot->controller_temp_c);
         gps_label_set(s_ui.speed_controller_temp,
@@ -10822,11 +10839,12 @@ static void set_gps_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
                       sizeof(s_ui.speed_motor_temp_buf),
                       text);
     }
-    snprintf(text, sizeof(text), "%u", gear_valid ? snapshot->controller_gear : 1U);
     gps_label_set(s_ui.speed_gear,
                   s_ui.speed_gear_buf,
                   sizeof(s_ui.speed_gear_buf),
-                  text);
+                  controller_gear_text(snapshot->controller_gear,
+                                       controller_online,
+                                       SNAPSHOT_FLAG(snapshot, CONTROLLER_GEAR_VALID)));
     set_obj_hidden(s_ui.speed_controller_temp, compact || !controller_temp_visible);
     set_obj_hidden(s_ui.speed_motor_temp, compact || !motor_temp_visible);
     set_obj_hidden(s_ui.speed_gear, false);
@@ -12124,7 +12142,7 @@ static void create_screen(lv_display_t *display)
     snprintf(s_ui.speed_consumption_buf, sizeof(s_ui.speed_consumption_buf), "-- Wh/km");
     s_ui.speed_controller_temp_buf[0] = '\0';
     s_ui.speed_motor_temp_buf[0] = '\0';
-    snprintf(s_ui.speed_gear_buf, sizeof(s_ui.speed_gear_buf), "1");
+    snprintf(s_ui.speed_gear_buf, sizeof(s_ui.speed_gear_buf), "-");
     memset(s_ui.speed_scale_buf, 0, sizeof(s_ui.speed_scale_buf));
     create_gps_dashboard();
 #if ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
@@ -13738,6 +13756,16 @@ static bool simulator_tree_has_label(lv_obj_t *obj, const char *text)
     return false;
 }
 
+static bool simulator_controller_gear_smoke(void)
+{
+    return strcmp(controller_gear_text(0U, true, true), "N") == 0 &&
+           strcmp(controller_gear_text(1U, true, true), "D") == 0 &&
+           strcmp(controller_gear_text(2U, true, true), "R") == 0 &&
+           strcmp(controller_gear_text(3U, true, true), "-") == 0 &&
+           strcmp(controller_gear_text(0U, false, true), "-") == 0 &&
+           strcmp(controller_gear_text(0U, true, false), "-") == 0;
+}
+
 static bool simulator_native_bms_portrait_smoke(void)
 {
     return !bms_native_portrait_enabled() ||
@@ -13840,7 +13868,8 @@ bool esp_bms_lvgl_ui_simulator_snapshot_matches(const esp_bms_dashboard_snapshot
 {
     return snapshot && UI_FLAG(LAST_SNAPSHOT_VALID) && !UI_FLAG(DEFERRED_SNAPSHOT_VALID) &&
            memcmp(&s_ui.last_snapshot, snapshot, sizeof(s_ui.last_snapshot)) == 0 &&
-           simulator_soc_color_smoke() && simulator_native_bms_portrait_smoke() &&
+           simulator_soc_color_smoke() && simulator_controller_gear_smoke() &&
+           simulator_native_bms_portrait_smoke() &&
            simulator_native_bms_landscape_smoke() && simulator_native_speed_dashboard_smoke();
 }
 

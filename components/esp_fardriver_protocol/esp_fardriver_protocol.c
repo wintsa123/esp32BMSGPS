@@ -128,8 +128,7 @@ static void parse_compact(esp_fardriver_state_t *state, uint8_t index, const uin
         const uint16_t raw_rpm = be16(data + 4U);
         state->rpm = raw_rpm;
         state->rpm_valid = true;
-        state->gear = (uint8_t)((data[2] >> 2U) & 0x03U);
-        state->gear = state->gear == 0U ? 3U : state->gear;
+        state->gear = (uint8_t)(data[2] & 0x03U);
         state->gear_valid = true;
     } else if (index == 1U) {
         state->voltage_deci_v = be16(data);
