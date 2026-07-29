@@ -809,6 +809,10 @@ static int32_t s_dashboard_battery_inner_w;
 static void finish_page_scroll_state(bool flush_snapshot);
 static void move_to_page(esp_bms_lvgl_page_t page, bool animated);
 static void show_dashboard_view(void);
+static bool dashboard_page_content_ready(esp_bms_lvgl_page_t page);
+static void dashboard_page_content_ensure(esp_bms_lvgl_page_t page);
+static void dashboard_page_content_release(esp_bms_lvgl_page_t page);
+static void dashboard_pages_release_except(esp_bms_lvgl_page_t page);
 static void settings_bms_popup_close(void);
 static void settings_swipe_indicator_hide(void);
 static void settings_show_root(void);
@@ -2613,6 +2617,8 @@ static void show_dashboard_view(void)
         settings_swipe_indicator_hide();
     }
     finish_page_scroll_state(true);
+    dashboard_pages_release_except(s_ui.page);
+    dashboard_page_content_ensure(s_ui.page);
     lv_obj_clear_flag(s_ui.pages, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_ui.settings_page, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_ui.header, LV_OBJ_FLAG_HIDDEN);
@@ -2622,6 +2628,10 @@ static void show_dashboard_view(void)
 static void show_settings_view(void)
 {
     finish_page_scroll_state(true);
+    dashboard_page_content_release(ESP_BMS_LVGL_PAGE_BATTERY);
+    dashboard_page_content_release(ESP_BMS_LVGL_PAGE_GPS);
+    dashboard_page_content_release(ESP_BMS_LVGL_PAGE_CAST);
+    dashboard_page_content_release(ESP_BMS_LVGL_PAGE_MUSIC);
     if (lv_obj_get_parent(s_ui.settings_page) == s_ui.staging_screen) {
         lv_obj_set_parent(s_ui.settings_page, s_ui.root);
     }
@@ -8216,6 +8226,9 @@ static void set_cast_page(const esp_bms_dashboard_snapshot_t *snapshot)
     (void)snapshot;
     return;
 #else
+    if (!snapshot || !dashboard_page_content_ready(ESP_BMS_LVGL_PAGE_CAST)) {
+        return;
+    }
     if (s_ui.cast_qr && snapshot->cast_active) {
         set_obj_hidden(s_ui.cast_qr, true);
         return;
@@ -8261,7 +8274,8 @@ static void music_control_set_enabled(lv_obj_t *control, bool enabled)
 static void set_music_page(const esp_bms_dashboard_snapshot_t *snapshot)
 {
 #if ESP_BMS_FEATURE_PHONE_MEDIA
-    if (!snapshot || !s_ui.music_status || !s_ui.music_title) {
+    if (!snapshot || !dashboard_page_content_ready(ESP_BMS_LVGL_PAGE_MUSIC) ||
+        !s_ui.music_status || !s_ui.music_title) {
         return;
     }
 
@@ -8290,7 +8304,8 @@ static void set_music_page(const esp_bms_dashboard_snapshot_t *snapshot)
         music_control_set_enabled(s_ui.music_controls[index], ready);
     }
 #elif ESP_BMS_FEATURE_BLE_MEDIA_HID
-    if (!snapshot || !s_ui.music_status) {
+    if (!snapshot || !dashboard_page_content_ready(ESP_BMS_LVGL_PAGE_MUSIC) ||
+        !s_ui.music_status) {
         return;
     }
 
@@ -8311,6 +8326,10 @@ static void set_music_page(const esp_bms_dashboard_snapshot_t *snapshot)
 
 static void set_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
 {
+    if (!snapshot || !dashboard_page_content_ready(ESP_BMS_LVGL_PAGE_BATTERY)) {
+        return;
+    }
+
     char soc_text[8];
     char voltage[24];
     char current[24];
@@ -8984,6 +9003,10 @@ static void create_controller_dashboard(void)
 
 static void speed_dashboard_style_apply(const esp_bms_dashboard_snapshot_t *snapshot)
 {
+    if (!snapshot || !dashboard_page_content_ready(ESP_BMS_LVGL_PAGE_GPS)) {
+        return;
+    }
+
     const esp_bms_speed_dashboard_style_t style =
         speed_dashboard_style_from_snapshot(snapshot);
     const bool controller_monitor = style == ESP_BMS_SPEED_DASHBOARD_STYLE_CONTROLLER;
@@ -11032,6 +11055,10 @@ static void speed_dashboard_apply_layout(void)
 
 static void set_gps_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
 {
+    if (!snapshot || !dashboard_page_content_ready(ESP_BMS_LVGL_PAGE_GPS)) {
+        return;
+    }
+
     char text[32];
     const bool compact = s_ui.width < 180 || s_ui.height < 180;
     const bool bms_online = SNAPSHOT_FLAG(snapshot, BMS_ONLINE);
@@ -11375,12 +11402,14 @@ static void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapsho
     memcpy(&s_ui.last_snapshot, snapshot, sizeof(s_ui.last_snapshot));
     UI_SET_FLAG(LAST_SNAPSHOT_VALID, true);
 
-    speed_page_sync(snapshot);
     set_header(snapshot);
+    speed_page_sync(snapshot);
     set_dashboard(snapshot);
     speed_dashboard_style_apply(snapshot);
 #if ESP_BMS_FEATURE_DASHBOARD_CONTROLLER
-    set_controller_dashboard(snapshot);
+    if (dashboard_page_content_ready(ESP_BMS_LVGL_PAGE_GPS)) {
+        set_controller_dashboard(snapshot);
+    }
 #endif
     set_gps_dashboard(snapshot);
     set_cast_page(snapshot);
@@ -11811,6 +11840,8 @@ static void page_transition_show(void)
 
 static void page_transition_expand(esp_bms_lvgl_page_t page)
 {
+    dashboard_pages_release_except(page);
+    dashboard_page_content_ensure(page);
     if (!page_transition_active()) {
         UI_SET_FLAG(SETTLING, false);
         flush_deferred_dashboard_snapshot();
@@ -11943,6 +11974,10 @@ static void move_to_page(esp_bms_lvgl_page_t page, bool animated)
     if (page == ESP_BMS_LVGL_PAGE_MUSIC &&
         !ESP_BMS_FEATURE_PHONE_MEDIA && !ESP_BMS_FEATURE_BLE_MEDIA_HID) {
         page = ESP_BMS_LVGL_PAGE_BATTERY;
+    }
+    if (!settings_view_is_visible()) {
+        dashboard_pages_release_except(page);
+        dashboard_page_content_ensure(page);
     }
     s_ui.page_scroll_programmatic = !animated;
     lv_obj_stop_scroll_anim(s_ui.pages);
@@ -12413,6 +12448,696 @@ static void page_scroll_event_cb(lv_event_t *event)
     }
 }
 
+static void create_gps_page_content(void)
+{
+    snprintf(s_ui.gps_speed_buf, sizeof(s_ui.gps_speed_buf), "-");
+    snprintf(s_ui.gps_speed_unit_buf, sizeof(s_ui.gps_speed_unit_buf), "km/h");
+    snprintf(s_ui.gps_uptime_buf, sizeof(s_ui.gps_uptime_buf), "--:--");
+    s_ui.speed_soc_buf[0] = '\0';
+    snprintf(s_ui.speed_consumption_buf, sizeof(s_ui.speed_consumption_buf), "-- Wh/km");
+    s_ui.speed_controller_temp_buf[0] = '\0';
+    s_ui.speed_motor_temp_buf[0] = '\0';
+    snprintf(s_ui.speed_gear_buf, sizeof(s_ui.speed_gear_buf), "-");
+    memset(s_ui.speed_scale_buf, 0, sizeof(s_ui.speed_scale_buf));
+    create_gps_dashboard();
+}
+
+static void create_cast_page_content(void)
+{
+#if ESP_BMS_FEATURE_CAST
+    const bool portrait = s_ui.width < s_ui.height;
+    lv_obj_t *cast_title = label(s_ui.cast_page,
+                                 0,
+                                 portrait ? 28 : 16,
+                                 s_ui.width,
+                                 settings_zh_16.line_height,
+                                 &settings_zh_16);
+    lv_label_set_text(cast_title, "扫码投屏");
+    lv_obj_set_style_text_align(cast_title, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(cast_title, COLOR_ACCENT, LV_PART_MAIN);
+#if LV_USE_QRCODE
+    s_ui.cast_qr = lv_qrcode_create(s_ui.cast_page);
+    if (s_ui.cast_qr) {
+        const int32_t cast_qr_size = portrait ? 132 : 112;
+        lv_qrcode_set_size(s_ui.cast_qr, cast_qr_size);
+        lv_qrcode_set_dark_color(s_ui.cast_qr, COLOR_BG);
+        lv_qrcode_set_light_color(s_ui.cast_qr, COLOR_WHITE);
+        lv_qrcode_set_quiet_zone(s_ui.cast_qr, true);
+        lv_obj_align(s_ui.cast_qr, LV_ALIGN_CENTER, 0, portrait ? 55 : 44);
+    }
+#endif
+#endif
+}
+
+static void create_music_page_content(void)
+{
+    const bool portrait = s_ui.width < s_ui.height;
+    memset(s_ui.music_controls, 0, sizeof(s_ui.music_controls));
+#if ESP_BMS_FEATURE_PHONE_MEDIA
+    const int32_t music_margin = portrait ? 16 : 24;
+    const int32_t music_gap = portrait ? 12 : 10;
+    const int32_t music_content_w = s_ui.width - (music_margin * 2);
+    const int32_t music_status_w = portrait ? 136 : 128;
+    const int32_t music_track_y = portrait ? 90 : 58;
+    const int32_t music_track_h = portrait ? 94 : 74;
+    const int32_t music_button_w = (music_content_w - music_gap) / 2;
+    const int32_t music_button_h = portrait ? 104 : 66;
+    const int32_t music_buttons_y = portrait ? 204 : 146;
+    lv_obj_t *music_heading = label(s_ui.music_page,
+                                    music_margin,
+                                    portrait ? 34 : 22,
+                                    music_content_w - music_status_w - music_gap,
+                                    20,
+                                    &lv_font_montserrat_14);
+    lv_label_set_text(music_heading, "PHONE MEDIA");
+    lv_obj_set_style_text_color(music_heading, COLOR_ACCENT, LV_PART_MAIN);
+    lv_obj_t *music_status_card = panel(s_ui.music_page,
+                                        s_ui.width - music_margin - music_status_w,
+                                        portrait ? 28 : 16,
+                                        music_status_w,
+                                        28,
+                                        COLOR_PANEL_ALT);
+    lv_obj_set_style_radius(music_status_card, 14, LV_PART_MAIN);
+    lv_obj_set_style_border_width(music_status_card, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(music_status_card, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
+    s_ui.music_status = label(music_status_card,
+                              8,
+                              5,
+                              music_status_w - 16,
+                              18,
+                              &lv_font_montserrat_14);
+    lv_obj_set_style_text_align(s_ui.music_status, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+
+    lv_obj_t *music_track_card = panel(s_ui.music_page,
+                                       music_margin,
+                                       music_track_y,
+                                       music_content_w,
+                                       music_track_h,
+                                       COLOR_PANEL_ALT);
+    lv_obj_set_style_radius(music_track_card, 8, LV_PART_MAIN);
+    lv_obj_set_style_border_width(music_track_card, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(music_track_card, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
+    lv_obj_t *music_track_accent = panel(music_track_card,
+                                         0,
+                                         0,
+                                         4,
+                                         music_track_h,
+                                         COLOR_ACCENT);
+    lv_obj_set_style_radius(music_track_accent, 2, LV_PART_MAIN);
+    lv_obj_t *music_track_label = label(music_track_card,
+                                        18,
+                                        8,
+                                        music_content_w - 36,
+                                        16,
+                                        &lv_font_montserrat_14);
+    lv_label_set_text(music_track_label, "NOW PLAYING");
+    lv_obj_set_style_text_color(music_track_label, COLOR_MUTED, LV_PART_MAIN);
+    s_ui.music_title = label(music_track_card,
+                             18,
+                             portrait ? 36 : 30,
+                             music_content_w - 36,
+                             30,
+                             &lv_font_montserrat_24);
+    lv_label_set_long_mode(s_ui.music_title, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
+
+    const esp_bms_lvgl_action_t music_actions[MUSIC_CONTROL_COUNT] = {
+        ESP_BMS_LVGL_ACTION_PHONE_MEDIA_PREVIOUS,
+        ESP_BMS_LVGL_ACTION_PHONE_MEDIA_NEXT,
+        ESP_BMS_LVGL_ACTION_PHONE_MEDIA_VOLUME_DOWN,
+        ESP_BMS_LVGL_ACTION_PHONE_MEDIA_VOLUME_UP,
+    };
+    const char *const music_icons[MUSIC_CONTROL_COUNT] = {
+        LV_SYMBOL_PREV,
+        LV_SYMBOL_NEXT,
+        LV_SYMBOL_VOLUME_MID " " LV_SYMBOL_MINUS,
+        LV_SYMBOL_VOLUME_MID " " LV_SYMBOL_PLUS,
+    };
+    const char *const music_labels[MUSIC_CONTROL_COUNT] = {
+        "PREVIOUS", "NEXT", "VOLUME -", "VOLUME +",
+    };
+    for (size_t index = 0U; index < MUSIC_CONTROL_COUNT; ++index) {
+        const int32_t column = (int32_t)(index % 2U);
+        const int32_t row = (int32_t)(index / 2U);
+        lv_obj_t *control = panel(s_ui.music_page,
+                                  music_margin + column * (music_button_w + music_gap),
+                                  music_buttons_y + row * (music_button_h + music_gap),
+                                  music_button_w,
+                                  music_button_h,
+                                  index < 2U ? COLOR_PANEL_ALT : COLOR_SETTINGS_LIST);
+        lv_obj_add_flag(control, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_border_width(control, 1, LV_PART_MAIN);
+        lv_obj_set_style_border_color(control, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
+        lv_obj_set_style_border_opa(control, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_radius(control, 8, LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(control, LV_OPA_40, LV_PART_MAIN | LV_STATE_DISABLED);
+        lv_obj_set_style_opa(control, LV_OPA_40, LV_PART_MAIN | LV_STATE_DISABLED);
+        lv_obj_add_event_cb(control,
+                            action_event_cb,
+                            LV_EVENT_CLICKED,
+                            (void *)(uintptr_t)music_actions[index]);
+        lv_obj_t *control_icon = label(control,
+                                       0,
+                                       portrait ? 20 : 6,
+                                       music_button_w - 8,
+                                       28,
+                                       &lv_font_montserrat_24);
+        lv_label_set_text(control_icon, music_icons[index]);
+        lv_obj_set_style_text_align(control_icon, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+        lv_obj_set_style_text_color(control_icon,
+                                    index < 2U ? COLOR_ACCENT : COLOR_WHITE,
+                                    LV_PART_MAIN);
+        lv_obj_t *control_label = label(control,
+                                        0,
+                                        portrait ? 60 : 38,
+                                        music_button_w - 8,
+                                        18,
+                                        &lv_font_montserrat_14);
+        lv_label_set_text(control_label, music_labels[index]);
+        lv_obj_set_style_text_align(control_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+        lv_obj_set_style_text_color(control_label, COLOR_MUTED, LV_PART_MAIN);
+        s_ui.music_controls[index] = control;
+    }
+#elif ESP_BMS_FEATURE_BLE_MEDIA_HID
+    s_ui.music_title = NULL;
+    const int32_t status_w = portrait ? 156 : 128;
+    const int32_t status_y = portrait ? 30 : 16;
+    lv_obj_t *status_card = panel(s_ui.music_page,
+                                  (s_ui.width - status_w) / 2,
+                                  status_y,
+                                  status_w,
+                                  28,
+                                  COLOR_PANEL_ALT);
+    lv_obj_set_style_radius(status_card, 8, LV_PART_MAIN);
+    lv_obj_set_style_border_width(status_card, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(status_card, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
+    s_ui.music_status = label(status_card, 4, 5, status_w - 8, 18, &lv_font_montserrat_14);
+    lv_obj_set_style_text_align(s_ui.music_status, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+
+    const esp_bms_lvgl_action_t music_actions[MUSIC_CONTROL_COUNT] = {
+        ESP_BMS_LVGL_ACTION_PHONE_MEDIA_PREVIOUS,
+        ESP_BMS_LVGL_ACTION_MEDIA_PLAY_PAUSE,
+        ESP_BMS_LVGL_ACTION_PHONE_MEDIA_NEXT,
+        ESP_BMS_LVGL_ACTION_PHONE_MEDIA_VOLUME_DOWN,
+        ESP_BMS_LVGL_ACTION_PHONE_MEDIA_VOLUME_UP,
+    };
+    const char *const music_icons[MUSIC_CONTROL_COUNT] = {
+        LV_SYMBOL_PREV,
+        LV_SYMBOL_PLAY,
+        LV_SYMBOL_NEXT,
+        LV_SYMBOL_VOLUME_MID " " LV_SYMBOL_MINUS,
+        LV_SYMBOL_VOLUME_MID " " LV_SYMBOL_PLUS,
+    };
+    const char *const music_labels[MUSIC_CONTROL_COUNT] = {
+        "PREV", "PLAY", "NEXT", "VOL -", "VOL +",
+    };
+    for (size_t index = 0U; index < MUSIC_CONTROL_COUNT; ++index) {
+        const bool track_control = index < 3U;
+        const int32_t button_w = track_control ? (portrait ? 64 : 80) : (portrait ? 100 : 128);
+        const int32_t button_h = track_control ? (portrait ? 72 : 62) : (portrait ? 82 : 64);
+        const int32_t gap = track_control ? (portrait ? 8 : 16) : (portrait ? 8 : 16);
+        const int32_t button_count = track_control ? 3 : 2;
+        const int32_t row_index = track_control ? (int32_t)index : (int32_t)(index - 3U);
+        const int32_t x = (s_ui.width - (button_w * button_count) -
+                           (gap * (button_count - 1))) /
+                              2 +
+                          row_index * (button_w + gap);
+        const int32_t y = track_control ? (portrait ? 82 : 62) : (portrait ? 168 : 140);
+        lv_obj_t *control = panel(s_ui.music_page,
+                                  x,
+                                  y,
+                                  button_w,
+                                  button_h,
+                                  track_control ? COLOR_PANEL_ALT : COLOR_SETTINGS_LIST);
+        lv_obj_add_flag(control, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_border_width(control, 1, LV_PART_MAIN);
+        lv_obj_set_style_border_color(control, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
+        lv_obj_set_style_border_opa(control, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_radius(control, 8, LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(control, LV_OPA_40, LV_PART_MAIN | LV_STATE_DISABLED);
+        lv_obj_set_style_opa(control, LV_OPA_40, LV_PART_MAIN | LV_STATE_DISABLED);
+        lv_obj_add_event_cb(control,
+                            action_event_cb,
+                            LV_EVENT_CLICKED,
+                            (void *)(uintptr_t)music_actions[index]);
+        lv_obj_t *icon = label(control,
+                               0,
+                               track_control ? (portrait ? 12 : 7) : (portrait ? 17 : 9),
+                               button_w,
+                               26,
+                               &lv_font_montserrat_24);
+        lv_label_set_text(icon, music_icons[index]);
+        lv_obj_set_style_text_align(icon, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+        lv_obj_set_style_text_color(icon,
+                                    track_control ? COLOR_ACCENT : COLOR_WHITE,
+                                    LV_PART_MAIN);
+        lv_obj_t *caption = label(control,
+                                  0,
+                                  button_h - 22,
+                                  button_w,
+                                  16,
+                                  &lv_font_montserrat_14);
+        lv_label_set_text(caption, music_labels[index]);
+        lv_obj_set_style_text_align(caption, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+        lv_obj_set_style_text_color(caption, COLOR_MUTED, LV_PART_MAIN);
+        s_ui.music_controls[index] = control;
+    }
+#endif
+    set_music_page(&s_ui.last_snapshot);
+}
+
+static void create_battery_page_content(void)
+{
+    const bool portrait = s_ui.width < s_ui.height;
+    const int32_t content_w = (portrait ? 240 : 320) - 16;
+
+    if (bms_native_landscape_enabled()) {
+        create_native_bms_dashboard();
+        return;
+    }
+    if (bms_native_portrait_enabled()) {
+        create_native_bms_portrait_dashboard();
+        return;
+    }
+
+    lv_obj_t *battery_viewport = dashboard_viewport(s_ui.battery_page, portrait);
+    if (portrait) {
+        lv_obj_t *soc_panel = dashboard_panel(battery_viewport,
+                                              8,
+                                              8,
+                                              108,
+                                              112,
+                                              COLOR_DASHBOARD_SOC_PANEL,
+                                              COLOR_DASHBOARD_SOC_BORDER);
+        s_ui.soc = label(soc_panel, 4, 8, 100, 30, &lv_font_montserrat_24);
+        dashboard_battery_icon(soc_panel, 19, 43, 66, 22);
+        s_ui.capacity = label(soc_panel, 4, 76, 100, 20, &lv_font_montserrat_14);
+
+        lv_obj_t *pack_panel = dashboard_panel(battery_viewport,
+                                               124,
+                                               8,
+                                               108,
+                                               112,
+                                               COLOR_DASHBOARD_PANEL,
+                                               COLOR_DASHBOARD_BORDER);
+        s_ui.pack_voltage = label(pack_panel, 4, 12, 100, 34, &lv_font_montserrat_28);
+        dashboard_separator(pack_panel, 8, 52, 92);
+        s_ui.current = label(pack_panel, 4, 58, 100, 34, &lv_font_montserrat_28);
+
+        lv_obj_t *bms_panel = dashboard_panel(battery_viewport,
+                                              8,
+                                              128,
+                                              108,
+                                              120,
+                                              COLOR_DASHBOARD_PANEL,
+                                              COLOR_DASHBOARD_BORDER);
+        s_ui.bms_error = label(bms_panel, 4, 4, 100, 12, &settings_zh_10);
+        s_ui.bms_status_ok = label(bms_panel, 4, 21, 100, 16, &lv_font_montserrat_14);
+        lv_label_set_text(s_ui.bms_status_ok, "OK");
+        s_ui.remaining_range_separator = dashboard_separator(bms_panel, 8, 52, 92);
+        s_ui.remaining_range_title = label(bms_panel, 4, 59, 100, 16, &settings_zh_13);
+        lv_label_set_text(s_ui.remaining_range_title, "剩余里程");
+        s_ui.remaining_range_value = label(bms_panel, 8, 77, 68, 30, &lv_font_montserrat_24);
+        s_ui.remaining_range_unit = label(bms_panel, 72, 87, 28, 16, &lv_font_montserrat_14);
+        lv_label_set_text(s_ui.remaining_range_unit, "km");
+
+        lv_obj_t *cell_panel = dashboard_panel(battery_viewport,
+                                               124,
+                                               128,
+                                               108,
+                                               120,
+                                               COLOR_DASHBOARD_PANEL,
+                                               COLOR_DASHBOARD_BORDER);
+        for (uint8_t index = 0; index < DASHBOARD_CELL_STAT_COUNT; ++index) {
+            const int32_t row_y = 6 + ((int32_t)index * 26);
+            lv_obj_t *key = dashboard_cell_key(cell_panel, 11, row_y + 2, index);
+            if (index == 0U) {
+                s_ui.cell_stats = key;
+            }
+            s_ui.cell_stat_values[index] =
+                label(cell_panel, 49, row_y, 53, 20, &lv_font_montserrat_14);
+            lv_obj_set_style_text_align(s_ui.cell_stat_values[index],
+                                        LV_TEXT_ALIGN_RIGHT,
+                                        LV_PART_MAIN);
+            lv_obj_set_style_text_color(s_ui.cell_stat_values[index],
+                                        COLOR_DASHBOARD_VALUE,
+                                        LV_PART_MAIN);
+            if (index + 1U < DASHBOARD_CELL_STAT_COUNT) {
+                dashboard_separator(cell_panel, 8, row_y + 23, 92);
+            }
+        }
+
+        lv_obj_t *temp_panel = dashboard_panel(battery_viewport,
+                                               8,
+                                               256,
+                                               content_w,
+                                               56,
+                                               COLOR_DASHBOARD_PANEL,
+                                               COLOR_DASHBOARD_BORDER);
+        const int32_t temp_col_w = content_w / (int32_t)ESP_BMS_BMS_TEMP_MAX_COUNT;
+        for (uint8_t index = 0; index < ESP_BMS_BMS_TEMP_MAX_COUNT; ++index) {
+            const int32_t col_x = (int32_t)index * temp_col_w;
+            lv_obj_t *key = label(temp_panel, col_x, 2, temp_col_w, 18, &lv_font_montserrat_14);
+            lv_label_set_text(key, DASHBOARD_TEMP_KEYS[index]);
+            lv_obj_set_style_text_align(key, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+            if (index == 0U) {
+                s_ui.temperature = key;
+            }
+            dashboard_thermometer_icon(temp_panel, col_x + (temp_col_w / 2), 18);
+            s_ui.temperature_values[index] =
+                label(temp_panel, col_x, 34, temp_col_w, 18, &lv_font_montserrat_14);
+            lv_obj_set_style_text_align(s_ui.temperature_values[index],
+                                        LV_TEXT_ALIGN_CENTER,
+                                        LV_PART_MAIN);
+            lv_obj_set_style_text_color(s_ui.temperature_values[index],
+                                        COLOR_DASHBOARD_VALUE,
+                                        LV_PART_MAIN);
+        }
+    } else {
+        lv_obj_t *soc_panel = dashboard_panel(battery_viewport,
+                                              8,
+                                              8,
+                                              148,
+                                              84,
+                                              COLOR_DASHBOARD_SOC_PANEL,
+                                              COLOR_DASHBOARD_SOC_BORDER);
+        s_ui.soc = label(soc_panel, 4, 3, 140, 30, &lv_font_montserrat_24);
+        dashboard_battery_icon(soc_panel, 34, 35, 76, 19);
+        s_ui.capacity = label(soc_panel, 4, 58, 140, 20, &lv_font_montserrat_14);
+
+        lv_obj_t *pack_panel = dashboard_panel(battery_viewport,
+                                               164,
+                                               8,
+                                               148,
+                                               84,
+                                               COLOR_DASHBOARD_PANEL,
+                                               COLOR_DASHBOARD_BORDER);
+        s_ui.pack_voltage = label(pack_panel, 4, 3, 140, 34, &lv_font_montserrat_28);
+        dashboard_separator(pack_panel, 10, 40, 128);
+        s_ui.current = label(pack_panel, 4, 44, 140, 34, &lv_font_montserrat_28);
+
+        lv_obj_t *bms_panel = dashboard_panel(battery_viewport,
+                                              8,
+                                              100,
+                                              148,
+                                              70,
+                                              COLOR_DASHBOARD_PANEL,
+                                              COLOR_DASHBOARD_BORDER);
+        s_ui.bms_error = label(bms_panel, 4, 4, 68, 12, &settings_zh_10);
+        s_ui.bms_status_ok = label(bms_panel, 4, 27, 68, 16, &lv_font_montserrat_14);
+        lv_label_set_text(s_ui.bms_status_ok, "OK");
+        s_ui.remaining_range_separator = dashboard_separator(bms_panel, 74, 8, 1);
+        lv_obj_set_size(s_ui.remaining_range_separator, 1, 54);
+        s_ui.remaining_range_title = label(bms_panel, 78, 6, 64, 16, &settings_zh_13);
+        lv_label_set_text(s_ui.remaining_range_title, "剩余里程");
+        s_ui.remaining_range_value = label(bms_panel, 78, 21, 64, 30, &lv_font_montserrat_24);
+        s_ui.remaining_range_unit = label(bms_panel, 78, 50, 64, 16, &lv_font_montserrat_14);
+        lv_label_set_text(s_ui.remaining_range_unit, "km");
+
+        lv_obj_t *cell_panel = dashboard_panel(battery_viewport,
+                                               164,
+                                               100,
+                                               148,
+                                               70,
+                                               COLOR_DASHBOARD_PANEL,
+                                               COLOR_DASHBOARD_BORDER);
+        for (uint8_t index = 0; index < DASHBOARD_CELL_STAT_COUNT; ++index) {
+            const int32_t row_y = 2 + ((int32_t)index * 16);
+            lv_obj_t *key = dashboard_cell_key(cell_panel, 20, row_y, index);
+            if (index == 0U) {
+                s_ui.cell_stats = key;
+            }
+            s_ui.cell_stat_values[index] =
+                label(cell_panel, 74, row_y, 62, 16, &lv_font_montserrat_14);
+            lv_obj_set_style_text_align(s_ui.cell_stat_values[index],
+                                        LV_TEXT_ALIGN_RIGHT,
+                                        LV_PART_MAIN);
+            lv_obj_set_style_text_color(s_ui.cell_stat_values[index],
+                                        COLOR_DASHBOARD_VALUE,
+                                        LV_PART_MAIN);
+            if (index + 1U < DASHBOARD_CELL_STAT_COUNT) {
+                dashboard_separator(cell_panel, 12, row_y + 15, 124);
+            }
+        }
+
+        lv_obj_t *temp_panel = dashboard_panel(battery_viewport,
+                                               8,
+                                               178,
+                                               304,
+                                               54,
+                                               COLOR_DASHBOARD_PANEL,
+                                               COLOR_DASHBOARD_BORDER);
+        const int32_t temp_col_w = 304 / (int32_t)ESP_BMS_BMS_TEMP_MAX_COUNT;
+        const int32_t temp_left =
+            (304 - (temp_col_w * (int32_t)ESP_BMS_BMS_TEMP_MAX_COUNT)) / 2;
+        for (uint8_t index = 0; index < ESP_BMS_BMS_TEMP_MAX_COUNT; ++index) {
+            const int32_t col_x = temp_left + ((int32_t)index * temp_col_w);
+            lv_obj_t *key = label(temp_panel, col_x, 1, temp_col_w, 18, &lv_font_montserrat_14);
+            lv_label_set_text(key, DASHBOARD_TEMP_KEYS[index]);
+            lv_obj_set_style_text_align(key, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+            if (index == 0U) {
+                s_ui.temperature = key;
+            }
+            dashboard_thermometer_icon(temp_panel, col_x + (temp_col_w / 2), 17);
+            s_ui.temperature_values[index] =
+                label(temp_panel, col_x, 32, temp_col_w, 18, &lv_font_montserrat_14);
+            lv_obj_set_style_text_align(s_ui.temperature_values[index],
+                                        LV_TEXT_ALIGN_CENTER,
+                                        LV_PART_MAIN);
+            lv_obj_set_style_text_color(s_ui.temperature_values[index],
+                                        COLOR_DASHBOARD_VALUE,
+                                        LV_PART_MAIN);
+        }
+    }
+    lv_obj_set_style_text_align(s_ui.soc, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_align(s_ui.capacity, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_align(s_ui.pack_voltage, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_align(s_ui.current, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_align(s_ui.bms_error, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_align(s_ui.bms_status_ok, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_align(s_ui.remaining_range_title, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_align(s_ui.remaining_range_value, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_align(s_ui.remaining_range_unit, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_line_space(s_ui.bms_error, 1, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.soc, COLOR_WHITE, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.capacity, COLOR_WHITE, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.pack_voltage, COLOR_WHITE, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.current, COLOR_WHITE, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.bms_status_ok, COLOR_ACCENT, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.remaining_range_title, COLOR_MUTED, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.remaining_range_value, COLOR_WHITE, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.remaining_range_unit, COLOR_ACCENT, LV_PART_MAIN);
+}
+
+static lv_obj_t *dashboard_page_shell(esp_bms_lvgl_page_t page)
+{
+    switch (page) {
+    case ESP_BMS_LVGL_PAGE_BATTERY:
+        return s_ui.battery_page;
+    case ESP_BMS_LVGL_PAGE_CONTROLLER:
+    case ESP_BMS_LVGL_PAGE_GPS:
+        return s_ui.gps_page;
+    case ESP_BMS_LVGL_PAGE_CAST:
+        return s_ui.cast_page;
+    case ESP_BMS_LVGL_PAGE_MUSIC:
+        return s_ui.music_page;
+    default:
+        return NULL;
+    }
+}
+
+static bool dashboard_page_content_ready(esp_bms_lvgl_page_t page)
+{
+    lv_obj_t *shell = dashboard_page_shell(page);
+    return shell && lv_obj_get_child_count(shell) > 0U;
+}
+
+static void dashboard_battery_pointers_reset(void)
+{
+    s_ui.soc = NULL;
+    s_ui.soc_arc = NULL;
+    s_ui.soc_battery_level = NULL;
+    s_ui.pack_voltage = NULL;
+    s_ui.pack_voltage_unit = NULL;
+    s_ui.current = NULL;
+    s_ui.current_unit = NULL;
+    s_ui.capacity = NULL;
+    s_ui.bms_running_time = NULL;
+    s_ui.cell_stats = NULL;
+    memset(s_ui.cell_stat_values, 0, sizeof(s_ui.cell_stat_values));
+    memset(s_ui.bms_safety_values, 0, sizeof(s_ui.bms_safety_values));
+    memset(s_ui.bms_safety_checks, 0, sizeof(s_ui.bms_safety_checks));
+    s_ui.bms_error = NULL;
+    s_ui.bms_status_ok = NULL;
+    s_ui.remaining_range_separator = NULL;
+    s_ui.remaining_range_title = NULL;
+    s_ui.remaining_range_value = NULL;
+    s_ui.remaining_range_unit = NULL;
+    s_ui.temperature = NULL;
+    memset(s_ui.temperature_values, 0, sizeof(s_ui.temperature_values));
+    s_ui.local_battery = NULL;
+    s_ui.native_bms_dashboard = false;
+}
+
+static void dashboard_gps_pointers_reset(void)
+{
+    s_ui.controller_page = NULL;
+    s_ui.speed = NULL;
+    s_ui.gps_detail = NULL;
+    s_ui.gps_speed_unit = NULL;
+    s_ui.speed_static_background = NULL;
+    s_ui.speed_art = NULL;
+    s_ui.fireblade_page = NULL;
+    s_ui.fireblade_time = NULL;
+    s_ui.fireblade_controller_temp = NULL;
+    s_ui.fireblade_motor_temp = NULL;
+    s_ui.fireblade_soc = NULL;
+    s_ui.fireblade_consumption = NULL;
+    s_ui.fireblade_consumption_unit = NULL;
+    s_ui.fireblade_range = NULL;
+    s_ui.fireblade_average_speed = NULL;
+    s_ui.fireblade_average_speed_unit = NULL;
+    s_ui.fireblade_date = NULL;
+    s_ui.fireblade_gear = NULL;
+    s_ui.fireblade_gear_unit = NULL;
+    s_ui.fireblade_speed = NULL;
+    s_ui.fireblade_speed_unit = NULL;
+    s_ui.fireblade_needle_black = NULL;
+    s_ui.fireblade_needle_red = NULL;
+    s_ui.speed_soc = NULL;
+    s_ui.speed_consumption = NULL;
+    s_ui.speed_controller_temp = NULL;
+    s_ui.speed_motor_temp = NULL;
+    s_ui.speed_gear = NULL;
+    memset(s_ui.speed_scale_labels, 0, sizeof(s_ui.speed_scale_labels));
+    s_ui.controller_speed = NULL;
+    s_ui.controller_speed_unit = NULL;
+    s_ui.controller_gear = NULL;
+    s_ui.controller_power = NULL;
+    s_ui.controller_rpm = NULL;
+    s_ui.controller_temp = NULL;
+    s_ui.controller_motor_temp = NULL;
+    s_ui.native_fireblade_dashboard = false;
+    s_ui.fireblade_needle_signature_valid = false;
+    s_ui.speed_art_signature_valid = false;
+}
+
+static void dashboard_page_content_release(esp_bms_lvgl_page_t page)
+{
+    lv_obj_t *shell = dashboard_page_shell(page);
+    if (!shell || lv_obj_get_child_count(shell) == 0U) {
+        return;
+    }
+
+    switch (page) {
+    case ESP_BMS_LVGL_PAGE_BATTERY:
+        dashboard_static_cache_release_one(&s_ui.battery_static_cache);
+        lv_obj_clean(shell);
+        dashboard_battery_pointers_reset();
+        break;
+    case ESP_BMS_LVGL_PAGE_CONTROLLER:
+    case ESP_BMS_LVGL_PAGE_GPS:
+        dashboard_static_cache_release_one(&s_ui.fireblade_static_cache);
+        dashboard_static_cache_release_one(&s_ui.speed_static_cache);
+        lv_obj_clean(shell);
+        dashboard_gps_pointers_reset();
+        break;
+    case ESP_BMS_LVGL_PAGE_CAST:
+        lv_obj_clean(shell);
+        s_ui.cast_qr = NULL;
+        break;
+    case ESP_BMS_LVGL_PAGE_MUSIC:
+        lv_obj_clean(shell);
+        s_ui.music_status = NULL;
+        s_ui.music_title = NULL;
+        memset(s_ui.music_controls, 0, sizeof(s_ui.music_controls));
+        break;
+    default:
+        return;
+    }
+
+#if !ESP_BMS_LVGL_UI_SIMULATOR
+    ESP_LOGI(TAG,
+             "[page-memory] released page=%d heap_free=%u heap_largest=%u",
+             (int)page,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_DEFAULT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
+#endif
+}
+
+static void dashboard_pages_release_except(esp_bms_lvgl_page_t page)
+{
+    if (page != ESP_BMS_LVGL_PAGE_BATTERY) {
+        dashboard_page_content_release(ESP_BMS_LVGL_PAGE_BATTERY);
+    }
+    if (page != ESP_BMS_LVGL_PAGE_GPS && page != ESP_BMS_LVGL_PAGE_CONTROLLER) {
+        dashboard_page_content_release(ESP_BMS_LVGL_PAGE_GPS);
+    }
+    if (page != ESP_BMS_LVGL_PAGE_CAST) {
+        dashboard_page_content_release(ESP_BMS_LVGL_PAGE_CAST);
+    }
+    if (page != ESP_BMS_LVGL_PAGE_MUSIC) {
+        dashboard_page_content_release(ESP_BMS_LVGL_PAGE_MUSIC);
+    }
+}
+
+static void dashboard_page_content_ensure(esp_bms_lvgl_page_t page)
+{
+    if (page == ESP_BMS_LVGL_PAGE_CONTROLLER) {
+        page = ESP_BMS_LVGL_PAGE_GPS;
+    }
+    if (dashboard_page_content_ready(page)) {
+        return;
+    }
+
+    switch (page) {
+    case ESP_BMS_LVGL_PAGE_BATTERY:
+        create_battery_page_content();
+        break;
+    case ESP_BMS_LVGL_PAGE_GPS:
+        create_gps_page_content();
+        break;
+    case ESP_BMS_LVGL_PAGE_CAST:
+        create_cast_page_content();
+        break;
+    case ESP_BMS_LVGL_PAGE_MUSIC:
+        create_music_page_content();
+        break;
+    default:
+        return;
+    }
+
+    if (UI_FLAG(LAST_SNAPSHOT_VALID)) {
+        switch (page) {
+        case ESP_BMS_LVGL_PAGE_BATTERY:
+            set_dashboard(&s_ui.last_snapshot);
+            break;
+        case ESP_BMS_LVGL_PAGE_GPS:
+            speed_dashboard_style_apply(&s_ui.last_snapshot);
+#if ESP_BMS_FEATURE_DASHBOARD_CONTROLLER
+            set_controller_dashboard(&s_ui.last_snapshot);
+#endif
+            set_gps_dashboard(&s_ui.last_snapshot);
+            break;
+        case ESP_BMS_LVGL_PAGE_CAST:
+            set_cast_page(&s_ui.last_snapshot);
+            break;
+        case ESP_BMS_LVGL_PAGE_MUSIC:
+            set_music_page(&s_ui.last_snapshot);
+            break;
+        default:
+            break;
+        }
+    }
+
+#if !ESP_BMS_LVGL_UI_SIMULATOR
+    ESP_LOGI(TAG,
+             "[page-memory] created page=%d heap_free=%u heap_largest=%u",
+             (int)page,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_DEFAULT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
+#endif
+}
+
 static void create_screen(lv_display_t *display)
 {
     lv_obj_t *screen = lv_obj_create(NULL);
@@ -12430,7 +13155,6 @@ static void create_screen(lv_display_t *display)
     const int32_t page_h = s_ui.height;
     const int32_t settings_y = 0;
     const int32_t settings_h = s_ui.height - settings_y;
-    const int32_t content_w = (portrait ? 240 : 320) - 16;
 
     s_ui.header = panel(screen, 0, 0, s_ui.width, 20, COLOR_BG);
     lv_obj_set_style_radius(s_ui.header, 0, LV_PART_MAIN);
@@ -12497,19 +13221,6 @@ static void create_screen(lv_display_t *display)
     lv_obj_set_style_bg_color(s_ui.gps_page, COLOR_BG, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_ui.gps_page, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_add_flag(s_ui.gps_page, LV_OBJ_FLAG_SNAPPABLE);
-    snprintf(s_ui.gps_speed_buf, sizeof(s_ui.gps_speed_buf), "-");
-    snprintf(s_ui.gps_speed_unit_buf, sizeof(s_ui.gps_speed_unit_buf), "km/h");
-    snprintf(s_ui.gps_uptime_buf, sizeof(s_ui.gps_uptime_buf), "--:--");
-    s_ui.speed_soc_buf[0] = '\0';
-    snprintf(s_ui.speed_consumption_buf, sizeof(s_ui.speed_consumption_buf), "-- Wh/km");
-    s_ui.speed_controller_temp_buf[0] = '\0';
-    s_ui.speed_motor_temp_buf[0] = '\0';
-    snprintf(s_ui.speed_gear_buf, sizeof(s_ui.speed_gear_buf), "-");
-    memset(s_ui.speed_scale_buf, 0, sizeof(s_ui.speed_scale_buf));
-    create_gps_dashboard();
-#if ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
-    create_fireblade_dashboard();
-#endif
 
 #if ESP_BMS_FEATURE_CAST
     s_ui.cast_page = lv_obj_create(s_ui.pages);
@@ -12519,28 +13230,12 @@ static void create_screen(lv_display_t *display)
     lv_obj_set_style_bg_color(s_ui.cast_page, COLOR_BG, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_ui.cast_page, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_add_flag(s_ui.cast_page, LV_OBJ_FLAG_SNAPPABLE);
-    lv_obj_t *cast_title = label(s_ui.cast_page, 0, portrait ? 28 : 16, s_ui.width,
-                                 settings_zh_16.line_height, &settings_zh_16);
-    lv_label_set_text(cast_title, "扫码投屏");
-    lv_obj_set_style_text_align(cast_title, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_set_style_text_color(cast_title, COLOR_ACCENT, LV_PART_MAIN);
-#if LV_USE_QRCODE
-    s_ui.cast_qr = lv_qrcode_create(s_ui.cast_page);
-    if (s_ui.cast_qr) {
-        const int32_t cast_qr_size = portrait ? 132 : 112;
-        lv_qrcode_set_size(s_ui.cast_qr, cast_qr_size);
-        lv_qrcode_set_dark_color(s_ui.cast_qr, COLOR_BG);
-        lv_qrcode_set_light_color(s_ui.cast_qr, COLOR_WHITE);
-        lv_qrcode_set_quiet_zone(s_ui.cast_qr, true);
-        lv_obj_align(s_ui.cast_qr, LV_ALIGN_CENTER, 0, portrait ? 55 : 44);
-    }
-#endif
 #else
     s_ui.cast_page = NULL;
     s_ui.cast_qr = NULL;
 #endif
 
-#if ESP_BMS_FEATURE_PHONE_MEDIA
+#if ESP_BMS_FEATURE_PHONE_MEDIA || ESP_BMS_FEATURE_BLE_MEDIA_HID
     s_ui.music_page = lv_obj_create(s_ui.pages);
     clear_style(s_ui.music_page);
     lv_obj_set_pos(s_ui.music_page, page_target_scroll_x(ESP_BMS_LVGL_PAGE_MUSIC), 0);
@@ -12548,219 +13243,6 @@ static void create_screen(lv_display_t *display)
     lv_obj_set_style_bg_color(s_ui.music_page, COLOR_BG, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_ui.music_page, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_add_flag(s_ui.music_page, LV_OBJ_FLAG_SNAPPABLE);
-    memset(s_ui.music_controls, 0, sizeof(s_ui.music_controls));
-
-    const int32_t music_margin = portrait ? 16 : 24;
-    const int32_t music_gap = portrait ? 12 : 10;
-    const int32_t music_content_w = s_ui.width - (music_margin * 2);
-    const int32_t music_status_w = portrait ? 136 : 128;
-    const int32_t music_track_y = portrait ? 90 : 58;
-    const int32_t music_track_h = portrait ? 94 : 74;
-    const int32_t music_button_w = (music_content_w - music_gap) / 2;
-    const int32_t music_button_h = portrait ? 104 : 66;
-    const int32_t music_buttons_y = portrait ? 204 : 146;
-    lv_obj_t *music_heading = label(s_ui.music_page,
-                                    music_margin,
-                                    portrait ? 34 : 22,
-                                    music_content_w - music_status_w - music_gap,
-                                    20,
-                                    &lv_font_montserrat_14);
-    lv_label_set_text(music_heading, "PHONE MEDIA");
-    lv_obj_set_style_text_color(music_heading, COLOR_ACCENT, LV_PART_MAIN);
-    lv_obj_t *music_status_card = panel(s_ui.music_page,
-                                        s_ui.width - music_margin - music_status_w,
-                                        portrait ? 28 : 16,
-                                        music_status_w,
-                                        28,
-                                        COLOR_PANEL_ALT);
-    lv_obj_set_style_radius(music_status_card, 14, LV_PART_MAIN);
-    lv_obj_set_style_border_width(music_status_card, 1, LV_PART_MAIN);
-    lv_obj_set_style_border_color(music_status_card, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
-    s_ui.music_status = label(music_status_card,
-                              8,
-                              5,
-                              music_status_w - 16,
-                              18,
-                              &lv_font_montserrat_14);
-    lv_obj_set_style_text_align(s_ui.music_status, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-
-    lv_obj_t *music_track_card = panel(s_ui.music_page,
-                                        music_margin,
-                                        music_track_y,
-                                        music_content_w,
-                                        music_track_h,
-                                        COLOR_PANEL_ALT);
-    lv_obj_set_style_radius(music_track_card, 8, LV_PART_MAIN);
-    lv_obj_set_style_border_width(music_track_card, 1, LV_PART_MAIN);
-    lv_obj_set_style_border_color(music_track_card, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
-    lv_obj_t *music_track_accent = panel(music_track_card,
-                                         0,
-                                         0,
-                                         4,
-                                         music_track_h,
-                                         COLOR_ACCENT);
-    lv_obj_set_style_radius(music_track_accent, 2, LV_PART_MAIN);
-    lv_obj_t *music_track_label = label(music_track_card,
-                                        18,
-                                        8,
-                                        music_content_w - 36,
-                                        16,
-                                        &lv_font_montserrat_14);
-    lv_label_set_text(music_track_label, "NOW PLAYING");
-    lv_obj_set_style_text_color(music_track_label, COLOR_MUTED, LV_PART_MAIN);
-    s_ui.music_title = label(music_track_card,
-                             18,
-                             portrait ? 36 : 30,
-                             music_content_w - 36,
-                             30,
-                             &lv_font_montserrat_24);
-    lv_label_set_long_mode(s_ui.music_title, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
-
-    const esp_bms_lvgl_action_t music_actions[4] = {
-        ESP_BMS_LVGL_ACTION_PHONE_MEDIA_PREVIOUS,
-        ESP_BMS_LVGL_ACTION_PHONE_MEDIA_NEXT,
-        ESP_BMS_LVGL_ACTION_PHONE_MEDIA_VOLUME_DOWN,
-        ESP_BMS_LVGL_ACTION_PHONE_MEDIA_VOLUME_UP,
-    };
-    const char *const music_icons[4] = {
-        LV_SYMBOL_PREV,
-        LV_SYMBOL_NEXT,
-        LV_SYMBOL_VOLUME_MID " " LV_SYMBOL_MINUS,
-        LV_SYMBOL_VOLUME_MID " " LV_SYMBOL_PLUS,
-    };
-    const char *const music_labels[4] = { "PREVIOUS", "NEXT", "VOLUME -", "VOLUME +" };
-    for (size_t index = 0U; index < MUSIC_CONTROL_COUNT; ++index) {
-        const int32_t column = (int32_t)(index % 2U);
-        const int32_t row = (int32_t)(index / 2U);
-        lv_obj_t *control = panel(s_ui.music_page,
-                                  music_margin + column * (music_button_w + music_gap),
-                                  music_buttons_y + row * (music_button_h + music_gap),
-                                  music_button_w,
-                                  music_button_h,
-                                  index < 2U ? COLOR_PANEL_ALT : COLOR_SETTINGS_LIST);
-        lv_obj_add_flag(control, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_set_style_border_width(control, 1, LV_PART_MAIN);
-        lv_obj_set_style_border_color(control, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
-        lv_obj_set_style_border_opa(control, LV_OPA_COVER, LV_PART_MAIN);
-        lv_obj_set_style_radius(control, 8, LV_PART_MAIN);
-        lv_obj_set_style_bg_opa(control, LV_OPA_40, LV_PART_MAIN | LV_STATE_DISABLED);
-        lv_obj_set_style_opa(control, LV_OPA_40, LV_PART_MAIN | LV_STATE_DISABLED);
-        lv_obj_add_event_cb(control, action_event_cb, LV_EVENT_CLICKED,
-                            (void *)(uintptr_t)music_actions[index]);
-        lv_obj_t *control_icon = label(control,
-                                       0,
-                                       portrait ? 20 : 6,
-                                       music_button_w - 8,
-                                       28,
-                                       &lv_font_montserrat_24);
-        lv_label_set_text(control_icon, music_icons[index]);
-        lv_obj_set_style_text_align(control_icon, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-        lv_obj_set_style_text_color(control_icon,
-                                    index < 2U ? COLOR_ACCENT : COLOR_WHITE,
-                                    LV_PART_MAIN);
-        lv_obj_t *control_label = label(control,
-                                        0,
-                                        portrait ? 60 : 38,
-                                        music_button_w - 8,
-                                        18,
-                                        &lv_font_montserrat_14);
-        lv_label_set_text(control_label, music_labels[index]);
-        lv_obj_set_style_text_align(control_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-        lv_obj_set_style_text_color(control_label, COLOR_MUTED, LV_PART_MAIN);
-        s_ui.music_controls[index] = control;
-    }
-    set_music_page(&s_ui.last_snapshot);
-#elif ESP_BMS_FEATURE_BLE_MEDIA_HID
-    s_ui.music_page = lv_obj_create(s_ui.pages);
-    clear_style(s_ui.music_page);
-    lv_obj_set_pos(s_ui.music_page, page_target_scroll_x(ESP_BMS_LVGL_PAGE_MUSIC), 0);
-    lv_obj_set_size(s_ui.music_page, s_ui.width, page_h);
-    lv_obj_set_style_bg_color(s_ui.music_page, COLOR_BG, LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(s_ui.music_page, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_add_flag(s_ui.music_page, LV_OBJ_FLAG_SNAPPABLE);
-    s_ui.music_title = NULL;
-    memset(s_ui.music_controls, 0, sizeof(s_ui.music_controls));
-
-    const int32_t status_w = portrait ? 156 : 128;
-    const int32_t status_y = portrait ? 30 : 16;
-    lv_obj_t *status_card = panel(s_ui.music_page,
-                                  (s_ui.width - status_w) / 2,
-                                  status_y,
-                                  status_w,
-                                  28,
-                                  COLOR_PANEL_ALT);
-    lv_obj_set_style_radius(status_card, 8, LV_PART_MAIN);
-    lv_obj_set_style_border_width(status_card, 1, LV_PART_MAIN);
-    lv_obj_set_style_border_color(status_card, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
-    s_ui.music_status = label(status_card, 4, 5, status_w - 8, 18, &lv_font_montserrat_14);
-    lv_obj_set_style_text_align(s_ui.music_status, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-
-    const esp_bms_lvgl_action_t music_actions[MUSIC_CONTROL_COUNT] = {
-        ESP_BMS_LVGL_ACTION_PHONE_MEDIA_PREVIOUS,
-        ESP_BMS_LVGL_ACTION_MEDIA_PLAY_PAUSE,
-        ESP_BMS_LVGL_ACTION_PHONE_MEDIA_NEXT,
-        ESP_BMS_LVGL_ACTION_PHONE_MEDIA_VOLUME_DOWN,
-        ESP_BMS_LVGL_ACTION_PHONE_MEDIA_VOLUME_UP,
-    };
-    const char *const music_icons[MUSIC_CONTROL_COUNT] = {
-        LV_SYMBOL_PREV,
-        LV_SYMBOL_PLAY,
-        LV_SYMBOL_NEXT,
-        LV_SYMBOL_VOLUME_MID " " LV_SYMBOL_MINUS,
-        LV_SYMBOL_VOLUME_MID " " LV_SYMBOL_PLUS,
-    };
-    const char *const music_labels[MUSIC_CONTROL_COUNT] = {
-        "PREV", "PLAY", "NEXT", "VOL -", "VOL +",
-    };
-    for (size_t index = 0U; index < MUSIC_CONTROL_COUNT; ++index) {
-        const bool track_control = index < 3U;
-        const int32_t button_w = track_control ? (portrait ? 64 : 80) : (portrait ? 100 : 128);
-        const int32_t button_h = track_control ? (portrait ? 72 : 62) : (portrait ? 82 : 64);
-        const int32_t gap = track_control ? (portrait ? 8 : 16) : (portrait ? 8 : 16);
-        const int32_t button_count = track_control ? 3 : 2;
-        const int32_t row_index = track_control ? (int32_t)index : (int32_t)(index - 3U);
-        const int32_t x = (s_ui.width - (button_w * button_count) -
-                           (gap * (button_count - 1))) / 2 +
-                          row_index * (button_w + gap);
-        const int32_t y = track_control ? (portrait ? 82 : 62) : (portrait ? 168 : 140);
-        lv_obj_t *control = panel(s_ui.music_page,
-                                  x,
-                                  y,
-                                  button_w,
-                                  button_h,
-                                  track_control ? COLOR_PANEL_ALT : COLOR_SETTINGS_LIST);
-        lv_obj_add_flag(control, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_set_style_border_width(control, 1, LV_PART_MAIN);
-        lv_obj_set_style_border_color(control, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
-        lv_obj_set_style_border_opa(control, LV_OPA_COVER, LV_PART_MAIN);
-        lv_obj_set_style_radius(control, 8, LV_PART_MAIN);
-        lv_obj_set_style_bg_opa(control, LV_OPA_40, LV_PART_MAIN | LV_STATE_DISABLED);
-        lv_obj_set_style_opa(control, LV_OPA_40, LV_PART_MAIN | LV_STATE_DISABLED);
-        lv_obj_add_event_cb(control, action_event_cb, LV_EVENT_CLICKED,
-                            (void *)(uintptr_t)music_actions[index]);
-        lv_obj_t *icon = label(control,
-                               0,
-                               track_control ? (portrait ? 12 : 7) : (portrait ? 17 : 9),
-                               button_w,
-                               26,
-                               &lv_font_montserrat_24);
-        lv_label_set_text(icon, music_icons[index]);
-        lv_obj_set_style_text_align(icon, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-        lv_obj_set_style_text_color(icon,
-                                    track_control ? COLOR_ACCENT : COLOR_WHITE,
-                                    LV_PART_MAIN);
-        lv_obj_t *caption = label(control,
-                                  0,
-                                  button_h - 22,
-                                  button_w,
-                                  16,
-                                  &lv_font_montserrat_14);
-        lv_label_set_text(caption, music_labels[index]);
-        lv_obj_set_style_text_align(caption, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-        lv_obj_set_style_text_color(caption, COLOR_MUTED, LV_PART_MAIN);
-        s_ui.music_controls[index] = control;
-    }
-    set_music_page(&s_ui.last_snapshot);
 #else
     s_ui.music_page = NULL;
     s_ui.music_status = NULL;
@@ -12768,198 +13250,7 @@ static void create_screen(lv_display_t *display)
     memset(s_ui.music_controls, 0, sizeof(s_ui.music_controls));
 #endif
 
-    if (bms_native_landscape_enabled()) {
-        create_native_bms_dashboard();
-    } else if (bms_native_portrait_enabled()) {
-        create_native_bms_portrait_dashboard();
-    } else {
-    lv_obj_t *battery_viewport = dashboard_viewport(s_ui.battery_page, portrait);
-    if (portrait) {
-        lv_obj_t *soc_panel = dashboard_panel(battery_viewport,
-                                              8,
-                                              8,
-                                              108,
-                                              112,
-                                              COLOR_DASHBOARD_SOC_PANEL,
-                                              COLOR_DASHBOARD_SOC_BORDER);
-        s_ui.soc = label(soc_panel, 4, 8, 100, 30, &lv_font_montserrat_24);
-        dashboard_battery_icon(soc_panel, 19, 43, 66, 22);
-        s_ui.capacity = label(soc_panel, 4, 76, 100, 20, &lv_font_montserrat_14);
-
-        lv_obj_t *pack_panel = dashboard_panel(battery_viewport,
-                                               124,
-                                               8,
-                                               108,
-                                               112,
-                                               COLOR_DASHBOARD_PANEL,
-                                               COLOR_DASHBOARD_BORDER);
-        s_ui.pack_voltage = label(pack_panel, 4, 12, 100, 34, &lv_font_montserrat_28);
-        dashboard_separator(pack_panel, 8, 52, 92);
-        s_ui.current = label(pack_panel, 4, 58, 100, 34, &lv_font_montserrat_28);
-
-        lv_obj_t *bms_panel = dashboard_panel(battery_viewport,
-                                              8,
-                                              128,
-                                              108,
-                                              120,
-                                              COLOR_DASHBOARD_PANEL,
-                                              COLOR_DASHBOARD_BORDER);
-        s_ui.bms_error = label(bms_panel, 4, 4, 100, 12, &settings_zh_10);
-        s_ui.bms_status_ok = label(bms_panel, 4, 21, 100, 16, &lv_font_montserrat_14);
-        lv_label_set_text(s_ui.bms_status_ok, "OK");
-        s_ui.remaining_range_separator = dashboard_separator(bms_panel, 8, 52, 92);
-        s_ui.remaining_range_title = label(bms_panel, 4, 59, 100, 16, &settings_zh_13);
-        lv_label_set_text(s_ui.remaining_range_title, "剩余里程");
-        s_ui.remaining_range_value = label(bms_panel, 8, 77, 68, 30, &lv_font_montserrat_24);
-        s_ui.remaining_range_unit = label(bms_panel, 72, 87, 28, 16, &lv_font_montserrat_14);
-        lv_label_set_text(s_ui.remaining_range_unit, "km");
-
-        lv_obj_t *cell_panel = dashboard_panel(battery_viewport,
-                                               124,
-                                               128,
-                                               108,
-                                               120,
-                                               COLOR_DASHBOARD_PANEL,
-                                               COLOR_DASHBOARD_BORDER);
-        for (uint8_t index = 0; index < DASHBOARD_CELL_STAT_COUNT; ++index) {
-            const int32_t row_y = 6 + ((int32_t)index * 26);
-            lv_obj_t *key = dashboard_cell_key(cell_panel, 11, row_y + 2, index);
-            if (index == 0U) {
-                s_ui.cell_stats = key;
-            }
-            s_ui.cell_stat_values[index] = label(cell_panel, 49, row_y, 53, 20, &lv_font_montserrat_14);
-            lv_obj_set_style_text_align(s_ui.cell_stat_values[index], LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
-            lv_obj_set_style_text_color(s_ui.cell_stat_values[index], COLOR_DASHBOARD_VALUE, LV_PART_MAIN);
-            if (index + 1U < DASHBOARD_CELL_STAT_COUNT) {
-                dashboard_separator(cell_panel, 8, row_y + 23, 92);
-            }
-        }
-
-        lv_obj_t *temp_panel = dashboard_panel(battery_viewport,
-                                               8,
-                                               256,
-                                               content_w,
-                                               56,
-                                               COLOR_DASHBOARD_PANEL,
-                                               COLOR_DASHBOARD_BORDER);
-        const int32_t temp_col_w = content_w / (int32_t)ESP_BMS_BMS_TEMP_MAX_COUNT;
-        for (uint8_t index = 0; index < ESP_BMS_BMS_TEMP_MAX_COUNT; ++index) {
-            const int32_t col_x = (int32_t)index * temp_col_w;
-            lv_obj_t *key = label(temp_panel, col_x, 2, temp_col_w, 18, &lv_font_montserrat_14);
-            lv_label_set_text(key, DASHBOARD_TEMP_KEYS[index]);
-            lv_obj_set_style_text_align(key, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-            if (index == 0U) {
-                s_ui.temperature = key;
-            }
-            dashboard_thermometer_icon(temp_panel, col_x + (temp_col_w / 2), 18);
-            s_ui.temperature_values[index] = label(temp_panel, col_x, 34, temp_col_w, 18, &lv_font_montserrat_14);
-            lv_obj_set_style_text_align(s_ui.temperature_values[index], LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-            lv_obj_set_style_text_color(s_ui.temperature_values[index], COLOR_DASHBOARD_VALUE, LV_PART_MAIN);
-        }
-    } else {
-        lv_obj_t *soc_panel = dashboard_panel(battery_viewport,
-                                              8,
-                                              8,
-                                              148,
-                                              84,
-                                              COLOR_DASHBOARD_SOC_PANEL,
-                                              COLOR_DASHBOARD_SOC_BORDER);
-        s_ui.soc = label(soc_panel, 4, 3, 140, 30, &lv_font_montserrat_24);
-        dashboard_battery_icon(soc_panel, 34, 35, 76, 19);
-        s_ui.capacity = label(soc_panel, 4, 58, 140, 20, &lv_font_montserrat_14);
-
-        lv_obj_t *pack_panel = dashboard_panel(battery_viewport,
-                                               164,
-                                               8,
-                                               148,
-                                               84,
-                                               COLOR_DASHBOARD_PANEL,
-                                               COLOR_DASHBOARD_BORDER);
-        s_ui.pack_voltage = label(pack_panel, 4, 3, 140, 34, &lv_font_montserrat_28);
-        dashboard_separator(pack_panel, 10, 40, 128);
-        s_ui.current = label(pack_panel, 4, 44, 140, 34, &lv_font_montserrat_28);
-
-        lv_obj_t *bms_panel = dashboard_panel(battery_viewport,
-                                              8,
-                                              100,
-                                              148,
-                                              70,
-                                              COLOR_DASHBOARD_PANEL,
-                                              COLOR_DASHBOARD_BORDER);
-        s_ui.bms_error = label(bms_panel, 4, 4, 68, 12, &settings_zh_10);
-        s_ui.bms_status_ok = label(bms_panel, 4, 27, 68, 16, &lv_font_montserrat_14);
-        lv_label_set_text(s_ui.bms_status_ok, "OK");
-        s_ui.remaining_range_separator = dashboard_separator(bms_panel, 74, 8, 1);
-        lv_obj_set_size(s_ui.remaining_range_separator, 1, 54);
-        s_ui.remaining_range_title = label(bms_panel, 78, 6, 64, 16, &settings_zh_13);
-        lv_label_set_text(s_ui.remaining_range_title, "剩余里程");
-        s_ui.remaining_range_value = label(bms_panel, 78, 21, 64, 30, &lv_font_montserrat_24);
-        s_ui.remaining_range_unit = label(bms_panel, 78, 50, 64, 16, &lv_font_montserrat_14);
-        lv_label_set_text(s_ui.remaining_range_unit, "km");
-
-        lv_obj_t *cell_panel = dashboard_panel(battery_viewport,
-                                               164,
-                                               100,
-                                               148,
-                                               70,
-                                               COLOR_DASHBOARD_PANEL,
-                                               COLOR_DASHBOARD_BORDER);
-        for (uint8_t index = 0; index < DASHBOARD_CELL_STAT_COUNT; ++index) {
-            const int32_t row_y = 2 + ((int32_t)index * 16);
-            lv_obj_t *key = dashboard_cell_key(cell_panel, 20, row_y, index);
-            if (index == 0U) {
-                s_ui.cell_stats = key;
-            }
-            s_ui.cell_stat_values[index] = label(cell_panel, 74, row_y, 62, 16, &lv_font_montserrat_14);
-            lv_obj_set_style_text_align(s_ui.cell_stat_values[index], LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
-            lv_obj_set_style_text_color(s_ui.cell_stat_values[index], COLOR_DASHBOARD_VALUE, LV_PART_MAIN);
-            if (index + 1U < DASHBOARD_CELL_STAT_COUNT) {
-                dashboard_separator(cell_panel, 12, row_y + 15, 124);
-            }
-        }
-
-        lv_obj_t *temp_panel = dashboard_panel(battery_viewport,
-                                               8,
-                                               178,
-                                               304,
-                                               54,
-                                               COLOR_DASHBOARD_PANEL,
-                                               COLOR_DASHBOARD_BORDER);
-        const int32_t temp_col_w = 304 / (int32_t)ESP_BMS_BMS_TEMP_MAX_COUNT;
-        const int32_t temp_left = (304 - (temp_col_w * (int32_t)ESP_BMS_BMS_TEMP_MAX_COUNT)) / 2;
-        for (uint8_t index = 0; index < ESP_BMS_BMS_TEMP_MAX_COUNT; ++index) {
-            const int32_t col_x = temp_left + ((int32_t)index * temp_col_w);
-            lv_obj_t *key = label(temp_panel, col_x, 1, temp_col_w, 18, &lv_font_montserrat_14);
-            lv_label_set_text(key, DASHBOARD_TEMP_KEYS[index]);
-            lv_obj_set_style_text_align(key, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-            if (index == 0U) {
-                s_ui.temperature = key;
-            }
-            dashboard_thermometer_icon(temp_panel, col_x + (temp_col_w / 2), 17);
-            s_ui.temperature_values[index] = label(temp_panel, col_x, 32, temp_col_w, 18, &lv_font_montserrat_14);
-            lv_obj_set_style_text_align(s_ui.temperature_values[index], LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-            lv_obj_set_style_text_color(s_ui.temperature_values[index], COLOR_DASHBOARD_VALUE, LV_PART_MAIN);
-        }
-    }
-    lv_obj_set_style_text_align(s_ui.soc, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_set_style_text_align(s_ui.capacity, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_set_style_text_align(s_ui.pack_voltage, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_set_style_text_align(s_ui.current, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_set_style_text_align(s_ui.bms_error, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_set_style_text_align(s_ui.bms_status_ok, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_set_style_text_align(s_ui.remaining_range_title, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_set_style_text_align(s_ui.remaining_range_value, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_set_style_text_align(s_ui.remaining_range_unit, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_set_style_text_line_space(s_ui.bms_error, 1, LV_PART_MAIN);
-    lv_obj_set_style_text_color(s_ui.soc, COLOR_WHITE, LV_PART_MAIN);
-    lv_obj_set_style_text_color(s_ui.capacity, COLOR_WHITE, LV_PART_MAIN);
-    lv_obj_set_style_text_color(s_ui.pack_voltage, COLOR_WHITE, LV_PART_MAIN);
-    lv_obj_set_style_text_color(s_ui.current, COLOR_WHITE, LV_PART_MAIN);
-    lv_obj_set_style_text_color(s_ui.bms_status_ok, COLOR_ACCENT, LV_PART_MAIN);
-    lv_obj_set_style_text_color(s_ui.remaining_range_title, COLOR_MUTED, LV_PART_MAIN);
-    lv_obj_set_style_text_color(s_ui.remaining_range_value, COLOR_WHITE, LV_PART_MAIN);
-    lv_obj_set_style_text_color(s_ui.remaining_range_unit, COLOR_ACCENT, LV_PART_MAIN);
-    }
+    create_battery_page_content();
 
     s_ui.staging_screen = lv_obj_create(NULL);
     s_ui.settings_page = lv_obj_create(s_ui.staging_screen);
@@ -13289,6 +13580,7 @@ static void create_screen(lv_display_t *display)
     set_quick_panel_open(false);
     page_transition_create(s_ui.pages);
     screen_lock_create(screen);
+    dashboard_pages_release_except(ESP_BMS_LVGL_PAGE_BATTERY);
     lv_obj_add_flag(s_ui.header, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -14360,7 +14652,8 @@ static bool simulator_controller_gear_smoke(void)
 
 static bool simulator_native_bms_portrait_smoke(void)
 {
-    return !bms_native_portrait_enabled() ||
+    return !dashboard_page_content_ready(ESP_BMS_LVGL_PAGE_BATTERY) ||
+           !bms_native_portrait_enabled() ||
            (s_ui.battery_page && s_ui.soc_battery_level && s_ui.soc && s_ui.pack_voltage &&
             s_ui.current &&
             s_ui.capacity && s_ui.remaining_range_value && s_ui.bms_running_time &&
@@ -14372,6 +14665,9 @@ static bool simulator_native_bms_portrait_smoke(void)
 
 static bool simulator_native_speed_dashboard_smoke(void)
 {
+    if (!dashboard_page_content_ready(ESP_BMS_LVGL_PAGE_GPS)) {
+        return true;
+    }
     const bool native_controller_layout =
         (s_ui.width == 320 && s_ui.height == 480) ||
         (s_ui.width == 480 && s_ui.height == 320);
@@ -14394,7 +14690,8 @@ static bool simulator_native_speed_dashboard_smoke(void)
 
 static bool simulator_native_bms_landscape_smoke(void)
 {
-    if (s_ui.width != 480 || s_ui.height != 320) {
+    if (!dashboard_page_content_ready(ESP_BMS_LVGL_PAGE_BATTERY) ||
+        s_ui.width != 480 || s_ui.height != 320) {
         return true;
     }
     return s_ui.native_bms_dashboard && s_ui.pack_voltage_unit && s_ui.current_unit &&
@@ -14530,6 +14827,10 @@ static bool simulator_page_transition_smoke(void)
     lv_timer_handler();
     const bool restored = !page_transition_active() &&
                           !UI_FLAG(SETTLING) &&
+                          dashboard_page_content_ready(ESP_BMS_LVGL_PAGE_BATTERY) &&
+                          !dashboard_page_content_ready(ESP_BMS_LVGL_PAGE_GPS) &&
+                          !dashboard_page_content_ready(ESP_BMS_LVGL_PAGE_CAST) &&
+                          !dashboard_page_content_ready(ESP_BMS_LVGL_PAGE_MUSIC) &&
                           !lv_obj_has_flag(s_ui.battery_page, LV_OBJ_FLAG_HIDDEN) &&
                           !lv_obj_has_flag(s_ui.gps_page, LV_OBJ_FLAG_HIDDEN) &&
                           (!s_ui.cast_page ||
@@ -14594,6 +14895,12 @@ bool esp_bms_lvgl_ui_simulator_native_gesture_smoke(void)
     }
 
     show_settings_view();
+    if (dashboard_page_content_ready(ESP_BMS_LVGL_PAGE_BATTERY) ||
+        dashboard_page_content_ready(ESP_BMS_LVGL_PAGE_GPS) ||
+        dashboard_page_content_ready(ESP_BMS_LVGL_PAGE_CAST) ||
+        dashboard_page_content_ready(ESP_BMS_LVGL_PAGE_MUSIC)) {
+        return false;
+    }
     settings_show_detail(SETTINGS_DETAIL_SYSTEM);
     if (simulator_tree_has_label(s_ui.settings_detail, "屏幕校准") ||
         esp_bms_lvgl_ui_handle_native_gesture(
@@ -14609,7 +14916,10 @@ bool esp_bms_lvgl_ui_simulator_native_gesture_smoke(void)
 
     show_dashboard_view();
     move_to_page(ESP_BMS_LVGL_PAGE_BATTERY, false);
-    return true;
+    return dashboard_page_content_ready(ESP_BMS_LVGL_PAGE_BATTERY) &&
+           !dashboard_page_content_ready(ESP_BMS_LVGL_PAGE_GPS) &&
+           !dashboard_page_content_ready(ESP_BMS_LVGL_PAGE_CAST) &&
+           !dashboard_page_content_ready(ESP_BMS_LVGL_PAGE_MUSIC);
 }
 
 bool esp_bms_lvgl_ui_simulator_boot_animation_preview_active(void)

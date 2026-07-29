@@ -798,26 +798,43 @@ static bool run_native_dashboard_stress(host_app_t *app)
     refresh_speed_snapshot(app);
     if (esp_bms_lvgl_ui_update(&app->snapshot) != ESP_OK ||
         esp_bms_lvgl_ui_set_page(ESP_BMS_LVGL_PAGE_BATTERY, false) != ESP_OK ||
-        esp_bms_lvgl_ui_simulator_static_cache_count() != 3U) {
+        esp_bms_lvgl_ui_simulator_static_cache_count() != 1U) {
         fprintf(stderr,
                 "native stress setup failed: cache=%u\n",
                 (unsigned)esp_bms_lvgl_ui_simulator_static_cache_count());
         return false;
     }
 
-    const uint32_t baseline_objects = esp_bms_lvgl_ui_simulator_object_count();
+    const uint32_t battery_objects = esp_bms_lvgl_ui_simulator_object_count();
+    uint32_t gps_objects = 0U;
     uint32_t snapshot_updates = 0U;
     for (uint32_t cycle = 0U; cycle < 6U; ++cycle) {
         const esp_bms_lvgl_page_t page = (cycle & 1U) == 0U
                                              ? ESP_BMS_LVGL_PAGE_GPS
                                              : ESP_BMS_LVGL_PAGE_BATTERY;
-        if (!run_native_dashboard_transition(app, page, &snapshot_updates) ||
-            esp_bms_lvgl_ui_simulator_object_count() != baseline_objects) {
+        if (!run_native_dashboard_transition(app, page, &snapshot_updates)) {
             fprintf(stderr,
-                    "native stress transition failed: cycle=%u objects=%u expected=%u\n",
+                    "native stress transition failed: cycle=%u\n",
+                    (unsigned)cycle);
+            return false;
+        }
+        const uint32_t objects = esp_bms_lvgl_ui_simulator_object_count();
+        const uint8_t expected_cache = page == ESP_BMS_LVGL_PAGE_GPS ? 2U : 1U;
+        if (page == ESP_BMS_LVGL_PAGE_GPS && gps_objects == 0U) {
+            gps_objects = objects;
+        }
+        const uint32_t expected_objects = page == ESP_BMS_LVGL_PAGE_GPS
+                                              ? gps_objects
+                                              : battery_objects;
+        if (objects != expected_objects ||
+            esp_bms_lvgl_ui_simulator_static_cache_count() != expected_cache) {
+            fprintf(stderr,
+                    "native stress lifecycle failed: cycle=%u objects=%u expected=%u cache=%u expected_cache=%u\n",
                     (unsigned)cycle,
-                    (unsigned)esp_bms_lvgl_ui_simulator_object_count(),
-                    (unsigned)baseline_objects);
+                    (unsigned)objects,
+                    (unsigned)expected_objects,
+                    (unsigned)esp_bms_lvgl_ui_simulator_static_cache_count(),
+                    (unsigned)expected_cache);
             return false;
         }
     }
@@ -832,8 +849,8 @@ static bool run_native_dashboard_stress(host_app_t *app)
     }
     rotate_display(app);
     const bool passed = esp_bms_lvgl_ui_update(&app->snapshot) == ESP_OK &&
-                        esp_bms_lvgl_ui_simulator_static_cache_count() == 3U &&
-                        esp_bms_lvgl_ui_simulator_object_count() == baseline_objects &&
+                        esp_bms_lvgl_ui_simulator_static_cache_count() == 1U &&
+                        esp_bms_lvgl_ui_simulator_object_count() == battery_objects &&
                         esp_bms_lvgl_ui_simulator_snapshot_matches(&app->snapshot) &&
                         snapshot_updates >= 300U;
     if (passed) {
@@ -843,7 +860,7 @@ static bool run_native_dashboard_stress(host_app_t *app)
                 "native stress restore failed: cache=%u objects=%u expected=%u snapshot=%d updates=%u\n",
                 (unsigned)esp_bms_lvgl_ui_simulator_static_cache_count(),
                 (unsigned)esp_bms_lvgl_ui_simulator_object_count(),
-                (unsigned)baseline_objects,
+                (unsigned)battery_objects,
                 esp_bms_lvgl_ui_simulator_snapshot_matches(&app->snapshot) ? 1 : 0,
                 (unsigned)snapshot_updates);
     }
