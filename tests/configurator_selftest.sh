@@ -102,6 +102,8 @@ rg -Fx 'set(ESP_BMS_PROFILE_COMMUNICATION_COPROCESSOR "ESP32C6" CACHE STRING "Fi
 rg -Fx 'COMMUNICATION_COPROCESSOR=ESP32C6' "${work_dir}/p4-build/p4-i80/report.txt"
 rg -Fq 'atanisoft/esp_lcd_ili9488:' "${work_dir}/p4-build/p4-i80/generated/idf_component.yml"
 expect_fail 'bms requires capability BLE' "${repo_root}/start.sh" validate --lang en --config "${work_dir}/p4-i80.env" --modules bms
+expect_fail 'phone-media requires capability BLE' "${repo_root}/start.sh" validate --lang en --config "${work_dir}/p4-i80.env" --modules phone-media
+expect_fail 'ble-media-hid requires capability BLE' "${repo_root}/start.sh" validate --lang en --config "${work_dir}/p4-i80.env" --modules ble-media-hid
 expect_fail 'network requires capability WIFI' "${repo_root}/start.sh" validate --lang en --config "${work_dir}/p4-i80.env" --modules network
 
 FIRMWARE_BUILD_ROOT="${work_dir}/s3-default-build" "${repo_root}/start.sh" configure --profile s3-default >/dev/null
@@ -133,6 +135,8 @@ rg -qx 'DASHBOARDS=fireblade,s1000rr' "${work_dir}/s3-gps-build/s3-gps/firmware.
 
 FIRMWARE_BUILD_ROOT="${work_dir}/no-cast-build" "${repo_root}/start.sh" configure --lang en --profile no-cast --mcu esp32 --board esp32-wroom-32e-legacy --display st7789-spi --input xpt2046-spi --modules audio,bms,controller,gps,network,ota --dashboards fireblade >/dev/null
 rg -qx 'MODULES=audio,bms,controller,gps,network,ota' "${work_dir}/no-cast-build/no-cast/firmware.env"
+"${repo_root}/start.sh" validate --lang en --mcu esp32 --board esp32-wroom-32e-legacy --display st7789-spi --input xpt2046-spi --modules ble-media-hid >/dev/null
+expect_fail 'conflicts with phone-media' "${repo_root}/start.sh" validate --lang en --mcu esp32 --board esp32-wroom-32e-legacy --display st7789-spi --input xpt2046-spi --modules phone-media,ble-media-hid
 
 FIRMWARE_BUILD_ROOT="${work_dir}/version-build" "${repo_root}/start.sh" configure --lang en --profile version-test --firmware-version v1.2.3 >/dev/null
 rg -qx 'FIRMWARE_VERSION=v1.2.3' "${work_dir}/version-build/version-test/firmware.env"
@@ -508,21 +512,21 @@ rg -q '^请输入 1、2、zh 或 en。 / Enter 1, 2, zh, or en\.$' "${work_dir}/
 rg -q '^config: .*/interactive-retry-build/esp32s3-n16r8-st7796u-gt1151/firmware.env$' "${work_dir}/interactive-retry.out"
 
 printf '1\n2\n\n\n\n\nn\n' | FIRMWARE_BUILD_ROOT="${work_dir}/interactive-cancel-build" "${repo_root}/start.sh" >"${work_dir}/interactive-cancel.out"
-rg -Fq '  1) ili9488-i80 ' "${work_dir}/interactive-cancel.out"
+rg -Fq '  7) phone-media ' "${work_dir}/interactive-cancel.out"
 rg -Fq '  1) gt1151-i2c ' "${work_dir}/interactive-cancel.out"
 rg -Fq '  2) none ' "${work_dir}/interactive-cancel.out"
 rg -q '^已取消生成配置。$' "${work_dir}/interactive-cancel.out"
 ! test -e "${work_dir}/interactive-cancel-build/esp32s3-n16r8-st7796u-gt1151/firmware.env"
 
 printf '%s\n' \
-    2 3 console-custom 1 '' '' 3 2 gps '1,2' \
-    13 14 15 2 36 32 33 27 35 18 y y '' '' y |
+    2 3 console-custom 1 '' '' st7789-spi 2 gps '1,2' \
+    13 14 15 2 36 32 33 27 35 18 y y '' '' |
     FIRMWARE_BUILD_ROOT="${work_dir}/interactive-custom-build" "${repo_root}/start.sh" >"${work_dir}/interactive-custom.out"
 rg -Fq '  3) custom ' "${work_dir}/interactive-custom.out"
 rg -Fq 'MCU' "${work_dir}/interactive-custom.out"
 rg -Fq 'GPIO range: 0-39' "${work_dir}/interactive-custom.out"
 rg -Fq 'Selected MCU: esp32' "${work_dir}/interactive-custom.out"
-rg -Fq '  3) st7789-spi ' "${work_dir}/interactive-custom.out"
+rg -Fq 'st7789-spi — ST7789, 240 x 320' "${work_dir}/interactive-custom.out"
 ! rg -Fq 'ili9488-i80' "${work_dir}/interactive-custom.out"
 [[ "$(rg -c '^[[:space:]]+[0-9]+\) none ' "${work_dir}/interactive-custom.out")" == 1 ]]
 rg -Fq 'Display' "${work_dir}/interactive-custom.out"
@@ -609,8 +613,8 @@ rg -Fq 'choose_dashboard_options_with_keyboard' "${repo_root}/start.sh"
 rg -Fq 'choose_catalog_option_with_keyboard' "${repo_root}/start.sh"
 [[ "$(rg -F "printf '\\033[2J\\033[H'" "${repo_root}/start.sh" | wc -l | tr -d '[:space:]')" == 2 ]]
 rg -U -Fq $'choose_board_or_saved_profile\n    [[ "$MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST" == YES ]] && continue' "${repo_root}/start.sh"
-rg -U -Fq $'choose_catalog_option mcu \'MCU\' "${CFG[MCU]}" "${choices[@]}"\n        [[ "$MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST" == YES ]] && continue' "${repo_root}/start.sh"
-rg -U -Fq $'choose_catalog_option display \'Display\' "$default_option" "${choices[@]}"\n        [[ "$MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST" == YES ]] && continue' "${repo_root}/start.sh"
+rg -U -Fq $'choose_catalog_option mcu \'MCU\' "${CFG[MCU]}" "${choices[@]}"\n                [[ "$MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST" == YES ]] && continue' "${repo_root}/start.sh"
+rg -U -Fq $'choose_catalog_option display \'Display\' "$default_option" "${choices[@]}"\n                [[ "$MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST" == YES ]] && { stage=mcu; continue; }' "${repo_root}/start.sh"
 rg -Fq '[[ "$MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST" == YES ]] && { stage=display; continue; }' "${repo_root}/start.sh"
 rg -Fq '[[ "$MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST" == YES ]] && { stage=input; continue; }' "${repo_root}/start.sh"
 rg -Fq 'Left to return to the previous feature list' "${repo_root}/start.ps1"
@@ -620,8 +624,8 @@ rg -Fq 'MENU_RETURN_TO_PREVIOUS_FUNCTION_LIST=YES' "${repo_root}/start.sh"
 rg -Fq '[ConsoleKey]::LeftArrow' "${repo_root}/start.ps1"
 [[ "$(rg -F 'Clear-Host' "${repo_root}/start.ps1" | wc -l | tr -d '[:space:]')" == 2 ]]
 rg -Fq 'function Update-KeyboardMenuPrefixes' "${repo_root}/start.ps1"
-rg -Fq "if ($script:ReturnToPreviousFunctionList) { $Stage = 'display'; continue }" "${repo_root}/start.ps1"
-rg -Fq "if ($script:ReturnToPreviousFunctionList) { $Stage = 'input'; continue }" "${repo_root}/start.ps1"
+rg -Fq 'if ($script:ReturnToPreviousFunctionList) { $Stage = '\''display'\''; continue }' "${repo_root}/start.ps1"
+rg -Fq 'if ($script:ReturnToPreviousFunctionList) { $Stage = '\''input'\''; continue }' "${repo_root}/start.ps1"
 rg -Fq "'DISPLAY_DATA_WIDTH'" "${repo_root}/start.ps1"
 rg -Fq "'DATA_WIDTH'" "${repo_root}/start.ps1"
 ! rg -Fq 'scripts/esp-idf-env.sh' "${repo_root}/start.ps1"

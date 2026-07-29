@@ -533,7 +533,7 @@ static bool process_ui_action(host_app_t *app)
 static void print_help(const char *program)
 {
     printf("用法: %s [--portrait] [--resolution WIDTHxHEIGHT] [--headless] [--screenshot FILE.bmp] "
-           "[--page battery|controller|gps|cast] "
+           "[--page battery|controller|gps|cast|music] "
            "[--style s1000rr|controller|fireblade] [--boot charge|bmw|honda] "
            "[--boot-progress 0..100]\n",
            program);
@@ -798,7 +798,7 @@ static bool run_native_dashboard_stress(host_app_t *app)
     refresh_speed_snapshot(app);
     if (esp_bms_lvgl_ui_update(&app->snapshot) != ESP_OK ||
         esp_bms_lvgl_ui_set_page(ESP_BMS_LVGL_PAGE_BATTERY, false) != ESP_OK ||
-        esp_bms_lvgl_ui_simulator_static_cache_count() != 2U) {
+        esp_bms_lvgl_ui_simulator_static_cache_count() != 3U) {
         fprintf(stderr,
                 "native stress setup failed: cache=%u\n",
                 (unsigned)esp_bms_lvgl_ui_simulator_static_cache_count());
@@ -832,7 +832,7 @@ static bool run_native_dashboard_stress(host_app_t *app)
     }
     rotate_display(app);
     const bool passed = esp_bms_lvgl_ui_update(&app->snapshot) == ESP_OK &&
-                        esp_bms_lvgl_ui_simulator_static_cache_count() == 2U &&
+                        esp_bms_lvgl_ui_simulator_static_cache_count() == 3U &&
                         esp_bms_lvgl_ui_simulator_object_count() == baseline_objects &&
                         esp_bms_lvgl_ui_simulator_snapshot_matches(&app->snapshot) &&
                         snapshot_updates >= 300U;
@@ -981,6 +981,8 @@ int main(int argc, char **argv)
                 preview_page = ESP_BMS_LVGL_PAGE_GPS;
             } else if (strcmp(page, "cast") == 0) {
                 preview_page = ESP_BMS_LVGL_PAGE_CAST;
+            } else if (strcmp(page, "music") == 0) {
+                preview_page = ESP_BMS_LVGL_PAGE_MUSIC;
             } else {
                 fprintf(stderr, "未知页面: %s\n", page);
                 return 2;

@@ -982,7 +982,7 @@ write_profile() {
     local profile="${CFG[PROFILE]}"
     local profile_dir="$BUILD_ROOT/$profile"
     local temporary backup partition_source sdkconfig_source role module main_requires profile_driver_requires display_cmake_component touch_cmake_component trimming communication_coprocessor
-    local audio_feature ble_feature bms_feature controller_feature gps_feature network_feature ota_feature cast_feature dashboard_s1000rr_feature dashboard_controller_feature dashboard_fireblade_feature
+    local audio_feature ble_feature bms_feature controller_feature gps_feature network_feature ota_feature cast_feature phone_media_feature ble_media_hid_feature dashboard_s1000rr_feature dashboard_controller_feature dashboard_fireblade_feature
 
     mkdir -p "$BUILD_ROOT"
     temporary="$(mktemp -d "$BUILD_ROOT/.${profile}.tmp.XXXXXX")"
@@ -1017,6 +1017,8 @@ write_profile() {
     network_feature=0
     ota_feature=0
     cast_feature=0
+    phone_media_feature=0
+    ble_media_hid_feature=0
     dashboard_s1000rr_feature=0
     dashboard_controller_feature=0
     dashboard_fireblade_feature=0
@@ -1054,6 +1056,12 @@ write_profile() {
     if csv_has "${CFG[MODULES]}" cast; then
         cast_feature=1
     fi
+    if csv_has "${CFG[MODULES]}" phone-media; then
+        phone_media_feature=1
+    fi
+    if csv_has "${CFG[MODULES]}" ble-media-hid; then
+        ble_media_hid_feature=1
+    fi
     csv_has "${CFG[DASHBOARDS]}" s1000rr && dashboard_s1000rr_feature=1
     csv_has "${CFG[DASHBOARDS]}" controller && dashboard_controller_feature=1
     csv_has "${CFG[DASHBOARDS]}" fireblade && dashboard_fireblade_feature=1
@@ -1071,6 +1079,8 @@ write_profile() {
         printf 'set(ESP_BMS_FEATURE_NETWORK %s CACHE BOOL "Firmware profile network feature" FORCE)\n' "$network_feature"
         printf 'set(ESP_BMS_FEATURE_OTA %s CACHE BOOL "Firmware profile OTA feature" FORCE)\n' "$ota_feature"
         printf 'set(ESP_BMS_FEATURE_CAST %s CACHE BOOL "Firmware profile cast feature" FORCE)\n' "$cast_feature"
+        printf 'set(ESP_BMS_FEATURE_PHONE_MEDIA %s CACHE BOOL "Firmware profile Android phone media feature" FORCE)\n' "$phone_media_feature"
+        printf 'set(ESP_BMS_FEATURE_BLE_MEDIA_HID %s CACHE BOOL "Firmware profile BLE HID media feature" FORCE)\n' "$ble_media_hid_feature"
         printf 'set(ESP_BMS_FEATURE_DASHBOARD_S1000RR %s CACHE BOOL "Firmware profile S1000RR dashboard" FORCE)\n' "$dashboard_s1000rr_feature"
         printf 'set(ESP_BMS_FEATURE_DASHBOARD_CONTROLLER %s CACHE BOOL "Firmware profile controller dashboard" FORCE)\n' "$dashboard_controller_feature"
         printf 'set(ESP_BMS_FEATURE_DASHBOARD_FIREBLADE %s CACHE BOOL "Firmware profile Fireblade dashboard" FORCE)\n' "$dashboard_fireblade_feature"

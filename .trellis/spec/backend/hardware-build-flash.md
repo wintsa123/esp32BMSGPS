@@ -1021,3 +1021,243 @@ panel_rotation_flags(rotation, &swap, &mirror_x, &mirror_y);
 esp_lcd_panel_mirror(s_panel, mirror_x, mirror_y);
 /* Keep touch_rotation_flags(rotation, ...) unchanged. */
 ```
+
+## Scenario: Android BLE Phone Media Bridge
+
+### 1. Scope / Trigger
+
+- Trigger: adding Android phone media controls to the device carousel without
+  Classic Bluetooth AVRCP.
+
+### 2. Signatures
+
+```text
+module: phone-media (REQUIRES_CAPABILITIES=BLE)
+profile: ESP_BMS_FEATURE_PHONE_MEDIA=0|1
+service: 5f9b7f60-9f16-4edf-a2e8-472a8aa1b201
+command notify: ...b202, 1=previous, 2=next, 3=volume down, 4=volume up
+state write: ...b203, [version=1, flags, UTF-8 title up to 96 bytes]
+```
+
+### 3. Contracts
+
+- `phone-media` is opt-in. A disabled profile must omit the music page, GATT
+  service, advertising UUID, and media actions. The configurator rejects it
+  on an MCU without `BLE`.
+- Register the private service on the existing NimBLE host before it starts;
+  never create a second host or alter the BMS/controller scanner ownership.
+  Accept state writes only on an encrypted connection and hand them to the
+  runtime through a fixed queue.
+- Both `PHONE_MEDIA_GATT_SERVICES` characteristics must set
+  `.access_cb = runtime_phone_media_gatt_access_cb`, including the command
+  notify characteristic. NimBLE rejects a characteristic with no callback at
+  `ble_gatts_count_cfg()` with `BLE_HS_EINVAL` (`rc=3`), before the BMS scan
+  can initialize the host.
+- `flags bit0=ready`, `bit1=active MediaSession`, and `bit2=playing`. Validate
+  version, payload length, and UTF-8 before updating the snapshot. Do not log
+  raw titles or state payloads.
+- Phone volume commands use Android `AudioManager.STREAM_MUSIC`. They must not
+  update `runtime.volume_percent`, audio feedback volume, or NVS.
+- The Android app needs a connected-device foreground service and a notification
+  listener. On Android 10/11, declare and request `ACCESS_FINE_LOCATION` before
+  BLE scanning; on Android 12+, request `BLUETOOTH_SCAN` and
+  `BLUETOOTH_CONNECT` instead. Android 12+ BLE permission and notification-access
+  failures must remain visible to the user instead of claiming the bridge is ready.
+- `ESP_BMS_LVGL_ACTION_ENABLE_BLUETOOTH_ADVERTISING` is available when any of
+  BMS, controller, or `phone-media` is enabled. A phone-media-only profile
+  starts the existing NimBLE host from the device Settings > System >
+  discoverable control; it must not depend on a BMS binding.
+- A flash package is target-specific. Use an `esp32` package for the legacy
+  ESP32 and an `esp32s3` package for S3 hardware; esptool must reject a
+  mismatched chip rather than writing it.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required response |
+| --- | --- |
+| Feature disabled | No media UUID/page/actions are present |
+| No BLE capability | Configurator rejects `phone-media` before profile generation |
+| Phone-media-only profile | Discoverable control starts local advertising without BMS/controller |
+| Unencrypted or malformed state write | Reject it without changing the dashboard snapshot |
+| Android 10/11 location denied | Do not scan; request location permission before starting the service |
+| Command CCCD not subscribed or link disconnected | Do not notify or imply the control is available |
+| Android BLE/notification access denied | Keep the service safe and show an actionable status |
+| Flash target differs from the connected chip | Stop at esptool chip validation; rebuild the matching profile |
+
+### 5. Good / Base / Bad Cases
+
+- Good: an encrypted, subscribed Android connection receives one-byte commands
+  and writes a bounded UTF-8 title back to the music page.
+- Base: no bound phone leaves the BLE host idle and the music page reports an
+  unavailable control state without affecting BMS/controller operation.
+- Bad: use AVRCP, persist a title, write the device volume for a phone-volume
+  command, or flash an S3 image to an ESP32.
+
+### 6. Tests Required
+
+- Run `./scripts/run-host-selftests.sh` and `./tests/configurator_selftest.sh`;
+  the latter must reject `phone-media` without BLE.
+- Build both a disabled profile and a feature-enabled profile, asserting
+  `ESP_BMS_FEATURE_PHONE_MEDIA=0` and `=1` respectively.
+- Build an isolated profile with only `phone-media`, and assert BMS/controller
+  are absent while the `bt` component and media GATT service remain linked.
+- Run `RUN_TESTS=1 ./scripts/build-android-cast.sh` for protocol UTF-8
+  truncation, Android 10/11 location permission selection, and Android compilation.
+- Build the LVGL simulator with `ESP_BMS_FEATURE_PHONE_MEDIA=1` and capture
+  the `music` page in `preview/`.
+- Flash the matching target package through RFC2217 at 115200 and check boot
+  logs for a normal `app_main` path with no panic or watchdog.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```c
+runtime->volume_percent = requested_phone_volume;
+```
+
+#### Correct
+
+```c
+return runtime_phone_media_send_command(runtime,
+                                        ESP_BMS_PHONE_MEDIA_COMMAND_VOLUME_UP);
+```
+
+## Scenario: App-Free BLE HID Media Control
+
+### 1. Scope / Trigger
+
+- Trigger: adding phone media controls without an Android companion app on an
+  ESP32 or ESP32-S3 profile that already uses NimBLE for BMS/controller BLE.
+
+### 2. Signatures
+
+```text
+module: ble-media-hid (REQUIRES_CAPABILITIES=BLE, CONFLICTS=phone-media)
+profile: ESP_BMS_FEATURE_BLE_MEDIA_HID=0|1
+service: HID over GATT 0x1812, appearance 0x03C0
+input report: id 1, usages 0x00B6/0x00CD/0x00B5/0x00EA/0x00E9
+```
+
+### 3. Contracts
+
+- `ble-media-hid` and `phone-media` are mutually exclusive. A disabled HID
+  profile omits the HIDS service, HID advertising UUID/appearance, worker, and
+  music page.
+- Register HIDS directly on the existing NimBLE Host before it starts. Do not
+  use a second Host or `esp_hid`, because the runtime owns peripheral phone
+  connections while BMS/controller retain central connection ownership.
+- After an encrypted link subscribes to the input report, each touch action
+  sends its one-byte Consumer Control press report, then an all-zero release
+  report after 30 ms. Refuse actions while unpaired, unsubscribed, disconnected,
+  or suspended.
+- HID volume usages control the phone only. They must never change
+  `runtime.volume_percent`, audio-feedback volume, or NVS.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required response |
+| --- | --- |
+| No BLE capability or both media modules selected | Configurator rejects the profile |
+| HID disabled | No HIDS UUID, HID appearance, page, or worker in the image |
+| Link not encrypted/subscribed/suspended | Keep controls disabled and do not queue a report |
+| GATT registration fails | Fail BLE-host initialization without starting an unusable advertiser |
+| Phone disconnects | Clear HID state and let existing BMS scan arbitration resume |
+
+### 5. Good / Base / Bad Cases
+
+- Good: Android pairs in system Bluetooth settings, then receives five standard
+  Consumer Control usages without a companion app.
+- Base: an unpaired phone sees `PAIR PHONE`; BMS/controller operation remains
+  unchanged.
+- Bad: use AVRCP/A2DP, modify local volume for a phone-volume action, or enable
+  private `phone-media` alongside HIDS.
+
+### 6. Tests Required
+
+- Run `./scripts/run-host-selftests.sh` and `./tests/configurator_selftest.sh`;
+  assert the five usage-to-bit mappings and the module conflict.
+- Build HID-on and HID-off BMS/controller profiles for both `esp32` and
+  `esp32s3`. HID-on images must contain `[hid]`; HID-off images must not.
+- Capture and inspect the HID music page at 480x320 and 240x320 under
+  `preview/`.
+- Flash a matching target through RFC2217 and verify Android pairing, the five
+  actions, reconnection, and BMS/controller coexistence.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```c
+runtime->volume_percent = requested_phone_volume;
+```
+
+#### Correct
+
+```c
+return runtime_ble_media_hid_enqueue(runtime,
+                                     ESP_BMS_BLE_MEDIA_HID_USAGE_VOLUME_INCREMENT);
+```
+
+## Scenario: Legacy ESP32 On-Demand Radio Heap Budget
+
+### 1. Scope / Trigger
+
+- Trigger: enabling Wi-Fi, NimBLE, or additional LVGL pages on the 4 MB,
+  no-PSRAM ESP32-WROOM-32E profile.
+
+### 2. Signatures
+
+```text
+CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=1
+CONFIG_LV_DRAW_THREAD_STACK_SIZE=8192
+CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE=4096
+```
+
+### 3. Contracts
+
+- The base legacy ESP32 defaults must keep one LVGL software draw unit. A
+  second unit permanently consumes another 8192-byte internal-DRAM task stack
+  and can prevent the on-demand Wi-Fi or NimBLE task from starting.
+- PSRAM-capable targets may opt into more draw units only in their target
+  defaults and only after radio coexistence validation.
+- Hidden carousel pages still own their LVGL objects. Treat every prebuilt page,
+  QR code, draw buffer, and task stack as part of the boot-time internal-DRAM
+  budget; Flash capacity does not make this memory allocatable as heap.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required response |
+| --- | --- |
+| NimBLE initialized but Host task log is absent | Treat startup as failed; inspect largest free block against the Host stack requirement |
+| `wifi nvs cfg alloc out of memory` | Reduce permanent internal-DRAM use before changing Wi-Fi retry logic |
+| Free heap recovers to the same value after retries | Do not classify it as a retry leak without a descending trend |
+| `bms_display` blocks in LVGL allocation under low heap | Restore heap headroom; do not mask it by disabling the watchdog |
+
+### 5. Good / Base / Bad Cases
+
+- Good: one draw unit leaves enough contiguous internal DRAM for BMS scanning
+  and Setup AP startup after all normal UI pages are built.
+- Base: a radio remains off until requested and consumes no controller/Host task
+  heap before that request.
+- Bad: enable a second 8 KB draw worker on legacy ESP32 because it has two CPU
+  cores, without measuring the radio startup path.
+
+### 6. Tests Required
+
+- Assert the generated legacy `sdkconfig` contains
+  `CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=1` and no PSRAM.
+- Build the feature-enabled ESP32 profile and run host plus LVGL simulator
+  self-tests.
+- On hardware, start BMS scan and Setup AP separately; require `NimBLE host task
+  started`, `NimBLE synced`, `BLE scan started`, and no Wi-Fi `ESP_ERR_NO_MEM`.
+
+### 7. Wrong vs Correct
+
+```ini
+# Wrong for legacy ESP32 without a measured radio heap budget
+CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=2
+
+# Correct
+CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=1
+```

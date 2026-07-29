@@ -66,6 +66,20 @@ printf '%s\n' "ANT BMS protocol self-test passed"
 "${build_dir}/capacity_estimate_selftest"
 printf '%s\n' "Capacity estimate self-test passed"
 
+"${cc_bin}" "${cflags[@]}" \
+    -I"${repo_root}/components/esp_bms_idf_runtime/include" \
+    "${repo_root}/tests/phone_media_protocol_selftest.c" \
+    -o "${build_dir}/phone_media_protocol_selftest"
+"${build_dir}/phone_media_protocol_selftest"
+printf '%s\n' "Phone media protocol self-test passed"
+
+"${cc_bin}" "${cflags[@]}" \
+    -I"${repo_root}/components/esp_bms_idf_runtime/include" \
+    "${repo_root}/tests/ble_media_hid_protocol_selftest.c" \
+    -o "${build_dir}/ble_media_hid_protocol_selftest"
+"${build_dir}/ble_media_hid_protocol_selftest"
+printf '%s\n' "BLE media HID protocol self-test passed"
+
 for brand in jk jbd daly; do
     "${cc_bin}" "${cflags[@]}" \
         -I"${repo_root}/components/esp_bms_bms_ble/protocols" \

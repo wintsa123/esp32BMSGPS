@@ -43,6 +43,14 @@
 #define ESP_BMS_FEATURE_CAST 1
 #endif
 
+#ifndef ESP_BMS_FEATURE_PHONE_MEDIA
+#define ESP_BMS_FEATURE_PHONE_MEDIA 0
+#endif
+
+#ifndef ESP_BMS_FEATURE_BLE_MEDIA_HID
+#define ESP_BMS_FEATURE_BLE_MEDIA_HID 0
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -52,6 +60,7 @@ typedef enum {
     ESP_BMS_LVGL_PAGE_CONTROLLER = 1,
     ESP_BMS_LVGL_PAGE_GPS = 2,
     ESP_BMS_LVGL_PAGE_CAST = 3,
+    ESP_BMS_LVGL_PAGE_MUSIC = 4,
 } esp_bms_lvgl_page_t;
 
 typedef enum {
@@ -99,6 +108,11 @@ typedef enum {
     ESP_BMS_LVGL_ACTION_CANCEL_BMS_CONNECTION = 33,
     ESP_BMS_LVGL_ACTION_SET_SPEED_SOURCE = 34,
     ESP_BMS_LVGL_ACTION_SELECT_BMS_YANYANG = 35,
+    ESP_BMS_LVGL_ACTION_PHONE_MEDIA_PREVIOUS = 36,
+    ESP_BMS_LVGL_ACTION_PHONE_MEDIA_NEXT = 37,
+    ESP_BMS_LVGL_ACTION_PHONE_MEDIA_VOLUME_DOWN = 38,
+    ESP_BMS_LVGL_ACTION_PHONE_MEDIA_VOLUME_UP = 39,
+    ESP_BMS_LVGL_ACTION_MEDIA_PLAY_PAUSE = 40,
 } esp_bms_lvgl_action_t;
 
 #define ESP_BMS_LVGL_ACTION_EVENT_FLAG_COMMITTED (UINT8_C(1) << 0)
@@ -354,6 +368,11 @@ typedef struct {
     bool average_consumption_valid;
     bool remaining_range_valid;
     bool cast_active;
+    bool phone_media_connected;
+    uint8_t phone_media_flags;
+    char phone_media_title[97];
+    bool ble_media_hid_connected;
+    bool ble_media_hid_suspended;
     char firmware_version[32];
 } esp_bms_dashboard_snapshot_t;
 

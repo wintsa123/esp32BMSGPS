@@ -1,7 +1,10 @@
 package com.fuckingbms.cast
 
 import android.app.Activity
+import android.app.NotificationManager
+import android.Manifest
 import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -16,6 +19,7 @@ import android.os.Bundle
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import android.view.Gravity
 import android.widget.Button
 import android.widget.LinearLayout
@@ -27,21 +31,28 @@ import kotlin.concurrent.thread
 class MainActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var castButton: Button
+    private lateinit var mediaStatus: TextView
     private var host = "192.168.4.1"
     private var ssid: String? = null
     private var password: String? = null
     private var network: Network? = null
     private var info: CastInfo? = null
+    private var startMediaAfterPermission = false
     private val castStatusReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             show(intent.getStringExtra(CastService.EXTRA_STATUS) ?: return)
         }
     }
+    private val mediaStatusReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            showMedia(intent.getStringExtra(MediaControlService.EXTRA_STATUS) ?: return)
+        }
+    }
 
-    override fun onCreate(state: Bundle?) { super.onCreate(state); if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) registerReceiver(castStatusReceiver, IntentFilter(CastService.ACTION_STATUS), Context.RECEIVER_NOT_EXPORTED) else registerReceiver(castStatusReceiver, IntentFilter(CastService.ACTION_STATUS)); readDeepLink(intent); content(); connectExistingWifiOrLoadInfo() }
+    override fun onCreate(state: Bundle?) { super.onCreate(state); registerReceiverCompat(castStatusReceiver, CastService.ACTION_STATUS); registerReceiverCompat(mediaStatusReceiver, MediaControlService.ACTION_STATUS); readDeepLink(intent); content(); connectExistingWifiOrLoadInfo() }
     override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); readDeepLink(intent); content() }
-    override fun onResume() { super.onResume(); connectExistingWifiOrLoadInfo() }
-    override fun onDestroy() { unregisterReceiver(castStatusReceiver); (getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager).bindProcessToNetwork(null); super.onDestroy() }
+    override fun onResume() { super.onResume(); connectExistingWifiOrLoadInfo(); showMedia(mediaAvailability()) }
+    override fun onDestroy() { unregisterReceiver(castStatusReceiver); unregisterReceiver(mediaStatusReceiver); (getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager).bindProcessToNetwork(null); super.onDestroy() }
 
     private fun readDeepLink(intent: Intent) { intent.data?.let { host = it.getQueryParameter("host") ?: host; ssid = it.getQueryParameter("ssid") ?: ssid; password = it.getQueryParameter("password") ?: password } }
     private fun content() {
@@ -52,8 +63,40 @@ class MainActivity : Activity() {
         root.addView(Button(this).apply { text = "停止投屏"; setOnClickListener { stopService(Intent(this@MainActivity, CastService::class.java)) } })
         root.addView(Button(this).apply { text = "返回（需无障碍服务）"; isEnabled = false })
         root.addView(Button(this).apply { text = "主页（需无障碍服务）"; isEnabled = false })
+        mediaStatus = TextView(this).apply { text = mediaAvailability() }; root.addView(mediaStatus)
+        root.addView(Button(this).apply { text = "启动手机媒体控制"; setOnClickListener { startMediaControl() } })
+        root.addView(Button(this).apply { text = "停止手机媒体控制"; setOnClickListener { stopService(MediaControlService.stopIntent(this@MainActivity)); showMedia("手机媒体控制已停止") } })
+        root.addView(Button(this).apply { text = "打开通知访问设置"; setOnClickListener { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)); showMedia("请为 BMS 手机媒体开启通知访问") } })
         setContentView(root)
     }
+
+    private fun registerReceiverCompat(receiver: BroadcastReceiver, action: String) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) registerReceiver(receiver, IntentFilter(action), Context.RECEIVER_NOT_EXPORTED) else registerReceiver(receiver, IntentFilter(action))
+    }
+
+    private fun startMediaControl() {
+        val missing = mediaPermissions().filter { checkSelfPermission(it) != android.content.pm.PackageManager.PERMISSION_GRANTED }.toTypedArray()
+        if (missing.isNotEmpty()) {
+            startMediaAfterPermission = true
+            requestPermissions(missing, REQUEST_MEDIA_PERMISSIONS)
+            return
+        }
+        startForegroundService(MediaControlService.startIntent(this))
+        showMedia("正在启动手机媒体控制")
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, results: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, results)
+        if (requestCode != REQUEST_MEDIA_PERMISSIONS || !startMediaAfterPermission) return
+        startMediaAfterPermission = false
+        if (results.all { it == android.content.pm.PackageManager.PERMISSION_GRANTED }) startMediaControl() else showMedia("附近设备或通知权限未授予")
+    }
+
+    private fun mediaPermissions(): List<String> = mediaPermissionsForSdk(Build.VERSION.SDK_INT)
+
+    private fun mediaAvailability(): String = if (notificationAccessGranted()) "通知访问已授权；可启动手机媒体控制" else "手机媒体控制需要通知访问授权"
+
+    private fun notificationAccessGranted(): Boolean = (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).isNotificationListenerAccessGranted(ComponentName(this, MediaNotificationListenerService::class.java))
     private fun connectExistingWifiOrLoadInfo() {
         val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         val active = cm.activeNetwork
@@ -105,6 +148,17 @@ class MainActivity : Activity() {
     }
     override fun onActivityResult(request: Int, result: Int, data: Intent?) { super.onActivityResult(request,result,data); if (request != 10 || result != RESULT_OK || data == null || info == null) return show("投屏权限未授予或设备未连接"); startForegroundService(CastService.intent(this, result, data, host, info!!)); show("投屏已启动；网络慢时将丢弃旧画面") }
     private fun show(message: String) { Handler(Looper.getMainLooper()).post { status.text = message } }
+    private fun showMedia(message: String) { Handler(Looper.getMainLooper()).post { mediaStatus.text = message } }
+
+    companion object {
+        private const val REQUEST_MEDIA_PERMISSIONS = 11
+
+        internal fun mediaPermissionsForSdk(sdkInt: Int): List<String> = buildList {
+            if (sdkInt < Build.VERSION_CODES.S) add(Manifest.permission.ACCESS_FINE_LOCATION)
+            else addAll(listOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT))
+            if (sdkInt >= Build.VERSION_CODES.TIRAMISU) add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
 }
 
 data class CastInfo(val width: Int, val height: Int, val rotation: Int, val maxBlockSide: Int)

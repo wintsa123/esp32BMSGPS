@@ -66,6 +66,15 @@ LV_FONT_DECLARE(settings_zh_18);
 #define QUICK_EDIT_BUTTON_SIZE 28
 #define QUICK_EDIT_BUTTON_SIZE_S3 36
 #define ARRAY_SIZE(array) (sizeof(array) / sizeof((array)[0]))
+#if ESP_BMS_FEATURE_PHONE_MEDIA
+#define MUSIC_CONTROL_COUNT 4U
+#elif ESP_BMS_FEATURE_BLE_MEDIA_HID
+#define MUSIC_CONTROL_COUNT 5U
+#else
+#define MUSIC_CONTROL_COUNT 0U
+#endif
+#define SETTINGS_BLE_STATUS_TEXT_LEN 24U
+#define SETTINGS_BLE_ROW_TEXT_LEN (ESP_BMS_BMS_SCAN_NAME_LEN + 16U)
 #define QUICK_BLUETOOTH_SYMBOL "\xee\x9c\xa8"
 #define QUICK_HOTSPOT_SYMBOL "\xee\x98\xab"
 #define SETUP_AP_INFO_LINE_SPACE 4
@@ -354,7 +363,7 @@ _Static_assert(sizeof(esp_bms_boot_animation_style_t) == 4 &&
                    ESP_BMS_BOOT_ANIMATION_GAUGE_S1000RR == 1 &&
                    ESP_BMS_BOOT_ANIMATION_GAUGE_HONDA_FIREBLADE == 2,
                "esp_bms_boot_animation_style_t ABI changed; update runtime consumers too");
-_Static_assert(sizeof(esp_bms_dashboard_snapshot_t) == 1100,
+_Static_assert(sizeof(esp_bms_dashboard_snapshot_t) == 1200,
                "dashboard snapshot ABI size changed; update all C consumers too");
 _Static_assert(ESP_BMS_LVGL_ACTION_NONE == 0,
                "esp_bms_lvgl_action_t value changed; update C action consumers too");
@@ -414,6 +423,10 @@ _Static_assert(ESP_BMS_LVGL_ACTION_SET_BOOT_ANIMATION_STYLE == 32,
                "esp_bms_lvgl_action_t value changed; update C action consumers too");
 _Static_assert(ESP_BMS_LVGL_ACTION_SELECT_BMS_YANYANG == 35,
                "esp_bms_lvgl_action_t value changed; update C action consumers too");
+_Static_assert(ESP_BMS_LVGL_ACTION_PHONE_MEDIA_PREVIOUS == 36 &&
+                   ESP_BMS_LVGL_ACTION_PHONE_MEDIA_VOLUME_UP == 39 &&
+                   ESP_BMS_LVGL_ACTION_MEDIA_PLAY_PAUSE == 40,
+               "esp_bms_lvgl_action_t value changed; update C action consumers too");
 
 typedef struct {
     lv_display_t *display;
@@ -424,17 +437,24 @@ typedef struct {
     lv_obj_t *battery_page;
     lv_obj_t *gps_page;
     lv_obj_t *cast_page;
+    lv_obj_t *music_page;
     lv_obj_t *page_transition_battery;
     lv_obj_t *page_transition_gps;
     lv_obj_t *page_transition_cast;
+    lv_obj_t *page_transition_music;
     lv_obj_t *page_transition_battery_card;
     lv_obj_t *page_transition_gps_card;
     lv_obj_t *page_transition_cast_card;
+    lv_obj_t *page_transition_music_card;
     lv_obj_t *page_transition_anim_card;
     lv_obj_t *cast_qr;
+    lv_obj_t *music_status;
+    lv_obj_t *music_title;
+    lv_obj_t *music_controls[5];
     lv_obj_t *controller_page;
     dashboard_static_cache_t battery_static_cache;
     dashboard_static_cache_t fireblade_static_cache;
+    dashboard_static_cache_t speed_static_cache;
     lv_obj_t *boot_overlay;
     lv_obj_t *boot_status;
     lv_obj_t *boot_progress;
@@ -455,6 +475,8 @@ typedef struct {
     uint32_t settings_boot_preview_started_ms;
     lv_obj_t *settings_bms_popup;
     lv_obj_t *settings_bms_ble_status;
+    lv_obj_t *settings_bms_ble_empty;
+    lv_obj_t *settings_bms_ble_list;
     lv_obj_t *settings_preset_range_rollers[4];
     lv_obj_t *settings_controller_tire_rollers[3];
     lv_obj_t *settings_controller_ratio_roller;
@@ -467,6 +489,10 @@ typedef struct {
     lv_obj_t *settings_calibration_status;
     char settings_bms_confirm_mac[18];
     char settings_bms_confirm_name[ESP_BMS_BMS_SCAN_NAME_LEN + 1U];
+    char settings_bms_ble_status_text[SETTINGS_BLE_STATUS_TEXT_LEN];
+    char settings_bms_ble_empty_text[SETTINGS_BLE_STATUS_TEXT_LEN];
+    char settings_bms_ble_list_text[ESP_BMS_BMS_SCAN_MAX_CANDIDATES *
+                                    SETTINGS_BLE_ROW_TEXT_LEN];
     lv_obj_t *settings_swipe_indicator;
     bool settings_bms_ble_popup_open;
     bool quick_connecting_toast_active;
@@ -543,6 +569,7 @@ typedef struct {
     lv_obj_t *local_battery;
     lv_obj_t *gps_detail;
     lv_obj_t *gps_speed_unit;
+    lv_obj_t *speed_static_background;
     lv_obj_t *speed_art;
     lv_obj_t *fireblade_page;
     lv_obj_t *fireblade_time;
@@ -870,6 +897,9 @@ static const lv_color_t COLOR_SETTINGS_ACCENT = LV_COLOR_MAKE(0xff, 0xff, 0xff);
 #define PAGE_TRANSITION_CARD_MARGIN 16
 #define PAGE_TRANSITION_CARD_RADIUS 8
 #define PAGE_TRANSITION_CARD_ANIM_MS 160U
+#define PHONE_MEDIA_FLAG_READY (UINT8_C(1) << 0)
+#define PHONE_MEDIA_FLAG_ACTIVE (UINT8_C(1) << 1)
+#define PHONE_MEDIA_FLAG_PLAYING (UINT8_C(1) << 2)
 static const lv_color_t COLOR_SWITCH_ACTIVE = LV_COLOR_MAKE(0x34, 0xc7, 0x59);
 static const uint8_t DASHBOARD_CELL_STAT_KEY_BITMAPS[DASHBOARD_CELL_STAT_COUNT]
                                                    [DASHBOARD_CELL_KEY_BITMAP_BYTES] = {
@@ -1009,6 +1039,7 @@ static void dashboard_static_cache_release(void)
 {
     dashboard_static_cache_release_one(&s_ui.battery_static_cache);
     dashboard_static_cache_release_one(&s_ui.fireblade_static_cache);
+    dashboard_static_cache_release_one(&s_ui.speed_static_cache);
 }
 
 static bool dashboard_static_cache_finalize(dashboard_static_cache_t *cache,
@@ -1673,8 +1704,10 @@ static void create_native_bms_dashboard(void)
     lv_obj_set_style_text_color(s_ui.bms_running_time, COLOR_WHITE, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_ui.pack_voltage, COLOR_WHITE, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_ui.pack_voltage_unit, COLOR_WHITE, LV_PART_MAIN);
+    lv_obj_set_style_translate_y(s_ui.pack_voltage_unit, -2, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_ui.current, COLOR_WHITE, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_ui.current_unit, COLOR_WHITE, LV_PART_MAIN);
+    lv_obj_set_style_translate_y(s_ui.current_unit, -2, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_ui.remaining_range_value, COLOR_WHITE, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_ui.remaining_range_unit, COLOR_ACCENT, LV_PART_MAIN);
     const lv_color_t bms_value_color =
@@ -1709,10 +1742,11 @@ static void create_native_bms_portrait_dashboard(void)
     const int32_t cell_y = 193;
     const int32_t cell_h = 54;
     const int32_t temp_y = 255;
-    const int32_t temp_h = 68;
-    const int32_t metric_y = 331;
+    const int32_t temp_h = 52;
+    const int32_t temp_row_pitch = 22;
+    const int32_t metric_y = temp_y + temp_h + 8;
     const int32_t metric_h = 48;
-    const int32_t safety_y = 387;
+    const int32_t safety_y = metric_y + metric_h + 8;
     const int32_t safety_h = s_ui.height - safety_y - margin;
     const int32_t safety_col_w = content_w / 2;
     const int32_t safety_row_h = (safety_h - 23) / 4;
@@ -1824,7 +1858,7 @@ static void create_native_bms_portrait_dashboard(void)
         bms_native_static_label(temp_panel,
                                 temp_keys[index],
                                 column * temp_col_w + 8,
-                                7 + row * 30,
+                                7 + row * temp_row_pitch,
                                 34,
                                 14,
                                 &settings_zh_10,
@@ -1833,7 +1867,7 @@ static void create_native_bms_portrait_dashboard(void)
         if (row > 0) {
             dashboard_separator(temp_panel,
                                 column * temp_col_w + 8,
-                                7 + row * 30 - 3,
+                                7 + row * temp_row_pitch - 3,
                                 temp_col_w - 16);
         }
     }
@@ -1932,7 +1966,7 @@ static void create_native_bms_portrait_dashboard(void)
         const int32_t row = (int32_t)index / 3;
         s_ui.temperature_values[index] = label(dynamic_layer,
                                                margin + column * temp_col_w + 40,
-                                               temp_y + 7 + row * 30,
+                                               temp_y + 7 + row * temp_row_pitch,
                                                temp_col_w - 48,
                                                14,
                                                &lv_font_montserrat_14);
@@ -4732,6 +4766,101 @@ static bool settings_bms_ble_connection_in_progress(const esp_bms_dashboard_snap
            strcmp(snapshot->bms_info_text, "BMS SUB") == 0;
 }
 
+static void settings_bms_ble_log_memory(const char *phase,
+                                        settings_ble_source_t source,
+                                        uint8_t candidate_count)
+{
+    lv_mem_monitor_t lvgl_memory = { 0 };
+    lv_mem_monitor(&lvgl_memory);
+    ESP_LOGI(TAG,
+             "[ble-ui] %s source=%s candidates=%u lvgl_free=%u lvgl_largest=%u "
+             "lvgl_used=%u%% lvgl_frag=%u%% heap_free=%u heap_largest=%u",
+             phase,
+             source == SETTINGS_BLE_SOURCE_BMS ? "BMS" : "controller",
+             (unsigned)candidate_count,
+             (unsigned)lvgl_memory.free_size,
+             (unsigned)lvgl_memory.free_biggest_size,
+             (unsigned)lvgl_memory.used_pct,
+             (unsigned)lvgl_memory.frag_pct,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_DEFAULT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
+}
+
+static void settings_bms_ble_refresh_rows(const esp_bms_dashboard_snapshot_t *snapshot,
+                                          settings_ble_source_t source,
+                                          bool scan_requested,
+                                          const char *phase)
+{
+    if (!snapshot || !s_ui.settings_bms_ble_status || !s_ui.settings_bms_ble_empty ||
+        !s_ui.settings_bms_ble_list) {
+        return;
+    }
+
+    const uint8_t source_count = source == SETTINGS_BLE_SOURCE_BMS
+                                     ? snapshot->bms_scan_candidate_count
+                                     : snapshot->controller_scan_candidate_count;
+    const esp_bms_bms_scan_candidate_t *candidates =
+        source == SETTINGS_BLE_SOURCE_BMS ? snapshot->bms_scan_candidates
+                                          : snapshot->controller_scan_candidates;
+    const uint8_t count = source_count > ESP_BMS_BMS_SCAN_MAX_CANDIDATES
+                              ? ESP_BMS_BMS_SCAN_MAX_CANDIDATES
+                              : source_count;
+
+    settings_bms_ble_format_status(s_ui.settings_bms_ble_status_text,
+                                   sizeof(s_ui.settings_bms_ble_status_text),
+                                   snapshot,
+                                   source,
+                                   scan_requested);
+    lv_label_set_text_static(s_ui.settings_bms_ble_status, s_ui.settings_bms_ble_status_text);
+
+    if (count == 0U) {
+        (void)snprintf(s_ui.settings_bms_ble_empty_text,
+                       sizeof(s_ui.settings_bms_ble_empty_text),
+                       "%s",
+                       scan_requested ? "扫描..."
+                                      : source == SETTINGS_BLE_SOURCE_BMS ? "未发现保护板"
+                                                                          : "未发现控制器");
+        lv_label_set_text_static(s_ui.settings_bms_ble_empty, s_ui.settings_bms_ble_empty_text);
+    }
+    set_obj_hidden(s_ui.settings_bms_ble_empty, count != 0U);
+
+    size_t used = 0U;
+    s_ui.settings_bms_ble_list_text[0] = '\0';
+    for (uint8_t index = 0U; index < ESP_BMS_BMS_SCAN_MAX_CANDIDATES; ++index) {
+        if (index >= count || used >= sizeof(s_ui.settings_bms_ble_list_text)) {
+            break;
+        }
+        const esp_bms_bms_scan_candidate_t *candidate = &candidates[index];
+        char fallback_name[16] = { 0 };
+        const bool has_name = candidate->has_name && candidate->name[0] != '\0';
+        if (!has_name) {
+            (void)snprintf(fallback_name, sizeof(fallback_name), "设备 %u", (unsigned)index + 1U);
+        }
+        const char *name = has_name ? candidate->name : fallback_name;
+        const int written = candidate->rssi > INT8_MIN
+                                ? snprintf(s_ui.settings_bms_ble_list_text + used,
+                                           sizeof(s_ui.settings_bms_ble_list_text) - used,
+                                           "%s%s  %d dBm",
+                                           index == 0U ? "" : "\n",
+                                           name,
+                                           (int)candidate->rssi)
+                                : snprintf(s_ui.settings_bms_ble_list_text + used,
+                                           sizeof(s_ui.settings_bms_ble_list_text) - used,
+                                           "%s%s  --",
+                                           index == 0U ? "" : "\n",
+                                           name);
+        if (written < 0) {
+            break;
+        }
+        const size_t remaining = sizeof(s_ui.settings_bms_ble_list_text) - used;
+        used += (size_t)written < remaining ? (size_t)written : remaining - 1U;
+    }
+    lv_label_set_text_static(s_ui.settings_bms_ble_list, s_ui.settings_bms_ble_list_text);
+    set_obj_hidden(s_ui.settings_bms_ble_list, count == 0U);
+
+    settings_bms_ble_log_memory(phase, source, count);
+}
+
 static void settings_show_bms_ble_popup(settings_ble_source_t source, bool start_scan)
 {
     const bool portrait = s_ui.width < s_ui.height;
@@ -4747,7 +4876,6 @@ static void settings_show_bms_ble_popup(settings_ble_source_t source, bool start
     const int32_t row_h = portrait ? SETTINGS_CHOICE_ROW_H_PORTRAIT :
                                      SETTINGS_CHOICE_ROW_H_LANDSCAPE;
     const esp_bms_dashboard_snapshot_t *snapshot = settings_current_snapshot();
-    char status_text[24] = { 0 };
 
     s_ui.settings_ble_source = (uint8_t)source;
     if (source == SETTINGS_BLE_SOURCE_BMS) {
@@ -4756,6 +4884,8 @@ static void settings_show_bms_ble_popup(settings_ble_source_t source, bool start
         s_ui.settings_controller_view = (uint8_t)SETTINGS_CONTROLLER_VIEW_BLE_LIST;
     }
     s_ui.settings_bms_ble_status = NULL;
+    s_ui.settings_bms_ble_empty = NULL;
+    s_ui.settings_bms_ble_list = NULL;
     lv_obj_clean(s_ui.settings_detail);
     label_set_text_if_changed(s_ui.settings_detail_title, "蓝牙连接");
     lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
@@ -4770,18 +4900,12 @@ static void settings_show_bms_ble_popup(settings_ble_source_t source, bool start
     lv_obj_set_style_border_width(status, 1, LV_PART_MAIN);
     lv_obj_set_style_border_color(status, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
     lv_obj_set_style_border_opa(status, LV_OPA_COVER, LV_PART_MAIN);
-    settings_bms_ble_format_status(status_text,
-                                   sizeof(status_text),
-                                   snapshot,
-                                   source,
-                                   start_scan);
     s_ui.settings_bms_ble_status = label(status,
                                          10,
                                          (status_h - ((int32_t)settings_zh_16.line_height + 4)) / 2,
                                          status_w - 20,
                                          (int32_t)settings_zh_16.line_height + 4,
                                          &settings_zh_16);
-    lv_label_set_text(s_ui.settings_bms_ble_status, status_text);
     lv_obj_set_style_text_color(s_ui.settings_bms_ble_status, COLOR_SETTINGS_TEXT, LV_PART_MAIN);
 
     settings_icon_action_button(s_ui.settings_detail,
@@ -4794,80 +4918,50 @@ static void settings_show_bms_ble_popup(settings_ble_source_t source, bool start
                                 settings_bms_ble_refresh_event_cb,
                                 NULL);
 
-    const uint8_t source_count = source == SETTINGS_BLE_SOURCE_BMS
-                                     ? snapshot->bms_scan_candidate_count
-                                     : snapshot->controller_scan_candidate_count;
-    const esp_bms_bms_scan_candidate_t *candidates =
-        source == SETTINGS_BLE_SOURCE_BMS ? snapshot->bms_scan_candidates
-                                          : snapshot->controller_scan_candidates;
-    const uint8_t count = source_count > ESP_BMS_BMS_SCAN_MAX_CANDIDATES
-                              ? ESP_BMS_BMS_SCAN_MAX_CANDIDATES
-                              : source_count;
-    if (count == 0U || start_scan) {
-        const int32_t empty_h = (int32_t)settings_zh_16.line_height + 8;
-        lv_obj_t *empty = label(s_ui.settings_detail,
-                                card_x,
-                                list_y + 18,
-                                card_w,
-                                empty_h,
-                                &settings_zh_16);
-        lv_label_set_text(empty,
-                          start_scan
-                              ? "扫描..."
-                              : source == SETTINGS_BLE_SOURCE_BMS ? "未发现保护板"
-                                                                  : "未发现控制器");
-        lv_obj_set_style_text_align(empty, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-        lv_obj_set_style_text_color(empty, COLOR_SETTINGS_MUTED, LV_PART_MAIN);
-    } else {
-        for (uint8_t index = 0; index < count; ++index) {
-            const esp_bms_bms_scan_candidate_t *candidate = &candidates[index];
-            lv_obj_t *row = panel(s_ui.settings_detail,
-                                  card_x,
-                                  list_y + ((int32_t)index * (row_h + gap)),
-                                  card_w,
-                                  row_h,
-                                  COLOR_SETTINGS_CARD);
-            lv_obj_set_style_radius(row, 8, LV_PART_MAIN);
-            lv_obj_set_style_border_width(row, 1, LV_PART_MAIN);
-            lv_obj_set_style_border_color(row, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
-            lv_obj_set_style_border_opa(row, LV_OPA_COVER, LV_PART_MAIN);
-            lv_obj_set_style_pad_all(row, 0, LV_PART_MAIN);
-            lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
-            settings_add_swipe_handlers(row);
-            lv_obj_add_event_cb(row,
-                                settings_bms_ble_candidate_event_cb,
-                                LV_EVENT_CLICKED,
-                                (void *)candidate);
+    const int32_t empty_h = (int32_t)settings_zh_16.line_height + 8;
+    s_ui.settings_bms_ble_empty = label(s_ui.settings_detail,
+                                        card_x,
+                                        list_y + 18,
+                                        card_w,
+                                        empty_h,
+                                        &settings_zh_16);
+    lv_obj_set_style_text_align(s_ui.settings_bms_ble_empty, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.settings_bms_ble_empty, COLOR_SETTINGS_MUTED, LV_PART_MAIN);
 
-            char fallback_name[16] = { 0 };
-            const bool has_name = candidate->has_name && candidate->name[0] != '\0';
-            if (!has_name) {
-                (void)snprintf(fallback_name, sizeof(fallback_name), "设备 %u", (unsigned)index + 1U);
-            }
-            const char *name = has_name ? candidate->name : fallback_name;
-            const lv_font_t *name_font = &settings_zh_16;
-            const lv_font_t *metadata_font = &settings_zh_13;
-            const int32_t name_h = (int32_t)name_font->line_height + 2;
-            const int32_t text_y = (row_h - name_h) / 2;
-            lv_obj_t *name_label = label(row, 10, text_y, card_w - 88, name_h, name_font);
-            lv_label_set_text(name_label, name);
-            lv_label_set_long_mode(name_label, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
-            lv_obj_set_style_text_color(name_label, COLOR_SETTINGS_TEXT, LV_PART_MAIN);
+    s_ui.settings_bms_ble_list = label(
+        s_ui.settings_detail,
+        card_x,
+        list_y,
+        card_w,
+        ((row_h + gap) * ESP_BMS_BMS_SCAN_MAX_CANDIDATES) - gap,
+        &settings_zh_16);
+    lv_obj_set_style_radius(s_ui.settings_bms_ble_list, 8, LV_PART_MAIN);
+    lv_obj_set_style_border_width(s_ui.settings_bms_ble_list, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(s_ui.settings_bms_ble_list,
+                                  COLOR_SETTINGS_BORDER,
+                                  LV_PART_MAIN);
+    lv_obj_set_style_border_opa(s_ui.settings_bms_ble_list, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s_ui.settings_bms_ble_list, COLOR_SETTINGS_CARD, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_ui.settings_bms_ble_list, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_pad_left(s_ui.settings_bms_ble_list, 10, LV_PART_MAIN);
+    lv_obj_set_style_pad_right(s_ui.settings_bms_ble_list, 10, LV_PART_MAIN);
+    lv_obj_set_style_pad_top(s_ui.settings_bms_ble_list,
+                             (row_h - (int32_t)settings_zh_16.line_height) / 2,
+                             LV_PART_MAIN);
+    lv_obj_set_style_text_line_space(s_ui.settings_bms_ble_list,
+                                     row_h + gap - (int32_t)settings_zh_16.line_height,
+                                     LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.settings_bms_ble_list,
+                                COLOR_SETTINGS_TEXT,
+                                LV_PART_MAIN);
+    lv_obj_add_flag(s_ui.settings_bms_ble_list, LV_OBJ_FLAG_CLICKABLE);
+    settings_add_swipe_handlers(s_ui.settings_bms_ble_list);
+    lv_obj_add_event_cb(s_ui.settings_bms_ble_list,
+                        settings_bms_ble_candidate_event_cb,
+                        LV_EVENT_CLICKED,
+                        NULL);
 
-            char rssi[12] = { 0 };
-            if (candidate->rssi > INT8_MIN) {
-                (void)snprintf(rssi, sizeof(rssi), "%d dBm", (int)candidate->rssi);
-            } else {
-                (void)snprintf(rssi, sizeof(rssi), "--");
-            }
-            const int32_t metadata_h = (int32_t)metadata_font->line_height + 4;
-            lv_obj_t *rssi_label = label(row, card_w - 70, (row_h - metadata_h) / 2, 58, metadata_h,
-                                         metadata_font);
-            lv_label_set_text(rssi_label, rssi);
-            lv_obj_set_style_text_align(rssi_label, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
-            lv_obj_set_style_text_color(rssi_label, COLOR_SETTINGS_MUTED, LV_PART_MAIN);
-        }
-    }
+    settings_bms_ble_refresh_rows(snapshot, source, start_scan, "list-built");
 
     if (start_scan) {
         settings_bms_ble_start_scan();
@@ -6532,8 +6626,32 @@ static void settings_bms_ble_candidate_event_cb(lv_event_t *event)
         return;
     }
 
+    lv_point_t point = { 0 };
+    lv_area_t area = { 0 };
+    lv_obj_t *list = lv_event_get_target_obj(event);
+    if (!list || !get_active_pointer(&point)) {
+        return;
+    }
+    lv_obj_get_coords(list, &area);
+    const int32_t row_h = s_ui.width < s_ui.height ? SETTINGS_CHOICE_ROW_H_PORTRAIT :
+                                                     SETTINGS_CHOICE_ROW_H_LANDSCAPE;
+    const int32_t gap = s_ui.width < s_ui.height ? 7 : 5;
+    const int32_t relative_y = point.y - area.y1;
+    if (relative_y < 0 || relative_y % (row_h + gap) >= row_h) {
+        return;
+    }
+    const uint8_t index = (uint8_t)(relative_y / (row_h + gap));
+    const esp_bms_dashboard_snapshot_t *snapshot = settings_current_snapshot();
+    const uint8_t count = s_ui.settings_ble_source == (uint8_t)SETTINGS_BLE_SOURCE_BMS
+                              ? snapshot->bms_scan_candidate_count
+                              : snapshot->controller_scan_candidate_count;
+    if (index >= count || index >= ESP_BMS_BMS_SCAN_MAX_CANDIDATES) {
+        return;
+    }
     const esp_bms_bms_scan_candidate_t *candidate =
-        (const esp_bms_bms_scan_candidate_t *)lv_event_get_user_data(event);
+        s_ui.settings_ble_source == (uint8_t)SETTINGS_BLE_SOURCE_BMS
+            ? &snapshot->bms_scan_candidates[index]
+            : &snapshot->controller_scan_candidates[index];
     if (!candidate || candidate->mac[0] == '\0') {
         return;
     }
@@ -8126,6 +8244,71 @@ static void set_cast_page(const esp_bms_dashboard_snapshot_t *snapshot)
 #endif
 }
 
+#if ESP_BMS_FEATURE_PHONE_MEDIA || ESP_BMS_FEATURE_BLE_MEDIA_HID
+static void music_control_set_enabled(lv_obj_t *control, bool enabled)
+{
+    if (!control) {
+        return;
+    }
+    if (enabled) {
+        lv_obj_remove_state(control, LV_STATE_DISABLED);
+    } else {
+        lv_obj_add_state(control, LV_STATE_DISABLED);
+    }
+}
+#endif
+
+static void set_music_page(const esp_bms_dashboard_snapshot_t *snapshot)
+{
+#if ESP_BMS_FEATURE_PHONE_MEDIA
+    if (!snapshot || !s_ui.music_status || !s_ui.music_title) {
+        return;
+    }
+
+    const bool ready = snapshot->phone_media_connected &&
+                       (snapshot->phone_media_flags & PHONE_MEDIA_FLAG_READY) != 0U;
+    const char *status = "BT OFF";
+    if (snapshot->phone_media_connected) {
+        if (!ready) {
+            status = "APP READY?";
+        } else if ((snapshot->phone_media_flags & PHONE_MEDIA_FLAG_ACTIVE) == 0U) {
+            status = "NO MEDIA";
+        } else if ((snapshot->phone_media_flags & PHONE_MEDIA_FLAG_PLAYING) != 0U) {
+            status = "PLAYING";
+        } else {
+            status = "PAUSED";
+        }
+    }
+    label_set_text_if_changed(s_ui.music_status, status);
+    label_set_text_if_changed(s_ui.music_title,
+                              snapshot->phone_media_title[0] != '\0'
+                                  ? snapshot->phone_media_title
+                                  : "--");
+    label_set_text_color_if_changed(s_ui.music_status,
+                                    ready ? COLOR_SWITCH_ACTIVE : COLOR_SETTINGS_MUTED);
+    for (size_t index = 0U; index < MUSIC_CONTROL_COUNT; ++index) {
+        music_control_set_enabled(s_ui.music_controls[index], ready);
+    }
+#elif ESP_BMS_FEATURE_BLE_MEDIA_HID
+    if (!snapshot || !s_ui.music_status) {
+        return;
+    }
+
+    const bool ready = snapshot->ble_media_hid_connected && !snapshot->ble_media_hid_suspended;
+    const char *status = snapshot->ble_media_hid_suspended
+                             ? "SUSPEND"
+                             : snapshot->ble_media_hid_connected ? "READY" : "PAIR PHONE";
+    label_set_text_if_changed(s_ui.music_status, status);
+    label_set_text_color_if_changed(s_ui.music_status,
+                                    ready ? COLOR_SWITCH_ACTIVE : COLOR_SETTINGS_MUTED);
+    for (size_t index = 0U; index < MUSIC_CONTROL_COUNT; ++index) {
+        music_control_set_enabled(s_ui.music_controls[index], ready);
+    }
+#else
+    (void)snapshot;
+#endif
+}
+
 static void set_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
 {
     char soc_text[8];
@@ -8824,6 +9007,7 @@ static void speed_dashboard_style_apply(const esp_bms_dashboard_snapshot_t *snap
     }
 #endif
 
+    set_obj_hidden(s_ui.speed_static_background, controller_monitor || honda_fireblade);
     set_obj_hidden(s_ui.speed_art, controller_monitor || honda_fireblade);
 #if ESP_BMS_FEATURE_DASHBOARD_CONTROLLER
     set_obj_hidden(s_ui.controller_page, !controller_monitor);
@@ -10345,6 +10529,24 @@ static bool speed_dashboard_static_landscape_enabled(const lv_area_t *coords)
 #endif
 }
 
+static bool speed_dashboard_s3_static_background_enabled(void)
+{
+#if ESP_BMS_LVGL_UI_SIMULATOR || defined(CONFIG_IDF_TARGET_ESP32S3)
+    return s_ui.width == (int32_t)DASHBOARD_STATIC_CACHE_WIDTH &&
+           s_ui.height == (int32_t)DASHBOARD_STATIC_CACHE_HEIGHT;
+#else
+    return false;
+#endif
+}
+
+static bool speed_dashboard_static_background_enabled(const lv_area_t *coords)
+{
+    return speed_dashboard_static_landscape_enabled(coords) ||
+           (s_ui.speed_static_background && coords &&
+            lv_area_get_width(coords) == (int32_t)DASHBOARD_STATIC_CACHE_WIDTH &&
+            lv_area_get_height(coords) == (int32_t)DASHBOARD_STATIC_CACHE_HEIGHT);
+}
+
 static void speed_dashboard_static_background_apply(void)
 {
 #if defined(CONFIG_IDF_TARGET_ESP32) && ESP_BMS_FEATURE_DASHBOARD_S1000RR
@@ -10530,6 +10732,109 @@ static void speed_dashboard_draw_satellite(lv_layer_t *layer,
 }
 #endif
 
+static void speed_dashboard_draw_static_gauge(lv_layer_t *layer,
+                                              const lv_area_t *coords,
+                                              bool portrait,
+                                              const lv_point_t *outer,
+                                              const lv_point_t *inner)
+{
+    for (uint32_t index = 0U; index < SPEED_DASHBOARD_SEGMENT_COUNT; ++index) {
+        lv_point_t start = speed_dashboard_point(
+            (outer[index].x + inner[index].x) / 2,
+            (outer[index].y + inner[index].y) / 2);
+        lv_point_t end = speed_dashboard_point(
+            (outer[index + 1U].x + inner[index + 1U].x) / 2,
+            (outer[index + 1U].y + inner[index + 1U].y) / 2);
+        speed_dashboard_overlap_band_endpoints(index, &start, &end);
+        speed_dashboard_draw_line(layer,
+                                  start,
+                                  end,
+                                  speed_dashboard_segment_color(index, 0U, false),
+                                  speed_dashboard_band_width(portrait,
+                                                             outer[index],
+                                                             inner[index],
+                                                             outer[index + 1U],
+                                                             inner[index + 1U]),
+                                  false);
+    }
+
+    for (uint32_t index = 0U; index < SPEED_DASHBOARD_SEGMENT_COUNT; ++index) {
+        const int32_t border_width = index >= SPEED_DASHBOARD_DANGER_START ? 2 : 4;
+        speed_dashboard_draw_line(layer,
+                                  outer[index],
+                                  outer[index + 1U],
+                                  index >= SPEED_DASHBOARD_DANGER_START
+                                      ? COLOR_SPEED_BAND_DANGER
+                                      : COLOR_WHITE,
+                                  border_width,
+                                  false);
+    }
+
+    for (uint32_t index = 0U; index <= SPEED_DASHBOARD_SEGMENT_COUNT;
+         index += SPEED_DASHBOARD_MINOR_TICK_STEP) {
+        const bool major = index % SPEED_DASHBOARD_MAJOR_TICK_STEP == 0U ||
+                           index == SPEED_DASHBOARD_SEGMENT_COUNT;
+        const int32_t numerator = major ? 38 : 22;
+        const lv_point_t tick_end = speed_dashboard_point(
+            outer[index].x + ((inner[index].x - outer[index].x) * numerator / 100),
+            outer[index].y + ((inner[index].y - outer[index].y) * numerator / 100));
+        speed_dashboard_draw_line(layer,
+                                  outer[index],
+                                  tick_end,
+                                  index >= SPEED_DASHBOARD_DANGER_START
+                                      ? COLOR_SPEED_BAND_DANGER
+                                      : COLOR_WHITE,
+                                  major ? 2 : 1,
+                                  false);
+    }
+
+    if (!portrait) {
+        const uint32_t last = SPEED_DASHBOARD_SEGMENT_COUNT;
+        const lv_area_t terminal = {
+            .x1 = inner[last].x,
+            .y1 = outer[last].y,
+            .x2 = outer[last].x,
+            .y2 = inner[last].y,
+        };
+        speed_dashboard_draw_rect(layer, terminal, COLOR_SPEED_BAND_DANGER, true, 0);
+        speed_dashboard_draw_line(layer,
+                                  speed_dashboard_point(outer[last].x, outer[last].y),
+                                  speed_dashboard_point(outer[last].x, inner[last].y),
+                                  COLOR_SPEED_BAND_DANGER,
+                                  2,
+                                  false);
+    }
+
+    const int32_t divider_y = speed_dashboard_scaled_y(coords, portrait, portrait ? 47 : 31);
+    speed_dashboard_draw_line(layer,
+                              speed_dashboard_point(speed_dashboard_scaled_x(coords, portrait, 8),
+                                                    divider_y),
+                              speed_dashboard_point(speed_dashboard_scaled_x(coords,
+                                                                            portrait,
+                                                                            portrait ? 232 : 312),
+                                                    divider_y),
+                              COLOR_SPEED_DIVIDER,
+                              1,
+                              false);
+}
+
+static void speed_dashboard_static_draw_event_cb(lv_event_t *event)
+{
+    lv_obj_t *object = lv_event_get_target_obj(event);
+    lv_layer_t *layer = lv_event_get_layer(event);
+    lv_area_t coords;
+    lv_obj_get_coords(object, &coords);
+    if (!speed_dashboard_s3_static_background_enabled()) {
+        return;
+    }
+
+    const bool portrait = lv_area_get_width(&coords) < lv_area_get_height(&coords);
+    lv_point_t outer[SPEED_DASHBOARD_SEGMENT_COUNT + 1U];
+    lv_point_t inner[SPEED_DASHBOARD_SEGMENT_COUNT + 1U];
+    speed_dashboard_geometry(portrait, &coords, outer, inner);
+    speed_dashboard_draw_static_gauge(layer, &coords, portrait, outer, inner);
+}
+
 static void speed_dashboard_draw_event_cb(lv_event_t *event)
 {
 #if CONFIG_ESP_BMS_LVGL_UI_DRAG_DIAGNOSTICS
@@ -10543,7 +10848,7 @@ static void speed_dashboard_draw_event_cb(lv_event_t *event)
     const esp_bms_dashboard_snapshot_t *snapshot = &s_ui.last_snapshot;
     const bool speed_valid = SNAPSHOT_FLAG(snapshot, SPEED_VALID);
     const uint32_t active_segments = speed_dashboard_active_segments(snapshot);
-    const bool static_background = speed_dashboard_static_landscape_enabled(&coords);
+    const bool static_background = speed_dashboard_static_background_enabled(&coords);
 
     lv_point_t outer[SPEED_DASHBOARD_SEGMENT_COUNT + 1U];
     lv_point_t inner[SPEED_DASHBOARD_SEGMENT_COUNT + 1U];
@@ -10578,65 +10883,7 @@ static void speed_dashboard_draw_event_cb(lv_event_t *event)
                                   false);
     }
     if (!static_background) {
-        for (uint32_t index = 0U; index < SPEED_DASHBOARD_SEGMENT_COUNT; ++index) {
-            const int32_t border_width = index >= SPEED_DASHBOARD_DANGER_START ? 2 : 4;
-            speed_dashboard_draw_line(layer,
-                                      outer[index],
-                                      outer[index + 1U],
-                                      index >= SPEED_DASHBOARD_DANGER_START
-                                          ? COLOR_SPEED_BAND_DANGER
-                                          : COLOR_WHITE,
-                                      border_width,
-                                      false);
-        }
-
-        for (uint32_t index = 0U; index <= SPEED_DASHBOARD_SEGMENT_COUNT;
-             index += SPEED_DASHBOARD_MINOR_TICK_STEP) {
-            const bool major = index % SPEED_DASHBOARD_MAJOR_TICK_STEP == 0U ||
-                               index == SPEED_DASHBOARD_SEGMENT_COUNT;
-            const int32_t numerator = major ? 38 : 22;
-            const lv_point_t tick_end = speed_dashboard_point(
-                outer[index].x + ((inner[index].x - outer[index].x) * numerator / 100),
-                outer[index].y + ((inner[index].y - outer[index].y) * numerator / 100));
-            speed_dashboard_draw_line(layer,
-                                      outer[index],
-                                      tick_end,
-                                      index >= SPEED_DASHBOARD_DANGER_START
-                                          ? COLOR_SPEED_BAND_DANGER
-                                          : COLOR_WHITE,
-                                      major ? 2 : 1,
-                                      false);
-        }
-
-        if (!portrait) {
-            const uint32_t last = SPEED_DASHBOARD_SEGMENT_COUNT;
-            const lv_area_t terminal = {
-                .x1 = inner[last].x,
-                .y1 = outer[last].y,
-                .x2 = outer[last].x,
-                .y2 = inner[last].y,
-            };
-            speed_dashboard_draw_rect(layer, terminal, COLOR_SPEED_BAND_DANGER, true, 0);
-            speed_dashboard_draw_line(layer,
-                                      speed_dashboard_point(outer[last].x, outer[last].y),
-                                      speed_dashboard_point(outer[last].x, inner[last].y),
-                                      COLOR_SPEED_BAND_DANGER,
-                                      2,
-                                      false);
-        }
-
-        const int32_t divider_y = speed_dashboard_scaled_y(&coords,
-                                                            portrait,
-                                                            portrait ? 47 : 31);
-        speed_dashboard_draw_line(layer,
-                                  speed_dashboard_point(speed_dashboard_scaled_x(&coords, portrait, 8), divider_y),
-                                  speed_dashboard_point(speed_dashboard_scaled_x(&coords,
-                                                                                  portrait,
-                                                                                  portrait ? 232 : 312),
-                                                        divider_y),
-                                  COLOR_SPEED_DIVIDER,
-                                  1,
-                                  false);
+        speed_dashboard_draw_static_gauge(layer, &coords, portrait, outer, inner);
     }
     const bool compact = lv_area_get_width(&coords) < 180 ||
                          lv_area_get_height(&coords) < 180;
@@ -10894,6 +11141,27 @@ static void set_gps_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
 
 static void create_gps_dashboard(void)
 {
+    if (speed_dashboard_s3_static_background_enabled()) {
+        lv_obj_t *static_layer = lv_obj_create(s_ui.gps_page);
+        clear_style(static_layer);
+        lv_obj_set_pos(static_layer, 0, 0);
+        lv_obj_set_size(static_layer, s_ui.width, s_ui.height);
+        lv_obj_set_style_bg_color(static_layer, COLOR_BG, LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(static_layer, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_clear_flag(static_layer, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(static_layer,
+                            speed_dashboard_static_draw_event_cb,
+                            LV_EVENT_DRAW_MAIN,
+                            NULL);
+        s_ui.speed_static_background = static_layer;
+        if (dashboard_static_cache_finalize(&s_ui.speed_static_cache,
+                                            s_ui.gps_page,
+                                            static_layer,
+                                            "s1000rr")) {
+            s_ui.speed_static_background = s_ui.speed_static_cache.image;
+        }
+    }
+
     s_ui.speed_art = lv_obj_create(s_ui.gps_page);
     clear_style(s_ui.speed_art);
     lv_obj_clear_flag(s_ui.speed_art, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
@@ -10987,6 +11255,8 @@ static void create_gps_dashboard(void)
     speed_dashboard_apply_layout();
 }
 
+static int32_t page_target_scroll_x(esp_bms_lvgl_page_t page);
+
 static void speed_page_sync(const esp_bms_dashboard_snapshot_t *snapshot)
 {
     if (!snapshot || !s_ui.gps_page) {
@@ -11005,6 +11275,25 @@ static void speed_page_sync(const esp_bms_dashboard_snapshot_t *snapshot)
     }
 
     if (changed && s_ui.pages) {
+        lv_obj_set_x(s_ui.gps_page, page_target_scroll_x(ESP_BMS_LVGL_PAGE_GPS));
+        if (s_ui.cast_page) {
+            lv_obj_set_x(s_ui.cast_page, page_target_scroll_x(ESP_BMS_LVGL_PAGE_CAST));
+        }
+        if (s_ui.music_page) {
+            lv_obj_set_x(s_ui.music_page, page_target_scroll_x(ESP_BMS_LVGL_PAGE_MUSIC));
+        }
+        if (s_ui.page_transition_gps) {
+            lv_obj_set_x(s_ui.page_transition_gps,
+                         page_target_scroll_x(ESP_BMS_LVGL_PAGE_GPS));
+        }
+        if (s_ui.page_transition_cast) {
+            lv_obj_set_x(s_ui.page_transition_cast,
+                         page_target_scroll_x(ESP_BMS_LVGL_PAGE_CAST));
+        }
+        if (s_ui.page_transition_music) {
+            lv_obj_set_x(s_ui.page_transition_music,
+                         page_target_scroll_x(ESP_BMS_LVGL_PAGE_MUSIC));
+        }
         move_to_page(retained_page, false);
         lv_obj_invalidate(s_ui.pages);
     }
@@ -11095,6 +11384,7 @@ static void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapsho
 #endif
     set_gps_dashboard(snapshot);
     set_cast_page(snapshot);
+    set_music_page(snapshot);
     if (had_last_snapshot &&
         ((!previous_bms_online && SNAPSHOT_FLAG(snapshot, BMS_ONLINE)) ||
          (!previous_controller_online && SNAPSHOT_FLAG(snapshot, CONTROLLER_ONLINE)))) {
@@ -11127,7 +11417,10 @@ static void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapsho
         const bool bms_type_changed = !had_last_snapshot || previous_bms_type != snapshot->bms_type;
         if (s_ui.settings_bms_view == (uint8_t)SETTINGS_BMS_VIEW_BLE_LIST &&
             (bms_scan_candidates_changed || bms_online_changed)) {
-            settings_show_bms_ble_popup(SETTINGS_BLE_SOURCE_BMS, false);
+            settings_bms_ble_refresh_rows(snapshot,
+                                          SETTINGS_BLE_SOURCE_BMS,
+                                          false,
+                                          "list-refresh");
         } else if (s_ui.settings_bms_view == (uint8_t)SETTINGS_BMS_VIEW_TYPE_LIST &&
                    bms_type_changed) {
             settings_show_bms_type_picker();
@@ -11144,7 +11437,10 @@ static void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapsho
         } else if (s_ui.settings_controller_view ==
                        (uint8_t)SETTINGS_CONTROLLER_VIEW_BLE_LIST &&
                    controller_ble_changed) {
-            settings_show_bms_ble_popup(SETTINGS_BLE_SOURCE_CONTROLLER, false);
+            settings_bms_ble_refresh_rows(snapshot,
+                                          SETTINGS_BLE_SOURCE_CONTROLLER,
+                                          false,
+                                          "list-refresh");
         }
     }
     if (s_ui.settings_detail_id == (uint8_t)SETTINGS_DETAIL_DASHBOARD &&
@@ -11218,31 +11514,65 @@ static void invalidate_dashboard_viewport(void)
 
 static int32_t page_target_scroll_x(esp_bms_lvgl_page_t page)
 {
-    if (page == ESP_BMS_LVGL_PAGE_CONTROLLER || page == ESP_BMS_LVGL_PAGE_GPS) {
-        return s_ui.width;
+    int32_t index = 1;
+    if (page == ESP_BMS_LVGL_PAGE_BATTERY) {
+        return 0;
     }
-    if (page == ESP_BMS_LVGL_PAGE_CAST && ESP_BMS_FEATURE_CAST) {
-        return s_ui.width * (s_ui.speed_page_renderable ? 2 : 1);
+    if (s_ui.speed_page_renderable) {
+        if (page == ESP_BMS_LVGL_PAGE_CONTROLLER || page == ESP_BMS_LVGL_PAGE_GPS) {
+            return s_ui.width;
+        }
+        ++index;
     }
+#if ESP_BMS_FEATURE_CAST
+    if (page == ESP_BMS_LVGL_PAGE_CAST) {
+        return s_ui.width * index;
+    }
+    ++index;
+#endif
+#if ESP_BMS_FEATURE_PHONE_MEDIA || ESP_BMS_FEATURE_BLE_MEDIA_HID
+    if (page == ESP_BMS_LVGL_PAGE_MUSIC) {
+        return s_ui.width * index;
+    }
+#endif
     return 0;
+}
+
+static int32_t page_last_scroll_x(void)
+{
+#if ESP_BMS_FEATURE_PHONE_MEDIA || ESP_BMS_FEATURE_BLE_MEDIA_HID
+    return page_target_scroll_x(ESP_BMS_LVGL_PAGE_MUSIC);
+#elif ESP_BMS_FEATURE_CAST
+    return page_target_scroll_x(ESP_BMS_LVGL_PAGE_CAST);
+#else
+    return page_target_scroll_x(ESP_BMS_LVGL_PAGE_GPS);
+#endif
 }
 
 static esp_bms_lvgl_page_t page_from_scroll_x(int32_t scroll_x)
 {
-    const int32_t index = (scroll_x + (s_ui.width / 2)) / s_ui.width;
+    int32_t index = (scroll_x + (s_ui.width / 2)) / s_ui.width;
     if (index <= 0) {
         return ESP_BMS_LVGL_PAGE_BATTERY;
     }
-    if (!s_ui.speed_page_renderable) {
-        if (ESP_BMS_FEATURE_CAST) {
-            return ESP_BMS_LVGL_PAGE_CAST;
+    if (s_ui.speed_page_renderable) {
+        if (index == 1) {
+            return ESP_BMS_LVGL_PAGE_GPS;
         }
-        return ESP_BMS_LVGL_PAGE_BATTERY;
+        --index;
     }
+#if ESP_BMS_FEATURE_CAST
     if (index == 1) {
-        return ESP_BMS_LVGL_PAGE_GPS;
+        return ESP_BMS_LVGL_PAGE_CAST;
     }
-    return ESP_BMS_FEATURE_CAST ? ESP_BMS_LVGL_PAGE_CAST : ESP_BMS_LVGL_PAGE_BATTERY;
+    --index;
+#endif
+#if ESP_BMS_FEATURE_PHONE_MEDIA || ESP_BMS_FEATURE_BLE_MEDIA_HID
+    if (index == 1) {
+        return ESP_BMS_LVGL_PAGE_MUSIC;
+    }
+#endif
+    return ESP_BMS_LVGL_PAGE_BATTERY;
 }
 
 static const char *page_transition_title(esp_bms_lvgl_page_t page)
@@ -11255,6 +11585,12 @@ static const char *page_transition_title(esp_bms_lvgl_page_t page)
         return "仪表";
     case ESP_BMS_LVGL_PAGE_CAST:
         return "投屏";
+    case ESP_BMS_LVGL_PAGE_MUSIC:
+#if ESP_BMS_FEATURE_BLE_MEDIA_HID && !ESP_BMS_FEATURE_PHONE_MEDIA
+        return "HID";
+#else
+        return "MUSIC";
+#endif
     default:
         return "";
     }
@@ -11276,6 +11612,8 @@ static lv_obj_t *page_transition_card_for_page(esp_bms_lvgl_page_t page)
         return s_ui.page_transition_gps_card;
     case ESP_BMS_LVGL_PAGE_CAST:
         return s_ui.page_transition_cast_card;
+    case ESP_BMS_LVGL_PAGE_MUSIC:
+        return s_ui.page_transition_music_card;
     default:
         return NULL;
     }
@@ -11410,12 +11748,15 @@ static void page_transition_hide(void)
     page_transition_card_set_full(s_ui.page_transition_battery_card);
     page_transition_card_set_full(s_ui.page_transition_gps_card);
     page_transition_card_set_full(s_ui.page_transition_cast_card);
+    page_transition_card_set_full(s_ui.page_transition_music_card);
     set_obj_hidden(s_ui.battery_page, false);
     set_obj_hidden(s_ui.gps_page, false);
     set_obj_hidden(s_ui.cast_page, false);
+    set_obj_hidden(s_ui.music_page, false);
     set_obj_hidden(s_ui.page_transition_battery, true);
     set_obj_hidden(s_ui.page_transition_gps, true);
     set_obj_hidden(s_ui.page_transition_cast, true);
+    set_obj_hidden(s_ui.page_transition_music, true);
 }
 
 static void page_transition_show(void)
@@ -11436,12 +11777,18 @@ static void page_transition_show(void)
         lv_obj_set_x(s_ui.page_transition_cast,
                      page_target_scroll_x(ESP_BMS_LVGL_PAGE_CAST));
     }
+    if (s_ui.page_transition_music) {
+        lv_obj_set_x(s_ui.page_transition_music,
+                     page_target_scroll_x(ESP_BMS_LVGL_PAGE_MUSIC));
+    }
     set_obj_hidden(s_ui.page_transition_battery, false);
     set_obj_hidden(s_ui.page_transition_gps, false);
     set_obj_hidden(s_ui.page_transition_cast, false);
+    set_obj_hidden(s_ui.page_transition_music, false);
     page_transition_card_set_full(s_ui.page_transition_battery_card);
     page_transition_card_set_full(s_ui.page_transition_gps_card);
     page_transition_card_set_full(s_ui.page_transition_cast_card);
+    page_transition_card_set_full(s_ui.page_transition_music_card);
     lv_obj_t *current_card = page_transition_card_for_page(s_ui.page);
     if (current_card != s_ui.page_transition_battery_card) {
         page_transition_card_set_compact(s_ui.page_transition_battery_card);
@@ -11452,9 +11799,13 @@ static void page_transition_show(void)
     if (current_card != s_ui.page_transition_cast_card) {
         page_transition_card_set_compact(s_ui.page_transition_cast_card);
     }
+    if (current_card != s_ui.page_transition_music_card) {
+        page_transition_card_set_compact(s_ui.page_transition_music_card);
+    }
     set_obj_hidden(s_ui.battery_page, true);
     set_obj_hidden(s_ui.gps_page, true);
     set_obj_hidden(s_ui.cast_page, true);
+    set_obj_hidden(s_ui.music_page, true);
     page_transition_card_animate(current_card, false);
 }
 
@@ -11526,6 +11877,9 @@ static lv_obj_t *page_transition_page_create(lv_obj_t *parent,
     case ESP_BMS_LVGL_PAGE_CAST:
         s_ui.page_transition_cast_card = card;
         break;
+    case ESP_BMS_LVGL_PAGE_MUSIC:
+        s_ui.page_transition_music_card = card;
+        break;
     default:
         break;
     }
@@ -11543,6 +11897,12 @@ static void page_transition_create(lv_obj_t *parent)
                                                              ESP_BMS_LVGL_PAGE_CAST);
 #else
     s_ui.page_transition_cast = NULL;
+#endif
+#if ESP_BMS_FEATURE_PHONE_MEDIA || ESP_BMS_FEATURE_BLE_MEDIA_HID
+    s_ui.page_transition_music = page_transition_page_create(parent,
+                                                              ESP_BMS_LVGL_PAGE_MUSIC);
+#else
+    s_ui.page_transition_music = NULL;
 #endif
 }
 
@@ -11578,6 +11938,10 @@ static void move_to_page(esp_bms_lvgl_page_t page, bool animated)
         page = ESP_BMS_LVGL_PAGE_BATTERY;
     }
     if (page == ESP_BMS_LVGL_PAGE_CAST && !ESP_BMS_FEATURE_CAST) {
+        page = ESP_BMS_LVGL_PAGE_BATTERY;
+    }
+    if (page == ESP_BMS_LVGL_PAGE_MUSIC &&
+        !ESP_BMS_FEATURE_PHONE_MEDIA && !ESP_BMS_FEATURE_BLE_MEDIA_HID) {
         page = ESP_BMS_LVGL_PAGE_BATTERY;
     }
     s_ui.page_scroll_programmatic = !animated;
@@ -11990,9 +12354,7 @@ static void page_scroll_event_cb(lv_event_t *event)
                                                     ? s_ui.drag_start_page
                                                     : s_ui.page;
         const int32_t stable_x = page_target_scroll_x(stable_page);
-        const int32_t last_x = ESP_BMS_FEATURE_CAST
-                                   ? page_target_scroll_x(ESP_BMS_LVGL_PAGE_CAST)
-                                   : page_target_scroll_x(ESP_BMS_LVGL_PAGE_GPS);
+        const int32_t last_x = page_last_scroll_x();
         const esp_bms_lvgl_page_t raw_target = page_from_scroll_x(scroll_x);
         const int32_t raw_target_x = page_target_scroll_x(raw_target);
         int32_t target_x = raw_target_x;
@@ -12176,6 +12538,234 @@ static void create_screen(lv_display_t *display)
 #else
     s_ui.cast_page = NULL;
     s_ui.cast_qr = NULL;
+#endif
+
+#if ESP_BMS_FEATURE_PHONE_MEDIA
+    s_ui.music_page = lv_obj_create(s_ui.pages);
+    clear_style(s_ui.music_page);
+    lv_obj_set_pos(s_ui.music_page, page_target_scroll_x(ESP_BMS_LVGL_PAGE_MUSIC), 0);
+    lv_obj_set_size(s_ui.music_page, s_ui.width, page_h);
+    lv_obj_set_style_bg_color(s_ui.music_page, COLOR_BG, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_ui.music_page, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_add_flag(s_ui.music_page, LV_OBJ_FLAG_SNAPPABLE);
+    memset(s_ui.music_controls, 0, sizeof(s_ui.music_controls));
+
+    const int32_t music_margin = portrait ? 16 : 24;
+    const int32_t music_gap = portrait ? 12 : 10;
+    const int32_t music_content_w = s_ui.width - (music_margin * 2);
+    const int32_t music_status_w = portrait ? 136 : 128;
+    const int32_t music_track_y = portrait ? 90 : 58;
+    const int32_t music_track_h = portrait ? 94 : 74;
+    const int32_t music_button_w = (music_content_w - music_gap) / 2;
+    const int32_t music_button_h = portrait ? 104 : 66;
+    const int32_t music_buttons_y = portrait ? 204 : 146;
+    lv_obj_t *music_heading = label(s_ui.music_page,
+                                    music_margin,
+                                    portrait ? 34 : 22,
+                                    music_content_w - music_status_w - music_gap,
+                                    20,
+                                    &lv_font_montserrat_14);
+    lv_label_set_text(music_heading, "PHONE MEDIA");
+    lv_obj_set_style_text_color(music_heading, COLOR_ACCENT, LV_PART_MAIN);
+    lv_obj_t *music_status_card = panel(s_ui.music_page,
+                                        s_ui.width - music_margin - music_status_w,
+                                        portrait ? 28 : 16,
+                                        music_status_w,
+                                        28,
+                                        COLOR_PANEL_ALT);
+    lv_obj_set_style_radius(music_status_card, 14, LV_PART_MAIN);
+    lv_obj_set_style_border_width(music_status_card, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(music_status_card, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
+    s_ui.music_status = label(music_status_card,
+                              8,
+                              5,
+                              music_status_w - 16,
+                              18,
+                              &lv_font_montserrat_14);
+    lv_obj_set_style_text_align(s_ui.music_status, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+
+    lv_obj_t *music_track_card = panel(s_ui.music_page,
+                                        music_margin,
+                                        music_track_y,
+                                        music_content_w,
+                                        music_track_h,
+                                        COLOR_PANEL_ALT);
+    lv_obj_set_style_radius(music_track_card, 8, LV_PART_MAIN);
+    lv_obj_set_style_border_width(music_track_card, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(music_track_card, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
+    lv_obj_t *music_track_accent = panel(music_track_card,
+                                         0,
+                                         0,
+                                         4,
+                                         music_track_h,
+                                         COLOR_ACCENT);
+    lv_obj_set_style_radius(music_track_accent, 2, LV_PART_MAIN);
+    lv_obj_t *music_track_label = label(music_track_card,
+                                        18,
+                                        8,
+                                        music_content_w - 36,
+                                        16,
+                                        &lv_font_montserrat_14);
+    lv_label_set_text(music_track_label, "NOW PLAYING");
+    lv_obj_set_style_text_color(music_track_label, COLOR_MUTED, LV_PART_MAIN);
+    s_ui.music_title = label(music_track_card,
+                             18,
+                             portrait ? 36 : 30,
+                             music_content_w - 36,
+                             30,
+                             &lv_font_montserrat_24);
+    lv_label_set_long_mode(s_ui.music_title, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
+
+    const esp_bms_lvgl_action_t music_actions[4] = {
+        ESP_BMS_LVGL_ACTION_PHONE_MEDIA_PREVIOUS,
+        ESP_BMS_LVGL_ACTION_PHONE_MEDIA_NEXT,
+        ESP_BMS_LVGL_ACTION_PHONE_MEDIA_VOLUME_DOWN,
+        ESP_BMS_LVGL_ACTION_PHONE_MEDIA_VOLUME_UP,
+    };
+    const char *const music_icons[4] = {
+        LV_SYMBOL_PREV,
+        LV_SYMBOL_NEXT,
+        LV_SYMBOL_VOLUME_MID " " LV_SYMBOL_MINUS,
+        LV_SYMBOL_VOLUME_MID " " LV_SYMBOL_PLUS,
+    };
+    const char *const music_labels[4] = { "PREVIOUS", "NEXT", "VOLUME -", "VOLUME +" };
+    for (size_t index = 0U; index < MUSIC_CONTROL_COUNT; ++index) {
+        const int32_t column = (int32_t)(index % 2U);
+        const int32_t row = (int32_t)(index / 2U);
+        lv_obj_t *control = panel(s_ui.music_page,
+                                  music_margin + column * (music_button_w + music_gap),
+                                  music_buttons_y + row * (music_button_h + music_gap),
+                                  music_button_w,
+                                  music_button_h,
+                                  index < 2U ? COLOR_PANEL_ALT : COLOR_SETTINGS_LIST);
+        lv_obj_add_flag(control, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_border_width(control, 1, LV_PART_MAIN);
+        lv_obj_set_style_border_color(control, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
+        lv_obj_set_style_border_opa(control, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_radius(control, 8, LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(control, LV_OPA_40, LV_PART_MAIN | LV_STATE_DISABLED);
+        lv_obj_set_style_opa(control, LV_OPA_40, LV_PART_MAIN | LV_STATE_DISABLED);
+        lv_obj_add_event_cb(control, action_event_cb, LV_EVENT_CLICKED,
+                            (void *)(uintptr_t)music_actions[index]);
+        lv_obj_t *control_icon = label(control,
+                                       0,
+                                       portrait ? 20 : 6,
+                                       music_button_w - 8,
+                                       28,
+                                       &lv_font_montserrat_24);
+        lv_label_set_text(control_icon, music_icons[index]);
+        lv_obj_set_style_text_align(control_icon, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+        lv_obj_set_style_text_color(control_icon,
+                                    index < 2U ? COLOR_ACCENT : COLOR_WHITE,
+                                    LV_PART_MAIN);
+        lv_obj_t *control_label = label(control,
+                                        0,
+                                        portrait ? 60 : 38,
+                                        music_button_w - 8,
+                                        18,
+                                        &lv_font_montserrat_14);
+        lv_label_set_text(control_label, music_labels[index]);
+        lv_obj_set_style_text_align(control_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+        lv_obj_set_style_text_color(control_label, COLOR_MUTED, LV_PART_MAIN);
+        s_ui.music_controls[index] = control;
+    }
+    set_music_page(&s_ui.last_snapshot);
+#elif ESP_BMS_FEATURE_BLE_MEDIA_HID
+    s_ui.music_page = lv_obj_create(s_ui.pages);
+    clear_style(s_ui.music_page);
+    lv_obj_set_pos(s_ui.music_page, page_target_scroll_x(ESP_BMS_LVGL_PAGE_MUSIC), 0);
+    lv_obj_set_size(s_ui.music_page, s_ui.width, page_h);
+    lv_obj_set_style_bg_color(s_ui.music_page, COLOR_BG, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_ui.music_page, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_add_flag(s_ui.music_page, LV_OBJ_FLAG_SNAPPABLE);
+    s_ui.music_title = NULL;
+    memset(s_ui.music_controls, 0, sizeof(s_ui.music_controls));
+
+    const int32_t status_w = portrait ? 156 : 128;
+    const int32_t status_y = portrait ? 30 : 16;
+    lv_obj_t *status_card = panel(s_ui.music_page,
+                                  (s_ui.width - status_w) / 2,
+                                  status_y,
+                                  status_w,
+                                  28,
+                                  COLOR_PANEL_ALT);
+    lv_obj_set_style_radius(status_card, 8, LV_PART_MAIN);
+    lv_obj_set_style_border_width(status_card, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(status_card, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
+    s_ui.music_status = label(status_card, 4, 5, status_w - 8, 18, &lv_font_montserrat_14);
+    lv_obj_set_style_text_align(s_ui.music_status, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+
+    const esp_bms_lvgl_action_t music_actions[MUSIC_CONTROL_COUNT] = {
+        ESP_BMS_LVGL_ACTION_PHONE_MEDIA_PREVIOUS,
+        ESP_BMS_LVGL_ACTION_MEDIA_PLAY_PAUSE,
+        ESP_BMS_LVGL_ACTION_PHONE_MEDIA_NEXT,
+        ESP_BMS_LVGL_ACTION_PHONE_MEDIA_VOLUME_DOWN,
+        ESP_BMS_LVGL_ACTION_PHONE_MEDIA_VOLUME_UP,
+    };
+    const char *const music_icons[MUSIC_CONTROL_COUNT] = {
+        LV_SYMBOL_PREV,
+        LV_SYMBOL_PLAY,
+        LV_SYMBOL_NEXT,
+        LV_SYMBOL_VOLUME_MID " " LV_SYMBOL_MINUS,
+        LV_SYMBOL_VOLUME_MID " " LV_SYMBOL_PLUS,
+    };
+    const char *const music_labels[MUSIC_CONTROL_COUNT] = {
+        "PREV", "PLAY", "NEXT", "VOL -", "VOL +",
+    };
+    for (size_t index = 0U; index < MUSIC_CONTROL_COUNT; ++index) {
+        const bool track_control = index < 3U;
+        const int32_t button_w = track_control ? (portrait ? 64 : 80) : (portrait ? 100 : 128);
+        const int32_t button_h = track_control ? (portrait ? 72 : 62) : (portrait ? 82 : 64);
+        const int32_t gap = track_control ? (portrait ? 8 : 16) : (portrait ? 8 : 16);
+        const int32_t button_count = track_control ? 3 : 2;
+        const int32_t row_index = track_control ? (int32_t)index : (int32_t)(index - 3U);
+        const int32_t x = (s_ui.width - (button_w * button_count) -
+                           (gap * (button_count - 1))) / 2 +
+                          row_index * (button_w + gap);
+        const int32_t y = track_control ? (portrait ? 82 : 62) : (portrait ? 168 : 140);
+        lv_obj_t *control = panel(s_ui.music_page,
+                                  x,
+                                  y,
+                                  button_w,
+                                  button_h,
+                                  track_control ? COLOR_PANEL_ALT : COLOR_SETTINGS_LIST);
+        lv_obj_add_flag(control, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_border_width(control, 1, LV_PART_MAIN);
+        lv_obj_set_style_border_color(control, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
+        lv_obj_set_style_border_opa(control, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_radius(control, 8, LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(control, LV_OPA_40, LV_PART_MAIN | LV_STATE_DISABLED);
+        lv_obj_set_style_opa(control, LV_OPA_40, LV_PART_MAIN | LV_STATE_DISABLED);
+        lv_obj_add_event_cb(control, action_event_cb, LV_EVENT_CLICKED,
+                            (void *)(uintptr_t)music_actions[index]);
+        lv_obj_t *icon = label(control,
+                               0,
+                               track_control ? (portrait ? 12 : 7) : (portrait ? 17 : 9),
+                               button_w,
+                               26,
+                               &lv_font_montserrat_24);
+        lv_label_set_text(icon, music_icons[index]);
+        lv_obj_set_style_text_align(icon, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+        lv_obj_set_style_text_color(icon,
+                                    track_control ? COLOR_ACCENT : COLOR_WHITE,
+                                    LV_PART_MAIN);
+        lv_obj_t *caption = label(control,
+                                  0,
+                                  button_h - 22,
+                                  button_w,
+                                  16,
+                                  &lv_font_montserrat_14);
+        lv_label_set_text(caption, music_labels[index]);
+        lv_obj_set_style_text_align(caption, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+        lv_obj_set_style_text_color(caption, COLOR_MUTED, LV_PART_MAIN);
+        s_ui.music_controls[index] = control;
+    }
+    set_music_page(&s_ui.last_snapshot);
+#else
+    s_ui.music_page = NULL;
+    s_ui.music_status = NULL;
+    s_ui.music_title = NULL;
+    memset(s_ui.music_controls, 0, sizeof(s_ui.music_controls));
 #endif
 
     if (bms_native_landscape_enabled()) {
@@ -13433,7 +14023,8 @@ esp_err_t esp_bms_lvgl_ui_set_page(esp_bms_lvgl_page_t page, bool animated)
     ESP_RETURN_ON_FALSE(page == ESP_BMS_LVGL_PAGE_BATTERY ||
                             page == ESP_BMS_LVGL_PAGE_CONTROLLER ||
                             page == ESP_BMS_LVGL_PAGE_GPS ||
-                            page == ESP_BMS_LVGL_PAGE_CAST,
+                            page == ESP_BMS_LVGL_PAGE_CAST ||
+                            page == ESP_BMS_LVGL_PAGE_MUSIC,
                         ESP_ERR_INVALID_ARG, TAG, "invalid page");
 
     move_to_page(page, animated);
@@ -13452,6 +14043,7 @@ static bool native_focus_callback(lv_event_cb_t callback)
     return callback == quick_panel_item_event_cb ||
            callback == quick_level_event_cb ||
            callback == quick_edit_event_cb ||
+           callback == action_event_cb ||
            callback == settings_option_event_cb ||
            callback == settings_detail_action_event_cb ||
            callback == settings_bms_type_option_event_cb ||
@@ -13607,9 +14199,7 @@ static void native_gesture_change_page(int direction)
         return;
     }
     const int32_t current_x = page_target_scroll_x(s_ui.page);
-    const int32_t last_x = ESP_BMS_FEATURE_CAST
-                               ? page_target_scroll_x(ESP_BMS_LVGL_PAGE_CAST)
-                               : page_target_scroll_x(ESP_BMS_LVGL_PAGE_GPS);
+    const int32_t last_x = page_last_scroll_x();
     const int32_t target_x = clamp_i32(current_x + (direction * s_ui.width), 0, last_x);
     move_to_page(page_from_scroll_x(target_x), true);
 }
@@ -13673,6 +14263,7 @@ esp_bms_lvgl_data_source_t esp_bms_lvgl_ui_stable_data_source(void)
     case ESP_BMS_LVGL_PAGE_GPS:
         return ESP_BMS_LVGL_DATA_SOURCE_SPEED_DASHBOARD;
     case ESP_BMS_LVGL_PAGE_CAST:
+    case ESP_BMS_LVGL_PAGE_MUSIC:
         return ESP_BMS_LVGL_DATA_SOURCE_NONE;
     case ESP_BMS_LVGL_PAGE_BATTERY:
     default:
@@ -13727,7 +14318,8 @@ uint32_t esp_bms_lvgl_ui_simulator_object_count(void)
 uint8_t esp_bms_lvgl_ui_simulator_static_cache_count(void)
 {
     return (uint8_t)((s_ui.battery_static_cache.active ? 1U : 0U) +
-                     (s_ui.fireblade_static_cache.active ? 1U : 0U));
+                     (s_ui.fireblade_static_cache.active ? 1U : 0U) +
+                     (s_ui.speed_static_cache.active ? 1U : 0U));
 }
 
 static bool simulator_soc_color_smoke(void)
@@ -13884,9 +14476,15 @@ static bool simulator_page_transition_smoke(void)
     move_to_page(ESP_BMS_LVGL_PAGE_BATTERY, false);
     page_transition_show();
     lv_obj_update_layout(s_ui.pages);
-    const int32_t last_x = ESP_BMS_FEATURE_CAST
-                               ? page_target_scroll_x(ESP_BMS_LVGL_PAGE_CAST)
-                               : page_target_scroll_x(ESP_BMS_LVGL_PAGE_GPS);
+    const int32_t last_x = page_last_scroll_x();
+    const int32_t cast_x = s_ui.width * (s_ui.speed_page_renderable ? 2 : 1);
+    const int32_t music_x = cast_x + (s_ui.cast_page ? s_ui.width : 0);
+    const char *music_transition_title =
+#if ESP_BMS_FEATURE_BLE_MEDIA_HID && !ESP_BMS_FEATURE_PHONE_MEDIA
+        "HID";
+#else
+        "MUSIC";
+#endif
     const bool transition_pages =
         page_transition_active() &&
         lv_obj_get_style_bg_opa(s_ui.page_transition_battery, LV_PART_MAIN) == LV_OPA_TRANSP &&
@@ -13901,10 +14499,18 @@ static bool simulator_page_transition_smoke(void)
         lv_obj_has_flag(s_ui.gps_page, LV_OBJ_FLAG_HIDDEN) &&
         !lv_obj_has_flag(s_ui.page_transition_battery, LV_OBJ_FLAG_HIDDEN) &&
         !lv_obj_has_flag(s_ui.page_transition_gps, LV_OBJ_FLAG_HIDDEN) &&
+        (!s_ui.speed_page_renderable ||
+         lv_obj_get_x(s_ui.page_transition_gps) == s_ui.width) &&
+        (!s_ui.page_transition_cast ||
+         lv_obj_get_x(s_ui.page_transition_cast) == cast_x) &&
+        (!s_ui.page_transition_music ||
+         lv_obj_get_x(s_ui.page_transition_music) == music_x) &&
         simulator_tree_has_label(s_ui.page_transition_battery, "BMS") &&
         simulator_tree_has_label(s_ui.page_transition_gps, "仪表") &&
         (!s_ui.page_transition_cast ||
-         simulator_tree_has_label(s_ui.page_transition_cast, "投屏"));
+         simulator_tree_has_label(s_ui.page_transition_cast, "投屏")) &&
+        (!s_ui.page_transition_music ||
+         simulator_tree_has_label(s_ui.page_transition_music, music_transition_title));
     const bool scroll_bounds_preserved = lv_obj_get_scroll_right(s_ui.pages) == last_x;
     lv_timer_handler();
     lv_delay_ms(PAGE_TRANSITION_CARD_ANIM_MS + 20U);
@@ -13928,12 +14534,17 @@ static bool simulator_page_transition_smoke(void)
                           !lv_obj_has_flag(s_ui.gps_page, LV_OBJ_FLAG_HIDDEN) &&
                           (!s_ui.cast_page ||
                            !lv_obj_has_flag(s_ui.cast_page, LV_OBJ_FLAG_HIDDEN)) &&
+                          (!s_ui.music_page ||
+                           !lv_obj_has_flag(s_ui.music_page, LV_OBJ_FLAG_HIDDEN)) &&
                           lv_obj_has_flag(s_ui.page_transition_battery,
                                           LV_OBJ_FLAG_HIDDEN) &&
                           lv_obj_has_flag(s_ui.page_transition_gps,
                                           LV_OBJ_FLAG_HIDDEN) &&
                           (!s_ui.page_transition_cast ||
                            lv_obj_has_flag(s_ui.page_transition_cast,
+                                           LV_OBJ_FLAG_HIDDEN)) &&
+                          (!s_ui.page_transition_music ||
+                           lv_obj_has_flag(s_ui.page_transition_music,
                                            LV_OBJ_FLAG_HIDDEN));
     move_to_page(ESP_BMS_LVGL_PAGE_BATTERY, false);
     return transition_pages && scroll_bounds_preserved && compact && expanding && restored;
@@ -13959,9 +14570,7 @@ bool esp_bms_lvgl_ui_simulator_native_gesture_smoke(void)
         return false;
     }
 
-    const int32_t last_x = ESP_BMS_FEATURE_CAST
-                               ? page_target_scroll_x(ESP_BMS_LVGL_PAGE_CAST)
-                               : page_target_scroll_x(ESP_BMS_LVGL_PAGE_GPS);
+    const int32_t last_x = page_last_scroll_x();
     const esp_bms_lvgl_page_t next_page = page_from_scroll_x(clamp_i32(s_ui.width, 0, last_x));
     if (esp_bms_lvgl_ui_handle_native_gesture(
             ESP_BMS_LVGL_NATIVE_GESTURE_SWIPE_RIGHT) != ESP_OK ||
@@ -14095,7 +14704,35 @@ bool esp_bms_lvgl_ui_simulator_settings_scroll_smoke(void)
 #endif
 #if ESP_BMS_FEATURE_BMS
     settings_show_detail(SETTINGS_DETAIL_BMS);
+    s_ui.last_snapshot.bms_scan_candidate_count = 0U;
+    memset(s_ui.last_snapshot.bms_scan_candidates,
+           0,
+           sizeof(s_ui.last_snapshot.bms_scan_candidates));
     settings_show_bms_ble_popup(SETTINGS_BLE_SOURCE_BMS, false);
+    const uint32_t empty_bms_candidate_list_objects = esp_bms_lvgl_ui_simulator_object_count();
+    lv_obj_t *const initial_bms_ble_status = s_ui.settings_bms_ble_status;
+    lv_obj_t *const initial_bms_ble_list = s_ui.settings_bms_ble_list;
+    s_ui.last_snapshot.bms_scan_candidate_count = ESP_BMS_BMS_SCAN_MAX_CANDIDATES;
+    for (uint8_t index = 0; index < ESP_BMS_BMS_SCAN_MAX_CANDIDATES; ++index) {
+        esp_bms_bms_scan_candidate_t *candidate = &s_ui.last_snapshot.bms_scan_candidates[index];
+        (void)snprintf(candidate->mac,
+                       sizeof(candidate->mac),
+                       "00:11:22:33:44:%02X",
+                       (unsigned)index);
+        (void)snprintf(candidate->name, sizeof(candidate->name), "设备 %u", (unsigned)index + 1U);
+        candidate->rssi = (int8_t)(-45 - (int8_t)index);
+        candidate->has_name = true;
+    }
+    settings_bms_ble_refresh_rows(&s_ui.last_snapshot,
+                                  SETTINGS_BLE_SOURCE_BMS,
+                                  false,
+                                  "simulator-refresh");
+    const bool bms_candidate_list_compact =
+        esp_bms_lvgl_ui_simulator_object_count() == empty_bms_candidate_list_objects &&
+        s_ui.settings_bms_ble_status == initial_bms_ble_status &&
+        s_ui.settings_bms_ble_list == initial_bms_ble_list &&
+        !lv_obj_has_flag(s_ui.settings_bms_ble_list, LV_OBJ_FLAG_HIDDEN) &&
+        strstr(lv_label_get_text(s_ui.settings_bms_ble_list), "设备 6") != NULL;
     settings_navigate_back();
     const bool bms_back_cancels_scan =
         s_ui.settings_bms_view == (uint8_t)SETTINGS_BMS_VIEW_ROOT &&
@@ -14113,9 +14750,11 @@ bool esp_bms_lvgl_ui_simulator_settings_scroll_smoke(void)
 #else
     const bool bms_back_cancels_scan = true;
     const bool bms_confirm_back_cancels_scan = true;
+    const bool bms_candidate_list_compact = true;
 #endif
     show_dashboard_view();
-    return scrolled && bms_back_cancels_scan && bms_confirm_back_cancels_scan;
+    return scrolled && bms_back_cancels_scan && bms_confirm_back_cancels_scan &&
+           bms_candidate_list_compact;
 }
 
 esp_err_t esp_bms_lvgl_ui_simulator_open_boot_animation_settings(void)
