@@ -12619,18 +12619,25 @@ static void create_music_page_content(void)
     }
 #elif ESP_BMS_FEATURE_BLE_MEDIA_HID
     s_ui.music_title = NULL;
-    const int32_t status_w = portrait ? 156 : 128;
-    const int32_t status_y = portrait ? 30 : 16;
+    const bool native_320x480 = s_ui.width == 320 && s_ui.height == 480;
+    const int32_t status_w = native_320x480 ? 192 : portrait ? 156 : 128;
+    const int32_t status_y = native_320x480 ? 42 : portrait ? 30 : 16;
+    const int32_t status_h = native_320x480 ? 32 : 28;
     lv_obj_t *status_card = panel(s_ui.music_page,
                                   (s_ui.width - status_w) / 2,
                                   status_y,
                                   status_w,
-                                  28,
+                                  status_h,
                                   COLOR_PANEL_ALT);
     lv_obj_set_style_radius(status_card, 8, LV_PART_MAIN);
     lv_obj_set_style_border_width(status_card, 1, LV_PART_MAIN);
     lv_obj_set_style_border_color(status_card, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
-    s_ui.music_status = label(status_card, 4, 5, status_w - 8, 18, &lv_font_montserrat_14);
+    s_ui.music_status = label(status_card,
+                              4,
+                              native_320x480 ? 6 : 5,
+                              status_w - 8,
+                              18,
+                              &lv_font_montserrat_14);
     lv_obj_set_style_text_align(s_ui.music_status, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
 
     const esp_bms_lvgl_action_t music_actions[MUSIC_CONTROL_COUNT] = {
@@ -12652,16 +12659,24 @@ static void create_music_page_content(void)
     };
     for (size_t index = 0U; index < MUSIC_CONTROL_COUNT; ++index) {
         const bool track_control = index < 3U;
-        const int32_t button_w = track_control ? (portrait ? 64 : 80) : (portrait ? 100 : 128);
-        const int32_t button_h = track_control ? (portrait ? 72 : 62) : (portrait ? 82 : 64);
-        const int32_t gap = track_control ? (portrait ? 8 : 16) : (portrait ? 8 : 16);
+        const int32_t button_w = track_control
+                                     ? (native_320x480 ? 84 : portrait ? 64 : 80)
+                                     : (native_320x480 ? 132 : portrait ? 100 : 128);
+        const int32_t button_h = track_control
+                                     ? (native_320x480 ? 104 : portrait ? 72 : 62)
+                                     : (native_320x480 ? 120 : portrait ? 82 : 64);
+        const int32_t gap = track_control
+                                ? (native_320x480 ? 12 : portrait ? 8 : 16)
+                                : (native_320x480 ? 16 : portrait ? 8 : 16);
         const int32_t button_count = track_control ? 3 : 2;
         const int32_t row_index = track_control ? (int32_t)index : (int32_t)(index - 3U);
         const int32_t x = (s_ui.width - (button_w * button_count) -
                            (gap * (button_count - 1))) /
                               2 +
                           row_index * (button_w + gap);
-        const int32_t y = track_control ? (portrait ? 82 : 62) : (portrait ? 168 : 140);
+        const int32_t y = track_control
+                              ? (native_320x480 ? 136 : portrait ? 82 : 62)
+                              : (native_320x480 ? 280 : portrait ? 168 : 140);
         lv_obj_t *control = panel(s_ui.music_page,
                                   x,
                                   y,
@@ -12681,7 +12696,9 @@ static void create_music_page_content(void)
                             (void *)(uintptr_t)music_actions[index]);
         lv_obj_t *icon = label(control,
                                0,
-                               track_control ? (portrait ? 12 : 7) : (portrait ? 17 : 9),
+                               track_control
+                                   ? (native_320x480 ? 20 : portrait ? 12 : 7)
+                                   : (native_320x480 ? 28 : portrait ? 17 : 9),
                                button_w,
                                26,
                                &lv_font_montserrat_24);

@@ -36,6 +36,8 @@ static httpd_handle_t s_http_server;
 extern const char web_index_html_start[] asm("_binary_index_html_start");
 extern const char web_index_html_end[] asm("_binary_index_html_end");
 
+static esp_err_t network_stop_setup_services(esp_bms_idf_runtime_t *runtime);
+
 static void network_set_error(esp_bms_idf_runtime_t *runtime, const char *text)
 {
     if (!runtime || !text) {
@@ -160,6 +162,15 @@ static esp_err_t network_register_wifi_handlers(esp_bms_idf_runtime_t *runtime)
     return ESP_OK;
 }
 
+static void network_destroy_setup_ap_netif(esp_bms_idf_runtime_t *runtime)
+{
+    if (s_setup_ap_netif) {
+        esp_netif_destroy_default_wifi(s_setup_ap_netif);
+        s_setup_ap_netif = NULL;
+    }
+    RUNTIME_SET_FLAG(runtime, WIFI_STACK_READY, false);
+}
+
 static esp_err_t network_init_wifi_stack(esp_bms_idf_runtime_t *runtime)
 {
     if (!RUNTIME_FLAG(runtime, WIFI_STACK_READY)) {
@@ -235,6 +246,10 @@ static esp_err_t network_start_setup_ap(esp_bms_idf_runtime_t *runtime)
         ret = esp_wifi_start();
     }
     if (ret != ESP_OK) {
+        const esp_err_t cleanup_ret = network_stop_setup_services(runtime);
+        if (cleanup_ret != ESP_OK) {
+            ESP_LOGW(TAG, "[wifi] AP start cleanup failed: %s", esp_err_to_name(cleanup_ret));
+        }
         runtime->snapshot.wifi = ESP_BMS_WIFI_OFFLINE;
         RUNTIME_SET_SNAPSHOT_FLAG(runtime, SETUP_AP_ENABLED, false);
         network_set_error(runtime, "AP FAIL");
@@ -261,9 +276,9 @@ static esp_err_t network_start_http_server(esp_bms_idf_runtime_t *runtime)
     }
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.max_open_sockets = 4;
+    config.max_open_sockets = 2;
     config.max_uri_handlers = 5;
-    config.stack_size = 4096;
+    config.stack_size = 3584;
     config.task_priority = HTTP_SERVER_TASK_PRIORITY;
     config.lru_purge_enable = true;
     config.uri_match_fn = httpd_uri_match_wildcard;
@@ -316,11 +331,23 @@ static esp_err_t network_stop_setup_services(esp_bms_idf_runtime_t *runtime)
         s_http_server = NULL;
     }
     RUNTIME_SET_FLAG(runtime, HTTP_SERVER_STARTED, false);
-    if (RUNTIME_FLAG(runtime, SETUP_AP_STARTED)) {
-        const esp_err_t wifi_ret = esp_wifi_stop();
-        if (wifi_ret != ESP_OK && result == ESP_OK) {
-            result = wifi_ret;
+    if (RUNTIME_FLAG(runtime, WIFI_DRIVER_READY)) {
+        const esp_err_t stop_ret = esp_wifi_stop();
+        if (stop_ret != ESP_OK && stop_ret != ESP_ERR_WIFI_NOT_STARTED &&
+            stop_ret != ESP_ERR_WIFI_NOT_INIT && result == ESP_OK) {
+            result = stop_ret;
         }
+        const esp_err_t deinit_ret = esp_wifi_deinit();
+        if (deinit_ret != ESP_OK && deinit_ret != ESP_ERR_WIFI_NOT_INIT) {
+            if (result == ESP_OK) {
+                result = deinit_ret;
+            }
+        } else {
+            RUNTIME_SET_FLAG(runtime, WIFI_DRIVER_READY, false);
+        }
+    }
+    if (!RUNTIME_FLAG(runtime, WIFI_DRIVER_READY)) {
+        network_destroy_setup_ap_netif(runtime);
     }
     RUNTIME_SET_FLAG(runtime, SETUP_AP_STARTED, false);
     runtime->setup_ap_clients = 0U;

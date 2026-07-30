@@ -133,6 +133,7 @@ static const char *TAG = "bms_idf_runtime";
 #define BLE_MEDIA_HID_WORKER_STACK 2048U
 #define BLE_MEDIA_HID_WORKER_PRIORITY 4U
 #define BLE_MEDIA_HID_REPORT_RELEASE_DELAY_MS 30U
+#define BLE_HOST_MIN_INTERNAL_FREE_BYTES (24U * 1024U)
 
 static uint16_t runtime_cast_width(const esp_bms_idf_runtime_t *runtime)
 {
@@ -3089,7 +3090,8 @@ static esp_err_t runtime_http_status_handler(httpd_req_t *req, esp_bms_idf_runti
         (void)snprintf(speed, sizeof(speed), "%u.%u", value / 10U, value % 10U);
     }
 
-    char json[HTTP_JSON_MAX_LEN] = { 0 };
+    /* HTTPD serializes handlers; static avoids consuming the small task stack. */
+    static char json[HTTP_JSON_MAX_LEN];
     const char *capacity_state = runtime_bms_supports_capacity_estimate(runtime->bms_type)
                                      ? capacity_ready ? "ready" : "estimating"
                                      : "unsupported";
@@ -3148,7 +3150,7 @@ static esp_err_t runtime_http_bms_candidates_handler(httpd_req_t *req,
         memcpy(candidates, runtime->bms_scan_candidates, sizeof(candidates));
     }
 
-    char json[HTTP_JSON_MAX_LEN] = { 0 };
+    static char json[HTTP_JSON_MAX_LEN];
     size_t offset = 0;
     int written = snprintf(json,
                            sizeof(json),
@@ -3224,7 +3226,7 @@ static esp_err_t runtime_http_config_handler(httpd_req_t *req, esp_bms_idf_runti
     char bms_mac[24] = { 0 };
     runtime_config_bms_mac_json(runtime, bms_mac, sizeof(bms_mac));
 
-    char json[HTTP_JSON_MAX_LEN] = { 0 };
+    static char json[HTTP_JSON_MAX_LEN];
     const int written = snprintf(json,
                                  sizeof(json),
                                  "{\"brightness\":%u,\"volume\":%u,\"display_rotation\":\"%s\","
@@ -3388,7 +3390,8 @@ static bool runtime_set_pending_http_bms_scan(esp_bms_idf_runtime_t *runtime)
 
 static esp_err_t runtime_http_post_config_handler(httpd_req_t *req, esp_bms_idf_runtime_t *runtime)
 {
-    char body[HTTP_BODY_MAX_LEN] = { 0 };
+    static char body[HTTP_BODY_MAX_LEN];
+    memset(body, 0, sizeof(body));
     esp_err_t ret = runtime_http_read_body(req, body, sizeof(body));
     if (ret != ESP_OK) {
         return runtime_http_send_text(req, "400 Bad Request", "invalid body");
@@ -3480,7 +3483,8 @@ static esp_err_t runtime_http_post_config_handler(httpd_req_t *req, esp_bms_idf_
 
 static esp_err_t runtime_http_post_ap_password_handler(httpd_req_t *req, esp_bms_idf_runtime_t *runtime)
 {
-    char body[HTTP_BODY_MAX_LEN] = { 0 };
+    static char body[HTTP_BODY_MAX_LEN];
+    memset(body, 0, sizeof(body));
     esp_err_t ret = runtime_http_read_body(req, body, sizeof(body));
     if (ret != ESP_OK) {
         return runtime_http_send_text(req, "400 Bad Request", "invalid body");
@@ -3502,7 +3506,8 @@ static esp_err_t runtime_http_post_ap_password_handler(httpd_req_t *req, esp_bms
 
 static esp_err_t runtime_http_post_bms_bind_handler(httpd_req_t *req, esp_bms_idf_runtime_t *runtime)
 {
-    char body[HTTP_BODY_MAX_LEN] = { 0 };
+    static char body[HTTP_BODY_MAX_LEN];
+    memset(body, 0, sizeof(body));
     esp_err_t ret = runtime_http_read_body(req, body, sizeof(body));
     if (ret != ESP_OK) {
         return runtime_http_send_text(req, "400 Bad Request", "invalid body");
@@ -3528,7 +3533,8 @@ static esp_err_t runtime_http_post_bms_bind_handler(httpd_req_t *req, esp_bms_id
 static esp_err_t runtime_http_post_bms_scan_handler(httpd_req_t *req, esp_bms_idf_runtime_t *runtime)
 {
     if (req->content_len > 0U) {
-        char body[HTTP_BODY_MAX_LEN] = { 0 };
+        static char body[HTTP_BODY_MAX_LEN];
+        memset(body, 0, sizeof(body));
         if (runtime_http_read_body(req, body, sizeof(body)) != ESP_OK) {
             return runtime_http_send_text(req, "400 Bad Request", "invalid body");
         }
@@ -3612,7 +3618,8 @@ esp_err_t esp_bms_idf_runtime_http_cast_ws_handler(httpd_req_t *req)
         esp_bms_idf_runtime_stop_cast(runtime, "invalid frame");
         return ESP_ERR_INVALID_SIZE;
     }
-    uint8_t message[CAST_MESSAGE_MAX_BYTES] = { 0 };
+    static uint8_t message[CAST_MESSAGE_MAX_BYTES];
+    memset(message, 0, sizeof(message));
     frame.payload = message;
     ESP_RETURN_ON_ERROR(httpd_ws_recv_frame(req, &frame, frame.len), TAG, "read cast frame failed");
     runtime->cast_heartbeat_elapsed_ms = 0U;
@@ -3974,6 +3981,17 @@ static bool runtime_apply_pending_http_bms_scan(esp_bms_idf_runtime_t *runtime)
     }
 
     ESP_LOGI(TAG, "[bms] consume pending BLE scan request");
+    if (RUNTIME_FLAG(runtime, WIFI_STACK_READY) || RUNTIME_FLAG(runtime, WIFI_DRIVER_READY) ||
+        RUNTIME_FLAG(runtime, SETUP_AP_STARTED) || RUNTIME_FLAG(runtime, HTTP_SERVER_STARTED)) {
+        ESP_LOGI(TAG, "[bms] stopping setup services before BLE scan");
+        const esp_err_t stop_ret = esp_bms_idf_runtime_stop_setup_services(runtime);
+        if (stop_ret != ESP_OK) {
+            runtime_set_bms_info(runtime, "BLE FAIL");
+            ESP_LOGW(TAG, "[bms] setup service stop failed: %s", esp_err_to_name(stop_ret));
+            runtime_log_heap_state("bms_scan_blocked");
+            return true;
+        }
+    }
     RUNTIME_SET_FLAG(runtime, BMS_BIND_ACTIVE, false);
     const esp_err_t ret = runtime->bms_ble_driver && runtime->bms_ble_driver->start_for_bind
                               ? runtime->bms_ble_driver->start_for_bind(runtime)
@@ -3983,7 +4001,7 @@ static bool runtime_apply_pending_http_bms_scan(esp_bms_idf_runtime_t *runtime)
         return true;
     }
 
-    runtime_set_bms_info(runtime, "BLE FAIL");
+    runtime_set_bms_info(runtime, ret == ESP_ERR_NO_MEM ? "BLE MEM" : "BLE FAIL");
     ESP_LOGW(TAG, "[bms] BLE bind scan start failed: %s", esp_err_to_name(ret));
     runtime_log_heap_state("bms_scan_failed");
     return true;
@@ -4480,6 +4498,17 @@ static esp_err_t runtime_init_ble_host(esp_bms_idf_runtime_t *runtime)
     }
 
     ESP_RETURN_ON_ERROR(runtime_init_nvs(runtime), TAG, "NVS init failed");
+
+    const uint32_t internal_caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+    const size_t internal_free = heap_caps_get_free_size(internal_caps);
+    if (internal_free < BLE_HOST_MIN_INTERNAL_FREE_BYTES) {
+        ESP_LOGW(TAG,
+                 "[ble] host init skipped: internal8_free=%u required=%u",
+                 (unsigned)internal_free,
+                 (unsigned)BLE_HOST_MIN_INTERNAL_FREE_BYTES);
+        runtime_log_heap_state("ble_init_rejected");
+        return ESP_ERR_NO_MEM;
+    }
 
     runtime_log_heap_state("ble_init_pre");
     esp_err_t ret = nimble_port_init();
