@@ -59,13 +59,24 @@ typedef struct {
 typedef struct {
     uint8_t fix_dimension;
     uint8_t satellites_used;
+    uint16_t hdop_centi;
+    bool hdop_valid;
 } esp_bms_gps_gsa_t;
+
+enum {
+    ESP_BMS_GPS_CONSTELLATION_GPS = 1U << 0,
+    ESP_BMS_GPS_CONSTELLATION_BDS = 1U << 1,
+    ESP_BMS_GPS_CONSTELLATION_GLONASS = 1U << 2,
+};
 
 typedef struct {
     uint8_t sentence_count;
     uint8_t sentence_index;
     uint8_t satellites_visible;
     uint8_t max_cn0;
+    uint16_t cn0_sum;
+    uint8_t cn0_count;
+    uint8_t constellation_mask;
 } esp_bms_gps_gsv_t;
 
 void esp_bms_gps_stream_reset(esp_bms_gps_stream_t *stream);

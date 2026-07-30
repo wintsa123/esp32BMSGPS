@@ -77,7 +77,12 @@ typedef struct {
     uint8_t satellites_visible;
     uint8_t satellites_used;
     uint8_t max_cn0;
+    uint8_t average_cn0;
+    uint8_t constellation_mask;
     uint8_t fix_dimension;
+    uint16_t hdop_centi;
+    uint16_t cn0_sum;
+    uint8_t cn0_count;
     bool uart_ready;
     bool pps_active;
     bool pps_ever_seen;
@@ -86,6 +91,7 @@ typedef struct {
     bool gsa_seen;
     bool gsv_seen;
     bool satellite_info_valid;
+    bool hdop_valid;
     esp_bms_gps_motion_filter_t motion_filter;
     bool security_state_valid;
     bool security_configured;
@@ -108,7 +114,11 @@ static bool gps_invalidate_satellite_info(esp_bms_idf_runtime_t *runtime)
                                                       s_gps.satellites_visible,
                                                       s_gps.satellites_used,
                                                       s_gps.max_cn0,
+                                                      s_gps.average_cn0,
+                                                      s_gps.constellation_mask,
                                                       s_gps.fix_dimension,
+                                                      s_gps.hdop_centi,
+                                                      s_gps.hdop_valid,
                                                       false);
 }
 
@@ -468,34 +478,56 @@ static bool gps_apply_line(esp_bms_idf_runtime_t *runtime, const uint8_t *line, 
         s_gps.gsa_elapsed_ms = 0U;
         s_gps.satellites_used = gsa.satellites_used;
         s_gps.fix_dimension = gsa.fix_dimension;
+        s_gps.hdop_centi = gsa.hdop_centi;
+        s_gps.hdop_valid = gsa.hdop_valid;
         s_gps.satellite_info_valid = s_gps.gsv_seen &&
                                      s_gps.gsv_elapsed_ms < GPS_SATELLITE_TIMEOUT_MS;
         return esp_bms_idf_runtime_publish_gps_satellites(runtime,
                                                           s_gps.satellites_visible,
                                                           s_gps.satellites_used,
                                                           s_gps.max_cn0,
+                                                          s_gps.average_cn0,
+                                                          s_gps.constellation_mask,
                                                           s_gps.fix_dimension,
+                                                          s_gps.hdop_centi,
+                                                          s_gps.hdop_valid,
                                                           s_gps.satellite_info_valid);
     }
 
     esp_bms_gps_gsv_t gsv = { 0 };
     if (esp_bms_gps_stream_parse_gsv(line, line_len, &gsv)) {
+        const bool gsv_timed_out = !s_gps.gsv_seen ||
+                                   s_gps.gsv_elapsed_ms >= GPS_SATELLITE_TIMEOUT_MS;
         s_gps.gsv_seen = true;
         s_gps.gsv_elapsed_ms = 0U;
         s_gps.satellites_visible = gsv.satellites_visible;
+        if (gsv_timed_out) {
+            s_gps.constellation_mask = 0U;
+        }
+        s_gps.constellation_mask |= gsv.constellation_mask;
         if (gsv.sentence_index == 1U) {
             s_gps.max_cn0 = 0U;
+            s_gps.cn0_sum = 0U;
+            s_gps.cn0_count = 0U;
         }
         if (gsv.max_cn0 > s_gps.max_cn0) {
             s_gps.max_cn0 = gsv.max_cn0;
         }
+        s_gps.cn0_sum = (uint16_t)(s_gps.cn0_sum + gsv.cn0_sum);
+        s_gps.cn0_count = (uint8_t)(s_gps.cn0_count + gsv.cn0_count);
+        s_gps.average_cn0 = s_gps.cn0_count == 0U ? 0U :
+                            (uint8_t)(s_gps.cn0_sum / s_gps.cn0_count);
         s_gps.satellite_info_valid = s_gps.gsa_seen &&
                                      s_gps.gsa_elapsed_ms < GPS_SATELLITE_TIMEOUT_MS;
         return esp_bms_idf_runtime_publish_gps_satellites(runtime,
                                                           s_gps.satellites_visible,
                                                           s_gps.satellites_used,
                                                           s_gps.max_cn0,
+                                                          s_gps.average_cn0,
+                                                          s_gps.constellation_mask,
                                                           s_gps.fix_dimension,
+                                                          s_gps.hdop_centi,
+                                                          s_gps.hdop_valid,
                                                           s_gps.satellite_info_valid);
     }
 

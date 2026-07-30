@@ -363,7 +363,7 @@ _Static_assert(sizeof(esp_bms_boot_animation_style_t) == 4 &&
                    ESP_BMS_BOOT_ANIMATION_GAUGE_S1000RR == 1 &&
                    ESP_BMS_BOOT_ANIMATION_GAUGE_HONDA_FIREBLADE == 2,
                "esp_bms_boot_animation_style_t ABI changed; update runtime consumers too");
-_Static_assert(sizeof(esp_bms_dashboard_snapshot_t) == 1200,
+_Static_assert(sizeof(esp_bms_dashboard_snapshot_t) == 1208,
                "dashboard snapshot ABI size changed; update all C consumers too");
 _Static_assert(ESP_BMS_LVGL_ACTION_NONE == 0,
                "esp_bms_lvgl_action_t value changed; update C action consumers too");
@@ -3597,7 +3597,7 @@ static const settings_option_t SETTINGS_OPTIONS[] = {
     { SETTINGS_DETAIL_BLUETOOTH, "蓝牙", "附近可见", QUICK_BLUETOOTH_SYMBOL, &bluetoothon },
 #endif
 #if ESP_BMS_FEATURE_BMS
-    { SETTINGS_DETAIL_BMS, "保护板设置", "扫描绑定", LV_SYMBOL_CHARGE, &lv_font_montserrat_24 },
+    { SETTINGS_DETAIL_BMS, "BMS设置", "扫描绑定", LV_SYMBOL_CHARGE, &lv_font_montserrat_24 },
 #endif
 #if ESP_BMS_FEATURE_GPS
     { SETTINGS_DETAIL_GPS, "GPS", "定位与搜星", LV_SYMBOL_GPS, &lv_font_montserrat_24 },
@@ -5130,7 +5130,7 @@ static void settings_show_bms_detail(void)
            sizeof(s_ui.settings_preset_range_rollers));
     s_ui.settings_bms_ble_status = NULL;
     lv_obj_clean(s_ui.settings_detail);
-    label_set_text_if_changed(s_ui.settings_detail_title, "保护板设置");
+    label_set_text_if_changed(s_ui.settings_detail_title, "BMS设置");
     lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
 
     settings_bms_ble_format_status(ble_status,
@@ -5227,7 +5227,7 @@ static void settings_show_bms_detail(void)
                                                   &capacity_estimate_row);
     lv_obj_remove_flag(capacity_box, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_state(capacity_box, LV_STATE_DISABLED);
-    lv_obj_set_style_opa(capacity_box, LV_OPA_50, LV_PART_MAIN);
+    lv_obj_set_style_text_opa(capacity_box, LV_OPA_40, LV_PART_MAIN | LV_STATE_DISABLED);
 }
 
 static const char CONTROLLER_RIM_OPTIONS[] =
@@ -6070,15 +6070,6 @@ static void settings_controller_style_row(lv_obj_t *parent,
     lv_obj_set_style_text_color(arrow, COLOR_SETTINGS_ACCENT, LV_PART_MAIN);
 }
 
-static const char *settings_gps_module_status(const esp_bms_dashboard_snapshot_t *snapshot)
-{
-    if (snapshot->gps_module_state == (uint8_t)ESP_BMS_GPS_MODULE_AVAILABLE) {
-        return "READY";
-    }
-    return snapshot->gps_module_state == (uint8_t)ESP_BMS_GPS_MODULE_PROBING ? "CHECK" :
-                                                                            "OFFLINE";
-}
-
 static void settings_show_gps_detail(void)
 {
     const int32_t card_x = SETTINGS_LIST_MARGIN_X;
@@ -6086,42 +6077,73 @@ static void settings_show_gps_detail(void)
     const int32_t row_h = s_ui.width < s_ui.height ? SETTINGS_DETAIL_ROW_H_PORTRAIT :
                                                      SETTINGS_DETAIL_ROW_H_LANDSCAPE;
     const esp_bms_dashboard_snapshot_t *snapshot = settings_current_snapshot();
-    char local_time[12] = { 0 };
-    char satellites_visible[12] = { 0 };
-    char satellites_used[12] = { 0 };
-    char max_cn0[16] = { 0 };
-    char fix_dimension[8] = { 0 };
+    char fix_mode[32] = { 0 };
+    char satellite_system[32] = "等待搜星";
+    char satellites[48] = { 0 };
+    char average_snr[64] = { 0 };
+    char hdop[32] = { 0 };
     const settings_detail_row_t rows[] = {
-        { "状态", settings_gps_module_status(snapshot), ESP_BMS_LVGL_ACTION_NONE,
+        { "定位模式", fix_mode, ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
+        { "卫星系统", satellite_system, ESP_BMS_LVGL_ACTION_NONE,
           SETTINGS_SYSTEM_VIEW_ROOT },
-        { "定位", SNAPSHOT_FLAG(snapshot, GPS_FIX_VALID) ? "FIX" : "NO FIX",
-          ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
-        { "TIME", local_time, ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
-        { "可见卫星", satellites_visible, ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
-        { "定位卫星", satellites_used, ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
-        { "最强 C/N0", max_cn0, ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
-        { "定位维度", fix_dimension, ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
+        { "卫星", satellites, ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
+        { "平均 SNR 信噪比", average_snr, ESP_BMS_LVGL_ACTION_NONE,
+          SETTINGS_SYSTEM_VIEW_ROOT },
+        { "HDOP", hdop, ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
     };
 
-    if (snapshot->gps_local_time_valid) {
-        (void)snprintf(local_time, sizeof(local_time), "%02u:%02u",
-                       snapshot->gps_local_hour, snapshot->gps_local_minute);
-    } else {
-        (void)snprintf(local_time, sizeof(local_time), "--:--");
-    }
     if (snapshot->gps_satellite_info_valid) {
-        (void)snprintf(satellites_visible, sizeof(satellites_visible), "%u",
-                       snapshot->gps_satellites_visible);
-        (void)snprintf(satellites_used, sizeof(satellites_used), "%u",
-                       snapshot->gps_satellites_used);
-        (void)snprintf(max_cn0, sizeof(max_cn0), "%u dBHz", snapshot->gps_max_cn0);
-        (void)snprintf(fix_dimension, sizeof(fix_dimension), "%uD",
-                       snapshot->gps_fix_dimension);
+        const char *const fix_text = snapshot->gps_fix_dimension == 3U ?
+                                         "3D 定位，测速精准" :
+                                     snapshot->gps_fix_dimension == 2U ?
+                                         "2D 定位，测速偏差大" : "无效定位";
+        const char *const satellite_hint = snapshot->gps_satellites_used < 5U ?
+                                             "，少于5颗不稳" : "，测速稳定";
+        const char *const snr_hint = snapshot->gps_average_cn0 < 10U ?
+                                       "，信号差易漂移" : "";
+        switch (snapshot->gps_constellation_mask) {
+        case 0x07U:
+            (void)snprintf(satellite_system, sizeof(satellite_system), "GPS+BDS+GLONASS 三模");
+            break;
+        case 0x03U:
+            (void)snprintf(satellite_system, sizeof(satellite_system), "GPS+北斗 双模");
+            break;
+        case 0x01U:
+            (void)snprintf(satellite_system, sizeof(satellite_system), "单 GPS");
+            break;
+        case 0x02U:
+            (void)snprintf(satellite_system, sizeof(satellite_system), "北斗 单模");
+            break;
+        case 0x04U:
+            (void)snprintf(satellite_system, sizeof(satellite_system), "GLONASS 单模");
+            break;
+        default:
+            break;
+        }
+        (void)snprintf(fix_mode, sizeof(fix_mode), "%s", fix_text);
+        (void)snprintf(satellites, sizeof(satellites), "%u 可见 / %u 有效%s",
+                       snapshot->gps_satellites_visible,
+                       snapshot->gps_satellites_used,
+                       satellite_hint);
+        (void)snprintf(average_snr, sizeof(average_snr), "%u dBHz，越大越好%s",
+                       snapshot->gps_average_cn0, snr_hint);
+        if (snapshot->gps_hdop_valid) {
+            const char *const hdop_hint = snapshot->gps_hdop_centi < 150U ?
+                                            "，优秀" :
+                                        snapshot->gps_hdop_centi > 400U ?
+                                            "，不建议测加速" : "";
+            (void)snprintf(hdop, sizeof(hdop), "%u.%02u%s",
+                           snapshot->gps_hdop_centi / 100U,
+                           snapshot->gps_hdop_centi % 100U,
+                           hdop_hint);
+        } else {
+            (void)snprintf(hdop, sizeof(hdop), "--");
+        }
     } else {
-        (void)snprintf(satellites_visible, sizeof(satellites_visible), "--");
-        (void)snprintf(satellites_used, sizeof(satellites_used), "--");
-        (void)snprintf(max_cn0, sizeof(max_cn0), "--");
-        (void)snprintf(fix_dimension, sizeof(fix_dimension), "--");
+        (void)snprintf(fix_mode, sizeof(fix_mode), "无效定位");
+        (void)snprintf(satellites, sizeof(satellites), "--");
+        (void)snprintf(average_snr, sizeof(average_snr), "--");
+        (void)snprintf(hdop, sizeof(hdop), "--");
     }
 
     lv_obj_clean(s_ui.settings_detail);
@@ -6134,7 +6156,11 @@ static void settings_show_gps_detail(void)
                                         row_count);
     size_t row_index = 0U;
     for (size_t index = 0U; index < ARRAY_SIZE(rows); ++index) {
-        settings_detail_row(card, 0, (int32_t)row_index++ * row_h, card_w, row_h, &rows[index]);
+        lv_obj_t *row =
+            settings_detail_row(card, 0, (int32_t)row_index++ * row_h, card_w, row_h, &rows[index]);
+        lv_obj_remove_flag(row, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_state(row, LV_STATE_DISABLED);
+        lv_obj_set_style_text_opa(row, LV_OPA_40, LV_PART_MAIN | LV_STATE_DISABLED);
     }
     lv_obj_update_layout(s_ui.settings_detail);
     lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
@@ -11389,7 +11415,13 @@ static void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapsho
                                   s_ui.last_snapshot.gps_satellites_used !=
                                       snapshot->gps_satellites_used ||
                                   s_ui.last_snapshot.gps_max_cn0 != snapshot->gps_max_cn0 ||
-                                  s_ui.last_snapshot.gps_fix_dimension != snapshot->gps_fix_dimension;
+                                  s_ui.last_snapshot.gps_average_cn0 !=
+                                      snapshot->gps_average_cn0 ||
+                                  s_ui.last_snapshot.gps_constellation_mask !=
+                                      snapshot->gps_constellation_mask ||
+                                  s_ui.last_snapshot.gps_fix_dimension != snapshot->gps_fix_dimension ||
+                                  s_ui.last_snapshot.gps_hdop_centi != snapshot->gps_hdop_centi ||
+                                  s_ui.last_snapshot.gps_hdop_valid != snapshot->gps_hdop_valid;
     const bool controller_ble_changed =
         !had_last_snapshot ||
         SNAPSHOT_FLAG(&s_ui.last_snapshot, CONTROLLER_ONLINE) !=

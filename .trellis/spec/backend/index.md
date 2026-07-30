@@ -22,6 +22,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Hardware, Build, and Flash](./hardware-build-flash.md) | GPIO ownership, board conflicts, toolchains, partitions, and supported flash paths | Active |
 | [FarDriver Gear Telemetry](./fardriver-gear-telemetry.md) | Compact-frame gear extraction and dashboard display contract | Active |
 | [LVGL Carousel Drag Diagnostics](./lvgl-carousel-drag-diagnostics.md) | Default invalidation policy and A/B diagnostic build contract | Active |
+| [GPS Diagnostic Telemetry](./gps-diagnostic-telemetry.md) | GSA/GSV parsing, snapshot projection, and settings-page status contract | Active |
 
 ---
 

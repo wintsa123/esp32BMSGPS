@@ -315,7 +315,10 @@ typedef struct {
     uint8_t gps_satellites_visible;
     uint8_t gps_satellites_used;
     uint8_t gps_max_cn0;
+    uint8_t gps_average_cn0;
+    uint8_t gps_constellation_mask;
     uint8_t gps_fix_dimension;
+    uint16_t gps_hdop_centi;
     uint8_t boot_animation_style;
     uint8_t bms_protection_count;
     char bms_protection_codes[ESP_BMS_BMS_CODE_MAX_COUNT][ESP_BMS_BMS_CODE_TEXT_LEN];
@@ -363,6 +366,7 @@ typedef struct {
     bool gps_local_time_valid;
     bool gps_local_date_valid;
     bool gps_satellite_info_valid;
+    bool gps_hdop_valid;
     bool bms_running_time_valid;
     bool average_speed_valid;
     bool average_consumption_valid;

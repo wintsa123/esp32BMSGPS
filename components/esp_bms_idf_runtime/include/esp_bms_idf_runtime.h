@@ -339,7 +339,11 @@ bool esp_bms_idf_runtime_publish_gps_satellites(esp_bms_idf_runtime_t *runtime,
                                                 uint8_t satellites_visible,
                                                 uint8_t satellites_used,
                                                 uint8_t max_cn0,
+                                                uint8_t average_cn0,
+                                                uint8_t constellation_mask,
                                                 uint8_t fix_dimension,
+                                                uint16_t hdop_centi,
+                                                bool hdop_valid,
                                                 bool valid);
 bool esp_bms_idf_runtime_timeout_gps(esp_bms_idf_runtime_t *runtime);
 uint8_t esp_bms_idf_runtime_take_connection_audio_events(esp_bms_idf_runtime_t *runtime);

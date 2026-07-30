@@ -99,19 +99,37 @@ static void test_gsa_gsv_satellite_parsing(void)
     size_t line_len = nmea_with_checksum(
         line, sizeof(line), "GNGSA,A,3,03,07,08,11,16,22,,,,,,,1.2,0.8,0.9,1");
     assert(esp_bms_gps_stream_parse_gsa((const uint8_t *)line, line_len, &gsa));
-    assert(gsa.fix_dimension == 3U && gsa.satellites_used == 6U);
+    assert(gsa.fix_dimension == 3U && gsa.satellites_used == 6U &&
+           gsa.hdop_valid && gsa.hdop_centi == 80U);
 
     line_len = nmea_with_checksum(
         line, sizeof(line), "GPGSA,A,2,,,,,,,,,,,,,2.1,1.3,1.7");
     assert(esp_bms_gps_stream_parse_gsa((const uint8_t *)line, line_len, &gsa));
-    assert(gsa.fix_dimension == 2U && gsa.satellites_used == 0U);
+    assert(gsa.fix_dimension == 2U && gsa.satellites_used == 0U &&
+           gsa.hdop_valid && gsa.hdop_centi == 130U);
 
     line_len = nmea_with_checksum(
         line, sizeof(line), "GNGSV,2,1,08,03,45,120,31,07,50,230,,08,22,050,44,11,18,300,27,1");
     assert(line_len > 64U);
     assert(esp_bms_gps_stream_parse_gsv((const uint8_t *)line, line_len, &gsv));
     assert(gsv.sentence_count == 2U && gsv.sentence_index == 1U &&
-           gsv.satellites_visible == 8U && gsv.max_cn0 == 44U);
+           gsv.satellites_visible == 8U && gsv.max_cn0 == 44U &&
+           gsv.cn0_sum == 102U && gsv.cn0_count == 3U &&
+           gsv.constellation_mask == ESP_BMS_GPS_CONSTELLATION_GPS);
+
+    line_len = nmea_with_checksum(line,
+                                  sizeof(line),
+                                  "BDGSV,1,1,04,201,45,120,31,202,50,230,26,203,22,050,44,204,18,300,27");
+    assert(esp_bms_gps_stream_parse_gsv((const uint8_t *)line, line_len, &gsv));
+    assert(gsv.constellation_mask == ESP_BMS_GPS_CONSTELLATION_BDS);
+
+    line_len = nmea_with_checksum(line, sizeof(line), "GNGSV,1,1,01,65,45,120,31");
+    assert(esp_bms_gps_stream_parse_gsv((const uint8_t *)line, line_len, &gsv));
+    assert(gsv.constellation_mask == ESP_BMS_GPS_CONSTELLATION_GLONASS);
+
+    line_len = nmea_with_checksum(line, sizeof(line), "GNGSV,1,1,01,301,45,120,31");
+    assert(esp_bms_gps_stream_parse_gsv((const uint8_t *)line, line_len, &gsv));
+    assert(gsv.constellation_mask == 0U);
 
     line[line_len - 1U] = line[line_len - 1U] == '0' ? '1' : '0';
     assert(!esp_bms_gps_stream_parse_gsv((const uint8_t *)line, line_len, &gsv));

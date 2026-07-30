@@ -158,6 +158,15 @@ static void init_snapshot(host_app_t *app)
     snapshot->active_speed_source = ESP_BMS_SPEED_SOURCE_GPS;
     snapshot->speed_dashboard_style = ESP_BMS_SPEED_DASHBOARD_STYLE_HONDA_FIREBLADE;
     snapshot->gps_module_state = (uint8_t)ESP_BMS_GPS_MODULE_AVAILABLE;
+    snapshot->gps_satellites_visible = 12U;
+    snapshot->gps_satellites_used = 7U;
+    snapshot->gps_max_cn0 = 42U;
+    snapshot->gps_average_cn0 = 28U;
+    snapshot->gps_constellation_mask = 0x07U;
+    snapshot->gps_fix_dimension = 3U;
+    snapshot->gps_hdop_centi = 85U;
+    snapshot->gps_satellite_info_valid = true;
+    snapshot->gps_hdop_valid = true;
     snapshot->boot_animation_style = (uint8_t)ESP_BMS_BOOT_ANIMATION_CHARGE;
     snapshot->average_speed_valid = true;
     snapshot->average_consumption_valid = true;

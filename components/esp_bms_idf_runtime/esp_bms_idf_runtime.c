@@ -1311,7 +1311,11 @@ bool esp_bms_idf_runtime_publish_gps_satellites(esp_bms_idf_runtime_t *runtime,
                                                 uint8_t satellites_visible,
                                                 uint8_t satellites_used,
                                                 uint8_t max_cn0,
+                                                uint8_t average_cn0,
+                                                uint8_t constellation_mask,
                                                 uint8_t fix_dimension,
+                                                uint16_t hdop_centi,
+                                                bool hdop_valid,
                                                 bool valid)
 {
     if (!runtime) {
@@ -1321,12 +1325,20 @@ bool esp_bms_idf_runtime_publish_gps_satellites(esp_bms_idf_runtime_t *runtime,
     const bool changed = snapshot->gps_satellites_visible != satellites_visible ||
                          snapshot->gps_satellites_used != satellites_used ||
                          snapshot->gps_max_cn0 != max_cn0 ||
+                         snapshot->gps_average_cn0 != average_cn0 ||
+                         snapshot->gps_constellation_mask != constellation_mask ||
                          snapshot->gps_fix_dimension != fix_dimension ||
+                         snapshot->gps_hdop_centi != hdop_centi ||
+                         snapshot->gps_hdop_valid != hdop_valid ||
                          snapshot->gps_satellite_info_valid != valid;
     snapshot->gps_satellites_visible = satellites_visible;
     snapshot->gps_satellites_used = satellites_used;
     snapshot->gps_max_cn0 = max_cn0;
+    snapshot->gps_average_cn0 = average_cn0;
+    snapshot->gps_constellation_mask = constellation_mask;
     snapshot->gps_fix_dimension = fix_dimension;
+    snapshot->gps_hdop_centi = hdop_centi;
+    snapshot->gps_hdop_valid = hdop_valid;
     snapshot->gps_satellite_info_valid = valid;
     return changed;
 }
