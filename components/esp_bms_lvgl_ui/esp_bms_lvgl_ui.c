@@ -4550,6 +4550,7 @@ static void settings_swipe_event_cb(lv_event_t *event)
             settings_navigate_back();
             lv_indev_wait_release(lv_indev_active());
         }
+        UI_SET_FLAG(SETTINGS_SWIPE_CONSUMED, false);
         s_ui.settings_swipe_drag_dx = 0;
         s_ui.settings_nav_drag_anchor_y = 0;
     }
@@ -6345,6 +6346,19 @@ static bool settings_detail_action_switch_on(esp_bms_lvgl_action_t action)
     return false;
 }
 
+static void settings_detail_switch_event_cb(lv_event_t *event)
+{
+    if (lv_event_get_code(event) != LV_EVENT_CLICKED) {
+        return;
+    }
+    /* Forward the click to the parent row so settings_detail_action_event_cb fires. */
+    lv_obj_t *track = lv_event_get_current_target(event);
+    lv_obj_t *box = lv_obj_get_parent(track);
+    if (box) {
+        lv_obj_send_event(box, LV_EVENT_CLICKED, NULL);
+    }
+}
+
 static void settings_detail_switch(lv_obj_t *parent, int32_t x, int32_t y, bool enabled)
 {
     const int32_t w = settings_scaled_px(34);
@@ -6360,7 +6374,9 @@ static void settings_detail_switch(lv_obj_t *parent, int32_t x, int32_t y, bool 
     lv_obj_set_style_border_width(track, 1, LV_PART_MAIN);
     lv_obj_set_style_border_color(track, enabled ? COLOR_SWITCH_ACTIVE : COLOR_SETTINGS_BORDER, LV_PART_MAIN);
     lv_obj_set_style_border_opa(track, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_clear_flag(track, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(track, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(track, settings_detail_switch_event_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_clear_flag(track, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t *thumb = lv_obj_create(track);
     clear_style(thumb);
@@ -8559,7 +8575,6 @@ static void set_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
         bms_native_set_safety_status(snapshot);
     }
 
-    set_setup_ap(snapshot);
     set_quick_brightness_value(snapshot->brightness_percent, false, true);
     set_quick_volume_value(snapshot->volume_percent, false, true);
     update_quick_item_colors(snapshot);
@@ -11437,6 +11452,7 @@ static void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapsho
     set_header(snapshot);
     speed_page_sync(snapshot);
     set_dashboard(snapshot);
+    set_setup_ap(snapshot);
     speed_dashboard_style_apply(snapshot);
 #if ESP_BMS_FEATURE_DASHBOARD_CONTROLLER
     if (dashboard_page_content_ready(ESP_BMS_LVGL_PAGE_GPS)) {
