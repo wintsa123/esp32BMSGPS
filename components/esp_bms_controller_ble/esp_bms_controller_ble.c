@@ -215,7 +215,10 @@ static bool controller_name_copy(char *out, size_t out_len, const uint8_t *name,
     for (size_t index = 0U; index < limit && copied + 1U < out_len; ++index) {
         const uint8_t value = name[index];
         if (value < 0x20U || value > 0x7EU || value == '"' || value == '\\') {
-            break;
+            /* Skip characters without a TFT glyph (e.g. UTF-8 Chinese)
+             * instead of truncating, so the printable ASCII part of the
+             * name is still shown. */
+            continue;
         }
         out[copied++] = (char)value;
     }
@@ -608,9 +611,11 @@ static int controller_scan_gap_event(struct ble_gap_event *event, void *arg)
     switch (event->type) {
     case BLE_GAP_EVENT_DISC: {
         struct ble_hs_adv_fields fields = { 0 };
-        if (ble_hs_adv_parse_fields(&fields, event->disc.data, event->disc.length_data) != 0) {
-            return 0;
-        }
+        /* Tolerate malformed trailing fields from some peripherals: the
+         * parse may fail after the name was already filled in. A scan
+         * response arrives as its own DISCOVERY event, so both the adv
+         * data and the scan response data go through this same path. */
+        (void)ble_hs_adv_parse_fields(&fields, event->disc.data, event->disc.length_data);
         char mac[sizeof(runtime->controller_bound_mac)] = { 0 };
         char name[ESP_BMS_IDF_BMS_SCAN_NAME_LEN + 1U] = { 0 };
         controller_addr_to_mac_text(event->disc.addr.val, mac, sizeof(mac));

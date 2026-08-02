@@ -168,6 +168,7 @@ LV_FONT_DECLARE(settings_zh_18);
 #define FIREBLADE_GEAR_RADIUS 29
 #define BOOT_CHARGE_SEGMENT_COUNT 10U
 #define BOOT_BRAND_PART_COUNT 12U
+#define OTA_BAR_SEGMENT_COUNT 20U
 #define BOOT_GAUGE_BMW_RR_PERCENT 32U
 #define BOOT_GAUGE_BRAND_INTRO_PERCENT 40U
 #define DASHBOARD_CELL_KEY_BITMAP_W 28
@@ -233,6 +234,7 @@ typedef enum {
     UI_STATE_FLAG_INITIALIZED = UINT32_C(1) << 26,
     UI_STATE_FLAG_QUICK_ROTATE_TOAST_ACTIVE = UINT32_C(1) << 27,
     UI_STATE_FLAG_QUICK_LEVEL_POINTER_ACTIVE = UINT32_C(1) << 28,
+    UI_STATE_FLAG_OTA_ACTIVE = UINT32_C(1) << 29,
 } ui_state_flag_t;
 
 typedef enum {
@@ -463,6 +465,11 @@ typedef struct {
     lv_obj_t *boot_rr_mark;
     boot_brand_part_t boot_brand_parts[BOOT_BRAND_PART_COUNT];
     lv_obj_t *boot_charge_segments[BOOT_CHARGE_SEGMENT_COUNT];
+    lv_obj_t *ota_overlay;
+    lv_obj_t *ota_status;
+    lv_obj_t *ota_percent;
+    lv_obj_t *ota_warning;
+    lv_obj_t *ota_bar_segments[OTA_BAR_SEGMENT_COUNT];
     lv_obj_t *settings_page;
     lv_obj_t *settings_root;
     lv_obj_t *settings_carousel;
@@ -613,6 +620,9 @@ typedef struct {
     char gps_uptime_buf[24];
     char boot_status_buf[24];
     char boot_progress_buf[8];
+    char ota_status_buf[24];
+    char ota_percent_buf[8];
+    char ota_warning_buf[32];
     char fireblade_time_buf[8];
     char fireblade_controller_temp_buf[24];
     char fireblade_motor_temp_buf[8];
@@ -673,6 +683,7 @@ typedef struct {
     bool native_bms_dashboard;
     bool native_fireblade_dashboard;
     bool boot_active;
+    bool ota_active;
     bool page_transition_expanding;
     bool page_scroll_programmatic;
     bool page_scroll_gesture_active;
@@ -2085,7 +2096,15 @@ static void label_set_text_if_changed(lv_obj_t *obj, const char *text)
 
 static void bms_label_set(lv_obj_t *obj, char *buffer, size_t buffer_len, const char *text)
 {
-    if (!obj || !buffer || buffer_len == 0U || !text || strcmp(buffer, text) == 0) {
+    if (!obj || !buffer || buffer_len == 0U || !text) {
+        return;
+    }
+    /* Only skip when the label already points at the buffer and the text is
+     * unchanged. After a page release/recreate the label holds the LVGL
+     * default placeholder text while the buffer still holds the old value, so
+     * a plain strcmp() would wrongly skip re-applying the text and the value
+     * would be replaced by the placeholder. */
+    if (lv_label_get_text(obj) == buffer && strcmp(buffer, text) == 0) {
         return;
     }
     (void)snprintf(buffer, buffer_len, "%s", text);
@@ -8586,7 +8605,13 @@ static void controller_label_set(lv_obj_t *label_obj,
                                  size_t buffer_len,
                                  const char *text)
 {
-    if (!label_obj || strcmp(buffer, text) == 0) {
+    if (!label_obj) {
+        return;
+    }
+    /* Skip only if the label already points at the buffer and the text is
+     * unchanged; after a page release/recreate the label holds the LVGL
+     * default placeholder text while the buffer still holds the old value. */
+    if (lv_label_get_text(label_obj) == buffer && strcmp(buffer, text) == 0) {
         return;
     }
     snprintf(buffer, buffer_len, "%s", text);
@@ -9159,7 +9184,13 @@ static void gps_label_set(lv_obj_t *label_obj,
                           size_t buffer_len,
                           const char *text)
 {
-    if (!label_obj || strcmp(buffer, text) == 0) {
+    if (!label_obj) {
+        return;
+    }
+    /* Skip only if the label already points at the buffer and the text is
+     * unchanged; after a page release/recreate the label holds the LVGL
+     * default placeholder text while the buffer still holds the old value. */
+    if (lv_label_get_text(label_obj) == buffer && strcmp(buffer, text) == 0) {
         return;
     }
     snprintf(buffer, buffer_len, "%s", text);
@@ -14350,6 +14381,169 @@ esp_err_t esp_bms_lvgl_ui_boot_finish(const esp_bms_dashboard_snapshot_t *snapsh
     return ESP_OK;
 }
 
+static void ota_overlay_delete(void)
+{
+    if (s_ui.ota_overlay) {
+        lv_obj_delete(s_ui.ota_overlay);
+    }
+    s_ui.ota_overlay = NULL;
+    s_ui.ota_status = NULL;
+    s_ui.ota_percent = NULL;
+    s_ui.ota_warning = NULL;
+    memset(s_ui.ota_bar_segments, 0, sizeof(s_ui.ota_bar_segments));
+    s_ui.ota_active = false;
+    UI_SET_FLAG(OTA_ACTIVE, false);
+}
+
+static lv_obj_t *ota_overlay_create(void)
+{
+    ota_overlay_delete();
+    lv_obj_t *overlay = lv_obj_create(s_ui.root);
+    clear_style(overlay);
+    lv_obj_set_pos(overlay, 0, 0);
+    lv_obj_set_size(overlay, s_ui.width, s_ui.height);
+    lv_obj_set_style_bg_color(overlay, COLOR_DASHBOARD_BG, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(overlay, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_add_flag(overlay, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_FLOATING);
+    lv_obj_clear_flag(overlay, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_move_foreground(overlay);
+    s_ui.ota_overlay = overlay;
+
+    for (int32_t x = 32; x < s_ui.width; x += 32) {
+        (void)boot_line(overlay, x, 28, 1, s_ui.height - 56,
+                        COLOR_BOOT_GRID, LV_OPA_COVER);
+    }
+    for (int32_t y = 40; y < s_ui.height - 24; y += 28) {
+        (void)boot_line(overlay, 16, y, s_ui.width - 32, 1,
+                        COLOR_BOOT_GRID, LV_OPA_COVER);
+    }
+    boot_corner_marks(overlay);
+
+    lv_obj_t *title = label(overlay, 0, 12, s_ui.width, 18, &lv_font_montserrat_14);
+    lv_label_set_text_static(title, "FIRMWARE UPDATE");
+    lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(title, COLOR_BOOT_CYAN, LV_PART_MAIN);
+    lv_obj_set_style_text_letter_space(title, 1, LV_PART_MAIN);
+
+    lv_obj_t *warning = label(overlay, 16, 32, s_ui.width - 32, 18, &lv_font_montserrat_14);
+    lv_obj_set_style_text_align(warning, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(warning, COLOR_WARN, LV_PART_MAIN);
+    (void)snprintf(s_ui.ota_warning_buf, sizeof(s_ui.ota_warning_buf), "DO NOT POWER OFF");
+    lv_label_set_text_static(warning, s_ui.ota_warning_buf);
+    s_ui.ota_warning = warning;
+
+    lv_obj_t *percent = label(overlay,
+                              0,
+                              64,
+                              s_ui.width,
+                              lv_font_montserrat_48.line_height + 4,
+                              &lv_font_montserrat_48);
+    lv_obj_set_style_text_align(percent, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(percent, COLOR_BOOT_CYAN, LV_PART_MAIN);
+    (void)snprintf(s_ui.ota_percent_buf, sizeof(s_ui.ota_percent_buf), "0%%");
+    lv_label_set_text_static(percent, s_ui.ota_percent_buf);
+    s_ui.ota_percent = percent;
+
+    const int32_t bar_w = s_ui.width - 80;
+    const int32_t bar_x = (s_ui.width - bar_w) / 2;
+    const int32_t bar_y = 136;
+    const int32_t bar_h = 12;
+    const int32_t gap = 2;
+    const int32_t segment_w =
+        (bar_w - ((int32_t)OTA_BAR_SEGMENT_COUNT - 1) * gap) /
+        (int32_t)OTA_BAR_SEGMENT_COUNT;
+    for (uint32_t index = 0U; index < OTA_BAR_SEGMENT_COUNT; ++index) {
+        lv_obj_t *segment = lv_obj_create(overlay);
+        clear_style(segment);
+        lv_obj_set_pos(segment, bar_x + (int32_t)index * (segment_w + gap), bar_y);
+        lv_obj_set_size(segment, segment_w, bar_h);
+        lv_obj_set_style_bg_color(segment, COLOR_BOOT_DIM, LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(segment, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_radius(segment, 2, LV_PART_MAIN);
+        lv_obj_clear_flag(segment, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+        s_ui.ota_bar_segments[index] = segment;
+    }
+
+    lv_obj_t *status = label(overlay,
+                             16,
+                             s_ui.height - 64,
+                             s_ui.width - 32,
+                             24,
+                             &lv_font_montserrat_14);
+    lv_obj_set_style_text_align(status, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(status, COLOR_TEXT, LV_PART_MAIN);
+    lv_obj_set_style_text_letter_space(status, 1, LV_PART_MAIN);
+    (void)snprintf(s_ui.ota_status_buf, sizeof(s_ui.ota_status_buf), "UPLOADING");
+    lv_label_set_text_static(status, s_ui.ota_status_buf);
+    s_ui.ota_status = status;
+
+    s_ui.ota_active = true;
+    UI_SET_FLAG(OTA_ACTIVE, true);
+    return overlay;
+}
+
+esp_err_t esp_bms_lvgl_ui_ota_update(uint8_t progress_percent,
+                                     const char *status_text,
+                                     bool failed)
+{
+    ESP_RETURN_ON_FALSE(UI_FLAG(INITIALIZED), ESP_ERR_INVALID_STATE, TAG,
+                        "UI is not initialized");
+    if (!s_ui.ota_active || !s_ui.ota_overlay) {
+        ota_overlay_create();
+    }
+
+    const uint8_t progress = progress_percent > 100U ? 100U : progress_percent;
+    char percent_text[sizeof(s_ui.ota_percent_buf)] = { 0 };
+    (void)snprintf(percent_text, sizeof(percent_text), "%u%%", (unsigned)progress);
+    gps_label_set(s_ui.ota_percent,
+                  s_ui.ota_percent_buf,
+                  sizeof(s_ui.ota_percent_buf),
+                  percent_text);
+    const uint32_t filled = progress == 0U
+                                ? 0U
+                                : (((uint32_t)progress * OTA_BAR_SEGMENT_COUNT) + 99U) /
+                                      100U;
+    for (uint32_t index = 0U; index < OTA_BAR_SEGMENT_COUNT; ++index) {
+        lv_obj_t *segment = s_ui.ota_bar_segments[index];
+        if (!segment) {
+            continue;
+        }
+        const bool active = index < filled;
+        lv_obj_set_style_bg_color(segment,
+                                  active ? COLOR_BOOT_CYAN : COLOR_BOOT_DIM,
+                                  LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(segment,
+                                active ? LV_OPA_COVER : LV_OPA_60,
+                                LV_PART_MAIN);
+    }
+    if (status_text && status_text[0] != '\0') {
+        gps_label_set(s_ui.ota_status,
+                      s_ui.ota_status_buf,
+                      sizeof(s_ui.ota_status_buf),
+                      status_text);
+    }
+    if (s_ui.ota_warning) {
+        if (failed) {
+            label_set_text_if_changed(s_ui.ota_warning, "UPDATE FAILED");
+            lv_obj_set_style_text_color(s_ui.ota_warning, COLOR_BAD, LV_PART_MAIN);
+            lv_obj_set_style_text_color(s_ui.ota_status, COLOR_BAD, LV_PART_MAIN);
+        } else {
+            label_set_text_if_changed(s_ui.ota_warning, "DO NOT POWER OFF");
+            lv_obj_set_style_text_color(s_ui.ota_warning, COLOR_WARN, LV_PART_MAIN);
+            lv_obj_set_style_text_color(s_ui.ota_status, COLOR_TEXT, LV_PART_MAIN);
+        }
+    }
+    return ESP_OK;
+}
+
+esp_err_t esp_bms_lvgl_ui_ota_finish(void)
+{
+    ESP_RETURN_ON_FALSE(UI_FLAG(INITIALIZED), ESP_ERR_INVALID_STATE, TAG,
+                        "UI is not initialized");
+    ota_overlay_delete();
+    return ESP_OK;
+}
+
 esp_err_t esp_bms_lvgl_ui_show_dashboard(void)
 {
     ESP_RETURN_ON_FALSE(UI_FLAG(INITIALIZED), ESP_ERR_INVALID_STATE, TAG, "UI is not initialized");
@@ -14981,10 +15175,21 @@ bool esp_bms_lvgl_ui_simulator_native_gesture_smoke(void)
 
     show_dashboard_view();
     move_to_page(ESP_BMS_LVGL_PAGE_BATTERY, false);
-    return dashboard_page_content_ready(ESP_BMS_LVGL_PAGE_BATTERY) &&
-           !dashboard_page_content_ready(ESP_BMS_LVGL_PAGE_GPS) &&
-           !dashboard_page_content_ready(ESP_BMS_LVGL_PAGE_CAST) &&
-           !dashboard_page_content_ready(ESP_BMS_LVGL_PAGE_MUSIC);
+    if (!(dashboard_page_content_ready(ESP_BMS_LVGL_PAGE_BATTERY) &&
+          !dashboard_page_content_ready(ESP_BMS_LVGL_PAGE_GPS) &&
+          !dashboard_page_content_ready(ESP_BMS_LVGL_PAGE_CAST) &&
+          !dashboard_page_content_ready(ESP_BMS_LVGL_PAGE_MUSIC))) {
+        return false;
+    }
+    /* After a page release/recreate the labels must be re-populated even when
+     * the snapshot values did not change; otherwise the values disappear until
+     * the next update (bms_label_set must not skip a label whose text pointer
+     * does not yet point at the static buffer). */
+    const bool soc_applied =
+        s_ui.soc && lv_label_get_text(s_ui.soc) == s_ui.bms_soc_buf;
+    const bool voltage_applied =
+        s_ui.pack_voltage && lv_label_get_text(s_ui.pack_voltage) == s_ui.bms_pack_voltage_buf;
+    return soc_applied && voltage_applied;
 }
 
 bool esp_bms_lvgl_ui_simulator_boot_animation_preview_active(void)

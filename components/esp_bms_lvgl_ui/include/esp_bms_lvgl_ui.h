@@ -431,6 +431,10 @@ esp_err_t esp_bms_lvgl_ui_update(const esp_bms_dashboard_snapshot_t *snapshot);
 esp_err_t esp_bms_lvgl_ui_boot_start(const esp_bms_dashboard_snapshot_t *snapshot);
 esp_err_t esp_bms_lvgl_ui_boot_update(uint8_t progress_percent, const char *status_text);
 esp_err_t esp_bms_lvgl_ui_boot_finish(const esp_bms_dashboard_snapshot_t *snapshot);
+esp_err_t esp_bms_lvgl_ui_ota_update(uint8_t progress_percent,
+                                     const char *status_text,
+                                     bool failed);
+esp_err_t esp_bms_lvgl_ui_ota_finish(void);
 esp_err_t esp_bms_lvgl_ui_show_dashboard(void);
 esp_err_t esp_bms_lvgl_ui_touch_calibration_result(bool success);
 esp_err_t esp_bms_lvgl_ui_set_page(esp_bms_lvgl_page_t page, bool animated);

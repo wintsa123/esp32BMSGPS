@@ -877,7 +877,10 @@ static bool runtime_bms_name_copy(char *out, size_t out_len, const uint8_t *name
     for (size_t index = 0; index < limit && copied + 1U < out_len; index++) {
         const unsigned char value = name[index];
         if (value < 0x20U || value > 0x7EU || value == '"' || value == '\\') {
-            break;
+            /* Skip characters without a TFT glyph (e.g. UTF-8 Chinese)
+             * instead of truncating, so the printable ASCII part of the
+             * name is still shown. */
+            continue;
         }
         out[copied++] = (char)value;
     }
@@ -3728,6 +3731,9 @@ esp_err_t esp_bms_idf_runtime_http_api_handler(httpd_req_t *req)
     }
     if (req->method == HTTP_POST && strcmp(req->uri, "/api/bms/bind") == 0) {
         return runtime_http_post_bms_bind_handler(req, runtime);
+    }
+    if (req->method == HTTP_GET && strcmp(req->uri, "/api/ota/progress") == 0) {
+        return esp_bms_ota_handle_progress_request(req);
     }
     if (req->method == HTTP_POST && strcmp(req->uri, "/api/ota") == 0) {
 #if ESP_BMS_FEATURE_OTA

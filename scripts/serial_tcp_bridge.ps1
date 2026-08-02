@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$PortName = "COM6",
+    [string]$PortName = "COM3",
     [int]$ListenPort = 4000,
     [string]$AllowedRemote = "192.168.2.108",
     [string]$IdfPythonEnv,
@@ -9,6 +9,89 @@ param(
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "esp-idf-version.ps1")
+
+function Test-BridgePortArgument {
+    param(
+        [AllowNull()][string]$CommandLine,
+        [Parameter(Mandatory = $true)][string]$SerialPort
+    )
+
+    if ([string]::IsNullOrWhiteSpace($CommandLine)) { return $false }
+
+    $portMatch = [regex]::Match($CommandLine, '(?i)-PortName\s+["'']?(COM\d+)')
+    if ($portMatch.Success) {
+        return $portMatch.Groups[1].Value -ieq $SerialPort
+    }
+
+    # The script defaults to COM3 when no explicit port is supplied.
+    return $SerialPort -ieq "COM3"
+}
+
+function Stop-ExistingBridge {
+    param(
+        [Parameter(Mandatory = $true)][string]$SerialPort,
+        [Parameter(Mandatory = $true)][int]$TcpPort
+    )
+
+    $currentProcessId = $PID
+    $adapterPathPattern = [regex]::Escape((Join-Path $PSScriptRoot "esp_rfc2217_usb_bridge.py"))
+    $scriptPathPattern = [regex]::Escape((Join-Path $PSScriptRoot "serial_tcp_bridge.ps1"))
+    $serialPortPattern = '(?i)(?:^|\s|["''])' + [regex]::Escape($SerialPort) + '(?:\s|$)'
+
+    $allProcesses = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
+    $processById = @{}
+    foreach ($process in $allProcesses) {
+        $processById[[int]$process.ProcessId] = $process
+    }
+    $protectedProcessIds = [System.Collections.Generic.HashSet[int]]::new()
+    $ancestorProcessId = $currentProcessId
+    while ($ancestorProcessId -gt 0 -and $protectedProcessIds.Add($ancestorProcessId)) {
+        if (-not $processById.ContainsKey($ancestorProcessId)) { break }
+        $ancestorProcessId = [int]$processById[$ancestorProcessId].ParentProcessId
+    }
+    $adapterProcessIds = @(
+        $allProcesses |
+            Where-Object {
+                -not $protectedProcessIds.Contains([int]$_.ProcessId) -and
+                $_.CommandLine -match $adapterPathPattern -and
+                $_.CommandLine -match $serialPortPattern -and
+                $_.CommandLine -match "(?i)(?:^|\s)-p\s+$TcpPort(?:\s|$)"
+            } |
+            ForEach-Object { [int]$_.ProcessId }
+    )
+    $scriptProcessIds = @(
+        $allProcesses |
+            Where-Object {
+                -not $protectedProcessIds.Contains([int]$_.ProcessId) -and
+                $_.CommandLine -match $scriptPathPattern -and
+                (Test-BridgePortArgument -CommandLine $_.CommandLine -SerialPort $SerialPort)
+            } |
+            ForEach-Object { [int]$_.ProcessId }
+    )
+    $bridgeProcessIds = @($adapterProcessIds + $scriptProcessIds | Select-Object -Unique)
+
+    if ($bridgeProcessIds.Count -gt 0) {
+        Write-Host "Restarting existing $SerialPort bridge process(es): $($bridgeProcessIds -join ', ')"
+        foreach ($bridgeProcessId in $adapterProcessIds) {
+            Stop-Process -Id $bridgeProcessId -Force -ErrorAction SilentlyContinue
+        }
+        foreach ($bridgeProcessId in $scriptProcessIds) {
+            Stop-Process -Id $bridgeProcessId -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    $deadline = (Get-Date).AddSeconds(5)
+    do {
+        $listeners = @(Get-NetTCPConnection -LocalPort $TcpPort -State Listen -ErrorAction SilentlyContinue)
+        if ($listeners.Count -eq 0) { return }
+        Start-Sleep -Milliseconds 200
+    } while ((Get-Date) -lt $deadline)
+
+    $listenerProcessId = [int]$listeners[0].OwningProcess
+    $listener = Get-CimInstance Win32_Process -Filter "ProcessId = $listenerProcessId" -ErrorAction SilentlyContinue
+    $listenerCommand = if ($listener) { $listener.CommandLine } else { "unknown command" }
+    throw "TCP port $TcpPort remains occupied by PID $listenerProcessId ($listenerCommand). Refusing to stop an unrelated process."
+}
 
 function Initialize-IdfEnvironment {
     $idfRoots = @()
@@ -132,6 +215,8 @@ function Test-UsbSerialJtagPort {
     return [bool]$device
 }
 
+Stop-ExistingBridge -SerialPort $PortName -TcpPort $ListenPort
+
 $server = $null
 if ($IdfPythonEnv) {
     $explicitServer = Join-Path $IdfPythonEnv "Scripts\esp_rfc2217_server.exe"
@@ -169,7 +254,7 @@ if ($isUsbSerialJtag) {
         throw "USB Serial/JTAG bridge adapter was not found: $usbBridge"
     }
     $launchTarget = $serverPython
-    $launchArgs = @($usbBridge) + $serverArgs
+    $launchArgs = @($usbBridge, "--one-client") + $serverArgs
     $bridgeMode = "ESP32-S3 USB Serial/JTAG"
     $clientUrl = "rfc2217://192.168.2.10:${ListenPort}?ign_set_control&timeout=10"
 }
@@ -183,5 +268,17 @@ Write-Host "  client:  $clientUrl (project endpoint)"
 # ESP-IDF 后续可能显示 vgate0 的 172.* 地址；实际监听仍覆盖所有 IPv4 接口。
 Write-Host "  note:    Ignore ESP-IDF's auto-detected 172.* URL; use the project endpoint above."
 Write-Host ""
+
+if ($isUsbSerialJtag) {
+    while ($true) {
+        & $launchTarget @launchArgs
+        $adapterExitCode = $LASTEXITCODE
+        if ($adapterExitCode -ne 0) {
+            throw "COM3 bridge adapter exited unexpectedly with code $adapterExitCode."
+        }
+        Write-Host "COM3 client session ended (exit $adapterExitCode); reopening the bridge for the next flash."
+        Start-Sleep -Milliseconds 250
+    }
+}
 
 & $launchTarget @launchArgs

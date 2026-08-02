@@ -3,7 +3,7 @@ setlocal
 
 cd /d "%~dp0.."
 
-powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0flash.ps1"
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0flash.ps1" %*
 set "FLASH_EXIT_CODE=%ERRORLEVEL%"
 
 echo.

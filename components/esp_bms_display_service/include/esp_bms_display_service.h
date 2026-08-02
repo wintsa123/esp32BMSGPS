@@ -23,6 +23,8 @@ typedef enum {
     ESP_BMS_DISPLAY_SERVICE_COMMAND_TOUCH_CALIBRATION_RESULT,
     ESP_BMS_DISPLAY_SERVICE_COMMAND_RESET_TOUCH_CALIBRATION,
     ESP_BMS_DISPLAY_SERVICE_COMMAND_WRITE_RGB565,
+    ESP_BMS_DISPLAY_SERVICE_COMMAND_OTA_UPDATE,
+    ESP_BMS_DISPLAY_SERVICE_COMMAND_OTA_FINISH,
 } esp_bms_display_service_command_kind_t;
 
 typedef struct {
@@ -56,6 +58,11 @@ typedef struct {
             const uint8_t *pixels;
             size_t pixel_bytes;
         } rgb565;
+        struct {
+            uint8_t progress_percent;
+            bool failed;
+            char status_text[ESP_BMS_DISPLAY_SERVICE_STATUS_TEXT_MAX];
+        } ota_update;
     } data;
 } esp_bms_display_service_command_t;
 

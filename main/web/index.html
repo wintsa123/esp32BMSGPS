@@ -5,75 +5,349 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>ESP32 BMS GPS</title>
   <style>
-    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
-    body { margin: 0; background: #f4f7f8; color: #142027; }
-    main { width: min(760px, calc(100% - 32px)); margin: 24px auto; }
-    header { display: flex; justify-content: space-between; gap: 16px; align-items: center; }
-    h1 { font-size: 1.45rem; margin: 0 0 4px; letter-spacing: 0; }
-    p { margin: 0; color: #53636b; }
-    section { margin-top: 18px; padding-top: 18px; border-top: 1px solid #cad4d9; }
-    h2 { font-size: 1rem; margin: 0 0 12px; letter-spacing: 0; }
-    .section-note { margin-bottom: 12px; }
-    label { display: grid; gap: 6px; margin: 12px 0; font-size: .92rem; }
-    input, select, button {
-      border: 1px solid #9caab2;
-      border-radius: 6px;
-      box-sizing: border-box;
+    :root {
+      color-scheme: light dark;
+      font-family: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      --bg: #eef2f6;
+      --bg-grad: linear-gradient(160deg, #e8eef4 0%, #dde6ee 100%);
+      --card: #ffffff;
+      --border: #d7e0e8;
+      --text: #152430;
+      --muted: #5b6b7a;
+      --primary: #0e7490;
+      --primary-strong: #0b5e77;
+      --primary-soft: #e0f2f7;
+      --ok: #15803d;
+      --ok-soft: #e6f6ec;
+      --warn: #a16207;
+      --warn-soft: #fdf3dc;
+      --bad: #b91c1c;
+      --bad-soft: #fdeaea;
+      --shadow: 0 1px 3px rgba(16, 34, 50, .08), 0 6px 18px rgba(16, 34, 50, .06);
+      --radius: 14px;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0d141b;
+        --bg-grad: linear-gradient(160deg, #101a23 0%, #0b1118 100%);
+        --card: #16212c;
+        --border: #2a3a48;
+        --text: #e6edf4;
+        --muted: #93a3b2;
+        --primary: #22b8d8;
+        --primary-strong: #38c8e8;
+        --primary-soft: #12303b;
+        --ok: #3ddc84;
+        --ok-soft: #0f2a1c;
+        --warn: #f2b35f;
+        --warn-soft: #33230d;
+        --bad: #ff7b7b;
+        --bad-soft: #3a1414;
+        --shadow: 0 1px 3px rgba(0, 0, 0, .35), 0 6px 18px rgba(0, 0, 0, .3);
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg-grad);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    main { width: min(780px, calc(100% - 28px)); margin: 20px auto 48px; }
+    p { margin: 0; color: var(--muted); }
+    button { font: inherit; }
+
+    /* ---------- header ---------- */
+    .app-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 14px;
+      padding: 6px 2px 16px;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .brand-logo {
+      width: 40px; height: 40px;
+      border-radius: 11px;
+      background: linear-gradient(140deg, var(--primary), #063b4e);
+      color: #fff;
+      display: grid; place-items: center;
+      font-weight: 800; font-size: 13px; letter-spacing: .5px;
+      box-shadow: var(--shadow);
+      flex: none;
+    }
+    .brand h1 { font-size: 1.2rem; margin: 0 0 3px; letter-spacing: .2px; }
+    .brand p { font-size: .8rem; }
+    .header-actions { display: flex; gap: 8px; align-items: center; flex: none; }
+
+    .btn {
+      appearance: none;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--card);
+      color: var(--text);
+      min-height: 40px;
+      padding: 8px 16px;
+      cursor: pointer;
+      transition: transform .08s ease, box-shadow .15s ease, background .15s ease;
+      box-shadow: var(--shadow);
+    }
+    .btn:hover { transform: translateY(-1px); }
+    .btn:active { transform: translateY(0); }
+    .btn:disabled { opacity: .55; cursor: not-allowed; transform: none; }
+    .btn-primary {
+      background: linear-gradient(140deg, var(--primary), var(--primary-strong));
+      border-color: transparent;
+      color: #fff;
+      font-weight: 600;
+    }
+    .btn-primary:hover { filter: brightness(1.08); }
+    .btn-block { width: 100%; }
+    .btn-danger {
+      background: var(--bad-soft);
+      border-color: color-mix(in srgb, var(--bad) 45%, transparent);
+      color: var(--bad);
+    }
+    .btn-sm { min-height: 34px; padding: 6px 12px; font-size: .86rem; border-radius: 9px; }
+
+    /* ---------- cards ---------- */
+    section.card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 18px 18px 16px;
+      margin-top: 14px;
+    }
+    section.card > h2 {
+      font-size: 1rem;
+      margin: 0 0 6px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    section.card > h2::before {
+      content: "";
+      width: 4px; height: 16px;
+      border-radius: 2px;
+      background: var(--primary);
+    }
+    .section-note { margin: 4px 0 12px; font-size: .86rem; }
+
+    /* ---------- status metrics ---------- */
+    .status {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+      margin-top: 4px;
+    }
+    .metric {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+      padding: 10px 12px;
+    }
+    .metric span {
+      display: block;
+      font-size: .76rem;
+      color: var(--muted);
+      letter-spacing: .4px;
+      text-transform: uppercase;
+      margin-bottom: 2px;
+    }
+    .metric strong {
+      display: block;
+      font-size: 1.15rem;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* ---------- forms ---------- */
+    label { display: grid; gap: 6px; margin: 10px 0; font-size: .9rem; }
+    label > span { font-weight: 600; }
+    input, select, textarea {
+      appearance: none;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--card);
+      color: var(--text);
       font: inherit;
       min-height: 42px;
-      padding: 9px 11px;
+      padding: 9px 12px;
       width: 100%;
+      transition: border-color .15s ease, box-shadow .15s ease;
     }
-    button { background: #176b87; border-color: #176b87; color: white; cursor: pointer; }
-    button.secondary { background: transparent; color: #176b87; }
+    input:focus, select:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 22%, transparent);
+    }
+    input[type="range"] { padding: 0; }
     .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
-    form + .grid { margin-top: 12px; }
+    form + .grid, .grid + .grid { margin-top: 10px; }
     #dynamic-settings:empty { display: none; }
-    .status { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); margin-top: 16px; }
-    .metric { border-left: 3px solid #2d8a66; padding-left: 10px; }
-    .metric strong { display: block; font-size: 1.2rem; }
-    .ride-records { display: grid; gap: 8px; }
-    .ride-record { border-left: 3px solid #176b87; padding-left: 10px; }
-    .ride-record strong, .ride-record p { display: block; }
-    .ride-record p { font-size: .88rem; margin-top: 4px; overflow-wrap: anywhere; }
+    .field-hint { color: var(--warn); min-height: 1.2em; font-size: .82rem; }
+
+    .refs { display: flex; flex-wrap: wrap; gap: 6px 12px; margin: 10px 0 6px; font-size: .85rem; }
+    .refs a { color: var(--primary); text-decoration: none; }
+    .refs a:hover { text-decoration: underline; }
+
     .candidate-list { display: grid; gap: 8px; margin: 12px 0; }
-    .refs { display: flex; flex-wrap: wrap; gap: 8px 12px; margin: 8px 0 12px; font-size: .88rem; }
-    .refs a { color: #176b87; }
     .candidate {
       align-items: center;
-      background: transparent;
-      border: 1px solid #9caab2;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
       color: inherit;
+      cursor: pointer;
       display: grid;
       gap: 4px;
       grid-template-columns: minmax(0, 1fr) auto;
       min-height: 46px;
-      padding: 8px 10px;
+      padding: 8px 12px;
       text-align: left;
+      transition: border-color .15s ease, transform .08s ease;
     }
+    .candidate:hover { border-color: var(--primary); transform: translateY(-1px); }
     .candidate strong, .candidate span { overflow-wrap: anywhere; }
-    .candidate small { color: #53636b; }
-    .field-hint { color: #a05b00; min-height: 1.2em; }
-    @media (prefers-color-scheme: dark) {
-      body { background: #101719; color: #e8eff2; }
-      p { color: #9facb2; }
-      section { border-color: #2c3a40; }
-      input, select, button.secondary { background: #172125; border-color: #42545d; color: #e8eff2; }
-      button.secondary { color: #8ed4ee; }
-      .candidate { border-color: #42545d; }
-      .candidate small { color: #9facb2; }
-      .field-hint { color: #f2b35f; }
+    .candidate small { color: var(--muted); }
+    .candidate > small { font-variant-numeric: tabular-nums; }
+
+    .ride-records { display: grid; gap: 8px; }
+    .ride-record {
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--primary);
+      border-radius: 10px;
+      background: var(--card);
+      padding: 10px 12px;
     }
+    .ride-record strong { display: block; }
+    .ride-record p { font-size: .85rem; margin-top: 4px; overflow-wrap: anywhere; }
+
+    /* ---------- OTA ---------- */
+    .ota-drop {
+      position: relative;
+      border: 2px dashed var(--border);
+      border-radius: 12px;
+      padding: 22px 16px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color .15s ease, background .15s ease;
+      margin-top: 4px;
+    }
+    .ota-drop:hover, .ota-drop.dragover {
+      border-color: var(--primary);
+      background: var(--primary-soft);
+    }
+    .ota-drop input[type="file"] {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+    }
+    .ota-drop .drop-icon {
+      font-size: 1.5rem;
+      line-height: 1;
+      margin-bottom: 6px;
+    }
+    .ota-drop .drop-text { font-size: .9rem; color: var(--muted); }
+    .ota-drop .drop-text strong { color: var(--primary); }
+    .ota-file-name {
+      margin-top: 8px;
+      font-size: .85rem;
+      font-weight: 600;
+      color: var(--text);
+      word-break: break-all;
+    }
+    .ota-file-meta { font-size: .78rem; color: var(--muted); margin-top: 2px; }
+    .ota-warning {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--warn-soft);
+      border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
+      color: var(--warn);
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: .88rem;
+      font-weight: 600;
+      margin-top: 12px;
+    }
+    .ota-alert {
+      background: var(--bad-soft);
+      border: 1px solid color-mix(in srgb, var(--bad) 40%, transparent);
+      color: var(--bad);
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: .88rem;
+      margin-top: 12px;
+      line-height: 1.5;
+    }
+    .ota-success {
+      background: var(--ok-soft);
+      border: 1px solid color-mix(in srgb, var(--ok) 40%, transparent);
+      color: var(--ok);
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: .88rem;
+      font-weight: 600;
+      margin-top: 12px;
+    }
+    .ota-progress-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 16px 18px;
+      margin-top: 14px;
+    }
+    .ota-progress-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+    .ota-progress-text { font-size: .9rem; font-weight: 600; }
+    .ota-progress-percent { font-size: 1.05rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .ota-progress-track {
+      height: 10px;
+      border-radius: 6px;
+      background: var(--border);
+      overflow: hidden;
+    }
+    .ota-progress-bar {
+      height: 100%;
+      width: 0%;
+      border-radius: 6px;
+      background: linear-gradient(90deg, var(--primary), var(--primary-strong));
+      transition: width .25s ease;
+    }
+    .ota-progress-bar.indeterminate {
+      width: 30%;
+      animation: ota-slide 1.1s ease-in-out infinite;
+    }
+    @keyframes ota-slide {
+      0% { margin-left: -30%; }
+      100% { margin-left: 100%; }
+    }
+    .ota-progress-bar.error { background: var(--bad); }
+    .ota-progress-bar.ok { background: var(--ok); }
   </style>
 </head>
 <body>
   <main>
-    <header>
-      <div>
-        <h1>ESP32 BMS GPS</h1>
-        <p id="fw">固件 0.1.0</p>
+    <header class="app-header">
+      <div class="brand">
+        <div class="brand-logo">BM</div>
+        <div>
+          <h1>ESP32 BMS GPS</h1>
+          <p id="fw">固件 0.1.0</p>
+        </div>
       </div>
-      <button class="secondary" id="refresh" type="button" data-i18n="refresh">刷新</button>
+      <div class="header-actions">
+        <button class="btn" id="refresh" type="button" data-i18n="refresh">刷新</button>
+      </div>
     </header>
 
     <div class="status">
@@ -85,22 +359,23 @@
       <div class="metric"><span>Wi-Fi</span><strong id="wifi">--</strong></div>
     </div>
 
-    <section>
+    <section class="card">
       <h2 data-i18n="rideRecords">骑行峰值记录</h2>
       <div id="ride-records" class="ride-records"></div>
     </section>
 
     <div id="dynamic-settings"></div>
-    <section>
+
+    <section class="card">
       <h2 data-i18n="setupAp">设置热点</h2>
       <p class="section-note"><span data-i18n="setupApPurpose">手机连接热点后访问</span> <strong>192.168.4.1</strong></p>
       <form id="ap-form">
         <label><span data-i18n="setupApPassword">设置热点密码</span><input name="password" type="password" autocomplete="new-password" inputmode="numeric" minlength="8" maxlength="8" pattern="[0-9]{8}"></label>
-        <button type="submit" data-i18n="saveApPassword">保存热点密码</button>
+        <button class="btn btn-primary btn-block" type="submit" data-i18n="saveApPassword">保存热点密码</button>
       </form>
     </section>
 
-    <section id="bms-section">
+    <section class="card" id="bms-section">
       <h2 data-i18n="bmsBoard">保护板</h2>
       <p class="section-note" data-i18n="bmsPurpose">选择保护板类型，再扫描或填入蓝牙 MAC 绑定。</p>
       <form id="bms-form">
@@ -116,25 +391,46 @@
           <a href="https://github.com/syssi/esphome-daly-bms" target="_blank" rel="noopener">Daly</a>
         </div>
         <div class="grid">
-          <button id="bms-scan" type="button" data-i18n="scanBms">扫描 BMS</button>
-          <button id="bms-bind" class="secondary" type="button" data-i18n="bindBms">绑定 BMS</button>
+          <button class="btn" id="bms-scan" type="button" data-i18n="scanBms">扫描 BMS</button>
+          <button class="btn btn-primary" id="bms-bind" type="button" data-i18n="bindBms">绑定 BMS</button>
         </div>
         <div id="bms-candidates" class="candidate-list"></div>
       </form>
     </section>
 
-    <section id="ota-section">
+    <section class="card" id="ota-section">
       <h2 data-i18n="firmwareUpdate">固件更新</h2>
       <p class="section-note" data-i18n="otaPurpose">选择应用固件并输入随固件生成的四位验证码。</p>
       <form id="ota-form">
-        <label><span data-i18n="firmwareFile">固件文件</span><input name="firmware" type="file" accept=".bin,application/octet-stream" required></label>
-        <label><span data-i18n="firmwareCode">固件验证码</span><input name="code" type="text" inputmode="numeric" autocomplete="one-time-code" minlength="4" maxlength="4" pattern="[0-9]{4}" required></label>
-        <button type="submit" data-i18n="uploadFirmware">上传并更新</button>
+        <div class="ota-drop" id="ota-drop">
+          <input name="firmware" type="file" accept=".bin,application/octet-stream" required>
+          <div class="drop-icon">⬆</div>
+          <div class="drop-text"><strong data-i18n="otaDropHint">点击选择或拖拽</strong> <span data-i18n="otaDropHintSub">.bin 固件到此处</span></div>
+          <div class="ota-file-name" id="ota-file-name"></div>
+          <div class="ota-file-meta" id="ota-file-meta"></div>
+        </div>
+        <label><span data-i18n="firmwareCode">固件验证码</span><input name="code" type="text" inputmode="numeric" autocomplete="one-time-code" minlength="4" maxlength="4" pattern="[0-9]{4}" required placeholder="0000"></label>
+        <button class="btn btn-primary btn-block" id="ota-upload-btn" type="submit" data-i18n="uploadFirmware">上传并更新</button>
       </form>
-      <p class="section-note" id="ota-status"></p>
     </section>
 
-    <section id="device-section">
+    <div class="ota-progress-card" id="ota-progress-card" hidden>
+      <div class="ota-progress-head">
+        <span class="ota-progress-text" id="ota-status"></span>
+        <span class="ota-progress-percent" id="ota-progress-percent"></span>
+      </div>
+      <div class="ota-progress-track">
+        <div class="ota-progress-bar" id="ota-progress-bar"></div>
+      </div>
+      <div class="ota-warning" id="ota-warning" hidden>
+        <span>⚠</span>
+        <span id="ota-warning-text" data-i18n="otaDoNotInterrupt">升级期间请勿断电或断开连接，也不要重启设备</span>
+      </div>
+      <div class="ota-alert" id="ota-alert" hidden></div>
+      <div class="ota-success" id="ota-success" hidden></div>
+    </div>
+
+    <section class="card" id="device-section">
       <h2 data-i18n="device">设备</h2>
       <form id="device-form">
         <div class="grid">
@@ -144,7 +440,7 @@
           <label><span data-i18n="speedSource">速度来源</span><select name="speed_source"><option value="gps" data-i18n="gpsSource">GPS</option><option value="controller" data-i18n="controllerSource">控制器</option></select><small class="field-hint" id="speed-source-hint"></small></label>
           <label><span data-i18n="language">语言</span><select name="language"><option value="zh" selected>中文</option><option value="en">English</option></select></label>
         </div>
-        <button type="submit" data-i18n="saveDevice">保存设备设置</button>
+        <button class="btn btn-primary btn-block" type="submit" data-i18n="saveDevice">保存设备设置</button>
       </form>
     </section>
   </main>
@@ -190,7 +486,20 @@
         otaRebooting: "校验通过，设备正在重启",
         otaSelectFile: "请选择固件文件",
         otaTooLarge: "固件超过 OTA 分区容量",
-        otaUploading: "固件上传中，请勿断开连接",
+        otaUploading: "固件上传中",
+        otaVerifying: "固件校验中",
+        otaWaitingReboot: "设备重启中，请稍候…",
+        otaBackOnline: "设备已重启，固件更新成功",
+        otaNetworkError: "与设备的连接中断，请确认设备仍在线后重试",
+        otaTimeout: "上传超时，请检查网络后重试",
+        otaBusy: "已有固件更新正在进行",
+        otaDoNotInterrupt: "升级期间请勿断电或断开连接，也不要重启设备",
+        otaDropHint: "点击选择或拖拽",
+        otaDropHintSub: ".bin 固件到此处",
+        otaBadFile: "请选择 .bin 固件文件",
+        otaFileTooLarge: "文件过大，超出 OTA 分区容量（约 1.4 MB）",
+        otaSize: "大小",
+        otaNotAvailable: "设备正在重启，请稍后刷新页面",
         portrait: "竖屏",
         protections: "保护",
         protocolRefs: "协议参考",
@@ -256,7 +565,20 @@
         otaRebooting: "Verified; the device is restarting",
         otaSelectFile: "Select a firmware file",
         otaTooLarge: "Firmware exceeds the OTA partition size",
-        otaUploading: "Uploading firmware; keep the connection open",
+        otaUploading: "Uploading firmware",
+        otaVerifying: "Verifying firmware",
+        otaWaitingReboot: "Device is restarting…",
+        otaBackOnline: "Device is back online — firmware updated",
+        otaNetworkError: "Connection to the device was lost. Check that it is still online and retry.",
+        otaTimeout: "Upload timed out. Check your network and retry.",
+        otaBusy: "A firmware update is already in progress",
+        otaDoNotInterrupt: "Do not power off, disconnect, or reboot the device during the update",
+        otaDropHint: "Click or drag",
+        otaDropHintSub: "a .bin firmware here",
+        otaBadFile: "Please choose a .bin firmware file",
+        otaFileTooLarge: "File is too large — exceeds the OTA partition (~1.4 MB)",
+        otaSize: "Size",
+        otaNotAvailable: "Device is restarting; refresh the page shortly",
         portrait: "Portrait",
         protections: "Protections",
         protocolRefs: "Protocol refs",
@@ -291,6 +613,7 @@
     let lastConfig = {};
     let lastStatus = {};
     let rideRecords = [];
+    let otaPollTimers = [];
 
     function t(key) {
       return (I18N[uiLanguage] || I18N.zh)[key] || I18N.zh[key] || key;
@@ -326,47 +649,212 @@
       return res.headers.get("content-type")?.includes("application/json") ? res.json() : res.text();
     }
 
-    function otaError(status) {
-      if (status === 403) return t("otaCodeMismatch");
-      if (status === 413) return t("otaTooLarge");
-      if (status === 422) return t("otaInvalidImage");
-      return t("otaFailed");
+    /* ---------------- OTA ---------------- */
+
+    function formatFileSize(bytes) {
+      if (!Number.isFinite(bytes) || bytes < 0) return "";
+      if (bytes < 1024) return `${bytes} B`;
+      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+      return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
     }
 
-    async function uploadFirmware(event) {
-      event.preventDefault();
-      const form = event.currentTarget;
-      const file = form.elements.firmware.files[0];
-      const code = form.elements.code.value.trim();
+    function otaError(status, detail) {
+      const detailText = detail && detail.trim() ? ` · ${detail.trim()}` : "";
+      if (status === 403) return `${t("otaCodeMismatch")}${detailText}`;
+      if (status === 413) return `${t("otaTooLarge")}${detailText}`;
+      if (status === 422) return `${t("otaInvalidImage")}${detailText}`;
+      if (status === 409) return `${t("otaBusy")}${detailText}`;
+      if (status === 408) return `${t("otaTimeout")}${detailText}`;
+      if (status === 0) return t("otaNetworkError");
+      return `${t("otaFailed")}（HTTP ${status}）${detailText}`;
+    }
+
+    function clearOtaPollTimers() {
+      otaPollTimers.forEach((timer) => clearInterval(timer));
+      otaPollTimers = [];
+    }
+
+    function otaProgressBar() {
+      return $("ota-progress-bar");
+    }
+
+    function setOtaProgress(percent, text, mode) {
+      const bar = otaProgressBar();
+      if (!bar) return;
+      bar.classList.remove("indeterminate", "error", "ok");
+      bar.style.width = "";
+      if (mode === "indeterminate") {
+        bar.classList.add("indeterminate");
+      } else {
+        bar.style.width = `${Math.max(0, Math.min(100, percent))}%`;
+      }
+      if (mode === "error") bar.classList.add("error");
+      if (mode === "ok") bar.classList.add("ok");
+      $("ota-progress-card").hidden = false;
+      $("ota-progress-percent").textContent =
+        mode === "indeterminate" ? "…" : `${Math.round(percent)}%`;
+      if (text != null) $("ota-status").textContent = text;
+      $("ota-warning").hidden = mode === "ok";
+      $("ota-alert").hidden = true;
+      $("ota-success").hidden = true;
+    }
+
+    function showOtaError(message) {
+      clearOtaPollTimers();
+      setOtaProgress(0, t("otaFailed"), "error");
+      $("ota-alert").textContent = message;
+      $("ota-alert").hidden = false;
+      $("ota-upload-btn").disabled = false;
+    }
+
+    function showOtaSuccess(message) {
+      clearOtaPollTimers();
+      setOtaProgress(100, message || t("otaBackOnline"), "ok");
+      $("ota-success").textContent = message || t("otaBackOnline");
+      $("ota-success").hidden = false;
+      $("ota-upload-btn").disabled = false;
+    }
+
+    function waitForDeviceBack() {
+      setOtaProgress(100, t("otaWaitingReboot"), "indeterminate");
+      const deadline = Date.now() + 45000;
+      const timer = setInterval(async () => {
+        try {
+          await api("/api/status");
+          clearInterval(timer);
+          showOtaSuccess();
+          refresh();
+        } catch {
+          if (Date.now() > deadline) {
+            clearInterval(timer);
+            showOtaError(t("otaNotAvailable"));
+          }
+        }
+      }, 1000);
+      otaPollTimers.push(timer);
+    }
+
+    function pollOtaProgress() {
+      clearOtaPollTimers();
+      const timer = setInterval(async () => {
+        let progress = null;
+        try {
+          progress = await api("/api/ota/progress");
+        } catch {
+          clearInterval(timer);
+          waitForDeviceBack();
+          return;
+        }
+        if (!progress || !progress.active) {
+          clearInterval(timer);
+          waitForDeviceBack();
+          return;
+        }
+        if (progress.state === "VERIFYING") {
+          setOtaProgress(progress.percent, t("otaVerifying"));
+        } else if (progress.state === "REBOOTING") {
+          clearInterval(timer);
+          waitForDeviceBack();
+        } else if (progress.state === "UPLOADING") {
+          setOtaProgress(progress.percent, t("otaUploading"));
+        } else if (progress.state === "UPDATE FAILED") {
+          clearInterval(timer);
+          showOtaError(progress.message || t("otaFailed"));
+        }
+      }, 400);
+      otaPollTimers.push(timer);
+    }
+
+    function startOtaUpload(file, code, endpoint = "/api/ota", codeHeader = "X-Firmware-Code") {
       if (!file) {
-        $("ota-status").textContent = t("otaSelectFile");
+        showOtaError(t("otaSelectFile"));
         return;
       }
       if (!/^[0-9]{4}$/.test(code)) {
-        $("ota-status").textContent = t("otaInvalidCode");
+        showOtaError(t("otaInvalidCode"));
         return;
       }
+      clearOtaPollTimers();
+      $("ota-upload-btn").disabled = true;
+      setOtaProgress(0, t("otaUploading"));
+      $("ota-warning").hidden = false;
 
-      const button = form.querySelector("button");
-      button.disabled = true;
-      $("ota-status").textContent = t("otaUploading");
-      try {
-        const response = await fetch("/api/ota", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/octet-stream",
-            "X-Firmware-Code": code
-          },
-          body: file
-        });
-        if (!response.ok) throw new Error(otaError(response.status));
-        $("ota-status").textContent = t("otaRebooting");
-      } catch (error) {
-        $("ota-status").textContent = error instanceof Error ? error.message : t("otaFailed");
-      } finally {
-        button.disabled = false;
-      }
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", endpoint);
+      xhr.setRequestHeader("Content-Type", "application/octet-stream");
+      xhr.setRequestHeader(codeHeader, code);
+      xhr.timeout = 180000;
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) {
+          setOtaProgress(event.loaded / event.total * 100, t("otaUploading"));
+        }
+      };
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          setOtaProgress(100, t("otaVerifying"));
+          pollOtaProgress();
+        } else {
+          showOtaError(otaError(xhr.status, xhr.responseText || ""));
+        }
+      };
+      xhr.onerror = () => showOtaError(otaError(0, ""));
+      xhr.ontimeout = () => showOtaError(t("otaTimeout"));
+      xhr.send(file);
     }
+
+    function setupOtaFileDrop() {
+      const drop = $("ota-drop");
+      const input = drop.querySelector('input[name="firmware"]');
+      const name = $("ota-file-name");
+      const meta = $("ota-file-meta");
+      const code = $("ota-form").elements.code;
+
+      function handleFile(file) {
+        if (!file) return;
+        const isBin = /\.bin$/i.test(file.name) || file.type === "application/octet-stream";
+        if (!isBin) {
+          showOtaError(t("otaBadFile"));
+          input.value = "";
+          name.textContent = "";
+          meta.textContent = "";
+          return;
+        }
+        if (file.size > 1500 * 1024) {
+          showOtaError(t("otaFileTooLarge"));
+          input.value = "";
+          name.textContent = "";
+          meta.textContent = "";
+          return;
+        }
+        name.textContent = file.name;
+        meta.textContent = `${t("otaSize")}: ${formatFileSize(file.size)}`;
+        code.value = "";
+        $("ota-alert").hidden = true;
+      }
+
+      input.addEventListener("change", () => handleFile(input.files[0]));
+      ["dragenter", "dragover"].forEach((eventName) => {
+        drop.addEventListener(eventName, (event) => {
+          event.preventDefault();
+          drop.classList.add("dragover");
+        });
+      });
+      ["dragleave", "drop"].forEach((eventName) => {
+        drop.addEventListener(eventName, (event) => {
+          event.preventDefault();
+          drop.classList.remove("dragover");
+        });
+      });
+      drop.addEventListener("drop", (event) => {
+        const file = event.dataTransfer?.files?.[0];
+        if (file) {
+          input.files = event.dataTransfer.files;
+          handleFile(file);
+        }
+      });
+    }
+
+    /* ---------------- dynamic settings ---------------- */
 
     function settingLabel(item) {
       return item.label?.[uiLanguage] || item.label?.zh || item.id;
@@ -387,6 +875,7 @@
         for (const section of manifest.sections) {
           if (!section?.label || !Array.isArray(section.items)) throw new Error("invalid manifest");
           const panel = document.createElement("section");
+          panel.className = "card";
           const title = document.createElement("h2");
           title.textContent = section.label[uiLanguage] || section.label.zh;
           const form = document.createElement("form");
@@ -394,15 +883,19 @@
           for (const item of section.items) {
             if (!item?.id || !["range", "select", "action", "choice", "upload"].includes(item.kind)) throw new Error("invalid item");
             if (item.kind === "action") {
-              const button = document.createElement("button"); button.type = "button"; button.textContent = settingLabel(item);
+              const button = document.createElement("button"); button.type = "button"; button.className = "btn"; button.textContent = settingLabel(item);
               button.onclick = async () => { const endpoint = safeEndpoint(item.endpoint); if (endpoint) await api(endpoint, { method: "POST" }); };
               form.append(button); continue;
             }
             if (item.kind === "upload") {
               const file = document.createElement("input"); file.type = "file"; file.accept = item.accept || ".bin";
               const code = document.createElement("input"); code.inputMode = "numeric"; code.maxLength = 4; code.placeholder = "四位验证码";
-              const button = document.createElement("button"); button.type = "button"; button.textContent = settingLabel(item);
-              button.onclick = async () => { const endpoint = safeEndpoint(item.endpoint); if (!endpoint || !file.files[0] || !/^\\d{4}$/.test(code.value)) return; await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/octet-stream", [item.code_header || "X-Firmware-Code"]: code.value }, body: file.files[0] }); };
+              const button = document.createElement("button"); button.type = "button"; button.className = "btn btn-primary"; button.textContent = settingLabel(item);
+              button.onclick = () => {
+                const endpoint = safeEndpoint(item.endpoint);
+                if (!endpoint || !file.files[0] || !/^[0-9]{4}$/.test(code.value)) return;
+                startOtaUpload(file.files[0], code.value, endpoint, item.code_header || "X-Firmware-Code");
+              };
               form.append(file, code, button); continue;
             }
             const label = document.createElement("label"); const text = document.createElement("span"); text.textContent = settingLabel(item);
@@ -411,7 +904,7 @@
             if (item.kind === "select") for (const option of item.options || []) { const node = document.createElement("option"); node.value = option.value; node.textContent = option.label?.[uiLanguage] || option.label?.zh || option.value; input.append(node); }
             label.append(text, input); form.append(label);
             if (item.kind === "choice") {
-              const bind = document.createElement("button"); bind.type = "button"; bind.textContent = "绑定";
+              const bind = document.createElement("button"); bind.type = "button"; bind.className = "btn"; bind.textContent = "绑定";
               bind.onclick = async () => { const endpoint = safeEndpoint(item.submit_endpoint); if (endpoint) await api(endpoint, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ [item.submit_key || "mac"]: input.value }) }); };
               form.append(bind);
             }
@@ -425,7 +918,7 @@
             estimate.append(label, value);
             form.append(estimate);
           }
-          if (section.submit && safeEndpoint(section.submit.endpoint)) { const save = document.createElement("button"); save.textContent = "保存"; form.onsubmit = async (event) => { event.preventDefault(); await api(section.submit.endpoint, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(Object.fromEntries(new FormData(form))) }); await loadManifest(); }; form.append(save); }
+          if (section.submit && safeEndpoint(section.submit.endpoint)) { const save = document.createElement("button"); save.type = "submit"; save.className = "btn btn-primary"; save.textContent = "保存"; form.onsubmit = async (event) => { event.preventDefault(); await api(section.submit.endpoint, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(Object.fromEntries(new FormData(form))) }); await loadManifest(); }; form.append(save); }
           panel.append(title, form); host.append(panel);
         }
         renderBmsCapacityEstimate(lastStatus);
@@ -435,6 +928,8 @@
         ["bms-section", "ota-section", "device-section"].forEach((id) => { $(id).hidden = true; });
       }
     }
+
+    /* ---------------- status & records ---------------- */
 
     async function refresh() {
       try {
@@ -644,11 +1139,12 @@
     $("bms-form").elements.bms_type.addEventListener("change", () => saveBmsType().then(refresh));
     $("device-form").elements.language.addEventListener("change", (event) => applyLanguage(event.target.value));
     $("device-form").elements.speed_source.addEventListener("change", () => updateSpeedSourceHint());
-    $("ota-form").addEventListener("submit", uploadFirmware);
-    $("ota-form").elements.firmware.addEventListener("change", () => {
-      $("ota-form").elements.code.value = "";
-      $("ota-status").textContent = "";
+    $("ota-form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      startOtaUpload(form.elements.firmware.files[0], form.elements.code.value.trim());
     });
+    setupOtaFileDrop();
     bindJsonForm("ap-form", "/api/ap-password");
     bindJsonForm("device-form", "/api/config");
     loadManifest().then(refresh);

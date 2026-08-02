@@ -322,6 +322,12 @@ static esp_err_t service_process_command(const esp_bms_display_service_command_t
                                                  command->data.rgb565.height,
                                                  command->data.rgb565.pixels,
                                                  command->data.rgb565.pixel_bytes);
+    case ESP_BMS_DISPLAY_SERVICE_COMMAND_OTA_UPDATE:
+        return esp_bms_lvgl_ui_ota_update(command->data.ota_update.progress_percent,
+                                          command->data.ota_update.status_text,
+                                          command->data.ota_update.failed);
+    case ESP_BMS_DISPLAY_SERVICE_COMMAND_OTA_FINISH:
+        return esp_bms_lvgl_ui_ota_finish();
     default:
         return ESP_ERR_INVALID_ARG;
     }

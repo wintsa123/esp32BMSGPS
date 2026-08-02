@@ -115,6 +115,98 @@ function Resolve-BuildDirectory {
     return (Resolve-Path -LiteralPath $candidate).Path
 }
 
+function Test-ProjectS3Rfc2217Endpoint {
+    param([Parameter(Mandatory = $true)][string]$SerialPort)
+
+    try {
+        $endpoint = [Uri]$SerialPort
+    } catch {
+        return $false
+    }
+
+    if ($endpoint.Scheme -ine "rfc2217" -or
+        $endpoint.Host -ine "192.168.2.10" -or
+        $endpoint.Port -ne 4000) {
+        return $false
+    }
+
+    return $endpoint.Query -match "(?:^|[?&])ign_set_control(?:&|$)"
+}
+
+function Test-ProcessDescendsFrom {
+    param(
+        [Parameter(Mandatory = $true)][int]$ProcessId,
+        [Parameter(Mandatory = $true)][int]$AncestorProcessId
+    )
+
+    $currentProcessId = $ProcessId
+    $visited = [System.Collections.Generic.HashSet[int]]::new()
+    while ($currentProcessId -gt 0 -and $visited.Add($currentProcessId)) {
+        if ($currentProcessId -eq $AncestorProcessId) {
+            return $true
+        }
+
+        $processInfo = Get-CimInstance Win32_Process -Filter "ProcessId = $currentProcessId" -ErrorAction SilentlyContinue
+        if ($null -eq $processInfo) {
+            return $false
+        }
+        $currentProcessId = [int]$processInfo.ParentProcessId
+    }
+
+    return $false
+}
+
+function Restart-ProjectS3Bridge {
+    param([Parameter(Mandatory = $true)][string]$Endpoint)
+
+    $bridgeScript = Join-Path $PSScriptRoot "serial_tcp_bridge.ps1"
+    if (-not (Test-Path -LiteralPath $bridgeScript -PathType Leaf)) {
+        throw "COM6 bridge script was not found: $bridgeScript"
+    }
+
+    $powerShell = (Get-Command powershell.exe -ErrorAction Stop).Source
+    $logDirectory = Join-Path ([System.IO.Path]::GetTempPath()) "esp32-rfc2217-bridge"
+    New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
+    $logStamp = Get-Date -Format "yyyyMMdd-HHmmss"
+    $standardOutput = Join-Path $logDirectory "bridge-restart-$logStamp.out.log"
+    $standardError = Join-Path $logDirectory "bridge-restart-$logStamp.err.log"
+    $arguments = @(
+        "-NoLogo",
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", ('"{0}"' -f $bridgeScript),
+        "-PortName", "COM6",
+        "-ListenPort", "4000"
+    )
+
+    Write-Host "==> Restarting COM6 RFC2217 bridge before flash" -ForegroundColor Cyan
+    $bridgeProcess = Start-Process -FilePath $powerShell -ArgumentList $arguments -WindowStyle Hidden -PassThru `
+        -RedirectStandardOutput $standardOutput -RedirectStandardError $standardError
+    $deadline = (Get-Date).AddSeconds(15)
+    do {
+        $bridgeProcess.Refresh()
+        if ($bridgeProcess.HasExited) {
+            $errorText = if (Test-Path -LiteralPath $standardError) {
+                ((Get-Content -LiteralPath $standardError -Tail 20) -join [Environment]::NewLine).Trim()
+            } else {
+                ""
+            }
+            throw "COM6 bridge stopped before listening (exit $($bridgeProcess.ExitCode)). Log: $standardError`n$errorText"
+        }
+
+        $listeners = @(Get-NetTCPConnection -LocalPort 4000 -State Listen -ErrorAction SilentlyContinue)
+        foreach ($listener in $listeners) {
+            if (Test-ProcessDescendsFrom -ProcessId ([int]$listener.OwningProcess) -AncestorProcessId $bridgeProcess.Id) {
+                Write-Host "==> COM6 bridge is listening for $Endpoint (PID $($listener.OwningProcess))" -ForegroundColor DarkGray
+                return
+            }
+        }
+        Start-Sleep -Milliseconds 200
+    } while ((Get-Date) -lt $deadline)
+
+    throw "COM6 bridge did not begin listening on TCP port 4000 within 15 seconds. Logs: $standardOutput, $standardError"
+}
+
 function Invoke-Checked {
     param(
         [Parameter(Mandatory = $true)][string]$Step,
@@ -152,6 +244,9 @@ try {
 
     $resolvedPort = Resolve-FlashPort -RequestedPort $Port
     $resolvedBuildDir = Resolve-BuildDirectory -RequestedBuildDir $BuildDir
+    if (Test-ProjectS3Rfc2217Endpoint -SerialPort $resolvedPort) {
+        Restart-ProjectS3Bridge -Endpoint $resolvedPort
+    }
     $effectiveBaudRate = $BaudRate
     if ($effectiveBaudRate -le 0 -and $resolvedPort -match "(?i)^socket://") {
         $effectiveBaudRate = 115200

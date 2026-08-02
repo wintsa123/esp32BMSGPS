@@ -276,10 +276,11 @@ static esp_err_t network_start_http_server(esp_bms_idf_runtime_t *runtime)
     }
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.max_open_sockets = 2;
+    config.max_open_sockets = 4;
     config.max_uri_handlers = 5;
     config.stack_size = 3584;
     config.task_priority = HTTP_SERVER_TASK_PRIORITY;
+    config.recv_wait_timeout = 10;
     config.lru_purge_enable = true;
     config.uri_match_fn = httpd_uri_match_wildcard;
 
