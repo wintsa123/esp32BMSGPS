@@ -20,9 +20,15 @@ static const char *TAG = "esp_bms_ota";
 #define OTA_BUFFER_SIZE 1024U
 #define OTA_CODE_LEN 4U
 #define OTA_RESTART_DELAY_MS 750U
-#define OTA_ERROR_VISIBLE_DELAY_MS 6000U
+/* 失败信息在屏幕上的可见时长；越短，失败后 8KB 上传任务栈释放得越快，
+   用户快速重试时越不容易因内存不足被拒。 */
+#define OTA_ERROR_VISIBLE_DELAY_MS 2500U
 #define OTA_TASK_STACK_BYTES 8192U
 #define OTA_TASK_PRIORITY 5U
+/* OTA 上传需要 async 请求拷贝 + 8KB 任务栈 + 1KB 缓冲 + lwIP socket 缓冲；
+   ESP32 无 PSRAM 时 heap 不足会直接 panic，这里设一个保守阈值提前拒绝。
+   实测：AP+HTTP 启动后 heap 约 33KB，页面打开后约 28KB，OTA 本身约需 15KB。 */
+#define OTA_MIN_FREE_HEAP_BYTES (20U * 1024U)
 
 typedef struct {
     httpd_req_t *req;
@@ -249,7 +255,7 @@ static void ota_task(void *context)
     }
 
     ota_progress_update(ESP_BMS_OTA_STATE_VERIFYING,
-                        100U,
+                        30U,
                         (uint32_t)received_total,
                         arg->content_len,
                         NULL);
@@ -308,6 +314,15 @@ static void ota_task(void *context)
     return;
 
 ota_task_finish:
+    /* 失败路径：擦除分区镜像头（4KB），确保残留数据不会成为可启动镜像，
+       等效"删除刚下载的固件"。成功路径不经过这里（直接 esp_restart）。 */
+    if (arg && arg->partition) {
+        const esp_err_t erase_ret =
+            esp_partition_erase_range(arg->partition, 0, 4096U); /* SPI_FLASH_SEC_SIZE */
+        if (erase_ret != ESP_OK) {
+            ESP_LOGW(TAG, "failed to erase partition head: %s", esp_err_to_name(erase_ret));
+        }
+    }
     (void)httpd_req_async_handler_complete(req);
     vTaskDelay(pdMS_TO_TICKS(OTA_ERROR_VISIBLE_DELAY_MS));
     ota_progress_update(ESP_BMS_OTA_STATE_IDLE, 0U, 0U, 0U, "");
@@ -320,6 +335,17 @@ esp_err_t esp_bms_ota_handle_http_request(httpd_req_t *req)
     char expected_code[OTA_CODE_LEN + 1U] = { 0 };
     if (!ota_read_code(req, expected_code)) {
         return ota_send_text(req, "400 Bad Request", "invalid firmware code");
+    }
+
+    /* ESP32 without PSRAM: an OTA upload needs the async request copy, the
+     * 8 KiB upload task stack, the 1 KiB read buffer and lwIP socket buffers.
+     * Refuse early instead of panicking when the heap is nearly exhausted. */
+    const size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (free_internal < OTA_MIN_FREE_HEAP_BYTES) {
+        ESP_LOGE(TAG, "rejected OTA: heap too low (%u < %u)",
+                 (unsigned)free_internal, (unsigned)OTA_MIN_FREE_HEAP_BYTES);
+        return ota_send_text(req, "507 Insufficient Storage",
+                             "device memory too low for firmware upload");
     }
 
     const esp_partition_t *update_partition = esp_ota_get_next_update_partition(NULL);

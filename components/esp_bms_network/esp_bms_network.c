@@ -221,6 +221,8 @@ static esp_err_t network_root_handler(httpd_req_t *req)
     const size_t html_len = html_size > 0U && web_index_html_start[html_size - 1U] == '\0'
                                 ? html_size - 1U
                                 : html_size;
+    ESP_LOGI(TAG, "[http] GET / served: %u bytes (remote %s)",
+             (unsigned)html_len, httpd_req_get_url_query_len(req) > 0 ? "with-query" : "no-query");
     ESP_RETURN_ON_ERROR(httpd_resp_set_type(req, "text/html; charset=utf-8"), TAG, "set HTTP type failed");
     return httpd_resp_send(req, web_index_html_start, (ssize_t)html_len);
 }
@@ -276,7 +278,9 @@ static esp_err_t network_start_http_server(esp_bms_idf_runtime_t *runtime)
     }
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.max_open_sockets = 4;
+    /* ESP32 (CONFIG_LWIP_MAX_SOCKETS=6) 要求 max_open_sockets + 3(内部) <= 6，上限为 3；
+       此前配 4 导致 httpd_start 返回 ESP_ERR_INVALID_ARG，80 端口无服务、192.168.4.1 打不开。 */
+    config.max_open_sockets = 3;
     config.max_uri_handlers = 5;
     config.stack_size = 3584;
     config.task_priority = HTTP_SERVER_TASK_PRIORITY;

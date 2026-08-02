@@ -41,12 +41,18 @@ menu "ESP BMS LVGL Bridge"
 
     config ESP_BMS_LVGL_BRIDGE_SKIP_RGB565_SWAP
         bool "Skip adapter RGB565 byte swap (16-bit I80)"
-        default y
+        default y if IDF_TARGET_ESP32S3
+        default n
         help
             The esp_lvgl_adapter flush callback byte-swaps RGB565 pixel data
             for 8-bit SPI/I80 panels where bytes are transmitted sequentially.
             On a 16-bit parallel I80 bus each pixel is a single atomic 16-bit
             transfer, so the swap is incorrect and produces garbled colors.
             Enable this to skip the swap.
+
+            This project's ESP32-S3 boards use a 16-bit I80 panel (ST7796U),
+            so the default is to skip the swap. Classic ESP32 boards use an
+            8-bit SPI panel (ST7789) which needs the byte swap, so the default
+            there is to perform it. Override manually when the bus differs.
 
 endmenu

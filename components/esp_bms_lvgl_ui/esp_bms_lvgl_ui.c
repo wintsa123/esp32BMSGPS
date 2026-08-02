@@ -5010,7 +5010,7 @@ static void settings_show_hotspot_detail(void)
                                      SETTINGS_DETAIL_ROW_H_LANDSCAPE;
     const int32_t gap = 8;
     const int32_t info_y = 12 + row_h + gap;
-    const int32_t info_h = portrait ? 78 : 96;
+    const int32_t info_h = portrait ? 70 : 96;
     const settings_detail_row_t control_row = {
         "热点共享",
         SNAPSHOT_FLAG(snapshot, SETUP_AP_ENABLED) ? "热点已打开" : "未打开",
@@ -5043,27 +5043,49 @@ static void settings_show_hotspot_detail(void)
 #if LV_USE_QRCODE
     const int32_t qr_size = portrait ? clamp_i32(s_ui.width - 104, 96, 140) :
                                       clamp_i32(s_ui.height - 96, 80, 120);
-    const int32_t qr_panel_w = qr_size + 18;
-    const int32_t qr_panel_h = qr_size + 18;
-    const int32_t qr_x = portrait ? (s_ui.width - qr_panel_w) / 2 : (s_ui.width - qr_panel_w - 12);
-    const int32_t qr_y = portrait ? (info_y + info_h + 10) : 58;
+    /* 顶部两行提示文字的高度，二维码面板需要加高容纳 */
+    const int32_t qr_hint_h = 40;
+    /* 面板可用宽度：竖屏=整卡宽，横屏=右半卡宽 */
+    const int32_t avail_w = portrait ? (s_ui.width - SETTINGS_LIST_MARGIN_X * 2)
+                                     : ((s_ui.width / 2) - 12);
+    /* 13px 两行提示约 162px 宽；窄屏退回 10px 提示字体 */
+    const bool qr_hint_small = avail_w < 184;
+    const int32_t qr_hint_min_w = qr_hint_small ? 148 : 184;
+    const int32_t qr_panel_w = qr_size + 18 > qr_hint_min_w ? (qr_size + 18) : qr_hint_min_w;
+    const int32_t qr_panel_w_clamped = qr_panel_w < avail_w ? qr_panel_w : avail_w;
+    const int32_t qr_panel_h = qr_size + 18 + qr_hint_h;
+    const int32_t qr_x = portrait ? (s_ui.width - qr_panel_w_clamped) / 2
+                                  : (s_ui.width - qr_panel_w_clamped - 12);
+    /* 横屏：二维码面板贴近顶部状态栏（内容区 y=8，含 header 上移后实际约 46px）；
+       竖屏：保持在 info 卡片下方。 */
+    const int32_t qr_y = portrait ? (info_y + info_h + 10) : 8;
     s_ui.setup_ap_qr_panel = panel(s_ui.settings_detail,
                                   qr_x,
                                   qr_y,
-                                  qr_panel_w,
+                                  qr_panel_w_clamped,
                                   qr_panel_h,
                                   COLOR_WHITE);
     lv_obj_set_style_radius(s_ui.setup_ap_qr_panel, 8, LV_PART_MAIN);
     lv_obj_set_style_border_width(s_ui.setup_ap_qr_panel, 1, LV_PART_MAIN);
     lv_obj_set_style_border_color(s_ui.setup_ap_qr_panel, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
     lv_obj_set_style_border_opa(s_ui.setup_ap_qr_panel, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_t *qr_hint = label(s_ui.setup_ap_qr_panel,
+                              10,
+                              8,
+                              qr_panel_w_clamped - 20,
+                              qr_hint_h - 10,
+                              qr_hint_small ? &settings_zh_10 : &settings_zh_13);
+    lv_label_set_long_mode(qr_hint, LV_LABEL_LONG_WRAP);
+    lv_label_set_text(qr_hint, "扫描二维码自动连接wifi；\n连接后访问192.168.4.1");
+    lv_obj_set_style_text_align(qr_hint, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(qr_hint, COLOR_SETTINGS_BG, LV_PART_MAIN);
     s_ui.setup_ap_qr = lv_qrcode_create(s_ui.setup_ap_qr_panel);
     if (s_ui.setup_ap_qr) {
         lv_qrcode_set_size(s_ui.setup_ap_qr, qr_size);
         lv_qrcode_set_dark_color(s_ui.setup_ap_qr, COLOR_SETTINGS_BG);
         lv_qrcode_set_light_color(s_ui.setup_ap_qr, COLOR_WHITE);
         lv_qrcode_set_quiet_zone(s_ui.setup_ap_qr, true);
-        lv_obj_center(s_ui.setup_ap_qr);
+        lv_obj_align(s_ui.setup_ap_qr, LV_ALIGN_BOTTOM_MID, 0, -9);
     }
     set_obj_hidden(s_ui.setup_ap_qr_panel, true);
 #endif
@@ -14541,6 +14563,13 @@ esp_err_t esp_bms_lvgl_ui_ota_finish(void)
     ESP_RETURN_ON_FALSE(UI_FLAG(INITIALIZED), ESP_ERR_INVALID_STATE, TAG,
                         "UI is not initialized");
     ota_overlay_delete();
+    /* OTA_FINISH 只在失败路径触发（成功路径直接 esp_restart 重启）。
+       失败后回到热点共享页，方便用户重试，而不是停留在仪表首页。 */
+    if (lv_obj_get_parent(s_ui.settings_page) != s_ui.root ||
+        lv_obj_has_flag(s_ui.settings_page, LV_OBJ_FLAG_HIDDEN)) {
+        show_settings_view();
+    }
+    settings_show_detail(SETTINGS_DETAIL_HOTSPOT);
     return ESP_OK;
 }
 

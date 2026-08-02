@@ -1,0 +1,2 @@
+[permissions]
+allow = ["Bash=ls /vol1/1000/project/esp32BmsGps && git -C /vol1/1000/project/esp32BmsGps status --short | head -20 && git -C /vol1/1000/project/esp32BmsGps log --oneline -5"]

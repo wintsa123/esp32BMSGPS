@@ -21,6 +21,7 @@
 #include "freertos/task.h"
 #if ESP_BMS_FEATURE_BLE
 #include "esp_bt.h"
+#include "esp_app_desc.h"
 #include "host/ble_gap.h"
 #include "host/ble_gatt.h"
 #include "host/ble_hs.h"
@@ -3105,6 +3106,10 @@ static esp_err_t runtime_http_status_handler(httpd_req_t *req, esp_bms_idf_runti
         (void)snprintf(speed, sizeof(speed), "%u.%u", value / 10U, value % 10U);
     }
 
+    /* 运行中固件的 SHA-256 前缀，供网页端 OTA 重启后对比判断刷入是否生效 */
+    char firmware_sha256[13] = "unknown";
+    (void)esp_app_get_elf_sha256(firmware_sha256, sizeof(firmware_sha256));
+
     /* HTTPD serializes handlers; static avoids consuming the small task stack. */
     static char json[HTTP_JSON_MAX_LEN];
     const char *capacity_state = runtime_bms_supports_capacity_estimate(runtime->bms_type)
@@ -3112,7 +3117,8 @@ static esp_err_t runtime_http_status_handler(httpd_req_t *req, esp_bms_idf_runti
                                      : "unsupported";
     const int written = snprintf(json,
                                  sizeof(json),
-                                 "{\"version\":\"%s\",\"speed\":\"%s\",\"speed_unit\":\"%s\","
+                                 "{\"version\":\"%s\",\"firmware_sha256\":\"%s\","
+                                 "\"speed\":\"%s\",\"speed_unit\":\"%s\","
                                  "\"gps_fix\":%s,\"bms\":\"%s\",\"pack_voltage_mv\":%s,"
                                  "\"current_deci_amps\":%s,\"soc_percent\":%s,"
                                  "\"local_battery_mv\":%s,\"bms_info\":\"%s\","
@@ -3121,6 +3127,7 @@ static esp_err_t runtime_http_status_handler(httpd_req_t *req, esp_bms_idf_runti
                                  "\"setup_ap_enabled\":%s,\"bms_capacity_estimate_mah\":%s,"
                                  "\"bms_capacity_estimate_state\":\"%s\"}",
                                  runtime->snapshot.firmware_version,
+                                 firmware_sha256,
                                  speed,
                                  runtime_speed_unit_config_text(runtime->snapshot.speed_unit),
                                  RUNTIME_SNAPSHOT_FLAG(runtime, GPS_FIX_VALID) ? "true" : "false",
