@@ -1152,6 +1152,9 @@ secured reads: HID Information, Report Map, Protocol Mode, Input Report
   characteristics. Do not proactively call `ble_gap_security_initiate()` or
   apply the local phone-media pairing timeout for HID connections; Android
   system Bluetooth can fail pairing if the peripheral races its pairing flow.
+- Keep the local phone HID connection on the default PHY during pairing. Do not
+  request Coded PHY for HIDS; BMS/controller long-range BLE may still request
+  Coded PHY through their own central connection paths.
 - After an encrypted link subscribes to the input report, each touch action
   sends its one-byte Consumer Control press report, then an all-zero release
   report after 30 ms. Refuse actions while unpaired, unsubscribed, disconnected,
@@ -1166,6 +1169,7 @@ secured reads: HID Information, Report Map, Protocol Mode, Input Report
 | No BLE capability or both media modules selected | Configurator rejects the profile |
 | HID disabled | No HIDS UUID, HID appearance, page, or worker in the image |
 | Android connects but has not paired | Encrypted HIDS read triggers Android pairing; firmware keeps the connection open |
+| Android HID phone connects | Keep default PHY; do not issue a local Coded PHY request |
 | Link not encrypted/subscribed/suspended | Keep controls disabled and do not queue a report |
 | GATT registration fails | Fail BLE-host initialization without starting an unusable advertiser |
 | Phone disconnects | Clear HID state and let existing BMS scan arbitration resume |

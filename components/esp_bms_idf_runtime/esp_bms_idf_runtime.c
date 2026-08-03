@@ -4207,7 +4207,12 @@ static int runtime_bluetooth_gap_event(struct ble_gap_event *event, void *arg)
                 esp_timer_get_time() +
                 (int64_t)LOCAL_BLUETOOTH_PAIR_INITIATE_DELAY_MS * 1000;
 #endif
+#if !ESP_BMS_FEATURE_BLE_MEDIA_HID
             esp_bms_idf_runtime_request_coded_phy(event->connect.conn_handle, "local");
+#else
+            ESP_LOGI(TAG, "[bt] HID pairing keeps default PHY: conn=%u",
+                     event->connect.conn_handle);
+#endif
             RUNTIME_SET_FLAG(runtime, BLUETOOTH_CONNECTED, false);
             RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISING, false);
 #if ESP_BMS_FEATURE_PHONE_MEDIA
