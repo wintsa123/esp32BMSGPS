@@ -1137,6 +1137,7 @@ module: ble-media-hid (REQUIRES_CAPABILITIES=BLE, CONFLICTS=phone-media)
 profile: ESP_BMS_FEATURE_BLE_MEDIA_HID=0|1
 service: HID over GATT 0x1812, appearance 0x03C0
 input report: id 1, usages 0x00B6/0x00CD/0x00B5/0x00EA/0x00E9
+secured reads: HID Information, Report Map, Protocol Mode, Input Report
 ```
 
 ### 3. Contracts
@@ -1147,6 +1148,10 @@ input report: id 1, usages 0x00B6/0x00CD/0x00B5/0x00EA/0x00E9
 - Register HIDS directly on the existing NimBLE Host before it starts. Do not
   use a second Host or `esp_hid`, because the runtime owns peripheral phone
   connections while BMS/controller retain central connection ownership.
+- In HID mode, let the Android HID host trigger SMP by reading encrypted HIDS
+  characteristics. Do not proactively call `ble_gap_security_initiate()` or
+  apply the local phone-media pairing timeout for HID connections; Android
+  system Bluetooth can fail pairing if the peripheral races its pairing flow.
 - After an encrypted link subscribes to the input report, each touch action
   sends its one-byte Consumer Control press report, then an all-zero release
   report after 30 ms. Refuse actions while unpaired, unsubscribed, disconnected,
@@ -1160,6 +1165,7 @@ input report: id 1, usages 0x00B6/0x00CD/0x00B5/0x00EA/0x00E9
 | --- | --- |
 | No BLE capability or both media modules selected | Configurator rejects the profile |
 | HID disabled | No HIDS UUID, HID appearance, page, or worker in the image |
+| Android connects but has not paired | Encrypted HIDS read triggers Android pairing; firmware keeps the connection open |
 | Link not encrypted/subscribed/suspended | Keep controls disabled and do not queue a report |
 | GATT registration fails | Fail BLE-host initialization without starting an unusable advertiser |
 | Phone disconnects | Clear HID state and let existing BMS scan arbitration resume |
@@ -1172,6 +1178,8 @@ input report: id 1, usages 0x00B6/0x00CD/0x00B5/0x00EA/0x00E9
   unchanged.
 - Bad: use AVRCP/A2DP, modify local volume for a phone-volume action, or enable
   private `phone-media` alongside HIDS.
+- Bad: start SMP from the device side or disconnect after a local pairing
+  deadline while Android is still reading the encrypted HIDS attributes.
 
 ### 6. Tests Required
 

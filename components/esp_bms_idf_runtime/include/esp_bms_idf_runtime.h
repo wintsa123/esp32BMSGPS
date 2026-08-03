@@ -160,6 +160,8 @@ struct esp_bms_idf_runtime {
     uint16_t bms_frame_len;
     uint16_t bms_conn_handle;
     uint16_t bluetooth_conn_handle;
+    int64_t bluetooth_pair_deadline_us;
+    int64_t bluetooth_pair_initiate_at_us;
     uint16_t controller_conn_handle;
     uint16_t bms_service_start_handle;
     uint16_t bms_service_end_handle;

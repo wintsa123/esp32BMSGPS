@@ -69,6 +69,8 @@ static const char *TAG = "bms_idf_runtime";
 #define BMS_SCAN_DURATION_MS 10000
 #define LOCAL_BLUETOOTH_NAME "ESP32 BMS GPS"
 #define LOCAL_BLUETOOTH_ADV_INTERVAL_MS 500U
+#define LOCAL_BLUETOOTH_PAIR_TIMEOUT_MS 10000U
+#define LOCAL_BLUETOOTH_PAIR_INITIATE_DELAY_MS 1000U
 #define BMS_CONNECT_TIMEOUT_MS 10000
 #define BMS_STATUS_POLL_PERIOD_MS 500U
 #define BMS_HEARTBEAT_TIMEOUT_MS 5000U
@@ -532,12 +534,12 @@ static const struct ble_gatt_svc_def BLE_MEDIA_HID_GATT_SERVICES[] = {
             {
                 .uuid = &BLE_MEDIA_HID_INFORMATION_UUID.u,
                 .access_cb = runtime_ble_media_hid_information_access_cb,
-                .flags = BLE_GATT_CHR_F_READ,
+                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC,
             },
             {
                 .uuid = &BLE_MEDIA_HID_REPORT_MAP_UUID.u,
                 .access_cb = runtime_ble_media_hid_report_map_access_cb,
-                .flags = BLE_GATT_CHR_F_READ,
+                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC,
             },
             {
                 .uuid = &BLE_MEDIA_HID_CONTROL_POINT_UUID.u,
@@ -548,7 +550,8 @@ static const struct ble_gatt_svc_def BLE_MEDIA_HID_GATT_SERVICES[] = {
             {
                 .uuid = &BLE_MEDIA_HID_PROTOCOL_MODE_UUID.u,
                 .access_cb = runtime_ble_media_hid_protocol_mode_access_cb,
-                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE |
+                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC |
+                         BLE_GATT_CHR_F_WRITE |
                          BLE_GATT_CHR_F_WRITE_NO_RSP | BLE_GATT_CHR_F_WRITE_ENC,
             },
             {
@@ -3740,7 +3743,11 @@ esp_err_t esp_bms_idf_runtime_http_api_handler(httpd_req_t *req)
         return runtime_http_post_bms_bind_handler(req, runtime);
     }
     if (req->method == HTTP_GET && strcmp(req->uri, "/api/ota/progress") == 0) {
+#if ESP_BMS_FEATURE_OTA
         return esp_bms_ota_handle_progress_request(req);
+#else
+        return runtime_http_send_text(req, "501 Not Implemented", "not implemented");
+#endif
     }
     if (req->method == HTTP_POST && strcmp(req->uri, "/api/ota") == 0) {
 #if ESP_BMS_FEATURE_OTA
@@ -4190,6 +4197,16 @@ static int runtime_bluetooth_gap_event(struct ble_gap_event *event, void *arg)
     case BLE_GAP_EVENT_CONNECT:
         if (event->connect.status == 0) {
             runtime->bluetooth_conn_handle = event->connect.conn_handle;
+#if ESP_BMS_FEATURE_BLE_MEDIA_HID
+            runtime->bluetooth_pair_deadline_us = 0;
+            runtime->bluetooth_pair_initiate_at_us = 0;
+#else
+            runtime->bluetooth_pair_deadline_us =
+                esp_timer_get_time() + (int64_t)LOCAL_BLUETOOTH_PAIR_TIMEOUT_MS * 1000;
+            runtime->bluetooth_pair_initiate_at_us =
+                esp_timer_get_time() +
+                (int64_t)LOCAL_BLUETOOTH_PAIR_INITIATE_DELAY_MS * 1000;
+#endif
             esp_bms_idf_runtime_request_coded_phy(event->connect.conn_handle, "local");
             RUNTIME_SET_FLAG(runtime, BLUETOOTH_CONNECTED, false);
             RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISING, false);
@@ -4201,17 +4218,19 @@ static int runtime_bluetooth_gap_event(struct ble_gap_event *event, void *arg)
 #endif
             (void)runtime_project_bluetooth_snapshot(runtime);
             runtime_set_error(runtime, "BT PAIR");
-            const int security_rc = ble_gap_security_initiate(event->connect.conn_handle);
-            if (security_rc != 0 && security_rc != BLE_HS_EALREADY) {
-                runtime_set_error(runtime, "BT PAIR FAIL");
-                ESP_LOGW(TAG, "[bt] pairing start failed: conn=%u rc=%d",
-                         event->connect.conn_handle, security_rc);
-                (void)ble_gap_terminate(event->connect.conn_handle,
-                                        BLE_ERR_REM_USER_CONN_TERM);
-            } else {
-                ESP_LOGI(TAG, "[bt] local Bluetooth connected; pairing started: conn=%u",
-                         event->connect.conn_handle);
-            }
+#if ESP_BMS_FEATURE_BLE_MEDIA_HID
+            ESP_LOGI(TAG, "[bt] local Bluetooth connected; waiting for Android HID pairing: conn=%u",
+                     event->connect.conn_handle);
+#else
+            /* Delay the security initiate by a short window: some Android
+             * system stacks start their own pairing on connect and react
+             * badly to an immediate Slave Security Request. The deferred
+             * initiate still guarantees pairing for app-driven GATT
+             * connections that never initiate themselves. */
+            ESP_LOGI(TAG, "[bt] local Bluetooth connected; pairing will start after %u ms: conn=%u",
+                     (unsigned)LOCAL_BLUETOOTH_PAIR_INITIATE_DELAY_MS,
+                     event->connect.conn_handle);
+#endif
         } else {
             runtime->bluetooth_conn_handle = 0xFFFFU;
             RUNTIME_SET_FLAG(runtime, BLUETOOTH_CONNECTED, false);
@@ -4242,6 +4261,8 @@ static int runtime_bluetooth_gap_event(struct ble_gap_event *event, void *arg)
             const bool resume_advertising =
                 RUNTIME_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED) && !start_bms_scan;
             runtime->bluetooth_conn_handle = 0xFFFFU;
+            runtime->bluetooth_pair_deadline_us = 0;
+            runtime->bluetooth_pair_initiate_at_us = 0;
             RUNTIME_SET_FLAG(runtime, BLUETOOTH_CONNECTED, false);
             RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISING, false);
             RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, resume_advertising);
@@ -4268,6 +4289,8 @@ static int runtime_bluetooth_gap_event(struct ble_gap_event *event, void *arg)
         return 0;
     case BLE_GAP_EVENT_ENC_CHANGE:
         if (event->enc_change.conn_handle == runtime->bluetooth_conn_handle) {
+            runtime->bluetooth_pair_deadline_us = 0;
+            runtime->bluetooth_pair_initiate_at_us = 0;
             struct ble_gap_conn_desc desc = { 0 };
             const int find_rc = ble_gap_conn_find(event->enc_change.conn_handle, &desc);
             const bool paired = event->enc_change.status == 0 && find_rc == 0 &&
@@ -4326,6 +4349,19 @@ static int runtime_bluetooth_gap_event(struct ble_gap_event *event, void *arg)
                      runtime->ble_media_hid_input_report_subscribed ? "enabled" : "disabled");
         }
 #endif
+        return 0;
+    case BLE_GAP_EVENT_PARING_COMPLETE:
+        if (event->pairing_complete.conn_handle == runtime->bluetooth_conn_handle) {
+            runtime->bluetooth_pair_initiate_at_us = 0;
+            if (event->pairing_complete.status == 0) {
+                ESP_LOGI(TAG, "[bt] SMP pairing completed: conn=%u",
+                         event->pairing_complete.conn_handle);
+            } else {
+                ESP_LOGW(TAG, "[bt] SMP pairing failed: conn=%u status=0x%04x",
+                         event->pairing_complete.conn_handle,
+                         event->pairing_complete.status);
+            }
+        }
         return 0;
     case BLE_GAP_EVENT_REPEAT_PAIRING: {
         struct ble_gap_conn_desc desc = { 0 };
@@ -5013,6 +5049,43 @@ bool esp_bms_idf_runtime_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_m
         }
     }
 #endif
+    if (!ESP_BMS_FEATURE_BLE_MEDIA_HID &&
+        runtime->bluetooth_pair_initiate_at_us != 0 &&
+        !RUNTIME_FLAG(runtime, BLUETOOTH_CONNECTED) &&
+        runtime->bluetooth_conn_handle != 0xFFFFU &&
+        esp_timer_get_time() >= runtime->bluetooth_pair_initiate_at_us) {
+        runtime->bluetooth_pair_initiate_at_us = 0;
+        const int security_rc =
+            ble_gap_security_initiate(runtime->bluetooth_conn_handle);
+        if (security_rc != 0 && security_rc != BLE_HS_EALREADY) {
+            runtime_set_error(runtime, "BT PAIR FAIL");
+            ESP_LOGW(TAG, "[bt] pairing start failed: conn=%u rc=%d",
+                     runtime->bluetooth_conn_handle, security_rc);
+            (void)ble_gap_terminate(runtime->bluetooth_conn_handle,
+                                    BLE_ERR_REM_USER_CONN_TERM);
+            changed = true;
+        } else {
+            ESP_LOGI(TAG, "[bt] pairing started: conn=%u",
+                     runtime->bluetooth_conn_handle);
+        }
+    }
+    if (!ESP_BMS_FEATURE_BLE_MEDIA_HID && runtime->bluetooth_pair_deadline_us != 0) {
+        if (RUNTIME_FLAG(runtime, BLUETOOTH_CONNECTED) ||
+            runtime->bluetooth_conn_handle == 0xFFFFU) {
+            runtime->bluetooth_pair_deadline_us = 0;
+        } else if (esp_timer_get_time() >= runtime->bluetooth_pair_deadline_us) {
+            runtime->bluetooth_pair_deadline_us = 0;
+            RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, true);
+            runtime_log_heap_state("bt_pair_timeout");
+            ESP_LOGW(TAG,
+                     "[bt] pairing timed out (%u ms); terminating conn=%u",
+                     (unsigned)LOCAL_BLUETOOTH_PAIR_TIMEOUT_MS,
+                     runtime->bluetooth_conn_handle);
+            (void)ble_gap_terminate(runtime->bluetooth_conn_handle,
+                                    BLE_ERR_REM_USER_CONN_TERM);
+            changed = true;
+        }
+    }
     if (RUNTIME_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED) &&
         !RUNTIME_FLAG(runtime, BLUETOOTH_ADVERTISING) &&
         !RUNTIME_FLAG(runtime, BLUETOOTH_CONNECTED) &&
