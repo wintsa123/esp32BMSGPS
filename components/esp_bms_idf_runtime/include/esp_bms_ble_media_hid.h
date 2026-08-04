@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 #define ESP_BMS_BLE_MEDIA_HID_REPORT_ID 1U
-#define ESP_BMS_BLE_MEDIA_HID_REPORT_RELEASE 0U
+#define ESP_BMS_BLE_MEDIA_HID_REPORT_LEN 2U
 
 typedef enum {
     ESP_BMS_BLE_MEDIA_HID_USAGE_NEXT_TRACK = 0x00B5U,
@@ -16,7 +16,7 @@ typedef enum {
 
 static inline bool esp_bms_ble_media_hid_report_from_usage(
     esp_bms_ble_media_hid_usage_t usage,
-    uint8_t *report)
+    uint8_t report[ESP_BMS_BLE_MEDIA_HID_REPORT_LEN])
 {
     if (!report) {
         return false;
@@ -24,21 +24,16 @@ static inline bool esp_bms_ble_media_hid_report_from_usage(
 
     switch (usage) {
     case ESP_BMS_BLE_MEDIA_HID_USAGE_NEXT_TRACK:
-        *report = UINT8_C(1) << 0;
-        return true;
     case ESP_BMS_BLE_MEDIA_HID_USAGE_PREVIOUS_TRACK:
-        *report = UINT8_C(1) << 1;
-        return true;
     case ESP_BMS_BLE_MEDIA_HID_USAGE_PLAY_PAUSE:
-        *report = UINT8_C(1) << 2;
-        return true;
     case ESP_BMS_BLE_MEDIA_HID_USAGE_VOLUME_DECREMENT:
-        *report = UINT8_C(1) << 3;
-        return true;
     case ESP_BMS_BLE_MEDIA_HID_USAGE_VOLUME_INCREMENT:
-        *report = UINT8_C(1) << 4;
+        report[0] = (uint8_t)(usage & UINT8_C(0xFF));
+        report[1] = (uint8_t)((uint16_t)usage >> 8U);
         return true;
     default:
+        report[0] = 0U;
+        report[1] = 0U;
         return false;
     }
 }

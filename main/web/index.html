@@ -294,13 +294,25 @@
       margin-top: 12px;
     }
     .ota-progress-card {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      display: grid;
+      place-items: center;
+      padding: 20px;
+      background: rgba(8, 16, 24, .55);
+      backdrop-filter: blur(2px);
+    }
+    .ota-modal {
+      width: min(460px, 100%);
       background: var(--card);
       border: 1px solid var(--border);
       border-radius: var(--radius);
       box-shadow: var(--shadow);
       padding: 16px 18px;
-      margin-top: 14px;
     }
+    .ota-modal .btn-block { margin-top: 12px; }
+    [hidden] { display: none !important; }
     .ota-progress-head {
       display: flex;
       justify-content: space-between;
@@ -431,26 +443,29 @@
     </section>
 
     <div class="ota-progress-card" id="ota-progress-card" hidden>
-      <div class="ota-progress-head">
-        <span class="ota-progress-text" id="ota-status"></span>
-        <span class="ota-progress-percent" id="ota-progress-percent"></span>
+      <div class="ota-modal">
+        <div class="ota-progress-head">
+          <span class="ota-progress-text" id="ota-status"></span>
+          <span class="ota-progress-percent" id="ota-progress-percent"></span>
+        </div>
+        <div class="ota-phase">
+          <span class="ota-phase-label" data-i18n="otaPhaseUpload">上传</span>
+          <span class="ota-phase-value" id="ota-upload-percent">0%</span>
+          <div class="ota-progress-track"><div class="ota-progress-bar" id="ota-upload-bar"></div></div>
+        </div>
+        <div class="ota-phase">
+          <span class="ota-phase-label" data-i18n="otaPhaseFlash">刷入</span>
+          <span class="ota-phase-value" id="ota-flash-percent">0%</span>
+          <div class="ota-progress-track"><div class="ota-progress-bar" id="ota-flash-bar"></div></div>
+        </div>
+        <div class="ota-warning" id="ota-warning" hidden>
+          <span>⚠</span>
+          <span id="ota-warning-text" data-i18n="otaDoNotInterrupt">升级期间请勿断电或断开连接，也不要重启设备</span>
+        </div>
+        <div class="ota-alert" id="ota-alert" hidden></div>
+        <div class="ota-success" id="ota-success" hidden></div>
+        <button class="btn btn-block" id="ota-progress-close" type="button" data-i18n="otaClose">关闭</button>
       </div>
-      <div class="ota-phase">
-        <span class="ota-phase-label" data-i18n="otaPhaseUpload">上传</span>
-        <span class="ota-phase-value" id="ota-upload-percent">0%</span>
-        <div class="ota-progress-track"><div class="ota-progress-bar" id="ota-upload-bar"></div></div>
-      </div>
-      <div class="ota-phase">
-        <span class="ota-phase-label" data-i18n="otaPhaseFlash">刷入</span>
-        <span class="ota-phase-value" id="ota-flash-percent">0%</span>
-        <div class="ota-progress-track"><div class="ota-progress-bar" id="ota-flash-bar"></div></div>
-      </div>
-      <div class="ota-warning" id="ota-warning" hidden>
-        <span>⚠</span>
-        <span id="ota-warning-text" data-i18n="otaDoNotInterrupt">升级期间请勿断电或断开连接，也不要重启设备</span>
-      </div>
-      <div class="ota-alert" id="ota-alert" hidden></div>
-      <div class="ota-success" id="ota-success" hidden></div>
     </div>
 
     <section class="card" id="device-section">
@@ -517,10 +532,10 @@
         otaBackOnline: "设备已重启，固件更新成功",
         otaSuccessSame: "设备已重启，但固件未变化（可能上传的是当前固件）",
         otaMemoryLow: "设备内存不足，暂时无法上传固件，请稍后重试",
-        otaCodeAutoHint: "已按固件文件自动填入验证码",
         otaNetworkError: "与设备的连接中断，请确认设备仍在线后重试",
         otaTimeout: "上传超时，请检查网络后重试",
         otaBusy: "已有固件更新正在进行",
+        otaClose: "关闭",
         otaDoNotInterrupt: "升级期间请勿断电或断开连接，也不要重启设备",
         otaDropHint: "点击选择或拖拽",
         otaDropHintSub: ".bin 固件到此处",
@@ -601,10 +616,10 @@
         otaBackOnline: "Device is back online — firmware updated",
         otaSuccessSame: "Device restarted, but the firmware is unchanged (same image uploaded?)",
         otaMemoryLow: "Device memory is too low for the upload; retry later",
-        otaCodeAutoHint: "Firmware code filled in automatically from the file",
         otaNetworkError: "Connection to the device was lost. Check that it is still online and retry.",
         otaTimeout: "Upload timed out. Check your network and retry.",
         otaBusy: "A firmware update is already in progress",
+        otaClose: "Close",
         otaDoNotInterrupt: "Do not power off, disconnect, or reboot the device during the update",
         otaDropHint: "Click or drag",
         otaDropHintSub: "a .bin firmware here",
@@ -689,18 +704,6 @@
       if (bytes < 1024) return `${bytes} B`;
       if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
       return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-    }
-
-    /* 与设备端 esp_crc32_le(0, ...) 一致：init 0、多项式 0xEDB88320、无最终异或 */
-    function crc32Le(bytes) {
-      let crc = 0 >>> 0;
-      for (let i = 0; i < bytes.length; i++) {
-        crc ^= bytes[i];
-        for (let k = 0; k < 8; k++) {
-          crc = (crc & 1) ? (0xEDB88320 ^ (crc >>> 1)) : (crc >>> 1);
-        }
-      }
-      return crc >>> 0;
     }
 
     /* OTA 上传前的固件指纹（version + SHA-256），重启后对比判断刷入是否生效 */
@@ -829,7 +832,7 @@
           waitForDeviceBack();
         } else if (progress.state === "UPLOADING") {
           /* 上传条由 XHR 驱动；刷入条保持 0%，等设备校验通过后才开始 */
-          setOtaProgress(0, t("otaUploading"));
+          $("ota-status").textContent = t("otaUploading");
         } else if (progress.state === "UPDATE FAILED") {
           clearInterval(timer);
           showOtaError(progress.message || t("otaFailed"));
@@ -864,8 +867,11 @@
       xhr.timeout = 180000;
       xhr.upload.onprogress = (event) => {
         if (event.lengthComputable) {
-          setOtaUploadProgress(event.loaded / event.total * 100);
-          setOtaProgress(event.loaded / event.total * 100, t("otaUploading"));
+          const percent = event.loaded / event.total * 100;
+          /* 上传阶段只驱动上传条，刷入条保持 0% */
+          setOtaUploadProgress(percent);
+          $("ota-status").textContent = t("otaUploading");
+          $("ota-progress-percent").textContent = `${Math.round(percent)}%`;
         }
       };
       xhr.onload = () => {
@@ -893,6 +899,7 @@
       xhr.send(file);
     }
 
+    /* 选择固件后验证码留空，由用户手动输入 */
     function setupOtaFileDrop() {
       const drop = $("ota-drop");
       const input = drop.querySelector('input[name="firmware"]');
@@ -920,20 +927,6 @@
         name.textContent = file.name;
         meta.textContent = `${t("otaSize")}: ${formatFileSize(file.size)}`;
         code.value = "";
-        /* 按固件文件自动计算验证码（与设备端 esp_crc32_le 一致），仍可手动修改 */
-        const reader = new FileReader();
-        reader.onload = () => {
-          try {
-            const bytes = new Uint8Array(reader.result);
-            const crc = crc32Le(bytes);
-            code.value = String(crc % 10000).padStart(4, "0");
-            meta.textContent = `${t("otaSize")}: ${formatFileSize(file.size)} · ${t("otaCodeAutoHint")}`;
-          } catch {
-            code.value = "";
-          }
-        };
-        reader.onerror = () => { code.value = ""; };
-        reader.readAsArrayBuffer(file);
         $("ota-alert").hidden = true;
       }
 
@@ -996,19 +989,6 @@
               const file = document.createElement("input"); file.type = "file"; file.accept = item.accept || ".bin";
               const code = document.createElement("input"); code.inputMode = "numeric"; code.maxLength = 4; code.placeholder = "四位验证码";
               const button = document.createElement("button"); button.type = "button"; button.className = "btn btn-primary"; button.textContent = settingLabel(item);
-              file.addEventListener("change", () => {
-                const selected = file.files[0];
-                if (!selected) return;
-                const reader = new FileReader();
-                reader.onload = () => {
-                  try {
-                    code.value = String(crc32Le(new Uint8Array(reader.result)) % 10000).padStart(4, "0");
-                  } catch {
-                    code.value = "";
-                  }
-                };
-                reader.readAsArrayBuffer(selected);
-              });
               button.onclick = () => {
                 const endpoint = safeEndpoint(item.endpoint);
                 if (!endpoint) return;
@@ -1249,6 +1229,9 @@
       });
     }
 
+    $("ota-progress-close").addEventListener("click", () => {
+      $("ota-progress-card").hidden = true;
+    });
     $("refresh").addEventListener("click", refresh);
     $("bms-scan").addEventListener("click", () => startBmsScan().catch(stopBmsScanPolling));
     $("bms-bind").addEventListener("click", () => bindBmsMac().then(refresh));

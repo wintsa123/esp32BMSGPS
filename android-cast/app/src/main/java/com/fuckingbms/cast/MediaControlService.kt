@@ -66,7 +66,9 @@ class MediaControlService : Service() {
             val device = intent.getParcelableExtra<BluetoothDevice>(BluetoothDevice.EXTRA_DEVICE) ?: return
             if (device.address != pendingDevice?.address) return
             when (intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.BOND_NONE)) {
-                BluetoothDevice.BOND_BONDED -> connect(device)
+                // GATT 连接过程中设备端会主动发起 Just Works 配对，配对完成后
+                // 现有连接自动加密，无需重连；只有连接尚未建立时才补连。
+                BluetoothDevice.BOND_BONDED -> if (activeGatt == null) connect(device)
                 BluetoothDevice.BOND_NONE -> report("蓝牙配对未完成")
             }
         }
@@ -186,9 +188,10 @@ class MediaControlService : Service() {
             stopScan()
             pendingDevice = result.device
             if (result.device.bondState != BluetoothDevice.BOND_BONDED) {
-                report("正在请求设备蓝牙配对")
-                if (!result.device.createBond()) report("无法发起蓝牙配对")
-                return
+                // 不调用 createBond()：它与系统蓝牙设置的配对流程相同，对 BLE
+                // 设备经常失败。直接 GATT 连接后，设备端会主动发起 Just Works
+                // 配对，Android 自动完成，无需系统配对 UI 介入。
+                report("已找到设备，连接后自动配对")
             }
             connect(result.device)
         }
