@@ -6,6 +6,44 @@
 
 ## Findings
 
+### Verified Working Configuration Update - 2026-08-04
+
+用户在刷入全功能 HID profile 后确认媒体控制功能正常。当前可用方案不是无 PIN
+Just Works，也不是 Classic Bluetooth AVRCP；它是 BLE HID over GATT，并使用
+ESP-IDF/NimBLE 的加密 HID 配对路径。
+
+- Build/flash evidence: full ESP32 HID profile flashed through
+  `rfc2217://192.168.2.10:4000?ign_set_control` at 115200 baud; boot log shows
+  `App version: a0148d9f-dirty` and `ELF file SHA256: f7d80df36...` in
+  `logs/ble-hid/20260804-212911-idf-monitor-hid-security-lvl2.log`.
+- Required profile security: `CONFIG_BT_NIMBLE_SM_LVL=2` in
+  `config/sdkconfig/sdkconfig.defaults`,
+  `firmware-builds/ble-media-hid-esp32/sdkconfig.defaults`, and
+  `firmware-builds/ble-media-hid-esp32/sdkconfig`.
+- Runtime security parameters: HID build uses `BLE_SM_IO_CAP_DISP_ONLY`,
+  `sm_bonding=1`, `sm_mitm=1`, `sm_sc=1`, and `ENC | ID` key distribution.
+- Runtime pairing flow: after ACL connect, keep default PHY and schedule
+  `ble_gap_security_initiate()` after the local 1000 ms delay. `PASSKEY_ACTION`
+  display/input injects fixed PIN `123456`; numeric comparison is accepted by
+  firmware.
+- Device UI requirement: while `bms_error_text` is `PIN 123456`, the Settings >
+  Bluetooth detail page shows `PIN 123456` on the existing `可被发现` row so the
+  user sees the PIN from the Bluetooth discovery area.
+- GATT compatibility pieces retained: Generic Attribute service init
+  (`ble_svc_gatt_init()`), DIS, BAS, PnP ID, External Report Reference, Report
+  Reference, encrypted HIDS reads/writes, and encrypted CCCD writes.
+- Report format retained: Consumer Control input report is Report ID 1 with a
+  2-byte little-endian Usage ID, followed by a 2-byte zero release report.
+  Reverting to the older one-byte bitmask is not the validated path.
+- Headphone comparison: Bluetooth headphones can change volume/track/playback
+  without a visible PIN because they normally use Classic Bluetooth AVRCP after
+  audio-profile pairing. This project must remain BLE HID for ESP32-S3
+  compatibility, so AVRCP/A2DP is not a valid replacement for this task.
+
+Do not treat earlier “let Android trigger SMP and do not proactively initiate
+security” notes in this research file as the final answer; the hardware-verified
+working path above supersedes that hypothesis.
+
 ### Files Found
 
 - `components/esp_bms_idf_runtime/esp_bms_idf_runtime.c` - 当前 BLE HID GATT 声明、GAP 事件处理、安全参数、广告和主动配对调度都集中在此文件。

@@ -982,7 +982,7 @@ write_profile() {
     local profile="${CFG[PROFILE]}"
     local profile_dir="$BUILD_ROOT/$profile"
     local temporary backup partition_source sdkconfig_source role module main_requires profile_driver_requires display_cmake_component touch_cmake_component trimming communication_coprocessor
-    local audio_feature ble_feature bms_feature controller_feature gps_feature network_feature ota_feature cast_feature phone_media_feature ble_media_hid_feature dashboard_s1000rr_feature dashboard_controller_feature dashboard_fireblade_feature
+    local audio_feature ble_feature bms_feature controller_feature gps_feature network_feature ota_feature cast_feature ble_media_hid_feature classic_media_hid_feature dashboard_s1000rr_feature dashboard_controller_feature dashboard_fireblade_feature
 
     mkdir -p "$BUILD_ROOT"
     temporary="$(mktemp -d "$BUILD_ROOT/.${profile}.tmp.XXXXXX")"
@@ -1017,8 +1017,8 @@ write_profile() {
     network_feature=0
     ota_feature=0
     cast_feature=0
-    phone_media_feature=0
     ble_media_hid_feature=0
+    classic_media_hid_feature=0
     dashboard_s1000rr_feature=0
     dashboard_controller_feature=0
     dashboard_fireblade_feature=0
@@ -1056,11 +1056,14 @@ write_profile() {
     if csv_has "${CFG[MODULES]}" cast; then
         cast_feature=1
     fi
-    if csv_has "${CFG[MODULES]}" phone-media; then
-        phone_media_feature=1
-    fi
     if csv_has "${CFG[MODULES]}" ble-media-hid; then
         ble_media_hid_feature=1
+    fi
+    if csv_has "${CFG[MODULES]}" classic-media-hid; then
+        main_requires="esp_bms_classic_media_hid;${main_requires}"
+        classic_media_hid_feature=1
+        ble_feature=0
+        trimming="classic-media-hid-spike;legacy-runtime-partially-untrimmed"
     fi
     csv_has "${CFG[DASHBOARDS]}" s1000rr && dashboard_s1000rr_feature=1
     csv_has "${CFG[DASHBOARDS]}" controller && dashboard_controller_feature=1
@@ -1079,8 +1082,8 @@ write_profile() {
         printf 'set(ESP_BMS_FEATURE_NETWORK %s CACHE BOOL "Firmware profile network feature" FORCE)\n' "$network_feature"
         printf 'set(ESP_BMS_FEATURE_OTA %s CACHE BOOL "Firmware profile OTA feature" FORCE)\n' "$ota_feature"
         printf 'set(ESP_BMS_FEATURE_CAST %s CACHE BOOL "Firmware profile cast feature" FORCE)\n' "$cast_feature"
-        printf 'set(ESP_BMS_FEATURE_PHONE_MEDIA %s CACHE BOOL "Firmware profile Android phone media feature" FORCE)\n' "$phone_media_feature"
         printf 'set(ESP_BMS_FEATURE_BLE_MEDIA_HID %s CACHE BOOL "Firmware profile BLE HID media feature" FORCE)\n' "$ble_media_hid_feature"
+        printf 'set(ESP_BMS_FEATURE_CLASSIC_MEDIA_HID %s CACHE BOOL "Firmware profile Classic HID media feature" FORCE)\n' "$classic_media_hid_feature"
         printf 'set(ESP_BMS_FEATURE_DASHBOARD_S1000RR %s CACHE BOOL "Firmware profile S1000RR dashboard" FORCE)\n' "$dashboard_s1000rr_feature"
         printf 'set(ESP_BMS_FEATURE_DASHBOARD_CONTROLLER %s CACHE BOOL "Firmware profile controller dashboard" FORCE)\n' "$dashboard_controller_feature"
         printf 'set(ESP_BMS_FEATURE_DASHBOARD_FIREBLADE %s CACHE BOOL "Firmware profile Fireblade dashboard" FORCE)\n' "$dashboard_fireblade_feature"
@@ -1100,7 +1103,12 @@ write_profile() {
     sdkconfig_source="$ROOT/config/sdkconfig/sdkconfig.defaults.${CFG[MCU]}"
     [[ -f "$sdkconfig_source" ]] || sdkconfig_source="$ROOT/config/sdkconfig/sdkconfig.defaults"
     {
-        sed '/^CONFIG_PARTITION_TABLE_CUSTOM_FILENAME=/d' "$sdkconfig_source"
+        if (( classic_media_hid_feature )); then
+            sed '/^CONFIG_PARTITION_TABLE_CUSTOM_FILENAME=/d;/^CONFIG_BT/d;/^# CONFIG_BT/d' "$sdkconfig_source"
+            cat "$ROOT/config/sdkconfig/sdkconfig.defaults.esp32-classic-media-hid"
+        else
+            sed '/^CONFIG_PARTITION_TABLE_CUSTOM_FILENAME=/d' "$sdkconfig_source"
+        fi
         printf 'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="%s"\n' "$profile_dir/partitions.csv"
     } > "$temporary/sdkconfig.defaults"
     partition_source="$ROOT/$BOARD_PARTITIONS"
@@ -1269,6 +1277,8 @@ catalog_option_description() {
         module:network) zh='Wi-Fi、设置热点与本地网页'; en='Wi-Fi, setup AP, and local web UI' ;;
         module:ota) zh='本地 Web OTA 更新（自动需要 network）'; en='Local web OTA update (automatically requires network)' ;;
         module:cast) zh='实验性手机投屏（当前使用 legacy runtime）'; en='Experimental phone casting (uses the legacy runtime)' ;;
+        module:ble-media-hid) zh='BLE HID 媒体按键（免 App，系统蓝牙直接配对）'; en='BLE HID media keys (no app needed, pair via system Bluetooth)' ;;
+        module:classic-media-hid) zh='Classic Bluetooth 媒体控制验证（ESP32 专用）'; en='Classic Bluetooth media control validation (ESP32 only)' ;;
         dashboard:s1000rr) zh='宝马 S1000RR 速度仪表'; en='BMW S1000RR speed dashboard' ;;
         dashboard:controller) zh='控制器监控仪表'; en='Controller monitoring dashboard' ;;
         dashboard:fireblade) zh='本田火刃仪表'; en='Honda Fireblade dashboard' ;;
@@ -1288,7 +1298,24 @@ catalog_ids() {
 }
 
 catalog_module_ids() {
-    catalog_ids module | awk '$0 != "cast" { print } $0 == "cast" { found = 1 } END { if (found) print "cast" }'
+    local file id capability mcu_capabilities ok
+    local -a required=()
+    local -A module_record=()
+    load_record mcu "${CFG[MCU]}"
+    mcu_capabilities="${RECORD[CAPABILITIES]}"
+    for file in "$CATALOG_DIR/module"/*.env; do
+        [[ -f "$file" ]] || continue
+        id="${file##*/}"
+        id="${id%.env}"
+        is_id "$id" || continue
+        read_kv_file "$file" module_record
+        ok=1
+        IFS=, read -r -a required <<< "${module_record[REQUIRES_CAPABILITIES]}"
+        for capability in "${required[@]}"; do
+            [[ -z "$capability" ]] || csv_has "$mcu_capabilities" "$capability" || { ok=0; break; }
+        done
+        (( ok )) && printf '%s\n' "$id"
+    done | LC_ALL=C sort -u | awk '$0 != "cast" { print } $0 == "cast" { found = 1 } END { if (found) print "cast" }'
 }
 
 catalog_ids_matching() {

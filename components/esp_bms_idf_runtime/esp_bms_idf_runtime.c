@@ -1,6 +1,8 @@
 #include "esp_bms_idf_runtime.h"
 #include "esp_bms_ble_media_hid.h"
-#include "esp_bms_phone_media_protocol.h"
+#if ESP_BMS_FEATURE_CLASSIC_MEDIA_HID
+#include "esp_bms_classic_media_hid.h"
+#endif
 
 #include "esp_bms_display_service.h"
 #include "esp_bms_profile_hardware.h"
@@ -10,6 +12,7 @@
 
 #include "esp_err.h"
 #include "esp_check.h"
+#include "esp_app_desc.h"
 #include "esp_heap_caps.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
@@ -21,7 +24,6 @@
 #include "freertos/task.h"
 #if ESP_BMS_FEATURE_BLE
 #include "esp_bt.h"
-#include "esp_app_desc.h"
 #include "host/ble_gap.h"
 #include "host/ble_gatt.h"
 #include "host/ble_hs.h"
@@ -132,7 +134,6 @@ static const char *TAG = "bms_idf_runtime";
 #define CAST_FRAME_BEGIN_BYTES 7U
 #define CAST_FRAME_END_BYTES 5U
 #define CAST_BLOCK_HEADER_BYTES 7U
-#define PHONE_MEDIA_STATE_QUEUE_LEN 4U
 #define BLE_MEDIA_HID_USAGE_QUEUE_LEN 8U
 #define BLE_MEDIA_HID_WORKER_STACK 2048U
 #define BLE_MEDIA_HID_WORKER_PRIORITY 4U
@@ -233,119 +234,6 @@ static bool runtime_project_bluetooth_snapshot(esp_bms_idf_runtime_t *runtime);
 
 #if ESP_BMS_FEATURE_BLE
 static esp_bms_idf_runtime_t *s_ble_host_runtime;
-
-#if ESP_BMS_FEATURE_PHONE_MEDIA
-static const ble_uuid128_t PHONE_MEDIA_SERVICE_UUID = BLE_UUID128_INIT(
-    0x01, 0xB2, 0xA1, 0x8A, 0x2A, 0x47, 0xE8, 0xA2,
-    0xDF, 0x4E, 0x16, 0x9F, 0x60, 0x7F, 0x9B, 0x5F);
-static const ble_uuid128_t PHONE_MEDIA_COMMAND_UUID = BLE_UUID128_INIT(
-    0x02, 0xB2, 0xA1, 0x8A, 0x2A, 0x47, 0xE8, 0xA2,
-    0xDF, 0x4E, 0x16, 0x9F, 0x60, 0x7F, 0x9B, 0x5F);
-static const ble_uuid128_t PHONE_MEDIA_STATE_UUID = BLE_UUID128_INIT(
-    0x03, 0xB2, 0xA1, 0x8A, 0x2A, 0x47, 0xE8, 0xA2,
-    0xDF, 0x4E, 0x16, 0x9F, 0x60, 0x7F, 0x9B, 0x5F);
-static uint16_t s_phone_media_command_handle;
-
-static void runtime_phone_media_snapshot_clear(esp_bms_idf_runtime_t *runtime)
-{
-    runtime->phone_media_commands_subscribed = false;
-    runtime->snapshot.phone_media_connected = false;
-    runtime->snapshot.phone_media_flags = 0U;
-    runtime->snapshot.phone_media_title[0] = '\0';
-}
-
-static int runtime_phone_media_gatt_access_cb(uint16_t conn_handle,
-                                              uint16_t attr_handle,
-                                              struct ble_gatt_access_ctxt *ctxt,
-                                              void *arg)
-{
-    (void)attr_handle;
-    (void)arg;
-    esp_bms_idf_runtime_t *runtime = s_ble_host_runtime;
-    if (!runtime || conn_handle != runtime->bluetooth_conn_handle ||
-        ctxt->op != BLE_GATT_ACCESS_OP_WRITE_CHR) {
-        return BLE_ATT_ERR_UNLIKELY;
-    }
-    struct ble_gap_conn_desc desc = { 0 };
-    if (ble_gap_conn_find(conn_handle, &desc) != 0 || !desc.sec_state.encrypted) {
-        return BLE_ATT_ERR_INSUFFICIENT_AUTHEN;
-    }
-    const uint16_t payload_len = OS_MBUF_PKTLEN(ctxt->om);
-    uint8_t payload[ESP_BMS_PHONE_MEDIA_STATE_HEADER_LEN + ESP_BMS_PHONE_MEDIA_TITLE_MAX_LEN];
-    if (payload_len < ESP_BMS_PHONE_MEDIA_STATE_HEADER_LEN || payload_len > sizeof(payload)) {
-        return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
-    }
-    if (os_mbuf_copydata(ctxt->om, 0U, payload_len, payload) != 0) {
-        return BLE_ATT_ERR_UNLIKELY;
-    }
-    esp_bms_phone_media_state_t state = { 0 };
-    if (!esp_bms_phone_media_state_decode(payload, payload_len, &state)) {
-        return BLE_ATT_ERR_UNLIKELY;
-    }
-    if (!runtime->phone_media_state_queue ||
-        xQueueSend(runtime->phone_media_state_queue, &state, 0U) != pdPASS) {
-        return BLE_ATT_ERR_INSUFFICIENT_RES;
-    }
-    return 0;
-}
-
-static const struct ble_gatt_svc_def PHONE_MEDIA_GATT_SERVICES[] = {
-    {
-        .type = BLE_GATT_SVC_TYPE_PRIMARY,
-        .uuid = &PHONE_MEDIA_SERVICE_UUID.u,
-        .characteristics = (struct ble_gatt_chr_def[]) {
-            {
-                .uuid = &PHONE_MEDIA_COMMAND_UUID.u,
-                .access_cb = runtime_phone_media_gatt_access_cb,
-                .val_handle = &s_phone_media_command_handle,
-                .flags = BLE_GATT_CHR_F_NOTIFY,
-            },
-            {
-                .uuid = &PHONE_MEDIA_STATE_UUID.u,
-                .access_cb = runtime_phone_media_gatt_access_cb,
-                .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
-            },
-            { 0 },
-        },
-    },
-    { 0 },
-};
-
-static esp_err_t runtime_phone_media_register_gatt(void)
-{
-    int rc = ble_gatts_count_cfg(PHONE_MEDIA_GATT_SERVICES);
-    if (rc == 0) {
-        rc = ble_gatts_add_svcs(PHONE_MEDIA_GATT_SERVICES);
-    }
-    if (rc != 0) {
-        ESP_LOGW(TAG, "[media] GATT service registration failed: rc=%d", rc);
-        return ESP_FAIL;
-    }
-    return ESP_OK;
-}
-
-static bool runtime_phone_media_send_command(esp_bms_idf_runtime_t *runtime,
-                                             esp_bms_phone_media_command_t command)
-{
-    if (!runtime || !RUNTIME_FLAG(runtime, BLUETOOTH_CONNECTED) ||
-        !runtime->phone_media_commands_subscribed || s_phone_media_command_handle == 0U) {
-        return false;
-    }
-    const uint8_t value = (uint8_t)command;
-    struct os_mbuf *om = ble_hs_mbuf_from_flat(&value, sizeof(value));
-    if (!om) {
-        return false;
-    }
-    const int rc = ble_gatts_notify_custom(runtime->bluetooth_conn_handle,
-                                           s_phone_media_command_handle,
-                                           om);
-    if (rc != 0) {
-        ESP_LOGW(TAG, "[media] command notify failed: rc=%d", rc);
-        return false;
-    }
-    return true;
-}
-#endif
 
 #if ESP_BMS_FEATURE_BLE_MEDIA_HID
 #define BLE_MEDIA_HID_SERVICE_UUID16 0x1812U
@@ -4396,9 +4284,6 @@ static int runtime_bluetooth_gap_event(struct ble_gap_event *event, void *arg)
 #endif
             RUNTIME_SET_FLAG(runtime, BLUETOOTH_CONNECTED, false);
             RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISING, false);
-#if ESP_BMS_FEATURE_PHONE_MEDIA
-            runtime_phone_media_snapshot_clear(runtime);
-#endif
 #if ESP_BMS_FEATURE_BLE_MEDIA_HID
             runtime_ble_media_hid_snapshot_clear(runtime);
 #endif
@@ -4424,9 +4309,6 @@ static int runtime_bluetooth_gap_event(struct ble_gap_event *event, void *arg)
             RUNTIME_SET_FLAG(runtime, BLUETOOTH_CONNECTED, false);
             RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISING, false);
             RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, true);
-#if ESP_BMS_FEATURE_PHONE_MEDIA
-            runtime_phone_media_snapshot_clear(runtime);
-#endif
 #if ESP_BMS_FEATURE_BLE_MEDIA_HID
             runtime_ble_media_hid_snapshot_clear(runtime);
 #endif
@@ -4454,9 +4336,6 @@ static int runtime_bluetooth_gap_event(struct ble_gap_event *event, void *arg)
             RUNTIME_SET_FLAG(runtime, BLUETOOTH_CONNECTED, false);
             RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISING, false);
             RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, resume_advertising);
-#if ESP_BMS_FEATURE_PHONE_MEDIA
-            runtime_phone_media_snapshot_clear(runtime);
-#endif
 #if ESP_BMS_FEATURE_BLE_MEDIA_HID
             runtime_ble_media_hid_snapshot_clear(runtime);
 #endif
@@ -4486,13 +4365,6 @@ static int runtime_bluetooth_gap_event(struct ble_gap_event *event, void *arg)
             RUNTIME_SET_FLAG(runtime, BLUETOOTH_CONNECTED, paired);
             RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISING, false);
             RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, !paired);
-#if ESP_BMS_FEATURE_PHONE_MEDIA
-            if (paired) {
-                runtime->snapshot.phone_media_connected = true;
-            } else {
-                runtime_phone_media_snapshot_clear(runtime);
-            }
-#endif
 #if ESP_BMS_FEATURE_BLE_MEDIA_HID
             if (paired) {
                 runtime->snapshot.ble_media_hid_connected = true;
@@ -4541,14 +4413,6 @@ static int runtime_bluetooth_gap_event(struct ble_gap_event *event, void *arg)
         }
         return 0;
     case BLE_GAP_EVENT_SUBSCRIBE:
-#if ESP_BMS_FEATURE_PHONE_MEDIA
-        if (event->subscribe.conn_handle == runtime->bluetooth_conn_handle &&
-            event->subscribe.attr_handle == s_phone_media_command_handle) {
-            runtime->phone_media_commands_subscribed = event->subscribe.cur_notify != 0;
-            ESP_LOGI(TAG, "[media] command notifications %s",
-                     runtime->phone_media_commands_subscribed ? "enabled" : "disabled");
-        }
-#endif
 #if ESP_BMS_FEATURE_BLE_MEDIA_HID
         if (event->subscribe.conn_handle == runtime->bluetooth_conn_handle &&
             event->subscribe.attr_handle == s_ble_media_hid_input_report_handle) {
@@ -4596,6 +4460,11 @@ static int runtime_bluetooth_gap_event(struct ble_gap_event *event, void *arg)
                          event->passkey.params.action,
                          (unsigned)BLE_MEDIA_HID_PAIR_PASSKEY,
                          rc);
+            } else if (event->passkey.params.action == BLE_SM_IOACT_NONE) {
+                /* Just Works pairing: no passkey to display or confirm. */
+                ESP_LOGI(TAG,
+                         "[bt] HID Just Works pairing: conn=%u",
+                         event->passkey.conn_handle);
             } else {
                 ESP_LOGW(TAG, "[bt] HID passkey action unsupported: conn=%u action=%u",
                          event->passkey.conn_handle,
@@ -4672,11 +4541,7 @@ static esp_err_t runtime_bluetooth_start_advertising_now(esp_bms_idf_runtime_t *
     struct ble_hs_adv_fields fields = { 0 };
     const char *name = ble_svc_gap_device_name();
     fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
-#if ESP_BMS_FEATURE_PHONE_MEDIA
-    fields.uuids128 = &PHONE_MEDIA_SERVICE_UUID;
-    fields.num_uuids128 = 1U;
-    fields.uuids128_is_complete = 1U;
-#elif ESP_BMS_FEATURE_BLE_MEDIA_HID
+#if ESP_BMS_FEATURE_BLE_MEDIA_HID
     fields.uuids16 = &BLE_MEDIA_HID_SERVICE_UUID;
     fields.num_uuids16 = 1U;
     fields.uuids16_is_complete = 1U;
@@ -4696,15 +4561,6 @@ static esp_err_t runtime_bluetooth_start_advertising_now(esp_bms_idf_runtime_t *
     if (fields_rc != 0) {
         return ESP_FAIL;
     }
-#if ESP_BMS_FEATURE_PHONE_MEDIA
-    struct ble_hs_adv_fields response_fields = { 0 };
-    response_fields.name = (uint8_t *)name;
-    response_fields.name_len = strlen(name);
-    response_fields.name_is_complete = 1U;
-    if (ble_gap_adv_rsp_set_fields(&response_fields) != 0) {
-        return ESP_FAIL;
-    }
-#endif
 
     struct ble_gap_adv_params params = { 0 };
     params.conn_mode = BLE_GAP_CONN_MODE_UND;
@@ -4739,9 +4595,6 @@ static void runtime_ble_host_on_reset(int reason)
         RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISING, false);
         RUNTIME_SET_FLAG(runtime, BLUETOOTH_CONNECTED, false);
         runtime->bluetooth_conn_handle = 0xFFFFU;
-#if ESP_BMS_FEATURE_PHONE_MEDIA
-        runtime_phone_media_snapshot_clear(runtime);
-#endif
 #if ESP_BMS_FEATURE_BLE_MEDIA_HID
         runtime_ble_media_hid_snapshot_clear(runtime);
 #endif
@@ -4844,13 +4697,7 @@ static esp_err_t runtime_init_ble_host(esp_bms_idf_runtime_t *runtime)
         ret = ESP_FAIL;
         goto deinit_nimble;
     }
-#if ESP_BMS_FEATURE_PHONE_MEDIA
-    ret = runtime_phone_media_register_gatt();
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "phone media GATT service registration failed");
-        goto deinit_nimble;
-    }
-#elif ESP_BMS_FEATURE_BLE_MEDIA_HID
+#if ESP_BMS_FEATURE_BLE_MEDIA_HID
     if (!runtime->ble_media_hid_usage_queue) {
         runtime->ble_media_hid_usage_queue =
             xQueueCreate(BLE_MEDIA_HID_USAGE_QUEUE_LEN, sizeof(esp_bms_ble_media_hid_usage_t));
@@ -4871,13 +4718,10 @@ static esp_err_t runtime_init_ble_host(esp_bms_idf_runtime_t *runtime)
     ble_hs_cfg.sync_cb = runtime_ble_host_on_sync;
     ble_hs_cfg.store_status_cb = ble_store_util_status_rr;
     ble_hs_cfg.sm_bonding = 1;
-#if ESP_BMS_FEATURE_BLE_MEDIA_HID
-    ble_hs_cfg.sm_io_cap = BLE_SM_IO_CAP_DISP_ONLY;
-    ble_hs_cfg.sm_mitm = 1;
-#else
+    /* Just Works pairing (no PIN / no passkey confirmation), like a consumer
+     * Bluetooth headset remote: the phone pairs silently and media keys work. */
     ble_hs_cfg.sm_io_cap = BLE_SM_IO_CAP_NO_IO;
     ble_hs_cfg.sm_mitm = 0;
-#endif
     ble_hs_cfg.sm_sc = 1;
     ble_hs_cfg.sm_our_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
     ble_hs_cfg.sm_their_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
@@ -5052,13 +4896,6 @@ void esp_bms_idf_runtime_init(esp_bms_idf_runtime_t *runtime)
     if (!runtime->capacity_estimate_lock) {
         ESP_LOGW(TAG, "[bms] capacity estimate mutex allocation failed");
     }
-#if ESP_BMS_FEATURE_PHONE_MEDIA
-    runtime->phone_media_state_queue = xQueueCreate(PHONE_MEDIA_STATE_QUEUE_LEN,
-                                                    sizeof(esp_bms_phone_media_state_t));
-    if (!runtime->phone_media_state_queue) {
-        ESP_LOGW(TAG, "[media] state queue allocation failed");
-    }
-#endif
     runtime_reset_state(runtime);
     runtime_ensure_setup_ap_credentials(runtime);
     const esp_err_t ride_records_ret = runtime_load_ride_records(runtime);
@@ -5197,6 +5034,7 @@ void esp_bms_idf_runtime_stop_controller_ble(esp_bms_idf_runtime_t *runtime)
     }
 }
 
+#if !ESP_BMS_FEATURE_CLASSIC_MEDIA_HID
 static esp_err_t runtime_bluetooth_stop_advertising(esp_bms_idf_runtime_t *runtime)
 {
     if (!runtime) {
@@ -5225,6 +5063,7 @@ static esp_err_t runtime_bluetooth_stop_advertising(esp_bms_idf_runtime_t *runti
     runtime_set_error(runtime, "BT HIDE");
     return ESP_OK;
 }
+#endif
 
 void esp_bms_idf_runtime_set_active_data_source(esp_bms_idf_runtime_t *runtime,
                                                 esp_bms_lvgl_data_source_t source)
@@ -5282,20 +5121,7 @@ bool esp_bms_idf_runtime_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_m
     changed = runtime_apply_pending_http_ap_password(runtime) || changed;
     changed = runtime_apply_pending_http_bms_scan(runtime) || changed;
     changed = runtime_apply_pending_http_bms_bind(runtime) || changed;
-#if ESP_BMS_FEATURE_PHONE_MEDIA
-    esp_bms_phone_media_state_t media_state = { 0 };
-    while (runtime->phone_media_state_queue &&
-           xQueueReceive(runtime->phone_media_state_queue, &media_state, 0U) == pdTRUE) {
-        if (runtime->snapshot.phone_media_flags != media_state.flags ||
-            strcmp(runtime->snapshot.phone_media_title, media_state.title) != 0) {
-            runtime->snapshot.phone_media_flags = media_state.flags;
-            runtime_copy_snapshot_text(runtime->snapshot.phone_media_title,
-                                       sizeof(runtime->snapshot.phone_media_title),
-                                       media_state.title);
-            changed = true;
-        }
-    }
-#endif
+#if ESP_BMS_FEATURE_BLE
     if (runtime->bluetooth_pair_initiate_at_us != 0 &&
         !RUNTIME_FLAG(runtime, BLUETOOTH_CONNECTED) &&
         runtime->bluetooth_conn_handle != 0xFFFFU &&
@@ -5344,6 +5170,7 @@ bool esp_bms_idf_runtime_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_m
         }
         changed = true;
     }
+#endif
     if (runtime->bms_ble_driver && runtime->bms_ble_driver->tick) {
         changed = runtime->bms_ble_driver->tick(runtime, elapsed_ms) || changed;
     }
@@ -5401,15 +5228,15 @@ static bool runtime_action_feature_enabled(esp_bms_lvgl_action_t action)
     case ESP_BMS_LVGL_ACTION_SET_CONTROLLER_RATIO:
         return ESP_BMS_FEATURE_CONTROLLER;
     case ESP_BMS_LVGL_ACTION_ENABLE_BLUETOOTH_ADVERTISING:
-        return ESP_BMS_FEATURE_BMS || ESP_BMS_FEATURE_CONTROLLER || ESP_BMS_FEATURE_PHONE_MEDIA ||
-               ESP_BMS_FEATURE_BLE_MEDIA_HID;
+        return ESP_BMS_FEATURE_BMS || ESP_BMS_FEATURE_CONTROLLER || ESP_BMS_FEATURE_BLE_MEDIA_HID ||
+               ESP_BMS_FEATURE_CLASSIC_MEDIA_HID;
     case ESP_BMS_LVGL_ACTION_PHONE_MEDIA_PREVIOUS:
     case ESP_BMS_LVGL_ACTION_PHONE_MEDIA_NEXT:
     case ESP_BMS_LVGL_ACTION_PHONE_MEDIA_VOLUME_DOWN:
     case ESP_BMS_LVGL_ACTION_PHONE_MEDIA_VOLUME_UP:
-        return ESP_BMS_FEATURE_PHONE_MEDIA || ESP_BMS_FEATURE_BLE_MEDIA_HID;
+        return ESP_BMS_FEATURE_BLE_MEDIA_HID || ESP_BMS_FEATURE_CLASSIC_MEDIA_HID;
     case ESP_BMS_LVGL_ACTION_MEDIA_PLAY_PAUSE:
-        return ESP_BMS_FEATURE_BLE_MEDIA_HID;
+        return ESP_BMS_FEATURE_BLE_MEDIA_HID || ESP_BMS_FEATURE_CLASSIC_MEDIA_HID;
     case ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_UNIT:
     case ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_SOURCE:
     case ESP_BMS_LVGL_ACTION_SET_SPEED_SOURCE:
@@ -5738,42 +5565,76 @@ bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,
     case ESP_BMS_LVGL_ACTION_PHONE_MEDIA_PREVIOUS:
 #if ESP_BMS_FEATURE_BLE_MEDIA_HID && ESP_BMS_FEATURE_BLE
         return runtime_ble_media_hid_enqueue(runtime, ESP_BMS_BLE_MEDIA_HID_USAGE_PREVIOUS_TRACK);
-#elif ESP_BMS_FEATURE_PHONE_MEDIA && ESP_BMS_FEATURE_BLE
-        return runtime_phone_media_send_command(runtime, ESP_BMS_PHONE_MEDIA_COMMAND_PREVIOUS);
+#elif ESP_BMS_FEATURE_CLASSIC_MEDIA_HID
+        return esp_bms_classic_media_hid_send_usage(
+                   ESP_BMS_BLE_MEDIA_HID_USAGE_PREVIOUS_TRACK) == ESP_OK;
 #else
         return false;
 #endif
     case ESP_BMS_LVGL_ACTION_PHONE_MEDIA_NEXT:
 #if ESP_BMS_FEATURE_BLE_MEDIA_HID && ESP_BMS_FEATURE_BLE
         return runtime_ble_media_hid_enqueue(runtime, ESP_BMS_BLE_MEDIA_HID_USAGE_NEXT_TRACK);
-#elif ESP_BMS_FEATURE_PHONE_MEDIA && ESP_BMS_FEATURE_BLE
-        return runtime_phone_media_send_command(runtime, ESP_BMS_PHONE_MEDIA_COMMAND_NEXT);
+#elif ESP_BMS_FEATURE_CLASSIC_MEDIA_HID
+        return esp_bms_classic_media_hid_send_usage(
+                   ESP_BMS_BLE_MEDIA_HID_USAGE_NEXT_TRACK) == ESP_OK;
 #else
         return false;
 #endif
     case ESP_BMS_LVGL_ACTION_PHONE_MEDIA_VOLUME_DOWN:
 #if ESP_BMS_FEATURE_BLE_MEDIA_HID && ESP_BMS_FEATURE_BLE
         return runtime_ble_media_hid_enqueue(runtime, ESP_BMS_BLE_MEDIA_HID_USAGE_VOLUME_DECREMENT);
-#elif ESP_BMS_FEATURE_PHONE_MEDIA && ESP_BMS_FEATURE_BLE
-        return runtime_phone_media_send_command(runtime, ESP_BMS_PHONE_MEDIA_COMMAND_VOLUME_DOWN);
+#elif ESP_BMS_FEATURE_CLASSIC_MEDIA_HID
+        return esp_bms_classic_media_hid_send_usage(
+                   ESP_BMS_BLE_MEDIA_HID_USAGE_VOLUME_DECREMENT) == ESP_OK;
 #else
         return false;
 #endif
     case ESP_BMS_LVGL_ACTION_PHONE_MEDIA_VOLUME_UP:
 #if ESP_BMS_FEATURE_BLE_MEDIA_HID && ESP_BMS_FEATURE_BLE
         return runtime_ble_media_hid_enqueue(runtime, ESP_BMS_BLE_MEDIA_HID_USAGE_VOLUME_INCREMENT);
-#elif ESP_BMS_FEATURE_PHONE_MEDIA && ESP_BMS_FEATURE_BLE
-        return runtime_phone_media_send_command(runtime, ESP_BMS_PHONE_MEDIA_COMMAND_VOLUME_UP);
+#elif ESP_BMS_FEATURE_CLASSIC_MEDIA_HID
+        return esp_bms_classic_media_hid_send_usage(
+                   ESP_BMS_BLE_MEDIA_HID_USAGE_VOLUME_INCREMENT) == ESP_OK;
 #else
         return false;
 #endif
     case ESP_BMS_LVGL_ACTION_MEDIA_PLAY_PAUSE:
 #if ESP_BMS_FEATURE_BLE_MEDIA_HID && ESP_BMS_FEATURE_BLE
         return runtime_ble_media_hid_enqueue(runtime, ESP_BMS_BLE_MEDIA_HID_USAGE_PLAY_PAUSE);
+#elif ESP_BMS_FEATURE_CLASSIC_MEDIA_HID
+        return esp_bms_classic_media_hid_send_usage(
+                   ESP_BMS_BLE_MEDIA_HID_USAGE_PLAY_PAUSE) == ESP_OK;
 #else
         return false;
 #endif
     case ESP_BMS_LVGL_ACTION_ENABLE_BLUETOOTH_ADVERTISING:
+#if ESP_BMS_FEATURE_CLASSIC_MEDIA_HID
+        if (RUNTIME_FLAG(runtime, BLUETOOTH_CONNECTED)) {
+            (void)esp_bms_classic_media_hid_set_discoverable(false);
+            RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, false);
+            RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISING, false);
+            runtime_project_bluetooth_snapshot(runtime);
+            runtime_set_error(runtime, "BT CONN");
+            return true;
+        }
+        if (RUNTIME_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED) ||
+            RUNTIME_FLAG(runtime, BLUETOOTH_ADVERTISING)) {
+            const esp_err_t ret = esp_bms_classic_media_hid_set_discoverable(false);
+            RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, false);
+            RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISING, false);
+            runtime_project_bluetooth_snapshot(runtime);
+            runtime_set_error(runtime, "BT HIDE");
+            return ret == ESP_OK || ret == ESP_ERR_INVALID_STATE;
+        }
+        RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, true);
+        const esp_err_t ret = esp_bms_classic_media_hid_set_discoverable(true);
+        RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISING,
+                         ret == ESP_OK && !RUNTIME_FLAG(runtime, BLUETOOTH_CONNECTED));
+        runtime_project_bluetooth_snapshot(runtime);
+        runtime_set_error(runtime,
+                          ret == ESP_OK || ret == ESP_ERR_INVALID_STATE ? "BT ON" : "BT FAIL");
+        return ret == ESP_OK || ret == ESP_ERR_INVALID_STATE;
+#else
         if (RUNTIME_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED) ||
             RUNTIME_FLAG(runtime, BLUETOOTH_ADVERTISING)) {
             return runtime_bluetooth_stop_advertising(runtime) == ESP_OK;
@@ -5782,6 +5643,7 @@ bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,
         runtime_project_bluetooth_snapshot(runtime);
         runtime_set_error(runtime, "BT ON");
         return true;
+#endif
     case ESP_BMS_LVGL_ACTION_SELECT_BMS_ANT:
         return runtime_select_bms_type(runtime, ESP_BMS_IDF_BMS_TYPE_ANT);
     case ESP_BMS_LVGL_ACTION_SELECT_BMS_JK:

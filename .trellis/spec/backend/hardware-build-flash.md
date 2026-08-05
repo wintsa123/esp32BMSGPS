@@ -1136,8 +1136,11 @@ return runtime_phone_media_send_command(runtime,
 module: ble-media-hid (REQUIRES_CAPABILITIES=BLE, CONFLICTS=phone-media)
 profile: ESP_BMS_FEATURE_BLE_MEDIA_HID=0|1
 service: HID over GATT 0x1812, appearance 0x03C0
-input report: id 1, usages 0x00B6/0x00CD/0x00B5/0x00EA/0x00E9
-secured reads: HID Information, Report Map, Protocol Mode, Input Report
+input report: id 1, 2-byte little-endian Consumer Usage ID
+usages: 0x00B6/0x00CD/0x00B5/0x00EA/0x00E9
+security: CONFIG_BT_NIMBLE_SM_LVL=2, bond=1, sc=1, mitm=1, io_cap=DISP_ONLY
+pairing PIN: 123456
+secured attributes: HID Information, Report Map, Protocol Mode, Input Report, CCCD writes
 ```
 
 ### 3. Contracts
@@ -1148,17 +1151,30 @@ secured reads: HID Information, Report Map, Protocol Mode, Input Report
 - Register HIDS directly on the existing NimBLE Host before it starts. Do not
   use a second Host or `esp_hid`, because the runtime owns peripheral phone
   connections while BMS/controller retain central connection ownership.
-- In HID mode, let the Android HID host trigger SMP by reading encrypted HIDS
-  characteristics. Do not proactively call `ble_gap_security_initiate()` or
-  apply the local phone-media pairing timeout for HID connections; Android
-  system Bluetooth can fail pairing if the peripheral races its pairing flow.
+- Register Generic Attribute service with `ble_svc_gatt_init()` before the
+  hand-written DIS/BAS/HIDS services so Android hosts do not see a partial GATT
+  database after cache changes.
+- The validated HID pairing path is device-initiated SMP after the ACL
+  connection settles: keep the default PHY, call `ble_gap_security_initiate()`
+  after the local 1000 ms delay, require `CONFIG_BT_NIMBLE_SM_LVL=2`, and use
+  `BLE_SM_IO_CAP_DISP_ONLY` with MITM enabled. `PASSKEY_ACTION` for display or
+  input injects and displays `123456`; numeric comparison may be accepted by
+  firmware.
+- While the passkey is active, the device Settings > Bluetooth detail page must
+  show `PIN 123456` on the existing discoverability row. Do not add a new
+  top-level prompt or a separate Bluetooth page.
+- Do not switch this profile to no-PIN Just Works (`NO_IO`, `mitm=0`) unless it
+  is a deliberate UX experiment with a fresh Android/Windows hardware pass.
+  Bluetooth headphones can control media without a PIN because they usually use
+  Classic Bluetooth AVRCP after audio-profile pairing; that does not satisfy the
+  ESP32-S3-compatible BLE HID requirement.
 - Keep the local phone HID connection on the default PHY during pairing. Do not
   request Coded PHY for HIDS; BMS/controller long-range BLE may still request
   Coded PHY through their own central connection paths.
 - After an encrypted link subscribes to the input report, each touch action
-  sends its one-byte Consumer Control press report, then an all-zero release
-  report after 30 ms. Refuse actions while unpaired, unsubscribed, disconnected,
-  or suspended.
+  sends the 2-byte little-endian Consumer Usage ID, then an all-zero 2-byte
+  release report after 30 ms. Refuse actions while unpaired, unsubscribed,
+  disconnected, or suspended.
 - HID volume usages control the phone only. They must never change
   `runtime.volume_percent`, audio-feedback volume, or NVS.
 
@@ -1168,7 +1184,9 @@ secured reads: HID Information, Report Map, Protocol Mode, Input Report
 | --- | --- |
 | No BLE capability or both media modules selected | Configurator rejects the profile |
 | HID disabled | No HIDS UUID, HID appearance, page, or worker in the image |
-| Android connects but has not paired | Encrypted HIDS read triggers Android pairing; firmware keeps the connection open |
+| Android connects but has not paired | Firmware starts SMP after 1000 ms and surfaces PIN `123456` |
+| `PASSKEY_ACTION` is display/input | Inject passkey `123456`; keep the connection open until SMP succeeds or the peer disconnects |
+| User opens Bluetooth detail while passkey is active | Existing `可被发现` row shows `PIN 123456` |
 | Android HID phone connects | Keep default PHY; do not issue a local Coded PHY request |
 | Link not encrypted/subscribed/suspended | Keep controls disabled and do not queue a report |
 | GATT registration fails | Fail BLE-host initialization without starting an unusable advertiser |
@@ -1177,24 +1195,31 @@ secured reads: HID Information, Report Map, Protocol Mode, Input Report
 ### 5. Good / Base / Bad Cases
 
 - Good: Android pairs in system Bluetooth settings, then receives five standard
-  Consumer Control usages without a companion app.
+  Consumer Control usages without a companion app. The verified full ESP32 HID
+  profile uses PIN `123456` and 2-byte Usage ID reports.
 - Base: an unpaired phone sees `PAIR PHONE`; BMS/controller operation remains
   unchanged.
 - Bad: use AVRCP/A2DP, modify local volume for a phone-volume action, or enable
   private `phone-media` alongside HIDS.
-- Bad: start SMP from the device side or disconnect after a local pairing
-  deadline while Android is still reading the encrypted HIDS attributes.
+- Bad: revert the report map to a one-byte bitmask; some hosts do not treat it
+  as a normal Consumer Control selector.
+- Bad: remove the active SMP/PIN path merely because Bluetooth headphones pair
+  without a PIN; headphones are not evidence that this BLE HID profile can use
+  Classic AVRCP.
 
 ### 6. Tests Required
 
 - Run `./scripts/run-host-selftests.sh` and `./tests/configurator_selftest.sh`;
-  assert the five usage-to-bit mappings and the module conflict.
+  assert the five usage-to-2-byte-report mappings and the module conflict.
 - Build HID-on and HID-off BMS/controller profiles for both `esp32` and
   `esp32s3`. HID-on images must contain `[hid]`; HID-off images must not.
 - Capture and inspect the HID music page at 480x320 and 240x320 under
   `preview/`.
 - Flash a matching target through RFC2217 and verify Android pairing, the five
-  actions, reconnection, and BMS/controller coexistence.
+  actions, reconnection, and BMS/controller coexistence. The log should show
+  `HID pairing will start after 1000 ms`, `HID passkey supplied`, `pairing
+  started`, and then successful encryption/subscription before accepting media
+  button validation.
 
 ### 7. Wrong vs Correct
 
@@ -1209,6 +1234,85 @@ runtime->volume_percent = requested_phone_volume;
 ```c
 return runtime_ble_media_hid_enqueue(runtime,
                                      ESP_BMS_BLE_MEDIA_HID_USAGE_VOLUME_INCREMENT);
+```
+
+## Scenario: ESP32 Classic HID Media Profile
+
+### 1. Scope / Trigger
+
+- Trigger: adding an ESP32-only Classic Bluetooth media-control profile while
+  keeping BLE HID as the fallback for ESP32-S3 and other BLE-only MCUs.
+
+### 2. Signatures
+
+```text
+module: classic-media-hid (REQUIRES_CAPABILITIES=BT_CLASSIC, CONFLICTS=ble-media-hid,bms,controller,phone-media)
+profile: ESP_BMS_FEATURE_CLASSIC_MEDIA_HID=0|1
+sdkconfig defaults: sdkconfig.defaults.esp32-classic-media-hid
+transport: Bluedroid Classic HID device, not NimBLE
+manual send API: esp_bms_classic_media_hid_send_usage(uint16_t consumer_usage)
+state API: esp_bms_classic_media_hid_tick(bool *connected, bool *suspended, bool *discoverable)
+```
+
+### 3. Contracts
+
+- Classic HID is a separate ESP32 build profile. Do not initialize Bluedroid
+  Classic beside the NimBLE BLE runtime in one firmware image.
+- ESP32 catalog entries may advertise `BT_CLASSIC`; ESP32-S3 and BLE-only MCUs
+  must reject `classic-media-hid` and use `ble-media-hid` instead.
+- The Classic profile reuses the existing Bluetooth discoverability action and
+  existing music page. Do not add a second music UI or a timer/demo task.
+- `esp_bms_classic_media_hid_tick()` only projects connected/suspended/
+  discoverable state into the existing runtime snapshot. It must never send a
+  media usage.
+- A media usage is sent only when a user action reaches
+  `esp_bms_idf_runtime_apply_action_event()`, which calls
+  `esp_bms_classic_media_hid_send_usage()`. The send function presses one
+  Consumer Usage and releases it after 30 ms.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required response |
+| --- | --- |
+| ESP32 profile selects `classic-media-hid` | Configurator enables `ESP_BMS_FEATURE_CLASSIC_MEDIA_HID=1` and disables BLE media HID |
+| ESP32-S3 selects `classic-media-hid` | Configurator rejects with missing `BT_CLASSIC` capability |
+| User toggles Bluetooth discoverability | Classic scan mode changes; no media usage is sent |
+| User opens music page and taps a control while connected | Exactly one press/release Consumer Usage pair is sent |
+| User does nothing after connecting | No periodic media usage is sent |
+
+### 5. Good / Base / Bad Cases
+
+- Good: ESP32 Classic profile pairs as a Classic HID device and media controls
+  only fire from the five existing music-page buttons.
+- Base: unsupported MCUs fall back to BLE HID profile selection.
+- Bad: add a `while` loop, timer, FreeRTOS task, or 2-second demo sender for
+  Classic media validation.
+
+### 6. Tests Required
+
+- Run `./tests/configurator_selftest.sh`; assert ESP32 accepts
+  `classic-media-hid` and ESP32-S3 rejects it.
+- Build the ESP32 Classic profile with `sdkconfig.defaults.esp32-classic-media-hid`.
+- Grep the Classic component to confirm `esp_bms_classic_media_hid_send_usage`
+  is only called from manual LVGL action dispatch.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```c
+while (true) {
+    esp_bms_classic_media_hid_send_usage(ESP_BMS_BLE_MEDIA_HID_USAGE_PLAY_PAUSE);
+    vTaskDelay(pdMS_TO_TICKS(2000));
+}
+```
+
+#### Correct
+
+```c
+case ESP_BMS_LVGL_ACTION_MEDIA_PLAY_PAUSE:
+    return esp_bms_classic_media_hid_send_usage(
+               ESP_BMS_BLE_MEDIA_HID_USAGE_PLAY_PAUSE) == ESP_OK;
 ```
 
 ## Scenario: Legacy ESP32 On-Demand Radio Heap Budget

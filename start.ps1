@@ -855,6 +855,9 @@ function Write-Profile([System.Collections.IDictionary]$Config) {
     $GpsFeature = 0
     $NetworkFeature = 0
     $OtaFeature = 0
+    $CastFeature = 0
+    $BleMediaHidFeature = 0
+    $ClassicMediaHidFeature = 0
     $DashboardS1000rrFeature = 0
     $DashboardControllerFeature = 0
     $DashboardFirebladeFeature = 0
@@ -889,6 +892,14 @@ function Write-Profile([System.Collections.IDictionary]$Config) {
         $OtaFeature = 1
         $Trimming = 'ota-component-enabled;legacy-runtime-partially-untrimmed'
     }
+    if ((Split-Csv $Config.MODULES) -contains 'cast') { $CastFeature = 1 }
+    if ((Split-Csv $Config.MODULES) -contains 'ble-media-hid') { $BleMediaHidFeature = 1 }
+    if ((Split-Csv $Config.MODULES) -contains 'classic-media-hid') {
+        $MainRequires = @('esp_bms_classic_media_hid') + $MainRequires
+        $ClassicMediaHidFeature = 1
+        $BleFeature = 0
+        $Trimming = 'classic-media-hid-spike;legacy-runtime-partially-untrimmed'
+    }
     if ((Split-Csv $Config.DASHBOARDS) -contains 's1000rr') { $DashboardS1000rrFeature = 1 }
     if ((Split-Csv $Config.DASHBOARDS) -contains 'controller') { $DashboardControllerFeature = 1 }
     if ((Split-Csv $Config.DASHBOARDS) -contains 'fireblade') { $DashboardFirebladeFeature = 1 }
@@ -905,6 +916,9 @@ function Write-Profile([System.Collections.IDictionary]$Config) {
         "set(ESP_BMS_FEATURE_GPS $GpsFeature CACHE BOOL `"Firmware profile GPS feature`" FORCE)"
         "set(ESP_BMS_FEATURE_NETWORK $NetworkFeature CACHE BOOL `"Firmware profile network feature`" FORCE)"
         "set(ESP_BMS_FEATURE_OTA $OtaFeature CACHE BOOL `"Firmware profile OTA feature`" FORCE)"
+        "set(ESP_BMS_FEATURE_CAST $CastFeature CACHE BOOL `"Firmware profile cast feature`" FORCE)"
+        "set(ESP_BMS_FEATURE_BLE_MEDIA_HID $BleMediaHidFeature CACHE BOOL `"Firmware profile BLE HID media feature`" FORCE)"
+        "set(ESP_BMS_FEATURE_CLASSIC_MEDIA_HID $ClassicMediaHidFeature CACHE BOOL `"Firmware profile Classic HID media feature`" FORCE)"
         "set(ESP_BMS_FEATURE_DASHBOARD_S1000RR $DashboardS1000rrFeature CACHE BOOL `"Firmware profile S1000RR dashboard`" FORCE)"
         "set(ESP_BMS_FEATURE_DASHBOARD_CONTROLLER $DashboardControllerFeature CACHE BOOL `"Firmware profile controller dashboard`" FORCE)"
         "set(ESP_BMS_FEATURE_DASHBOARD_FIREBLADE $DashboardFirebladeFeature CACHE BOOL `"Firmware profile Fireblade dashboard`" FORCE)"
@@ -925,8 +939,14 @@ function Write-Profile([System.Collections.IDictionary]$Config) {
     $ProfilePartitionTable = Join-Path $ProfileDir 'partitions.csv'
     $SdkconfigLines = @(
         Get-Content -LiteralPath $SdkconfigDefaults |
-            Where-Object { $_ -notmatch '^CONFIG_PARTITION_TABLE_CUSTOM_FILENAME=' }
+            Where-Object {
+                $_ -notmatch '^CONFIG_PARTITION_TABLE_CUSTOM_FILENAME=' -and
+                ($ClassicMediaHidFeature -eq 0 -or $_ -notmatch '^(# )?CONFIG_BT')
+            }
     )
+    if ($ClassicMediaHidFeature -eq 1) {
+        $SdkconfigLines += Get-Content -LiteralPath (Join-Path $Root 'config/sdkconfig/sdkconfig.defaults.esp32-classic-media-hid')
+    }
     $SdkconfigLines += "CONFIG_PARTITION_TABLE_CUSTOM_FILENAME=`"$ProfilePartitionTable`""
     Write-Utf8NoBom (Join-Path $Temp 'sdkconfig.defaults') (($SdkconfigLines -join "`n") + "`n")
     Copy-Item -LiteralPath (Join-Path $Root $script:BoardPartitions) -Destination (Join-Path $Temp 'partitions.csv')
@@ -1264,6 +1284,8 @@ function Get-CatalogOptionDescription([string]$Kind, [string]$Id) {
         'module/network' = @('Wi-Fi、设置热点与本地网页', 'Wi-Fi, setup AP, and local web UI')
         'module/ota' = @('本地 Web OTA 更新（自动需要 network）', 'Local web OTA update (automatically requires network)')
         'module/cast' = @('实验性手机投屏（当前使用 legacy runtime）', 'Experimental phone casting (uses the legacy runtime)')
+        'module/ble-media-hid' = @('BLE HID 媒体按键（免 App，系统蓝牙直接配对）', 'BLE HID media keys (no app needed, pair via system Bluetooth)')
+        'module/classic-media-hid' = @('Classic Bluetooth 媒体控制验证（ESP32 专用）', 'Classic Bluetooth media control validation (ESP32 only)')
         'dashboard/s1000rr' = @('宝马 S1000RR 速度仪表', 'BMW S1000RR speed dashboard')
         'dashboard/controller' = @('控制器监控仪表', 'Controller monitoring dashboard')
         'dashboard/fireblade' = @('本田火刃仪表', 'Honda Fireblade dashboard')
@@ -1443,13 +1465,29 @@ function Select-CatalogOptionsWithKeyboard([string]$Kind, [string]$Default, [str
     }
 }
 
+function Get-ModuleCatalogIds([string]$McuId) {
+    $Mcu = Get-Record 'mcu' $McuId
+    $Result = [System.Collections.Generic.List[string]]::new()
+    foreach ($Id in (Get-CatalogIds 'module')) {
+        $Record = Get-Record 'module' $Id
+        $Supported = $true
+        foreach ($Capability in @(Split-Csv $Record.REQUIRES_CAPABILITIES)) {
+            if (-not [string]::IsNullOrEmpty($Capability) -and -not (Test-CsvContains $Mcu.CAPABILITIES $Capability)) { $Supported = $false; break }
+        }
+        if ($Supported) { $Result.Add($Id) }
+    }
+    $Sorted = @($Result | Sort-Object -Unique)
+    return @($Sorted | Where-Object { $_ -ne 'cast' }) + @($Sorted | Where-Object { $_ -eq 'cast' })
+}
+
 function Select-ModuleOptionsWithKeyboard([string]$Default, [string[]]$Options) {
     return (Select-CatalogOptionsWithKeyboard 'module' $Default $Options)
 }
 
-function Select-ModuleOptions([string]$Default) {
-    $Options = @((Get-CatalogIds 'module' | Where-Object { $_ -ne 'cast' }) + (Get-CatalogIds 'module' | Where-Object { $_ -eq 'cast' }))
-    if (Test-InteractiveTerminal) { return (Select-ModuleOptionsWithKeyboard $Default $Options) }
+function Select-ModuleOptions([System.Collections.IDictionary]$Config) {
+    $Options = @(Get-ModuleCatalogIds $Config.MCU)
+    if (Test-InteractiveTerminal) { return (Select-ModuleOptionsWithKeyboard $Config.MODULES $Options) }
+    $Default = $Config.MODULES
     while ($true) {
         Write-Host ''
         Write-Host (Convert-LocalizedText 'Modules')
@@ -1605,7 +1643,7 @@ function Set-CustomBoardConfig([System.Collections.IDictionary]$Config) {
                 $Stage = 'module'
             }
             'module' {
-                $Config.MODULES = Select-ModuleOptions $Config.MODULES
+                $Config.MODULES = Select-ModuleOptions $Config
                 if ($script:ReturnToPreviousFunctionList) { $Stage = 'input'; continue }
                 $Stage = 'dashboard'
             }
@@ -1848,7 +1886,7 @@ function Invoke-Interactive {
                     $Stage = 'module'
                 }
                 'module' {
-                    $Config.MODULES = Select-ModuleOptions $Config.MODULES
+                    $Config.MODULES = Select-ModuleOptions $Config
                     if ($script:ReturnToPreviousFunctionList) { $Stage = 'input'; continue }
                     $Stage = 'dashboard'
                 }

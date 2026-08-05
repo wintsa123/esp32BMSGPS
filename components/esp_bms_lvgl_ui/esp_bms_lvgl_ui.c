@@ -47,6 +47,10 @@ LV_FONT_DECLARE(fireblade_scale_digits_14);
 LV_FONT_DECLARE(settings_zh_10);
 LV_FONT_DECLARE(settings_zh_13);
 LV_FONT_DECLARE(settings_zh_16);
+#if ESP_BMS_FEATURE_BLE_MEDIA_HID || \
+    ESP_BMS_FEATURE_CLASSIC_MEDIA_HID
+LV_FONT_DECLARE(media_zh_13);
+#endif
 #if defined(CONFIG_IDF_TARGET_ESP32S3) || ESP_BMS_LVGL_UI_SIMULATOR
 #define SETTINGS_S3_FONT_ENABLED 1
 LV_FONT_DECLARE(settings_zh_18);
@@ -66,9 +70,10 @@ LV_FONT_DECLARE(settings_zh_18);
 #define QUICK_EDIT_BUTTON_SIZE 28
 #define QUICK_EDIT_BUTTON_SIZE_S3 36
 #define ARRAY_SIZE(array) (sizeof(array) / sizeof((array)[0]))
-#if ESP_BMS_FEATURE_PHONE_MEDIA
-#define MUSIC_CONTROL_COUNT 4U
-#elif ESP_BMS_FEATURE_BLE_MEDIA_HID
+#define MEDIA_HID_PAGE_ENABLED \
+    (ESP_BMS_FEATURE_BLE_MEDIA_HID || ESP_BMS_FEATURE_CLASSIC_MEDIA_HID)
+#define MUSIC_PAGE_ENABLED MEDIA_HID_PAGE_ENABLED
+#if MEDIA_HID_PAGE_ENABLED
 #define MUSIC_CONTROL_COUNT 5U
 #else
 #define MUSIC_CONTROL_COUNT 0U
@@ -365,7 +370,7 @@ _Static_assert(sizeof(esp_bms_boot_animation_style_t) == 4 &&
                    ESP_BMS_BOOT_ANIMATION_GAUGE_S1000RR == 1 &&
                    ESP_BMS_BOOT_ANIMATION_GAUGE_HONDA_FIREBLADE == 2,
                "esp_bms_boot_animation_style_t ABI changed; update runtime consumers too");
-_Static_assert(sizeof(esp_bms_dashboard_snapshot_t) == 1208,
+_Static_assert(sizeof(esp_bms_dashboard_snapshot_t) == 1108,
                "dashboard snapshot ABI size changed; update all C consumers too");
 _Static_assert(ESP_BMS_LVGL_ACTION_NONE == 0,
                "esp_bms_lvgl_action_t value changed; update C action consumers too");
@@ -453,6 +458,9 @@ typedef struct {
     lv_obj_t *music_status;
     lv_obj_t *music_title;
     lv_obj_t *music_controls[5];
+    lv_obj_t *music_control_icons[5];
+    lv_obj_t *music_control_captions[5];
+    bool music_play_paused;
     lv_obj_t *controller_page;
     dashboard_static_cache_t battery_static_cache;
     dashboard_static_cache_t fireblade_static_cache;
@@ -912,9 +920,6 @@ static const lv_color_t COLOR_SETTINGS_ACCENT = LV_COLOR_MAKE(0xff, 0xff, 0xff);
 #define PAGE_TRANSITION_CARD_MARGIN 16
 #define PAGE_TRANSITION_CARD_RADIUS 8
 #define PAGE_TRANSITION_CARD_ANIM_MS 160U
-#define PHONE_MEDIA_FLAG_READY (UINT8_C(1) << 0)
-#define PHONE_MEDIA_FLAG_ACTIVE (UINT8_C(1) << 1)
-#define PHONE_MEDIA_FLAG_PLAYING (UINT8_C(1) << 2)
 static const lv_color_t COLOR_SWITCH_ACTIVE = LV_COLOR_MAKE(0x34, 0xc7, 0x59);
 static const uint8_t DASHBOARD_CELL_STAT_KEY_BITMAPS[DASHBOARD_CELL_STAT_COUNT]
                                                    [DASHBOARD_CELL_KEY_BITMAP_BYTES] = {
@@ -3277,6 +3282,24 @@ static void perform_ui_action(esp_bms_lvgl_action_t action, bool close_quick_pan
         set_quick_panel_open(false);
     }
 
+#if MEDIA_HID_PAGE_ENABLED
+    if (action == ESP_BMS_LVGL_ACTION_MEDIA_PLAY_PAUSE) {
+        /* Local play/pause icon toggle: the HID link has no playback status
+         * feedback channel, so the remote keeps its own state (like a
+         * consumer headset button). The key itself also answers/hangs up
+         * phone calls on Android/iOS. */
+        s_ui.music_play_paused = !s_ui.music_play_paused;
+        if (s_ui.music_control_icons[1]) {
+            lv_label_set_text(s_ui.music_control_icons[1],
+                              s_ui.music_play_paused ? LV_SYMBOL_PAUSE : LV_SYMBOL_PLAY);
+        }
+        if (s_ui.music_control_captions[1]) {
+            lv_label_set_text(s_ui.music_control_captions[1],
+                              s_ui.music_play_paused ? "暂停/挂断" : "播放/接听");
+        }
+    }
+#endif
+
     if (action == ESP_BMS_LVGL_ACTION_SHOW_QUICK_MENU) {
         set_quick_panel_open(!UI_FLAG(QUICK_PANEL_OPEN));
         return;
@@ -5116,12 +5139,13 @@ static void settings_show_bluetooth_detail(void)
     const int32_t row_h = s_ui.width < s_ui.height ? SETTINGS_DETAIL_ROW_H_PORTRAIT :
                                                      SETTINGS_DETAIL_ROW_H_LANDSCAPE;
     const int32_t first_y = 12;
+    const bool pin_visible = snapshot && strcmp(snapshot->bms_error_text, "PIN 123456") == 0;
 
     const settings_detail_row_t rows[] = {
         { "状态", bluetooth_status_text(snapshot), ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
         { "名称", snapshot->bluetooth_name[0] != '\0' ? snapshot->bluetooth_name : "ESP32 BMS GPS",
           ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
-        { "可被发现", "附近可见", ESP_BMS_LVGL_ACTION_ENABLE_BLUETOOTH_ADVERTISING,
+        { "可被发现", pin_visible ? "PIN 123456" : "附近可见", ESP_BMS_LVGL_ACTION_ENABLE_BLUETOOTH_ADVERTISING,
           SETTINGS_SYSTEM_VIEW_ROOT },
     };
 
@@ -8340,7 +8364,7 @@ static void set_cast_page(const esp_bms_dashboard_snapshot_t *snapshot)
 #endif
 }
 
-#if ESP_BMS_FEATURE_PHONE_MEDIA || ESP_BMS_FEATURE_BLE_MEDIA_HID
+#if MUSIC_PAGE_ENABLED
 static void music_control_set_enabled(lv_obj_t *control, bool enabled)
 {
     if (!control) {
@@ -8356,37 +8380,7 @@ static void music_control_set_enabled(lv_obj_t *control, bool enabled)
 
 static void set_music_page(const esp_bms_dashboard_snapshot_t *snapshot)
 {
-#if ESP_BMS_FEATURE_PHONE_MEDIA
-    if (!snapshot || !dashboard_page_content_ready(ESP_BMS_LVGL_PAGE_MUSIC) ||
-        !s_ui.music_status || !s_ui.music_title) {
-        return;
-    }
-
-    const bool ready = snapshot->phone_media_connected &&
-                       (snapshot->phone_media_flags & PHONE_MEDIA_FLAG_READY) != 0U;
-    const char *status = "BT OFF";
-    if (snapshot->phone_media_connected) {
-        if (!ready) {
-            status = "APP READY?";
-        } else if ((snapshot->phone_media_flags & PHONE_MEDIA_FLAG_ACTIVE) == 0U) {
-            status = "NO MEDIA";
-        } else if ((snapshot->phone_media_flags & PHONE_MEDIA_FLAG_PLAYING) != 0U) {
-            status = "PLAYING";
-        } else {
-            status = "PAUSED";
-        }
-    }
-    label_set_text_if_changed(s_ui.music_status, status);
-    label_set_text_if_changed(s_ui.music_title,
-                              snapshot->phone_media_title[0] != '\0'
-                                  ? snapshot->phone_media_title
-                                  : "--");
-    label_set_text_color_if_changed(s_ui.music_status,
-                                    ready ? COLOR_SWITCH_ACTIVE : COLOR_SETTINGS_MUTED);
-    for (size_t index = 0U; index < MUSIC_CONTROL_COUNT; ++index) {
-        music_control_set_enabled(s_ui.music_controls[index], ready);
-    }
-#elif ESP_BMS_FEATURE_BLE_MEDIA_HID
+#if MEDIA_HID_PAGE_ENABLED
     if (!snapshot || !dashboard_page_content_ready(ESP_BMS_LVGL_PAGE_MUSIC) ||
         !s_ui.music_status) {
         return;
@@ -8394,8 +8388,8 @@ static void set_music_page(const esp_bms_dashboard_snapshot_t *snapshot)
 
     const bool ready = snapshot->ble_media_hid_connected && !snapshot->ble_media_hid_suspended;
     const char *status = snapshot->ble_media_hid_suspended
-                             ? "SUSPEND"
-                             : snapshot->ble_media_hid_connected ? "READY" : "PAIR PHONE";
+                             ? "挂起"
+                             : snapshot->ble_media_hid_connected ? "已连接" : "未连接";
     label_set_text_if_changed(s_ui.music_status, status);
     label_set_text_color_if_changed(s_ui.music_status,
                                     ready ? COLOR_SWITCH_ACTIVE : COLOR_SETTINGS_MUTED);
@@ -11436,6 +11430,7 @@ static void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapsho
     const bool previous_bluetooth_connected = SNAPSHOT_FLAG(&s_ui.last_snapshot, BLUETOOTH_CONNECTED);
     const uint8_t previous_bms_scan_candidate_count = s_ui.last_snapshot.bms_scan_candidate_count;
     char previous_bms_info_text[sizeof(s_ui.last_snapshot.bms_info_text)] = { 0 };
+    char previous_bms_error_text[sizeof(s_ui.last_snapshot.bms_error_text)] = { 0 };
     char previous_bluetooth_name[sizeof(s_ui.last_snapshot.bluetooth_name)] = { 0 };
     if (had_last_snapshot) {
         snprintf(previous_bluetooth_name,
@@ -11446,6 +11441,10 @@ static void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapsho
                  sizeof(previous_bms_info_text),
                  "%s",
                  s_ui.last_snapshot.bms_info_text);
+        snprintf(previous_bms_error_text,
+                 sizeof(previous_bms_error_text),
+                 "%s",
+                 s_ui.last_snapshot.bms_error_text);
     }
     const bool bms_scan_candidates_changed =
         !had_last_snapshot ||
@@ -11538,7 +11537,8 @@ static void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapsho
          previous_bluetooth_enabled != SNAPSHOT_FLAG(snapshot, BLUETOOTH_ENABLED) ||
          previous_bluetooth_advertising != SNAPSHOT_FLAG(snapshot, BLUETOOTH_ADVERTISING) ||
          previous_bluetooth_connected != SNAPSHOT_FLAG(snapshot, BLUETOOTH_CONNECTED) ||
-         strcmp(previous_bluetooth_name, snapshot->bluetooth_name) != 0)) {
+         strcmp(previous_bluetooth_name, snapshot->bluetooth_name) != 0 ||
+         strcmp(previous_bms_error_text, snapshot->bms_error_text) != 0)) {
         settings_show_detail(SETTINGS_DETAIL_BLUETOOTH);
     }
     if (s_ui.settings_detail_id == (uint8_t)SETTINGS_DETAIL_BMS) {
@@ -11660,7 +11660,7 @@ static int32_t page_target_scroll_x(esp_bms_lvgl_page_t page)
     }
     ++index;
 #endif
-#if ESP_BMS_FEATURE_PHONE_MEDIA || ESP_BMS_FEATURE_BLE_MEDIA_HID
+#if MUSIC_PAGE_ENABLED
     if (page == ESP_BMS_LVGL_PAGE_MUSIC) {
         return s_ui.width * index;
     }
@@ -11670,7 +11670,7 @@ static int32_t page_target_scroll_x(esp_bms_lvgl_page_t page)
 
 static int32_t page_last_scroll_x(void)
 {
-#if ESP_BMS_FEATURE_PHONE_MEDIA || ESP_BMS_FEATURE_BLE_MEDIA_HID
+#if MUSIC_PAGE_ENABLED
     return page_target_scroll_x(ESP_BMS_LVGL_PAGE_MUSIC);
 #elif ESP_BMS_FEATURE_CAST
     return page_target_scroll_x(ESP_BMS_LVGL_PAGE_CAST);
@@ -11697,7 +11697,7 @@ static esp_bms_lvgl_page_t page_from_scroll_x(int32_t scroll_x)
     }
     --index;
 #endif
-#if ESP_BMS_FEATURE_PHONE_MEDIA || ESP_BMS_FEATURE_BLE_MEDIA_HID
+#if MUSIC_PAGE_ENABLED
     if (index == 1) {
         return ESP_BMS_LVGL_PAGE_MUSIC;
     }
@@ -11716,7 +11716,7 @@ static const char *page_transition_title(esp_bms_lvgl_page_t page)
     case ESP_BMS_LVGL_PAGE_CAST:
         return "投屏";
     case ESP_BMS_LVGL_PAGE_MUSIC:
-#if ESP_BMS_FEATURE_BLE_MEDIA_HID && !ESP_BMS_FEATURE_PHONE_MEDIA
+#if MEDIA_HID_PAGE_ENABLED
         return "HID";
 #else
         return "MUSIC";
@@ -12030,7 +12030,7 @@ static void page_transition_create(lv_obj_t *parent)
 #else
     s_ui.page_transition_cast = NULL;
 #endif
-#if ESP_BMS_FEATURE_PHONE_MEDIA || ESP_BMS_FEATURE_BLE_MEDIA_HID
+#if MUSIC_PAGE_ENABLED
     s_ui.page_transition_music = page_transition_page_create(parent,
                                                               ESP_BMS_LVGL_PAGE_MUSIC);
 #else
@@ -12073,7 +12073,7 @@ static void move_to_page(esp_bms_lvgl_page_t page, bool animated)
         page = ESP_BMS_LVGL_PAGE_BATTERY;
     }
     if (page == ESP_BMS_LVGL_PAGE_MUSIC &&
-        !ESP_BMS_FEATURE_PHONE_MEDIA && !ESP_BMS_FEATURE_BLE_MEDIA_HID) {
+        !MUSIC_PAGE_ENABLED) {
         page = ESP_BMS_LVGL_PAGE_BATTERY;
     }
     if (!settings_view_is_visible()) {
@@ -12592,133 +12592,12 @@ static void create_cast_page_content(void)
 
 static void create_music_page_content(void)
 {
-    const bool portrait = s_ui.width < s_ui.height;
     memset(s_ui.music_controls, 0, sizeof(s_ui.music_controls));
-#if ESP_BMS_FEATURE_PHONE_MEDIA
-    const int32_t music_margin = portrait ? 16 : 24;
-    const int32_t music_gap = portrait ? 12 : 10;
-    const int32_t music_content_w = s_ui.width - (music_margin * 2);
-    const int32_t music_status_w = portrait ? 136 : 128;
-    const int32_t music_track_y = portrait ? 90 : 58;
-    const int32_t music_track_h = portrait ? 94 : 74;
-    const int32_t music_button_w = (music_content_w - music_gap) / 2;
-    const int32_t music_button_h = portrait ? 104 : 66;
-    const int32_t music_buttons_y = portrait ? 204 : 146;
-    lv_obj_t *music_heading = label(s_ui.music_page,
-                                    music_margin,
-                                    portrait ? 34 : 22,
-                                    music_content_w - music_status_w - music_gap,
-                                    20,
-                                    &lv_font_montserrat_14);
-    lv_label_set_text(music_heading, "PHONE MEDIA");
-    lv_obj_set_style_text_color(music_heading, COLOR_ACCENT, LV_PART_MAIN);
-    lv_obj_t *music_status_card = panel(s_ui.music_page,
-                                        s_ui.width - music_margin - music_status_w,
-                                        portrait ? 28 : 16,
-                                        music_status_w,
-                                        28,
-                                        COLOR_PANEL_ALT);
-    lv_obj_set_style_radius(music_status_card, 14, LV_PART_MAIN);
-    lv_obj_set_style_border_width(music_status_card, 1, LV_PART_MAIN);
-    lv_obj_set_style_border_color(music_status_card, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
-    s_ui.music_status = label(music_status_card,
-                              8,
-                              5,
-                              music_status_w - 16,
-                              18,
-                              &lv_font_montserrat_14);
-    lv_obj_set_style_text_align(s_ui.music_status, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-
-    lv_obj_t *music_track_card = panel(s_ui.music_page,
-                                       music_margin,
-                                       music_track_y,
-                                       music_content_w,
-                                       music_track_h,
-                                       COLOR_PANEL_ALT);
-    lv_obj_set_style_radius(music_track_card, 8, LV_PART_MAIN);
-    lv_obj_set_style_border_width(music_track_card, 1, LV_PART_MAIN);
-    lv_obj_set_style_border_color(music_track_card, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
-    lv_obj_t *music_track_accent = panel(music_track_card,
-                                         0,
-                                         0,
-                                         4,
-                                         music_track_h,
-                                         COLOR_ACCENT);
-    lv_obj_set_style_radius(music_track_accent, 2, LV_PART_MAIN);
-    lv_obj_t *music_track_label = label(music_track_card,
-                                        18,
-                                        8,
-                                        music_content_w - 36,
-                                        16,
-                                        &lv_font_montserrat_14);
-    lv_label_set_text(music_track_label, "NOW PLAYING");
-    lv_obj_set_style_text_color(music_track_label, COLOR_MUTED, LV_PART_MAIN);
-    s_ui.music_title = label(music_track_card,
-                             18,
-                             portrait ? 36 : 30,
-                             music_content_w - 36,
-                             30,
-                             &lv_font_montserrat_24);
-    lv_label_set_long_mode(s_ui.music_title, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
-
-    const esp_bms_lvgl_action_t music_actions[MUSIC_CONTROL_COUNT] = {
-        ESP_BMS_LVGL_ACTION_PHONE_MEDIA_PREVIOUS,
-        ESP_BMS_LVGL_ACTION_PHONE_MEDIA_NEXT,
-        ESP_BMS_LVGL_ACTION_PHONE_MEDIA_VOLUME_DOWN,
-        ESP_BMS_LVGL_ACTION_PHONE_MEDIA_VOLUME_UP,
-    };
-    const char *const music_icons[MUSIC_CONTROL_COUNT] = {
-        LV_SYMBOL_PREV,
-        LV_SYMBOL_NEXT,
-        LV_SYMBOL_VOLUME_MID " " LV_SYMBOL_MINUS,
-        LV_SYMBOL_VOLUME_MID " " LV_SYMBOL_PLUS,
-    };
-    const char *const music_labels[MUSIC_CONTROL_COUNT] = {
-        "PREVIOUS", "NEXT", "VOLUME -", "VOLUME +",
-    };
-    for (size_t index = 0U; index < MUSIC_CONTROL_COUNT; ++index) {
-        const int32_t column = (int32_t)(index % 2U);
-        const int32_t row = (int32_t)(index / 2U);
-        lv_obj_t *control = panel(s_ui.music_page,
-                                  music_margin + column * (music_button_w + music_gap),
-                                  music_buttons_y + row * (music_button_h + music_gap),
-                                  music_button_w,
-                                  music_button_h,
-                                  index < 2U ? COLOR_PANEL_ALT : COLOR_SETTINGS_LIST);
-        lv_obj_add_flag(control, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_set_style_border_width(control, 1, LV_PART_MAIN);
-        lv_obj_set_style_border_color(control, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
-        lv_obj_set_style_border_opa(control, LV_OPA_COVER, LV_PART_MAIN);
-        lv_obj_set_style_radius(control, 8, LV_PART_MAIN);
-        lv_obj_set_style_bg_opa(control, LV_OPA_40, LV_PART_MAIN | LV_STATE_DISABLED);
-        lv_obj_set_style_opa(control, LV_OPA_40, LV_PART_MAIN | LV_STATE_DISABLED);
-        lv_obj_add_event_cb(control,
-                            action_event_cb,
-                            LV_EVENT_CLICKED,
-                            (void *)(uintptr_t)music_actions[index]);
-        lv_obj_t *control_icon = label(control,
-                                       0,
-                                       portrait ? 20 : 6,
-                                       music_button_w - 8,
-                                       28,
-                                       &lv_font_montserrat_24);
-        lv_label_set_text(control_icon, music_icons[index]);
-        lv_obj_set_style_text_align(control_icon, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-        lv_obj_set_style_text_color(control_icon,
-                                    index < 2U ? COLOR_ACCENT : COLOR_WHITE,
-                                    LV_PART_MAIN);
-        lv_obj_t *control_label = label(control,
-                                        0,
-                                        portrait ? 60 : 38,
-                                        music_button_w - 8,
-                                        18,
-                                        &lv_font_montserrat_14);
-        lv_label_set_text(control_label, music_labels[index]);
-        lv_obj_set_style_text_align(control_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-        lv_obj_set_style_text_color(control_label, COLOR_MUTED, LV_PART_MAIN);
-        s_ui.music_controls[index] = control;
-    }
-#elif ESP_BMS_FEATURE_BLE_MEDIA_HID
+    memset(s_ui.music_control_icons, 0, sizeof(s_ui.music_control_icons));
+    memset(s_ui.music_control_captions, 0, sizeof(s_ui.music_control_captions));
+    s_ui.music_play_paused = false;
+#if MEDIA_HID_PAGE_ENABLED
+    const bool portrait = s_ui.width < s_ui.height;
     s_ui.music_title = NULL;
     const bool native_320x480 = s_ui.width == 320 && s_ui.height == 480;
     const int32_t status_w = native_320x480 ? 192 : portrait ? 156 : 128;
@@ -12738,7 +12617,7 @@ static void create_music_page_content(void)
                               native_320x480 ? 6 : 5,
                               status_w - 8,
                               18,
-                              &lv_font_montserrat_14);
+                              &media_zh_13);
     lv_obj_set_style_text_align(s_ui.music_status, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
 
     const esp_bms_lvgl_action_t music_actions[MUSIC_CONTROL_COUNT] = {
@@ -12755,8 +12634,10 @@ static void create_music_page_content(void)
         LV_SYMBOL_VOLUME_MID " " LV_SYMBOL_MINUS,
         LV_SYMBOL_VOLUME_MID " " LV_SYMBOL_PLUS,
     };
+    /* The play/pause key also answers/hangs up phone calls (standard media key
+     * behaviour on Android/iOS), so the label shows both roles. */
     const char *const music_labels[MUSIC_CONTROL_COUNT] = {
-        "PREV", "PLAY", "NEXT", "VOL -", "VOL +",
+        "上一首", "播放/接听", "下一首", "音量-", "音量+",
     };
     for (size_t index = 0U; index < MUSIC_CONTROL_COUNT; ++index) {
         const bool track_control = index < 3U;
@@ -12813,11 +12694,13 @@ static void create_music_page_content(void)
                                   button_h - 22,
                                   button_w,
                                   16,
-                                  &lv_font_montserrat_14);
+                                  &media_zh_13);
         lv_label_set_text(caption, music_labels[index]);
         lv_obj_set_style_text_align(caption, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
         lv_obj_set_style_text_color(caption, COLOR_MUTED, LV_PART_MAIN);
         s_ui.music_controls[index] = control;
+        s_ui.music_control_icons[index] = icon;
+        s_ui.music_control_captions[index] = caption;
     }
 #endif
     set_music_page(&s_ui.last_snapshot);
@@ -13353,7 +13236,7 @@ static void create_screen(lv_display_t *display)
     s_ui.cast_qr = NULL;
 #endif
 
-#if ESP_BMS_FEATURE_PHONE_MEDIA || ESP_BMS_FEATURE_BLE_MEDIA_HID
+#if MUSIC_PAGE_ENABLED
     s_ui.music_page = lv_obj_create(s_ui.pages);
     clear_style(s_ui.music_page);
     lv_obj_set_pos(s_ui.music_page, page_target_scroll_x(ESP_BMS_LVGL_PAGE_MUSIC), 0);
@@ -15065,7 +14948,7 @@ static bool simulator_page_transition_smoke(void)
     const int32_t cast_x = s_ui.width * (s_ui.speed_page_renderable ? 2 : 1);
     const int32_t music_x = cast_x + (s_ui.cast_page ? s_ui.width : 0);
     const char *music_transition_title =
-#if ESP_BMS_FEATURE_BLE_MEDIA_HID && !ESP_BMS_FEATURE_PHONE_MEDIA
+#if MEDIA_HID_PAGE_ENABLED
         "HID";
 #else
         "MUSIC";
@@ -15361,9 +15244,29 @@ bool esp_bms_lvgl_ui_simulator_settings_scroll_smoke(void)
     const bool bms_confirm_back_cancels_scan = true;
     const bool bms_candidate_list_compact = true;
 #endif
+    esp_bms_dashboard_snapshot_t bluetooth_snapshot = s_ui.last_snapshot;
+    bluetooth_snapshot.bms_error_text[0] = '\0';
+    apply_dashboard_snapshot(&bluetooth_snapshot);
+    settings_show_detail(SETTINGS_DETAIL_BLUETOOTH);
+    const bool bluetooth_default_hides_pin =
+        s_ui.settings_detail_id == (uint8_t)SETTINGS_DETAIL_BLUETOOTH &&
+        !simulator_tree_has_label(s_ui.settings_detail, "PIN 123456");
+    (void)snprintf(bluetooth_snapshot.bms_error_text,
+                   sizeof(bluetooth_snapshot.bms_error_text),
+                   "PIN 123456");
+    apply_dashboard_snapshot(&bluetooth_snapshot);
+    const bool bluetooth_pin_visible =
+        s_ui.settings_detail_id == (uint8_t)SETTINGS_DETAIL_BLUETOOTH &&
+        simulator_tree_has_label(s_ui.settings_detail, "PIN 123456");
+    bluetooth_snapshot.bms_error_text[0] = '\0';
+    apply_dashboard_snapshot(&bluetooth_snapshot);
+    const bool bluetooth_pin_hidden =
+        s_ui.settings_detail_id == (uint8_t)SETTINGS_DETAIL_BLUETOOTH &&
+        !simulator_tree_has_label(s_ui.settings_detail, "PIN 123456");
     show_dashboard_view();
     return scrolled && bms_back_cancels_scan && bms_confirm_back_cancels_scan &&
-           bms_candidate_list_compact;
+           bms_candidate_list_compact && bluetooth_default_hides_pin &&
+           bluetooth_pin_visible && bluetooth_pin_hidden;
 }
 
 esp_err_t esp_bms_lvgl_ui_simulator_open_boot_animation_settings(void)

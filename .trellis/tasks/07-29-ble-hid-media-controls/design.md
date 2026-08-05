@@ -28,12 +28,16 @@ HID 模块启用时创建一个无标题的音乐控制页，包含五个固定�
 
 配置器增加 `ble-media-hid` 模块目录记录：需要 `BLE` capability、与 `phone-media` 冲突。生成的 CMake feature flag 同时传给 runtime 和 LVGL UI。自定义 profile 不需要新的 GPIO。
 
+BLE HID 触发 passkey 配对时，设备设置里的蓝牙详情页在现有“可被发现”行显示 `PIN 123456`，配对完成或失败后恢复普通发现状态文案。不要增加新的首页弹窗或独立配对页。
+
 ## Compatibility And Rollback
 
 - 目标为经典 ESP32 与 ESP32-S3；两者都走 NimBLE BLE HID，绝不依赖 AVRCP/A2DP。
 - Android 通过系统蓝牙把设备配对为输入设备；首次配对仍由用户在系统蓝牙设置中完成，之后使用 bond 自动重连。
 - BMS/控制器仍作为同一 Host 的中央连接；手机 HID 连接占用本机外设连接时，既有扫描仲裁继续生效。
 - 若模块被配置器取消，HID 服务、广告 UUID、音乐页和运行时工作任务均不编译进固件，恢复当前行为。
+
+用户希望 Classic Bluetooth 可用时优先使用 Classic、不可用时降级到 BLE HID。该目标不能直接塞进当前 NimBLE HID 交付：ESP32-S3 不支持 Classic Bluetooth，且 Classic 会引入 Bluedroid/AVRCP 与现有 NimBLE Host 共存风险。当前任务保留已验证 BLE HID 作为通用 fallback；Classic ESP32-only 媒体控制应作为独立 profile/后续任务设计和验证。
 
 ## Risks
 

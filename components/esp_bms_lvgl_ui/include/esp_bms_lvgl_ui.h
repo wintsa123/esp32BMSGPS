@@ -43,12 +43,12 @@
 #define ESP_BMS_FEATURE_CAST 1
 #endif
 
-#ifndef ESP_BMS_FEATURE_PHONE_MEDIA
-#define ESP_BMS_FEATURE_PHONE_MEDIA 0
-#endif
-
 #ifndef ESP_BMS_FEATURE_BLE_MEDIA_HID
 #define ESP_BMS_FEATURE_BLE_MEDIA_HID 0
+#endif
+
+#ifndef ESP_BMS_FEATURE_CLASSIC_MEDIA_HID
+#define ESP_BMS_FEATURE_CLASSIC_MEDIA_HID 0
 #endif
 
 #ifdef __cplusplus
@@ -372,9 +372,6 @@ typedef struct {
     bool average_consumption_valid;
     bool remaining_range_valid;
     bool cast_active;
-    bool phone_media_connected;
-    uint8_t phone_media_flags;
-    char phone_media_title[97];
     bool ble_media_hid_connected;
     bool ble_media_hid_suspended;
     char firmware_version[32];

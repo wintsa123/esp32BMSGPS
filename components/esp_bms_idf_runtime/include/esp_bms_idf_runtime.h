@@ -26,12 +26,12 @@ extern "C" {
 #define ESP_BMS_FEATURE_OTA 1
 #endif
 
-#ifndef ESP_BMS_FEATURE_PHONE_MEDIA
-#define ESP_BMS_FEATURE_PHONE_MEDIA 0
-#endif
-
 #ifndef ESP_BMS_FEATURE_BLE_MEDIA_HID
 #define ESP_BMS_FEATURE_BLE_MEDIA_HID 0
+#endif
+
+#ifndef ESP_BMS_FEATURE_CLASSIC_MEDIA_HID
+#define ESP_BMS_FEATURE_CLASSIC_MEDIA_HID 0
 #endif
 
 typedef enum {
@@ -195,7 +195,6 @@ struct esp_bms_idf_runtime {
     SemaphoreHandle_t bms_scan_lock;
     SemaphoreHandle_t ride_records_lock;
     SemaphoreHandle_t capacity_estimate_lock;
-    QueueHandle_t phone_media_state_queue;
     QueueHandle_t ble_media_hid_usage_queue;
     esp_bms_idf_bms_scan_candidate_t bms_scan_candidates[ESP_BMS_IDF_BMS_SCAN_MAX_CANDIDATES];
     esp_bms_idf_bms_scan_candidate_t controller_scan_candidates[ESP_BMS_IDF_BMS_SCAN_MAX_CANDIDATES];
@@ -208,7 +207,6 @@ struct esp_bms_idf_runtime {
     bool ride_records_session_started;
     bool ride_records_dirty;
     bool capacity_estimate_dirty;
-    bool phone_media_commands_subscribed;
     bool ble_media_hid_input_report_subscribed;
     bool ble_media_hid_worker_started;
     int cast_socket_fd;
