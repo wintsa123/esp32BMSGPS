@@ -195,6 +195,7 @@ def config_macro(profile: dict[str, str], mcu_record: dict[str, str], mcu_path: 
         "pin_expander_scl": gpio(profile, "EXPANDER_SCL", expander == "XL9555"),
         "use_xl9555_expander": "true" if expander == "XL9555" else "false",
         "i80_data_pins": "{ " + ", ".join(data_pins) + " }",
+        "pin_rd": gpio(profile, "TFT_RD", False),
         "pin_wr": gpio(profile, "TFT_WR", not is_spi_display),
         "i80_bus_width": str(data_width),
         "pin_touch_miso": gpio(profile, "TOUCH_MISO", is_xpt2046),

@@ -98,6 +98,10 @@ static const char *TAG = "bms_lvgl_bridge";
 
 static esp_lcd_panel_io_handle_t s_panel_io;
 static esp_lcd_panel_handle_t s_panel;
+#if ESP_BMS_PROFILE_PANEL_ST7796
+static void *s_i80_draw_buffer;
+static size_t s_i80_draw_buffer_bytes;
+#endif
 static esp_lcd_panel_io_handle_t s_touch_io;
 static esp_lcd_touch_handle_t s_touch;
 static i2c_master_bus_handle_t s_touch_i2c_bus;
@@ -583,6 +587,16 @@ static touch_filter_result_t touch_filter_apply(esp_lcd_touch_point_data_t *poin
         s_touch_filter.pressed = true;
         s_touch_filter.candidate_x = point->x;
         s_touch_filter.candidate_y = point->y;
+        if (s_touch && s_touch->config.int_gpio_num != GPIO_NUM_NC) {
+            s_touch_filter.reported = true;
+            s_touch_filter.accepted_x = point->x;
+            s_touch_filter.accepted_y = point->y;
+            s_touch_filter.accepted_point = *point;
+            s_touch_filter.accepted_point_valid = true;
+            s_touch_filter.accepted_tick = now;
+            touch_filter_push(point->x, point->y);
+            return TOUCH_FILTER_ACCEPT;
+        }
         return TOUCH_FILTER_HOLD;
     }
 
@@ -980,24 +994,29 @@ static esp_err_t touch_read_with_diagnostics(esp_lcd_touch_handle_t tp,
     }
 
 #if ESP_BMS_PROFILE_TOUCH_GT1151
-    uint8_t gt1151_gesture = 0;
-    const esp_err_t gt1151_gesture_ret =
-        esp_lcd_panel_io_rx_param(s_touch_io,
-                                  GT1151_GESTURE_REGISTER,
-                                  &gt1151_gesture,
-                                  sizeof(gt1151_gesture));
     uint8_t gt1151_status = 0;
     const esp_err_t gt1151_status_ret =
         esp_lcd_panel_io_rx_param(s_touch_io,
                                   GT1151_POINT_STATUS_REGISTER,
                                   &gt1151_status,
                                   sizeof(gt1151_status));
-    gt1151_capture_gesture(gt1151_gesture,
-                           gt1151_gesture_ret,
-                           gt1151_status,
-                           gt1151_status_ret,
-                           now);
-    /* A clear buffer-ready bit means the GT1151 coordinate data is invalid, not released. */
+    if (esp_bms_lvgl_bridge_native_gestures_supported()) {
+        uint8_t gt1151_gesture = 0;
+        const esp_err_t gt1151_gesture_ret =
+            esp_lcd_panel_io_rx_param(s_touch_io,
+                                      GT1151_GESTURE_REGISTER,
+                                      &gt1151_gesture,
+                                      sizeof(gt1151_gesture));
+        gt1151_capture_gesture(gt1151_gesture,
+                               gt1151_gesture_ret,
+                               gt1151_status,
+                               gt1151_status_ret,
+                               now);
+    }
+    /* A clear buffer-ready bit means the GT1151 coordinate data is invalid, not released.
+     * This hold logic must stay independent of the optional 0x814C gesture path: with
+     * polling or IRQ reads, the controller refreshes coordinates periodically and the
+     * ready bit is clear between frames while the finger is still down. */
     if (gt1151_status_ret == ESP_OK &&
         (gt1151_status & GT1151_POINT_STATUS_READY_BIT) == 0U &&
         s_touch_filter.accepted_point_valid && points && count && max_count > 0U) {
@@ -1253,9 +1272,17 @@ static esp_err_t i80_draw_bitmap_swap(lv_display_t *disp,
 {
     (void)disp;
     (void)user_ctx;
-    uint32_t pixel_count = (uint32_t)(x_end - x_start) * (uint32_t)(y_end - y_start);
-    lv_draw_sw_rgb565_swap((void *)color_map, pixel_count);
-    return esp_lcd_panel_draw_bitmap(panel, x_start, y_start, x_end, y_end, color_map);
+    ESP_RETURN_ON_FALSE(color_map && x_end > x_start && y_end > y_start,
+                        ESP_ERR_INVALID_ARG, TAG, "invalid I80 draw area");
+    const uint32_t pixel_count = (uint32_t)(x_end - x_start) * (uint32_t)(y_end - y_start);
+    const size_t transfer_bytes = pixel_count * sizeof(uint16_t);
+    ESP_RETURN_ON_FALSE(s_i80_draw_buffer && transfer_bytes <= s_i80_draw_buffer_bytes,
+                        ESP_ERR_INVALID_SIZE, TAG, "I80 draw area exceeds DMA buffer");
+
+    /* The adapter releases this slot only from the I80 color-transfer callback. */
+    memcpy(s_i80_draw_buffer, color_map, transfer_bytes);
+    lv_draw_sw_rgb565_swap(s_i80_draw_buffer, pixel_count);
+    return esp_lcd_panel_draw_bitmap(panel, x_start, y_start, x_end, y_end, s_i80_draw_buffer);
 }
 #endif
 
@@ -1309,6 +1336,17 @@ static esp_err_t init_panel_spi(const esp_bms_lvgl_bridge_config_t *config, int 
 static esp_err_t init_panel_i80(const esp_bms_lvgl_bridge_config_t *config, int max_transfer_sz)
 {
 #if SOC_LCD_I80_SUPPORTED
+    if (config->pin_rd != GPIO_NUM_NC) {
+        const gpio_config_t rd_config = {
+            .pin_bit_mask = 1ULL << config->pin_rd,
+            .mode = GPIO_MODE_INPUT_OUTPUT,
+            .pull_up_en = GPIO_PULLUP_ENABLE,
+            .pull_down_en = GPIO_PULLDOWN_DISABLE,
+            .intr_type = GPIO_INTR_DISABLE,
+        };
+        ESP_RETURN_ON_ERROR(gpio_config(&rd_config), TAG, "configure display RD pin failed");
+        ESP_RETURN_ON_ERROR(gpio_set_level(config->pin_rd, 1), TAG, "drive display RD pin high failed");
+    }
     const esp_lcd_i80_bus_config_t bus_config = {
         .dc_gpio_num = config->pin_dc,
         .wr_gpio_num = config->pin_wr,
@@ -1321,14 +1359,14 @@ static esp_err_t init_panel_i80(const esp_bms_lvgl_bridge_config_t *config, int 
         },
         .bus_width = config->i80_bus_width,
         .max_transfer_bytes = (size_t)max_transfer_sz,
-        .dma_burst_size = 64,
+        .dma_burst_size = 32,
     };
     esp_lcd_i80_bus_handle_t i80_bus = NULL;
     ESP_RETURN_ON_ERROR(esp_lcd_new_i80_bus(&bus_config, &i80_bus), TAG, "initialize display I80 bus failed");
     const esp_lcd_panel_io_i80_config_t io_config = {
         .cs_gpio_num = config->pin_cs,
         .pclk_hz = config->pixel_clock_hz,
-        .trans_queue_depth = 10,
+        .trans_queue_depth = 1,
         .dc_levels = {
             .dc_idle_level = 0,
             .dc_cmd_level = 0,
@@ -1355,6 +1393,13 @@ static esp_err_t init_panel_i80(const esp_bms_lvgl_bridge_config_t *config, int 
 #endif
 #if ESP_BMS_PROFILE_PANEL_ST7796
     if (config->panel_driver == ESP_BMS_LVGL_PANEL_ST7796) {
+        s_i80_draw_buffer = esp_lcd_i80_alloc_draw_buffer(s_panel_io, (size_t)max_transfer_sz,
+                                                           MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+        ESP_RETURN_ON_FALSE(s_i80_draw_buffer, ESP_ERR_NO_MEM, TAG,
+                            "allocate I80 internal DMA draw buffer failed");
+        s_i80_draw_buffer_bytes = (size_t)max_transfer_sz;
+        ESP_LOGI(TAG, "I80 RD pin=%d, internal DMA draw buffer=%u", config->pin_rd,
+                 (unsigned)s_i80_draw_buffer_bytes);
         return esp_lcd_new_panel_st7796(s_panel_io, &panel_config, &s_panel);
     }
  #endif
@@ -1400,7 +1445,8 @@ esp_err_t esp_bms_lvgl_bridge_init(const esp_bms_lvgl_bridge_config_t *config)
 
     const uint16_t hres = logical_hres(config);
     const uint16_t vres = logical_vres(config);
-    const int max_transfer_sz = hres * LVGL_SPI_DRAW_BUFFER_HEIGHT * sizeof(uint16_t);
+    const uint16_t draw_buffer_height = LVGL_SPI_DRAW_BUFFER_HEIGHT;
+    const int max_transfer_sz = hres * draw_buffer_height * sizeof(uint16_t);
     const size_t draw_buffer_bytes = (size_t)max_transfer_sz;
     size_t psram_free = 0;
     size_t psram_largest = 0;
@@ -1411,18 +1457,20 @@ esp_err_t esp_bms_lvgl_bridge_init(const esp_bms_lvgl_bridge_config_t *config)
 #if CONFIG_SPIRAM
     /* Do not turn PSRAM pressure into two internal draw buffers. */
     const bool use_double_buffer = LVGL_REQUIRE_DOUBLE_BUFFER &&
+                                   config->display_bus != ESP_BMS_LVGL_DISPLAY_BUS_I80 &&
                                    psram_can_hold_lvgl_buffers(draw_buffer_bytes, true, NULL, NULL);
 #else
-    const bool use_double_buffer = LVGL_REQUIRE_DOUBLE_BUFFER;
+    const bool use_double_buffer = LVGL_REQUIRE_DOUBLE_BUFFER &&
+                                   config->display_bus != ESP_BMS_LVGL_DISPLAY_BUS_I80;
 #endif
     s_physical_width = config->physical_width;
     s_physical_height = config->physical_height;
     s_panel_mirror_x = config->panel_mirror_x;
     s_touch_driver = config->touch_driver;
 
-    ESP_LOGI(TAG, "init display bus=%d panel=%d hres=%u vres=%u pclk=%lu",
+    ESP_LOGI(TAG, "init display bus=%d panel=%d hres=%u vres=%u pclk=%lu dma_max=%d",
              config->display_bus, config->panel_driver, hres, vres,
-             (unsigned long)config->pixel_clock_hz);
+             (unsigned long)config->pixel_clock_hz, max_transfer_sz);
     ESP_RETURN_ON_ERROR(init_xl9555(config), TAG, "initialize board expander failed");
     ESP_RETURN_ON_ERROR(configure_backlight(config->pin_backlight, config->backlight_on_level),
                         TAG, "configure backlight failed");
@@ -1455,7 +1503,7 @@ esp_err_t esp_bms_lvgl_bridge_init(const esp_bms_lvgl_bridge_config_t *config)
         ESP_LV_ADAPTER_DISPLAY_SPI_WITHOUT_PSRAM_DEFAULT_CONFIG(
             s_panel, s_panel_io, hres, vres, ESP_LV_ADAPTER_ROTATE_0);
     display_config.profile.use_psram = use_psram_buffers;
-    display_config.profile.buffer_height = LVGL_SPI_DRAW_BUFFER_HEIGHT;
+    display_config.profile.buffer_height = draw_buffer_height;
     display_config.profile.require_double_buffer = use_double_buffer;
     s_display = esp_lv_adapter_register_display(&display_config);
     ESP_RETURN_ON_FALSE(s_display, ESP_FAIL, TAG, "register adapter display failed");
@@ -1485,7 +1533,7 @@ esp_err_t esp_bms_lvgl_bridge_init(const esp_bms_lvgl_bridge_config_t *config)
                         TAG, "turn backlight on failed");
 
     ESP_LOGI(TAG, "LVGL buffers height=%u requested_double=%s active_double=%s psram=%s free=%u largest=%u",
-             (unsigned)LVGL_SPI_DRAW_BUFFER_HEIGHT, LVGL_REQUIRE_DOUBLE_BUFFER ? "yes" : "no",
+             (unsigned)draw_buffer_height, LVGL_REQUIRE_DOUBLE_BUFFER ? "yes" : "no",
              use_double_buffer ? "yes" : "no",
              use_psram_buffers ? "yes" : "no", (unsigned)psram_free, (unsigned)psram_largest);
     s_initialized = true;
@@ -1740,7 +1788,8 @@ bool esp_bms_lvgl_bridge_touch_calibration_supported(void)
 
 bool esp_bms_lvgl_bridge_native_gestures_supported(void)
 {
-    return s_touch_driver == ESP_BMS_LVGL_TOUCH_GT1151;
+    /* Raw GT1151 points alone do not prove that the controller emits 0x814C gestures. */
+    return false;
 }
 
 bool esp_bms_lvgl_bridge_take_native_gesture(esp_bms_lvgl_native_gesture_t *gesture)

@@ -37,7 +37,8 @@ else
 fi
 
 actual_version="$(idf.py --version)"
-if [[ "$actual_version" != "$ESP_IDF_REQUIRED_VERSION" ]]; then
+if [[ "$actual_version" != "$ESP_IDF_REQUIRED_VERSION" &&
+      "$actual_version" != "$ESP_IDF_REQUIRED_VERSION-dirty" ]]; then
     printf 'unsupported ESP-IDF version: expected %s, got %s\n' "$ESP_IDF_REQUIRED_VERSION" "$actual_version" >&2
     exit 2
 fi

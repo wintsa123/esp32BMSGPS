@@ -685,6 +685,7 @@ collect_module_gpio_roles() {
 
 collect_required_gpio_roles() {
     local role module entry kind
+    local -a items
     REQUIRED_GPIO_KINDS=()
     MODULE_GPIO_ROLE_STATE=()
     if [[ "${CFG[BOARD]}" == custom ]]; then
@@ -707,6 +708,11 @@ collect_required_gpio_roles() {
             for role in TFT_WR TFT_CS TFT_DC; do require_gpio_role output "$role"; done
             ;;
     esac
+    load_record display "${CFG[DISPLAY]}"
+    IFS=, read -r -a items <<< "${RECORD[REQUIRES_INPUT_GPIO]}"
+    for role in "${items[@]}"; do [[ -z "$role" ]] || require_gpio_role input "$role"; done
+    IFS=, read -r -a items <<< "${RECORD[REQUIRES_OUTPUT_GPIO]}"
+    for role in "${items[@]}"; do [[ -z "$role" ]] || require_gpio_role output "$role"; done
     if [[ "$BOARD_EXPANDER" == XL9555 ]]; then
         for role in EXPANDER_SDA EXPANDER_SCL; do require_gpio_role output "$role"; done
     fi
