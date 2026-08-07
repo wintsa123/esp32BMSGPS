@@ -116,6 +116,7 @@ rg -Fq '.panel_mirror_x = true' "${work_dir}/s3-default-build/s3-default/generat
 rg -Fq '.rgb_element_order = LCD_RGB_ELEMENT_ORDER_BGR' "${work_dir}/s3-default-build/s3-default/generated/esp_bms_profile_hardware.h"
 rg -Fq '.invert_color = true' "${work_dir}/s3-default-build/s3-default/generated/esp_bms_profile_hardware.h"
 rg -Fq '.i80_swap_color_bytes = false' "${work_dir}/s3-default-build/s3-default/generated/esp_bms_profile_hardware.h"
+rg -Fq '# CONFIG_ESP_BMS_LVGL_BRIDGE_FULL_REFRESH_DOUBLE_BUFFER is not set' "${work_dir}/s3-default-build/s3-default/sdkconfig.defaults"
 rg -Fq '.touch_mirror_x = true' "${work_dir}/s3-default-build/s3-default/generated/esp_bms_profile_hardware.h"
 rg -Fq '.pin_expander_sda = (gpio_num_t)2' "${work_dir}/s3-default-build/s3-default/generated/esp_bms_profile_hardware.h"
 rg -Fq '.pin_expander_scl = (gpio_num_t)1' "${work_dir}/s3-default-build/s3-default/generated/esp_bms_profile_hardware.h"

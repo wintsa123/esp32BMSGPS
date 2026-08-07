@@ -95,6 +95,11 @@ static const char *TAG = "bms_lvgl_bridge";
 #else
 #define LVGL_REQUIRE_DOUBLE_BUFFER false
 #endif
+#if CONFIG_ESP_BMS_LVGL_BRIDGE_FULL_REFRESH_DOUBLE_BUFFER
+#define LVGL_FULL_REFRESH_DOUBLE_BUFFER true
+#else
+#define LVGL_FULL_REFRESH_DOUBLE_BUFFER false
+#endif
 
 static esp_lcd_panel_io_handle_t s_panel_io;
 static esp_lcd_panel_handle_t s_panel;
@@ -1333,7 +1338,9 @@ static esp_err_t init_panel_spi(const esp_bms_lvgl_bridge_config_t *config, int 
     return esp_lcd_new_panel_st7789(s_panel_io, &panel_config, &s_panel);
 }
 
-static esp_err_t init_panel_i80(const esp_bms_lvgl_bridge_config_t *config, int max_transfer_sz)
+static esp_err_t init_panel_i80(const esp_bms_lvgl_bridge_config_t *config,
+                                int max_transfer_sz,
+                                bool full_refresh)
 {
 #if SOC_LCD_I80_SUPPORTED
     if (config->pin_rd != GPIO_NUM_NC) {
@@ -1393,13 +1400,21 @@ static esp_err_t init_panel_i80(const esp_bms_lvgl_bridge_config_t *config, int 
 #endif
 #if ESP_BMS_PROFILE_PANEL_ST7796
     if (config->panel_driver == ESP_BMS_LVGL_PANEL_ST7796) {
-        s_i80_draw_buffer = esp_lcd_i80_alloc_draw_buffer(s_panel_io, (size_t)max_transfer_sz,
-                                                           MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
-        ESP_RETURN_ON_FALSE(s_i80_draw_buffer, ESP_ERR_NO_MEM, TAG,
-                            "allocate I80 internal DMA draw buffer failed");
-        s_i80_draw_buffer_bytes = (size_t)max_transfer_sz;
-        ESP_LOGI(TAG, "I80 RD pin=%d, internal DMA draw buffer=%u", config->pin_rd,
-                 (unsigned)s_i80_draw_buffer_bytes);
+        if (!full_refresh) {
+            s_i80_draw_buffer = esp_lcd_i80_alloc_draw_buffer(s_panel_io, (size_t)max_transfer_sz,
+                                                               MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+            ESP_RETURN_ON_FALSE(s_i80_draw_buffer, ESP_ERR_NO_MEM, TAG,
+                                "allocate I80 internal DMA draw buffer failed");
+            s_i80_draw_buffer_bytes = (size_t)max_transfer_sz;
+            ESP_LOGI(TAG, "I80 RD pin=%d, internal DMA draw buffer=%u", config->pin_rd,
+                     (unsigned)s_i80_draw_buffer_bytes);
+        } else {
+            /* Full-refresh mode sends LVGL buffers straight to the panel in
+             * RGB565_SWAPPED order; the byte-swap bounce buffer is not used. */
+            s_i80_draw_buffer = NULL;
+            s_i80_draw_buffer_bytes = 0;
+            ESP_LOGI(TAG, "I80 RD pin=%d, full-refresh mode (no bounce buffer)", config->pin_rd);
+        }
         return esp_lcd_new_panel_st7796(s_panel_io, &panel_config, &s_panel);
     }
  #endif
@@ -1416,7 +1431,9 @@ static esp_err_t init_panel_i80(const esp_bms_lvgl_bridge_config_t *config, int 
 #endif
 }
 
-static esp_err_t init_panel(const esp_bms_lvgl_bridge_config_t *config, int max_transfer_sz)
+static esp_err_t init_panel(const esp_bms_lvgl_bridge_config_t *config,
+                            int max_transfer_sz,
+                            bool full_refresh)
 {
     ESP_RETURN_ON_FALSE(config->pin_cs != GPIO_NUM_NC && config->pin_dc != GPIO_NUM_NC,
                         ESP_ERR_INVALID_ARG, TAG, "display CS/DC pins are required");
@@ -1429,7 +1446,7 @@ static esp_err_t init_panel(const esp_bms_lvgl_bridge_config_t *config, int max_
         ESP_RETURN_ON_FALSE(config->pin_wr != GPIO_NUM_NC &&
                                 (config->i80_bus_width == 8U || config->i80_bus_width == 16U),
                             ESP_ERR_INVALID_ARG, TAG, "display I80 pins are incomplete");
-        return init_panel_i80(config, max_transfer_sz);
+        return init_panel_i80(config, max_transfer_sz, full_refresh);
     default:
         return ESP_ERR_NOT_SUPPORTED;
     }
@@ -1446,38 +1463,69 @@ esp_err_t esp_bms_lvgl_bridge_init(const esp_bms_lvgl_bridge_config_t *config)
     const uint16_t hres = logical_hres(config);
     const uint16_t vres = logical_vres(config);
     const uint16_t draw_buffer_height = LVGL_SPI_DRAW_BUFFER_HEIGHT;
-    const int max_transfer_sz = hres * draw_buffer_height * sizeof(uint16_t);
-    const size_t draw_buffer_bytes = (size_t)max_transfer_sz;
+    const size_t draw_buffer_bytes = (size_t)hres * draw_buffer_height * sizeof(uint16_t);
+    const size_t full_frame_bytes = (size_t)hres * vres * sizeof(uint16_t);
     size_t psram_free = 0;
     size_t psram_largest = 0;
-    const bool use_psram_buffers = psram_can_hold_lvgl_buffers(draw_buffer_bytes,
-                                                                false,
-                                                                &psram_free,
-                                                                &psram_largest);
+    /* Full-screen single-buffered refresh on 16-bit I80 panels with PSRAM:
+     * every frame renders into a full-screen PSRAM buffer and the panel
+     * updates in one full-frame pass, so page drags/carousel transitions no
+     * longer refresh in visible row bands.
+     *
+     * The adapter's DOUBLE_FULL tear-avoidance modes are RGB/MIPI-only, and
+     * NONE-mode double buffering deadlocks: display_bridge_v9_flush_default
+     * never calls lv_display_flush_ready on success, so with two buffers LVGL
+     * blocks forever in wait_for_flushing().  Single buffering avoids that
+     * (LVGL only waits when double buffered) and stays safe in practice
+     * because a full-frame SW render takes longer than the I80 DMA transfer.
+     *
+     * The hardware byte swizzle flag must stay off: LVGL renders
+     * RGB565_SWAPPED directly, and a second hardware swap would garble. */
+    const bool use_full_refresh =
+        LVGL_FULL_REFRESH_DOUBLE_BUFFER &&
+        config->display_bus == ESP_BMS_LVGL_DISPLAY_BUS_I80 &&
+        config->i80_bus_width == 16U &&
+        !config->i80_swap_color_bytes &&
+        psram_can_hold_lvgl_buffers(full_frame_bytes, true, &psram_free, &psram_largest);
+    const uint16_t effective_buffer_height = use_full_refresh ? vres : draw_buffer_height;
+    const int max_transfer_sz = (int)(use_full_refresh ? full_frame_bytes : draw_buffer_bytes);
+    bool use_psram_buffers = false;
+    bool use_double_buffer = false;
+    if (use_full_refresh) {
+        use_psram_buffers = true;
+        /* Keep single buffering: see the deadlock note above. */
+        use_double_buffer = false;
+    } else {
+        use_psram_buffers = psram_can_hold_lvgl_buffers(draw_buffer_bytes,
+                                                        false,
+                                                        &psram_free,
+                                                        &psram_largest);
 #if CONFIG_SPIRAM
-    /* Do not turn PSRAM pressure into two internal draw buffers. */
-    const bool use_double_buffer = LVGL_REQUIRE_DOUBLE_BUFFER &&
-                                   config->display_bus != ESP_BMS_LVGL_DISPLAY_BUS_I80 &&
-                                   psram_can_hold_lvgl_buffers(draw_buffer_bytes, true, NULL, NULL);
+        /* Do not turn PSRAM pressure into two internal draw buffers. */
+        use_double_buffer = LVGL_REQUIRE_DOUBLE_BUFFER &&
+                            config->display_bus != ESP_BMS_LVGL_DISPLAY_BUS_I80 &&
+                            psram_can_hold_lvgl_buffers(draw_buffer_bytes, true, NULL, NULL);
 #else
-    const bool use_double_buffer = LVGL_REQUIRE_DOUBLE_BUFFER &&
-                                   config->display_bus != ESP_BMS_LVGL_DISPLAY_BUS_I80;
+        use_double_buffer = LVGL_REQUIRE_DOUBLE_BUFFER &&
+                            config->display_bus != ESP_BMS_LVGL_DISPLAY_BUS_I80;
 #endif
+    }
     s_physical_width = config->physical_width;
     s_physical_height = config->physical_height;
     s_panel_mirror_x = config->panel_mirror_x;
     s_touch_driver = config->touch_driver;
 
-    ESP_LOGI(TAG, "init display bus=%d panel=%d hres=%u vres=%u pclk=%lu dma_max=%d",
+    ESP_LOGI(TAG, "init display bus=%d panel=%d hres=%u vres=%u pclk=%lu dma_max=%d full_refresh=%s",
              config->display_bus, config->panel_driver, hres, vres,
-             (unsigned long)config->pixel_clock_hz, max_transfer_sz);
+             (unsigned long)config->pixel_clock_hz, max_transfer_sz,
+             use_full_refresh ? "yes" : "no");
     ESP_RETURN_ON_ERROR(init_xl9555(config), TAG, "initialize board expander failed");
     ESP_RETURN_ON_ERROR(configure_backlight(config->pin_backlight, config->backlight_on_level),
                         TAG, "configure backlight failed");
     if (config->power_on_delay_ms > 0U) {
         vTaskDelay(pdMS_TO_TICKS(config->power_on_delay_ms));
     }
-    ESP_RETURN_ON_ERROR(init_panel(config, max_transfer_sz), TAG, "create display panel failed");
+    ESP_RETURN_ON_ERROR(init_panel(config, max_transfer_sz, use_full_refresh), TAG, "create display panel failed");
     ESP_RETURN_ON_ERROR(esp_lcd_panel_reset(s_panel), TAG, "reset panel failed");
     ESP_RETURN_ON_ERROR(esp_lcd_panel_init(s_panel), TAG, "init panel failed");
     ESP_RETURN_ON_ERROR(esp_lcd_panel_invert_color(s_panel, config->invert_color),
@@ -1503,10 +1551,15 @@ esp_err_t esp_bms_lvgl_bridge_init(const esp_bms_lvgl_bridge_config_t *config)
         ESP_LV_ADAPTER_DISPLAY_SPI_WITHOUT_PSRAM_DEFAULT_CONFIG(
             s_panel, s_panel_io, hres, vres, ESP_LV_ADAPTER_ROTATE_0);
     display_config.profile.use_psram = use_psram_buffers;
-    display_config.profile.buffer_height = draw_buffer_height;
+    display_config.profile.buffer_height = effective_buffer_height;
     display_config.profile.require_double_buffer = use_double_buffer;
     s_display = esp_lv_adapter_register_display(&display_config);
     ESP_RETURN_ON_FALSE(s_display, ESP_FAIL, TAG, "register adapter display failed");
+    if (use_full_refresh) {
+        /* Render directly in the I80 big-endian wire order so the flush path
+         * can send LVGL buffers to the panel without a per-frame byte swap. */
+        lv_display_set_color_format(s_display, LV_COLOR_FORMAT_RGB565_SWAPPED);
+    }
     esp_bms_lvgl_bridge_reset_metrics();
     lv_display_add_event_cb(s_display, bridge_metrics_event_cb, LV_EVENT_INVALIDATE_AREA, NULL);
     lv_display_add_event_cb(s_display, bridge_metrics_event_cb, LV_EVENT_RENDER_START, NULL);
@@ -1517,9 +1570,11 @@ esp_err_t esp_bms_lvgl_bridge_init(const esp_bms_lvgl_bridge_config_t *config)
     lv_display_add_event_cb(s_display, bridge_metrics_event_cb, LV_EVENT_FLUSH_WAIT_FINISH, NULL);
 #if ESP_BMS_PROFILE_PANEL_ST7796
     /* ESP32-S3 I80 16-bit DMA sends the low-address byte on D[15:8] (big-endian
-     * wire order).  LVGL renders RGB565 in native little-endian, so we byte-swap
-     * each pixel in our custom draw callback before sending to the panel. */
-    if (config->display_bus == ESP_BMS_LVGL_DISPLAY_BUS_I80) {
+     * wire order).  In partial-refresh mode LVGL renders RGB565 in native
+     * little-endian, so we byte-swap each pixel in our custom draw callback
+     * before sending to the panel.  Full-refresh mode renders RGB565_SWAPPED
+     * instead and bypasses this callback entirely. */
+    if (config->display_bus == ESP_BMS_LVGL_DISPLAY_BUS_I80 && !use_full_refresh) {
         const esp_lv_adapter_draw_bitmap_callbacks_t cbs = {
             .custom_draw_bitmap = i80_draw_bitmap_swap,
         };
@@ -1532,10 +1587,15 @@ esp_err_t esp_bms_lvgl_bridge_init(const esp_bms_lvgl_bridge_config_t *config)
     ESP_RETURN_ON_ERROR(set_backlight(config->pin_backlight, config->backlight_on_level),
                         TAG, "turn backlight on failed");
 
-    ESP_LOGI(TAG, "LVGL buffers height=%u requested_double=%s active_double=%s psram=%s free=%u largest=%u",
-             (unsigned)draw_buffer_height, LVGL_REQUIRE_DOUBLE_BUFFER ? "yes" : "no",
+    ESP_LOGI(TAG,
+             "LVGL buffers height=%u full_refresh=%s requested_double=%s active_double=%s psram=%s free=%u largest=%u",
+             (unsigned)effective_buffer_height,
+             use_full_refresh ? "yes" : "no",
+             LVGL_REQUIRE_DOUBLE_BUFFER ? "yes" : "no",
              use_double_buffer ? "yes" : "no",
-             use_psram_buffers ? "yes" : "no", (unsigned)psram_free, (unsigned)psram_largest);
+             use_psram_buffers ? "yes" : "no",
+             (unsigned)psram_free,
+             (unsigned)psram_largest);
     s_initialized = true;
     return ESP_OK;
 }

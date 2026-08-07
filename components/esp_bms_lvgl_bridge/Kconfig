@@ -13,6 +13,9 @@ menu "ESP BMS LVGL Bridge"
             partial-mode draw buffer. Keep this below a full frame on ESP32
             without PSRAM.
 
+            This is ignored while ESP_BMS_LVGL_BRIDGE_FULL_REFRESH_DOUBLE_BUFFER
+            is active (16-bit I80 with PSRAM), which renders full frames instead.
+
     config ESP_BMS_LVGL_BRIDGE_TASK_MAX_DELAY_MS
         int "LVGL adapter task max delay"
         range 1 15
@@ -38,6 +41,35 @@ menu "ESP BMS LVGL Bridge"
             logs confirm enough free internal RAM remains after LVGL, Wi-Fi,
             and HTTP start. Explicit diagnostic configurations can still enable
             it for A/B testing on those targets.
+
+            On 16-bit I80 boards with PSRAM this is superseded by
+            ESP_BMS_LVGL_BRIDGE_FULL_REFRESH_DOUBLE_BUFFER, which uses two
+            full-screen buffers instead of the partial-refresh pair.
+
+    config ESP_BMS_LVGL_BRIDGE_FULL_REFRESH_DOUBLE_BUFFER
+        bool "Full-screen refresh with PSRAM (16-bit I80)"
+        default n
+        help
+            Use a full-screen PSRAM draw buffer on 16-bit I80 panels (e.g.
+            ST7796U on ESP32-S3) when PSRAM can hold a full-screen RGB565
+            buffer.
+
+            Every frame renders into the full-screen buffer and the panel
+            updates in one full-frame pass. This removes the visible row-band
+            refresh ("screen moves in three rows") during page drags and
+            carousel transitions.
+
+            LVGL output switches to RGB565_SWAPPED so the rendered byte order
+            already matches the I80 big-endian wire order; the per-frame byte
+            swap and the internal DMA bounce buffer are dropped entirely.
+
+            The buffer stays single-buffered: the LVGL adapter's NONE-mode
+            double buffering never signals flush completion and would freeze
+            the UI (wait_for_flushing deadlock). The option name is kept for
+            backward compatibility.
+
+            Requires PSRAM. On SPI panels, 8-bit I80, or targets without PSRAM
+            this option has no effect and the partial-refresh path is used.
 
     config ESP_BMS_LVGL_BRIDGE_SKIP_RGB565_SWAP
         bool "Skip adapter RGB565 byte swap (16-bit I80)"
