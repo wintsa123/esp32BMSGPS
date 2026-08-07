@@ -28,6 +28,10 @@ endif()
 set(ESP_BMS_LVGL_UI_SRCS
     "esp_bms_lvgl_ui.c" "bluetoothon.c" "settings_zh_16.c" "settings_zh_13.c"
     "settings_zh_10.c" "wlanJZ.c"
+    "ui_bms_dashboard.c" "ui_quick_panel.c" "ui_settings.c"
+    "ui_settings_pickers.c" "ui_settings_system.c" "ui_dashboard_pages.c"
+    "ui_dashboard_controller.c" "ui_dashboard_fireblade.c" "ui_dashboard_speed.c"
+    "ui_screen.c" "ui_boot_ota.c" "ui_simulator.c"
 )
 if(IDF_TARGET STREQUAL "esp32s3")
     list(APPEND ESP_BMS_LVGL_UI_SRCS "settings_zh_18.c")

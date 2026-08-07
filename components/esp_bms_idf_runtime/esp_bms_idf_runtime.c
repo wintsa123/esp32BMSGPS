@@ -1861,7 +1861,6 @@ static void runtime_reset_state(esp_bms_idf_runtime_t *runtime)
     runtime->controller_cccd_handle = 0;
     runtime->controller_ble_phase = BMS_BLE_PHASE_IDLE;
     runtime->controller_keepalive_elapsed_ms = 0;
-    runtime->controller_poll_index = 0U;
     runtime->controller_scan_revision = 0U;
     runtime->ride_records_generation = 0U;
     runtime->ride_records_retry_after_us = 0;

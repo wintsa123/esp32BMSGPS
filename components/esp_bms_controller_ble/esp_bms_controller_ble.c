@@ -22,7 +22,7 @@ static const char *TAG = "esp_bms_controller_ble";
 
 #define CONTROLLER_SCAN_DURATION_MS 10000U
 #define CONTROLLER_CONNECT_TIMEOUT_MS 10000U
-#define CONTROLLER_READ_PERIOD_MS 200U
+#define CONTROLLER_KEEPALIVE_PERIOD_MS 3000U
 #define CONTROLLER_TIRE_RIM_MIN ESP_BMS_CONTROLLER_TIRE_RIM_MIN
 #define CONTROLLER_TIRE_RIM_MAX ESP_BMS_CONTROLLER_TIRE_RIM_MAX
 #define CONTROLLER_TIRE_ASPECT_MIN ESP_BMS_CONTROLLER_TIRE_ASPECT_MIN
@@ -60,26 +60,16 @@ static controller_scan_name_cache_entry_t
 static uint8_t s_controller_scan_name_cache_count;
 static uint8_t s_controller_scan_name_cache_next;
 
-/* UUIDs are stored in NimBLE's little-endian byte order. */
-static const uint8_t CONTROLLER_SERVICE_UUID[16] = {
-    0x9E, 0xCA, 0xDC, 0x24, 0xE5, 0x0A, 0xA9, 0xE0,
-    0x93, 0xF3, 0xA3, 0xB5, 0x01, 0x00, 0x40, 0x6E,
-};
-static const uint8_t CONTROLLER_NOTIFY_UUID[16] = {
-    0x9E, 0xCA, 0xDC, 0x24, 0xE5, 0x0A, 0xA9, 0xE0,
-    0x93, 0xF3, 0xA3, 0xB5, 0x03, 0x00, 0x40, 0x6E,
-};
-static const uint8_t CONTROLLER_WRITE_UUID[16] = {
-    0x9E, 0xCA, 0xDC, 0x24, 0xE5, 0x0A, 0xA9, 0xE0,
-    0x93, 0xF3, 0xA3, 0xB5, 0x02, 0x00, 0x40, 0x6E,
-};
+/* FarDriver 控制器使用 16 位 UUID（与已验证可用的 ndsl95/FarDriver-BLE 一致）：
+ * 服务 FFE0、notify 特征 FFEC、write 特征 FFEF。 */
+static const ble_uuid16_t CONTROLLER_SERVICE_UUID = BLE_UUID16_INIT(0xFFE0U);
+static const ble_uuid16_t CONTROLLER_NOTIFY_UUID = BLE_UUID16_INIT(0xFFECU);
+static const ble_uuid16_t CONTROLLER_WRITE_UUID = BLE_UUID16_INIT(0xFFEFU);
 
-static ble_uuid128_t controller_uuid128(const uint8_t bytes[16])
-{
-    ble_uuid128_t uuid = { .u = { .type = BLE_UUID_TYPE_128 } };
-    memcpy(uuid.value, bytes, sizeof(uuid.value));
-    return uuid;
-}
+/* 特征发现失败时的回退：服务内第一个可 notify / 可 write 的特征
+ * （部分固件的特征 UUID 与标准不同，但能力位一致）。 */
+static uint16_t s_controller_fallback_notify_handle;
+static uint16_t s_controller_fallback_write_handle;
 
 static void controller_copy_text(char *out, size_t out_len, const char *text)
 {
@@ -286,30 +276,37 @@ static int controller_write_cb(uint16_t conn_handle,
     return 0;
 }
 
-static void controller_send_read_request(esp_bms_idf_runtime_t *runtime)
+static void controller_send_command(esp_bms_idf_runtime_t *runtime,
+                                    const uint8_t *command,
+                                    size_t len)
 {
-    if (!runtime || runtime->controller_conn_handle == 0xFFFFU ||
+    if (!runtime || !command || len == 0U || runtime->controller_conn_handle == 0xFFFFU ||
         runtime->controller_write_char_val_handle == 0U) {
-        return;
-    }
-    uint8_t address = 0U;
-    uint8_t request[ESP_FARDRIVER_READ_REQUEST_LEN];
-    const size_t count = esp_fardriver_poll_address_count();
-    if (count == 0U || !esp_fardriver_poll_address(runtime->controller_poll_index, &address) ||
-        !esp_fardriver_build_read_request(address, request)) {
-        runtime->controller_poll_index = 0U;
         return;
     }
     const int rc = ble_gattc_write_no_rsp_flat(runtime->controller_conn_handle,
                                                runtime->controller_write_char_val_handle,
-                                               request,
-                                               sizeof(request));
-    runtime->controller_keepalive_elapsed_ms = 0U;
+                                               command,
+                                               len);
     if (rc != 0) {
-        ESP_LOGW(TAG, "read request failed: address=0x%02X rc=%d", address, rc);
-        return;
+        ESP_LOGW(TAG, "command send failed: rc=%d", rc);
     }
-    runtime->controller_poll_index = (uint8_t)((runtime->controller_poll_index + 1U) % count);
+}
+
+static void controller_send_open(esp_bms_idf_runtime_t *runtime)
+{
+    uint8_t command[ESP_FARDRIVER_COMMAND_LEN];
+    if (esp_fardriver_build_open_command(command)) {
+        controller_send_command(runtime, command, sizeof(command));
+    }
+}
+
+static void controller_send_keepalive(esp_bms_idf_runtime_t *runtime)
+{
+    uint8_t command[ESP_FARDRIVER_COMMAND_LEN];
+    if (esp_fardriver_build_keepalive_command(command)) {
+        controller_send_command(runtime, command, sizeof(command));
+    }
 }
 
 static void controller_set_subscription(esp_bms_idf_runtime_t *runtime, bool enabled)
@@ -328,7 +325,8 @@ static void controller_set_subscription(esp_bms_idf_runtime_t *runtime, bool ena
                              runtime) == 0) {
         RUNTIME_SET_FLAG(runtime, CONTROLLER_SUBSCRIBED, enabled);
         if (enabled) {
-            controller_send_read_request(runtime);
+            /* 订阅成功后发送 open 命令，控制器才开始推送遥测帧 */
+            controller_send_open(runtime);
         }
     }
 }
@@ -370,25 +368,42 @@ static int controller_chr_cb(uint16_t conn_handle,
         return 0;
     }
     if (error && error->status == 0 && chr) {
-        const ble_uuid128_t notify_uuid = controller_uuid128(CONTROLLER_NOTIFY_UUID);
-        const ble_uuid128_t write_uuid = controller_uuid128(CONTROLLER_WRITE_UUID);
-        if (ble_uuid_cmp(&chr->uuid.u, &notify_uuid.u) == 0) {
+        if (ble_uuid_cmp(&chr->uuid.u, &CONTROLLER_NOTIFY_UUID.u) == 0) {
             runtime->controller_char_val_handle = chr->val_handle;
-        } else if (ble_uuid_cmp(&chr->uuid.u, &write_uuid.u) == 0) {
+        } else if (ble_uuid_cmp(&chr->uuid.u, &CONTROLLER_WRITE_UUID.u) == 0) {
             runtime->controller_write_char_val_handle = chr->val_handle;
+        } else {
+            /* 回退记录：未匹配到标准 UUID 时，用服务内第一个具备
+             * notify / write 能力的特征（与参考实现的行为一致）。 */
+            if (s_controller_fallback_notify_handle == 0U &&
+                (chr->properties & BLE_GATT_CHR_F_NOTIFY) != 0) {
+                s_controller_fallback_notify_handle = chr->val_handle;
+            }
+            if (s_controller_fallback_write_handle == 0U &&
+                (chr->properties & (BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP)) != 0) {
+                s_controller_fallback_write_handle = chr->val_handle;
+            }
         }
         return 0;
     }
-    if (error && error->status == BLE_HS_EDONE && runtime->controller_char_val_handle != 0U &&
-        runtime->controller_write_char_val_handle != 0U) {
-        runtime->controller_cccd_handle = 0U;
-        runtime->controller_ble_phase = (uint8_t)CONTROLLER_BLE_PHASE_DISCOVERING_CCCD;
-        if (ble_gattc_disc_all_dscs(conn_handle,
-                                    runtime->controller_char_val_handle,
-                                    runtime->controller_service_end_handle,
-                                    controller_dsc_cb,
-                                    runtime) == 0) {
-            return 0;
+    if (error && error->status == BLE_HS_EDONE) {
+        if (runtime->controller_char_val_handle == 0U) {
+            runtime->controller_char_val_handle = s_controller_fallback_notify_handle;
+        }
+        if (runtime->controller_write_char_val_handle == 0U) {
+            runtime->controller_write_char_val_handle = s_controller_fallback_write_handle;
+        }
+        if (runtime->controller_char_val_handle != 0U &&
+            runtime->controller_write_char_val_handle != 0U) {
+            runtime->controller_cccd_handle = 0U;
+            runtime->controller_ble_phase = (uint8_t)CONTROLLER_BLE_PHASE_DISCOVERING_CCCD;
+            if (ble_gattc_disc_all_dscs(conn_handle,
+                                        runtime->controller_char_val_handle,
+                                        runtime->controller_service_end_handle,
+                                        controller_dsc_cb,
+                                        runtime) == 0) {
+                return 0;
+            }
         }
     }
     (void)ble_gap_terminate(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
@@ -465,6 +480,7 @@ static int controller_gap_event(struct ble_gap_event *event, void *arg)
                 return 0;
             }
             runtime->controller_conn_handle = event->connect.conn_handle;
+            runtime->controller_keepalive_elapsed_ms = 0U;
             esp_bms_idf_runtime_request_coded_phy(event->connect.conn_handle, "controller");
             __atomic_fetch_or(&runtime->pending_audio_events,
                               ESP_BMS_IDF_RUNTIME_AUDIO_EVENT_CONTROLLER_CONNECTED,
@@ -474,11 +490,11 @@ static int controller_gap_event(struct ble_gap_event *event, void *arg)
             runtime->controller_char_val_handle = 0U;
             runtime->controller_write_char_val_handle = 0U;
             runtime->controller_cccd_handle = 0U;
-            runtime->controller_poll_index = 0U;
             runtime->controller_ble_phase = (uint8_t)CONTROLLER_BLE_PHASE_DISCOVERING_SERVICE;
-            const ble_uuid128_t uuid = controller_uuid128(CONTROLLER_SERVICE_UUID);
+            s_controller_fallback_notify_handle = 0U;
+            s_controller_fallback_write_handle = 0U;
             if (ble_gattc_disc_svc_by_uuid(event->connect.conn_handle,
-                                           &uuid.u,
+                                           &CONTROLLER_SERVICE_UUID.u,
                                            controller_service_cb,
                                            runtime) != 0) {
                 (void)ble_gap_terminate(event->connect.conn_handle, BLE_ERR_REM_USER_CONN_TERM);
@@ -504,7 +520,6 @@ static int controller_gap_event(struct ble_gap_event *event, void *arg)
             runtime->controller_cccd_handle = 0U;
             runtime->controller_char_val_handle = 0U;
             runtime->controller_write_char_val_handle = 0U;
-            runtime->controller_poll_index = 0U;
             runtime->controller_ble_phase = (uint8_t)CONTROLLER_BLE_PHASE_BACKOFF;
             RUNTIME_SET_FLAG(runtime, CONTROLLER_SUBSCRIBED, false);
             controller_clear_telemetry(runtime);
@@ -740,7 +755,6 @@ static void controller_on_ble_reset(esp_bms_idf_runtime_t *runtime)
     runtime->controller_char_val_handle = 0U;
     runtime->controller_write_char_val_handle = 0U;
     runtime->controller_cccd_handle = 0U;
-    runtime->controller_poll_index = 0U;
     runtime->controller_ble_phase = (uint8_t)CONTROLLER_BLE_PHASE_BACKOFF;
     RUNTIME_SET_FLAG(runtime, CONTROLLER_SUBSCRIBED, false);
     RUNTIME_SET_FLAG(runtime,
@@ -764,8 +778,9 @@ static bool controller_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_ms)
          runtime->active_data_source == ESP_BMS_LVGL_DATA_SOURCE_SPEED_DASHBOARD) &&
         RUNTIME_FLAG(runtime, CONTROLLER_SUBSCRIBED)) {
         runtime->controller_keepalive_elapsed_ms += elapsed_ms;
-        if (runtime->controller_keepalive_elapsed_ms >= CONTROLLER_READ_PERIOD_MS) {
-            controller_send_read_request(runtime);
+        if (runtime->controller_keepalive_elapsed_ms >= CONTROLLER_KEEPALIVE_PERIOD_MS) {
+            controller_send_keepalive(runtime);
+            runtime->controller_keepalive_elapsed_ms = 0U;
         }
     }
     return changed;

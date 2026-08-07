@@ -1,0 +1,466 @@
+controller_gear_text	21	
+ui_flag_bit	318	
+ui_flag_get	323	
+ui_flag_set	328	
+settings_uses_s3_layout	759	
+settings_scaled_px	769	
+settings_title_font	774	
+settings_subtitle_font	783	
+settings_disclosure_font	788	
+ui_state_flag_get	793	
+ui_state_flag_set	798	
+clear_style	987	
+dashboard_native_landscape_enabled	994	ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
+bms_native_landscape_enabled	1001	
+bms_native_portrait_enabled	1006	
+dashboard_static_cache_alloc	1012	LV_USE_SNAPSHOT
+dashboard_static_cache_free	1022	
+dashboard_static_cache_enabled	1035	LV_USE_SNAPSHOT
+dashboard_static_cache_release_one	1046	
+dashboard_static_cache_release	1058	
+dashboard_static_cache_finalize	1065	
+panel	1120	
+label	1133	
+dashboard_panel	1146	
+dashboard_viewport	1163	
+dashboard_separator	1175	
+dashboard_battery_icon	1186	
+update_dashboard_battery_icon	1229	
+dashboard_thermometer_icon	1243	
+bms_native_layout	1262	
+dashboard_native_layer	1296	
+bms_native_static_label	1311	
+bms_native_safety_icon	1327	
+bms_native_safety_check	1339	
+create_native_bms_dashboard	1354	
+create_native_bms_portrait_dashboard	1751	
+label_set_text_if_changed	2094	
+bms_label_set	2102	
+bms_native_set_safety_status	2121	
+label_set_text_fmt_if_changed	2160	
+label_set_text_color_if_changed	2170	
+dashboard_cell_key_draw_buf	2178	
+dashboard_cell_key_draw	2209	
+dashboard_cell_key	2228	
+set_obj_hidden	2240	
+abs_i32	2252	
+clamp_i32	2257	
+quick_rect_set	2268	
+quick_layout_orientation	2279	
+quick_current_layout	2284	
+quick_layout_make_default	2289	
+quick_layout_ensure_current	2341	
+quick_tile_x_anim_cb	2353	
+quick_tile_y_anim_cb	2358	
+quick_obj_stop_reorder_anim	2363	
+quick_obj_apply_rect	2372	
+quick_obj_animate_to_rect	2382	
+quick_layout_rect_for_target	2415	
+quick_layout_obj_for_target	2434	
+quick_layout_apply_current	2449	
+quick_rect_contains_point	2462	
+quick_rect_center_distance_sq	2471	
+quick_layout_find_drop_target	2481	
+quick_layout_update_drag_sort	2529	
+quick_layout_commit_drag_sort	2566	
+dashboard_soc_fill_color	2585	
+get_active_pointer	2600	
+settings_view_is_visible	2614	
+quick_pull_start_allowed	2619	
+return_home_start_allowed	2628	
+show_dashboard_view	2637	
+show_settings_view	2652	
+queue_action_with_commit	2672	
+queue_action	2681	
+queue_bms_bind_action	2686	
+queue_controller_bind_action	2699	
+queue_touch_calibration_sample	2715	
+clamp_brightness_percent	2731	
+clamp_volume_percent	2742	
+quick_level_icon	2765	
+quick_level_current_value	2770	
+quick_level_position	2775	
+quick_level_position_text	2782	
+quick_level_queue_value	2796	
+quick_level_snap_drag_value	2810	
+quick_level_overlay_update	2821	
+set_quick_brightness_value	2870	
+set_quick_volume_value	2883	
+refresh_quick_level_layouts	2896	
+quick_panel_y_anim_cb	2902	
+quick_panel_stop_settle_anim	2907	
+quick_panel_settle_anim_completed_cb	2915	
+quick_pull_open_threshold	2921	
+quick_panel_animate_to_open_state	2926	
+quick_connecting_spinner_anim_cb	2964	
+quick_toast_stop_connecting	2969	
+quick_toast_cancel	2981	
+quick_toast_apply_normal_style	2990	
+quick_toast_timer_cb	3017	
+quick_rotate_toast_set_countdown	3025	
+quick_rotate_toast_timer_cb	3035	
+quick_toast_show_text	3050	
+quick_toast_show_connecting	3069	
+quick_rotate_toast_show	3123	
+set_quick_panel_open	3202	
+set_quick_edit_mode	3238	
+quick_edit_event_cb	3255	
+perform_ui_action	3279	
+action_event_cb	3324	
+process_return_swipe_event	3338	
+return_swipe_event_cb	3436	
+quick_pull_event_cb	3441	
+quick_panel_item_index	3715	
+quick_icon_color	3724	
+quick_bluetooth_symbol_color	3729	
+quick_icon_tree_set_color	3734	
+quick_bluetooth_icon_set_active	3752	
+quick_hotspot_icon_set_active	3761	
+quick_panel_item_can_stay_active	3770	
+quick_panel_item_detail_id	3776	
+quick_panel_item_apply_active	3795	
+quick_lock_icon_recenter	3825	
+quick_tile_pressed_extent	3836	
+quick_tile_apply_press_inset	3843	
+quick_edit_button_size	3855	
+quick_edit_icon_font	3860	
+quick_edit_set_pressed	3865	
+quick_panel_item_icon_font	3884	
+quick_panel_item_icon_symbol	3898	
+quick_panel_item_recenter_icon	3909	
+quick_level_recenter_icon	3931	
+quick_panel_item_set_pressed	3944	
+quick_level_set_pressed	3954	
+quick_tile_set_scale	3962	
+quick_drag_begin	3975	
+quick_drag_update	3990	
+quick_drag_end	4012	
+quick_panel_item_event_cb	4023	
+quick_first_utf8_codepoint	4124	
+quick_symbol_icon_recenter	4152	
+quick_symbol_icon	4199	
+settings_navigation_apply_offset	4217	
+settings_navigation_offset_anim_cb	4248	
+settings_navigation_offset_anim_completed_cb	4254	
+settings_navigation_set_hidden	4260	
+settings_navigation_scroll_event_cb	4316	
+settings_navigation_track_drag	4357	
+settings_show_root	4379	
+settings_detail_is_enabled	4399	
+settings_detail_title_text	4409	
+settings_detail_chrome_show	4419	
+settings_navigate_back	4435	
+settings_detail_back_event_cb	4474	
+settings_swipe_indicator_x_anim_cb	4484	
+settings_swipe_indicator_hide_completed_cb	4489	
+settings_swipe_indicator_hide	4495	
+settings_swipe_indicator_set_drag	4505	
+settings_swipe_indicator_settle	4518	
+settings_swipe_event_cb	4538	
+settings_add_swipe_handlers	4601	
+settings_icon_action_button	4612	
+settings_current_snapshot	4642	
+settings_list_card	4648	
+settings_bms_type_label	4667	
+settings_bms_popup_close	4673	
+settings_bms_popup_click_ready	4683	
+settings_show_bms_type_picker	4692	
+settings_bms_ble_format_status	4749	
+settings_bms_ble_start_scan	4795	
+settings_bms_ble_connection_in_progress	4807	
+settings_bms_ble_log_memory	4822	
+settings_bms_ble_refresh_rows	4842	
+settings_show_bms_ble_popup	4917	
+settings_show_hotspot_detail	5024	
+bluetooth_status_text	5119	
+settings_show_bluetooth_detail	5133	
+settings_preset_range_button_event_cb	5168	
+settings_show_bms_detail	5176	
+settings_controller_roller	5306	
+settings_preset_range_confirm_event_cb	5342	
+settings_show_preset_range_edit	5365	
+settings_controller_ratio_options	5437	
+settings_controller_confirm_event_cb	5464	
+settings_controller_confirm_button	5503	
+settings_show_controller_tire_edit	5530	
+settings_show_controller_ratio_edit	5609	
+settings_controller_value_event_cb	5645	
+settings_controller_value_row	5659	
+esp_bms_lvgl_ui_speed_dashboard_style_available	5692	
+speed_dashboard_style_from_snapshot	5721	
+settings_dashboard_style_label	5748	
+settings_controller_style_button_event_cb	5760	
+settings_controller_style_option_event_cb	5769	
+settings_show_controller_style_picker	5794	
+settings_speed_unit_button_event_cb	5886	
+settings_speed_unit_option_event_cb	5894	
+settings_show_speed_unit_picker	5912	
+settings_speed_source_button_event_cb	5979	ESP_BMS_FEATURE_GPS && ESP_BMS_FEATURE_CONTROLLER
+settings_speed_source_option_event_cb	5987	ESP_BMS_FEATURE_GPS && ESP_BMS_FEATURE_CONTROLLER
+settings_show_speed_source_picker	6005	ESP_BMS_FEATURE_GPS && ESP_BMS_FEATURE_CONTROLLER
+settings_speed_unit_row	6069	
+settings_speed_source_row	6095	ESP_BMS_FEATURE_GPS && ESP_BMS_FEATURE_CONTROLLER
+settings_controller_style_row	6115	
+settings_show_gps_detail	6139	
+settings_show_dashboard_detail	6235	
+settings_show_controller_detail	6279	
+settings_detail_action_uses_switch	6385	
+settings_detail_action_switch_on	6393	
+settings_detail_switch_event_cb	6414	
+settings_detail_switch	6427	
+settings_restore_popup_close	6458	
+settings_restore_cancel_event_cb	6467	
+settings_restore_accept_event_cb	6474	
+settings_restore_confirm_show	6483	
+settings_detail_action_event_cb	6542	
+settings_bms_type_button_event_cb	6582	
+settings_bms_type_option_event_cb	6591	
+settings_bms_bind_confirm_cancel	6611	
+settings_bms_bind_confirm_cancel_event_cb	6621	
+settings_bms_bind_confirm_accept_event_cb	6630	
+settings_show_bms_bind_confirm	6657	
+settings_bms_ble_candidate_event_cb	6740	
+settings_bms_ble_refresh_event_cb	6784	
+settings_detail_rows_for_id	6800	
+settings_detail_row	6838	
+settings_system_slider_event_cb	6913	
+settings_show_system_slider	6948	
+settings_system_position_option_event_cb	7001	
+settings_show_system_position	7012	
+settings_calibration_target_place	7053	
+settings_calibration_start_timer_cb	7077	
+settings_calibration_event_cb	7085	
+settings_calibration_cancel_event_cb	7108	
+settings_show_touch_calibration	7118	
+boot_animation_style_is_available	7184	
+boot_animation_style_is_gauge	7197	
+settings_boot_preview_timer_cancel	7203	
+settings_boot_preview_status	7213	
+settings_boot_preview_finish	7236	
+settings_boot_preview_timer_cb	7250	
+settings_boot_preview_start	7273	
+settings_boot_preview_button_event_cb	7296	
+settings_boot_animation_option_event_cb	7307	
+settings_show_boot_animation_picker	7329	
+settings_show_system_view	7391	
+settings_show_detail	7441	
+settings_option_event_cb	7554	
+settings_option_card	7567	
+quick_bluetooth_icon	7632	
+quick_hotspot_icon	7645	
+quick_lock_icon	7658	
+quick_panel_tile	7684	
+quick_item_active_from_snapshot	7720	
+update_quick_item_colors	7738	
+quick_level_tile_for_kind	7749	
+quick_level_overlay_matches	7754	
+quick_level_save_timer_cancel	7760	
+quick_level_commit_current	7768	
+quick_level_save_timer_cb	7778	
+quick_level_save_timer_restart	7786	
+quick_level_overlay_opa_anim_cb	7797	
+quick_level_overlay_hide_completed_cb	7802	
+quick_level_overlay_fade	7811	
+quick_level_pointer_on_track	7829	
+quick_level_overlay_layout	7846	
+quick_level_overlay_show	7893	
+quick_level_overlay_hide	7914	
+quick_level_set_from_pointer	7928	
+quick_level_overlay_event_cb	7965	
+quick_level_event_cb	7995	
+quick_level_tile	8064	
+quick_level_overlay_create	8109	
+quick_rotate_toast_event_cb	8165	
+quick_toast_create	8176	
+format_mv	8193	
+format_deci_amps	8202	
+format_cell_v	8218	
+format_temp_c	8227	
+set_header	8236	
+set_setup_ap	8267	
+set_cast_page	8330	
+music_control_set_enabled	8368	MUSIC_PAGE_ENABLED
+set_music_page	8381	
+set_dashboard	8404	
+controller_label_set	8619	ESP_BMS_FEATURE_DASHBOARD_CONTROLLER
+set_controller_dashboard	8637	ESP_BMS_FEATURE_DASHBOARD_CONTROLLER
+controller_dashboard_panel	8682	ESP_BMS_FEATURE_DASHBOARD_CONTROLLER
+controller_dashboard_label	8696	
+controller_dashboard_vertical_separator	8713	ESP_BMS_FEATURE_DASHBOARD_CONTROLLER
+create_controller_dashboard	8726	ESP_BMS_FEATURE_DASHBOARD_CONTROLLER
+speed_dashboard_style_apply	9086	
+settings_ble_candidate_rows_changed	9135	
+settings_controller_candidate_rows_changed	9156	
+settings_controller_view_changed	9166	
+gps_label_set	9198	
+speed_dashboard_point	9216	
+speed_dashboard_draw_line	9222	
+speed_dashboard_draw_triangle	9243	
+speed_dashboard_draw_rect	9262	
+fireblade_circle_point	9280	ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
+fireblade_format_date	9287	ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
+fireblade_panel	9312	ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
+fireblade_label	9331	ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
+fireblade_arc	9353	ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
+fireblade_line	9376	ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
+fireblade_needle_draw_event_cb	9391	ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
+fireblade_needle_triangle	9410	ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
+fireblade_needle_line_set	9423	ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
+fireblade_add_title	9465	ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
+fireblade_title_extension_draw_event_cb	9483	ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
+fireblade_add_title_extension	9502	ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
+fireblade_add_title_extensions	9521	ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
+fireblade_add_scale	9528	ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
+fireblade_add_needle	9593	ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
+fireblade_add_gear_circle	9620	ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
+fireblade_add_gear_dynamic	9635	ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
+fireblade_add_gear	9657	ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
+fireblade_native_title	9664	ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
+fireblade_create_native_landscape	9682	ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
+fireblade_create_native_portrait	9895	ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
+fireblade_create_landscape	10037	ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
+fireblade_create_portrait	10187	ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
+set_fireblade_dashboard	10311	ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
+create_fireblade_dashboard	10511	ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
+speed_dashboard_smooth_step	10540	
+speed_dashboard_scaled_x	10547	
+speed_dashboard_scaled_y	10556	
+speed_dashboard_geometry	10565	
+speed_dashboard_segment_color	10610	
+speed_dashboard_static_landscape_enabled	10632	
+speed_dashboard_s3_static_background_enabled	10643	
+speed_dashboard_static_background_enabled	10653	
+speed_dashboard_static_background_apply	10661	
+speed_dashboard_active_segments	10678	
+speed_dashboard_battery_active_segments	10690	
+speed_dashboard_render_signature	10700	
+speed_dashboard_band_width	10724	
+speed_dashboard_overlap_band_endpoints	10738	
+speed_dashboard_draw_battery	10758	
+speed_dashboard_draw_satellite	10802	ESP_BMS_FEATURE_GPS
+speed_dashboard_draw_static_gauge	10846	
+speed_dashboard_static_draw_event_cb	10932	
+speed_dashboard_draw_event_cb	10949	
+speed_dashboard_apply_layout	11054	
+set_gps_dashboard	11144	
+create_gps_dashboard	11257	
+speed_page_sync	11375	
+apply_dashboard_snapshot	11417	
+defer_dashboard_snapshot	11607	
+flush_deferred_dashboard_snapshot	11613	
+invalidate_dashboard_viewport	11625	
+page_target_scroll_x	11645	
+page_last_scroll_x	11671	
+page_from_scroll_x	11682	
+page_transition_title	11708	
+page_transition_active	11729	
+page_transition_card_for_page	11735	
+page_transition_card_set_rect	11752	
+page_transition_card_set_full	11765	
+page_transition_card_set_compact	11770	
+page_transition_card_anim_cb	11779	
+page_transition_card_animation_cancel	11797	
+page_transition_card_anim_completed_cb	11808	
+page_transition_card_animate	11823	
+page_transition_hide	11871	
+page_transition_show	11892	
+page_transition_expand	11942	
+page_transition_page_create	11967	
+page_transition_create	12021	
+finish_page_scroll_state	12041	
+move_to_page	12064	
+screen_unlock_timer_cancel	12106	
+screen_unlock_reset	12114	
+screen_unlock_prompt_hide	12126	
+screen_unlock_timeout_cb	12133	
+screen_unlock_prompt_show	12140	
+screen_lock_reapply	12159	
+screen_lock_exit	12174	
+screen_lock_enter	12183	
+screen_lock_guard_event_cb	12192	
+screen_unlock_update_from_pointer	12237	
+screen_unlock_progress_percent	12261	
+screen_unlock_track_event_cb	12276	
+screen_lock_create	12325	
+page_scroll_event_cb	12418	
+create_gps_page_content	12552	
+create_cast_page_content	12566	
+create_music_page_content	12593	
+create_battery_page_content	12709	
+dashboard_page_shell	12932	
+dashboard_page_content_ready	12949	
+dashboard_battery_pointers_reset	12955	
+dashboard_gps_pointers_reset	12982	
+dashboard_page_content_release	13025	
+dashboard_pages_release_except	13068	
+dashboard_page_content_ensure	13084	
+create_screen	13142	
+boot_line	13588	
+boot_gauge_brand_spin_anim_cb	13606	
+boot_gauge_brand_set_hidden	13635	
+boot_gauge_brand_hide	13642	
+boot_overlay_delete	13652	
+boot_overlay_create	13668	
+boot_corner_marks	13685	
+boot_charge_create	13706	
+boot_gauge_brand_part_register	13809	
+boot_gauge_brand_part_create	13830	
+boot_gauge_brand_label_create	13847	
+boot_gauge_bmw_badge_create	13867	
+boot_gauge_honda_badge_create	13946	
+boot_gauge_rr_mark_create	13970	
+boot_gauge_hud_create	13988	
+boot_gauge_dashboard_style	14017	
+boot_gauge_sweep_progress	14028	
+boot_gauge_demo_speed	14037	
+boot_gauge_dashboard_set_visible	14049	
+boot_gauge_apply	14057	
+rebuild_screen_if_needed	14092	
+esp_bms_lvgl_ui_init	14170	
+esp_bms_lvgl_ui_update	14183	
+esp_bms_lvgl_ui_boot_start	14197	
+esp_bms_lvgl_ui_boot_update	14225	
+esp_bms_lvgl_ui_boot_finish	14275	
+ota_overlay_delete	14289	
+ota_overlay_create	14303	
+esp_bms_lvgl_ui_ota_update	14390	
+esp_bms_lvgl_ui_ota_finish	14444	
+esp_bms_lvgl_ui_show_dashboard	14459	
+esp_bms_lvgl_ui_touch_calibration_result	14469	
+esp_bms_lvgl_ui_set_page	14483	
+native_focus_callback	14504	
+native_focusable	14536	
+native_focus_collect	14552	
+native_focus_root	14567	
+native_focus_list	14586	
+native_focus_set	14593	
+native_focus_step	14610	
+native_focus_confirm	14628	
+native_gesture_back	14643	
+native_gesture_change_page	14658	
+esp_bms_lvgl_ui_handle_native_gesture	14670	
+esp_bms_lvgl_ui_stable_data_source	14717	
+esp_bms_lvgl_ui_drag_active	14737	
+esp_bms_lvgl_ui_take_action_event	14743	
+esp_bms_lvgl_ui_take_action	14753	
+simulator_object_count	14763	ESP_BMS_LVGL_UI_SIMULATOR
+esp_bms_lvgl_ui_simulator_object_count	14776	ESP_BMS_LVGL_UI_SIMULATOR
+esp_bms_lvgl_ui_simulator_static_cache_count	14781	ESP_BMS_LVGL_UI_SIMULATOR
+simulator_soc_color_smoke	14788	ESP_BMS_LVGL_UI_SIMULATOR
+simulator_tree_has_label	14796	ESP_BMS_LVGL_UI_SIMULATOR
+simulator_controller_gear_smoke	14814	ESP_BMS_LVGL_UI_SIMULATOR
+simulator_native_bms_portrait_smoke	14824	ESP_BMS_LVGL_UI_SIMULATOR
+simulator_native_speed_dashboard_smoke	14837	ESP_BMS_LVGL_UI_SIMULATOR
+simulator_native_bms_landscape_smoke	14862	ESP_BMS_LVGL_UI_SIMULATOR
+esp_bms_lvgl_ui_simulator_boot_gauge_matches	14873	ESP_BMS_LVGL_UI_SIMULATOR
+esp_bms_lvgl_ui_simulator_snapshot_matches	14927	ESP_BMS_LVGL_UI_SIMULATOR
+simulator_page_transition_smoke	14936	ESP_BMS_LVGL_UI_SIMULATOR
+esp_bms_lvgl_ui_simulator_native_gesture_smoke	15025	ESP_BMS_LVGL_UI_SIMULATOR
+esp_bms_lvgl_ui_simulator_boot_animation_preview_active	15107	ESP_BMS_LVGL_UI_SIMULATOR
+esp_bms_lvgl_ui_simulator_boot_animation_settings_visible	15112	ESP_BMS_LVGL_UI_SIMULATOR
+esp_bms_lvgl_ui_simulator_gps_settings_visible	15128	ESP_BMS_LVGL_UI_SIMULATOR
+esp_bms_lvgl_ui_simulator_open_gps_settings	15135	ESP_BMS_LVGL_UI_SIMULATOR
+esp_bms_lvgl_ui_simulator_gps_settings_smoke	15150	ESP_BMS_LVGL_UI_SIMULATOR
+esp_bms_lvgl_ui_simulator_settings_scroll_smoke	15178	ESP_BMS_LVGL_UI_SIMULATOR
+esp_bms_lvgl_ui_simulator_open_boot_animation_settings	15272	ESP_BMS_LVGL_UI_SIMULATOR
+esp_bms_lvgl_ui_simulator_play_boot_animation	15288	ESP_BMS_LVGL_UI_SIMULATOR

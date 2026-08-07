@@ -177,7 +177,6 @@ struct esp_bms_idf_runtime {
     uint8_t volume_percent;
     uint8_t bms_type;
     uint8_t bms_poll_index;
-    uint8_t controller_poll_index;
     uint8_t bms_own_addr_type;
     uint8_t bluetooth_own_addr_type;
     uint8_t bms_ble_phase;

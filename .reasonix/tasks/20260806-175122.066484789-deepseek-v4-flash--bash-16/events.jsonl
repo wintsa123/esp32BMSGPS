@@ -1,0 +1,2 @@
+{"sequence":1,"timestamp":"2026-08-07T02:10:59.538832193+08:00","event_type":"state_change","task_id":"20260806-175122.066484789-deepseek-v4-flash--bash-16","session_id":"20260806-175122.066484789-deepseek-v4-flash","state":"running","runtime_state":"alive"}
+{"sequence":2,"timestamp":"2026-08-07T02:11:43.001508832+08:00","event_type":"state_change","task_id":"20260806-175122.066484789-deepseek-v4-flash--bash-16","session_id":"20260806-175122.066484789-deepseek-v4-flash","state":"succeeded","runtime_state":"exited"}

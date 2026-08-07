@@ -9,12 +9,13 @@ extern "C" {
 #endif
 
 #define ESP_FARDRIVER_FRAME_LEN 16U
-#define ESP_FARDRIVER_READ_REQUEST_LEN 5U
+#define ESP_FARDRIVER_COMMAND_LEN 8U
 
 typedef struct {
     bool rpm_valid;
     bool speed_valid;
     bool gear_valid;
+    bool current_valid;
     bool power_valid;
     bool controller_temp_valid;
     bool motor_temp_valid;
@@ -22,6 +23,7 @@ typedef struct {
     uint16_t rpm;
     uint16_t speed_deci_kmh;
     uint8_t gear;
+    int32_t current_centi_a;
     int32_t power_w;
     int16_t controller_temp_c;
     int16_t motor_temp_c;
@@ -38,10 +40,8 @@ typedef struct {
 } esp_fardriver_state_t;
 
 uint16_t esp_fardriver_crc(const uint8_t *data, size_t len);
-size_t esp_fardriver_poll_address_count(void);
-bool esp_fardriver_poll_address(size_t poll_index, uint8_t *address);
-bool esp_fardriver_build_read_request(uint8_t address,
-                                      uint8_t out[ESP_FARDRIVER_READ_REQUEST_LEN]);
+bool esp_fardriver_build_open_command(uint8_t out[ESP_FARDRIVER_COMMAND_LEN]);
+bool esp_fardriver_build_keepalive_command(uint8_t out[ESP_FARDRIVER_COMMAND_LEN]);
 bool esp_fardriver_tire_circumference_mm(uint8_t rim_inch,
                                          uint8_t aspect_percent,
                                          uint16_t width_mm,
