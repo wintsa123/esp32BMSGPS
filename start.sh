@@ -445,7 +445,7 @@ set_defaults() {
     CFG[AUDIO_BACKEND]=''
     CFG[AUDIO_DAC_CHANNEL]=''
     CFG[AUDIO_ENABLE_ACTIVE_LEVEL]=''
-    CFG[MODULES]=bms,controller,network,ota
+    CFG[MODULES]=ble-media-hid,bms,controller,network,ota
     CFG[DASHBOARDS]=''
     CFG[DASHBOARDS_AUTO]=YES
     CFG[CONFIRM_DANGEROUS_GPIO]=NO

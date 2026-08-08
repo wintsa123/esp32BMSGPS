@@ -1,0 +1,2 @@
+{"file":".trellis/tasks/08-08-fix-s3-ble-phone-pairing/prd.md","reason":"Confirmed user outcome, Just Works security decision, scope, and acceptance criteria for the BLE HID pairing regression."}
+{"file":".trellis/spec/backend/hardware-build-flash.md","reason":"Firmware build and hardware-validation contract for the ESP32-S3 BLE behavior change."}

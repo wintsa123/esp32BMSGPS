@@ -1,0 +1,2 @@
+{"file":".trellis/tasks/08-08-fix-s3-ble-phone-pairing/prd.md","reason":"Acceptance criteria require PIN-free ESP32-S3 pairing, preserved encrypted BLE HID operation, and no ESP32 regression."}
+{"file":".trellis/spec/backend/hardware-build-flash.md","reason":"Requires the normal firmware build and project hardware validation path for firmware-impacting changes."}

@@ -251,7 +251,6 @@ static esp_bms_idf_runtime_t *s_ble_host_runtime;
 #define BLE_MEDIA_HID_EXTERNAL_REPORT_REFERENCE_UUID16 0x2907U
 #define BLE_MEDIA_HID_REPORT_REFERENCE_UUID16 0x2908U
 #define BLE_MEDIA_HID_APPEARANCE 0x03C0U
-#define BLE_MEDIA_HID_PAIR_PASSKEY 123456U
 #if CONFIG_BT_NIMBLE_SM_LVL >= 2
 #define BLE_MEDIA_HID_READ_SECURITY_FLAGS BLE_GATT_CHR_F_READ_ENC
 #define BLE_MEDIA_HID_WRITE_SECURITY_FLAGS BLE_GATT_CHR_F_WRITE_ENC
@@ -4434,44 +4433,6 @@ static int runtime_bluetooth_gap_event(struct ble_gap_event *event, void *arg)
             }
         }
         return 0;
-#if ESP_BMS_FEATURE_BLE_MEDIA_HID
-    case BLE_GAP_EVENT_PASSKEY_ACTION:
-        if (event->passkey.conn_handle == runtime->bluetooth_conn_handle) {
-            struct ble_sm_io pkey = { 0 };
-            pkey.action = event->passkey.params.action;
-            int rc = 0;
-            if (event->passkey.params.action == BLE_SM_IOACT_NUMCMP) {
-                pkey.numcmp_accept = 1U;
-                rc = ble_sm_inject_io(event->passkey.conn_handle, &pkey);
-                ESP_LOGI(TAG,
-                         "[bt] HID numeric comparison accepted: conn=%u code=%06lu rc=%d",
-                         event->passkey.conn_handle,
-                         (unsigned long)event->passkey.params.numcmp,
-                         rc);
-            } else if (event->passkey.params.action == BLE_SM_IOACT_DISP ||
-                       event->passkey.params.action == BLE_SM_IOACT_INPUT) {
-                pkey.passkey = BLE_MEDIA_HID_PAIR_PASSKEY;
-                rc = ble_sm_inject_io(event->passkey.conn_handle, &pkey);
-                runtime_set_error(runtime, "PIN 123456");
-                ESP_LOGI(TAG,
-                         "[bt] HID passkey supplied: conn=%u action=%u passkey=%06u rc=%d",
-                         event->passkey.conn_handle,
-                         event->passkey.params.action,
-                         (unsigned)BLE_MEDIA_HID_PAIR_PASSKEY,
-                         rc);
-            } else if (event->passkey.params.action == BLE_SM_IOACT_NONE) {
-                /* Just Works pairing: no passkey to display or confirm. */
-                ESP_LOGI(TAG,
-                         "[bt] HID Just Works pairing: conn=%u",
-                         event->passkey.conn_handle);
-            } else {
-                ESP_LOGW(TAG, "[bt] HID passkey action unsupported: conn=%u action=%u",
-                         event->passkey.conn_handle,
-                         event->passkey.params.action);
-            }
-        }
-        return 0;
-#endif
     case BLE_GAP_EVENT_REPEAT_PAIRING: {
         struct ble_gap_conn_desc desc = { 0 };
         if (ble_gap_conn_find(event->repeat_pairing.conn_handle, &desc) == 0) {
@@ -4717,8 +4678,7 @@ static esp_err_t runtime_init_ble_host(esp_bms_idf_runtime_t *runtime)
     ble_hs_cfg.sync_cb = runtime_ble_host_on_sync;
     ble_hs_cfg.store_status_cb = ble_store_util_status_rr;
     ble_hs_cfg.sm_bonding = 1;
-    /* Just Works pairing (no PIN / no passkey confirmation), like a consumer
-     * Bluetooth headset remote: the phone pairs silently and media keys work. */
+    /* Just Works pairing: encrypted and bonded without PIN or confirmation. */
     ble_hs_cfg.sm_io_cap = BLE_SM_IO_CAP_NO_IO;
     ble_hs_cfg.sm_mitm = 0;
     ble_hs_cfg.sm_sc = 1;
