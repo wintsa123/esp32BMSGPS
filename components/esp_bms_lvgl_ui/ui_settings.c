@@ -262,6 +262,17 @@ void settings_navigate_back(void)
     }
     if (s_ui.settings_detail_id == (uint8_t)SETTINGS_DETAIL_BMS &&
         s_ui.settings_bms_view != (uint8_t)SETTINGS_BMS_VIEW_ROOT) {
+        if (s_ui.settings_bms_view == (uint8_t)SETTINGS_BMS_VIEW_BLE_LIST &&
+            s_ui.settings_ble_more_page) {
+            s_ui.settings_ble_more_page = false;
+            settings_bms_ble_refresh_rows(settings_current_snapshot(),
+                                          SETTINGS_BLE_SOURCE_BMS,
+                                          false,
+                                          "back-to-first-page");
+            lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
+            settings_navigation_set_hidden(false, false);
+            return;
+        }
         if (s_ui.settings_bms_view == (uint8_t)SETTINGS_BMS_VIEW_BLE_LIST) {
             queue_action(ESP_BMS_LVGL_ACTION_CANCEL_BMS_CONNECTION);
         }
@@ -277,6 +288,17 @@ void settings_navigate_back(void)
     }
     if (s_ui.settings_detail_id == (uint8_t)SETTINGS_DETAIL_CONTROLLER &&
         s_ui.settings_controller_view != (uint8_t)SETTINGS_CONTROLLER_VIEW_ROOT) {
+        if (s_ui.settings_controller_view == (uint8_t)SETTINGS_CONTROLLER_VIEW_BLE_LIST &&
+            s_ui.settings_ble_more_page) {
+            s_ui.settings_ble_more_page = false;
+            settings_bms_ble_refresh_rows(settings_current_snapshot(),
+                                          SETTINGS_BLE_SOURCE_CONTROLLER,
+                                          false,
+                                          "back-to-first-page");
+            lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
+            settings_navigation_set_hidden(false, false);
+            return;
+        }
         settings_show_controller_detail();
         settings_navigation_set_hidden(false, false);
         return;
@@ -671,6 +693,14 @@ void settings_show_bms_ble_popup(settings_ble_source_t source, bool start_scan)
                                      SETTINGS_CHOICE_ROW_H_LANDSCAPE;
     const esp_bms_dashboard_snapshot_t *snapshot = settings_current_snapshot();
 
+    const bool same_list = s_ui.settings_ble_source == (uint8_t)source &&
+                           (source == SETTINGS_BLE_SOURCE_BMS
+                                ? s_ui.settings_bms_view == (uint8_t)SETTINGS_BMS_VIEW_BLE_LIST
+                                : s_ui.settings_controller_view ==
+                                      (uint8_t)SETTINGS_CONTROLLER_VIEW_BLE_LIST);
+    if (!same_list) {
+        s_ui.settings_ble_more_page = false;
+    }
     s_ui.settings_ble_source = (uint8_t)source;
     if (source == SETTINGS_BLE_SOURCE_BMS) {
         s_ui.settings_bms_view = (uint8_t)SETTINGS_BMS_VIEW_BLE_LIST;
@@ -727,7 +757,7 @@ void settings_show_bms_ble_popup(settings_ble_source_t source, bool start_scan)
         card_x,
         list_y,
         card_w,
-        ((row_h + gap) * ESP_BMS_BMS_SCAN_MAX_CANDIDATES) - gap,
+        ((row_h + gap) * SETTINGS_BLE_MAX_VISIBLE_ROWS) - gap,
         &settings_zh_16);
     lv_obj_set_style_radius(s_ui.settings_bms_ble_list, 8, LV_PART_MAIN);
     lv_obj_set_style_border_width(s_ui.settings_bms_ble_list, 1, LV_PART_MAIN);
@@ -2093,4 +2123,3 @@ bool settings_controller_view_changed(const esp_bms_dashboard_snapshot_t *previo
            strcmp(previous->controller_bound_name, current->controller_bound_name) != 0 ||
            settings_controller_candidate_rows_changed(previous, current);
 }
-

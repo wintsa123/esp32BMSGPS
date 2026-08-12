@@ -232,7 +232,7 @@ typedef enum {
 #define ESP_BMS_BMS_CODE_MAX_COUNT 6U
 #define ESP_BMS_BMS_CODE_TEXT_LEN 8U
 #define ESP_BMS_BMS_TEMP_MAX_COUNT 6U
-#define ESP_BMS_BMS_SCAN_MAX_CANDIDATES 6U
+#define ESP_BMS_BMS_SCAN_MAX_CANDIDATES 12U
 #define ESP_BMS_BMS_SCAN_NAME_LEN 24U
 #define ESP_BMS_CONTROLLER_TIRE_RIM_MIN 8U
 #define ESP_BMS_CONTROLLER_TIRE_RIM_MAX 24U
@@ -290,6 +290,7 @@ typedef struct {
     uint32_t capacity_remaining_mah;
     uint32_t bms_capacity_estimate_mah;
     uint32_t bms_running_time_seconds;
+    uint32_t bms_cycle_capacity_mah;
     uint32_t local_battery_mv;
     esp_bms_speed_unit_t speed_unit;
     esp_bms_speed_source_t speed_source;
@@ -368,6 +369,7 @@ typedef struct {
     bool gps_satellite_info_valid;
     bool gps_hdop_valid;
     bool bms_running_time_valid;
+    bool bms_cycle_capacity_valid;
     bool average_speed_valid;
     bool average_consumption_valid;
     bool remaining_range_valid;

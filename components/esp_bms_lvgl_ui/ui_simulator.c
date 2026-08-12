@@ -111,8 +111,10 @@ static bool simulator_native_bms_landscape_smoke(void)
         return true;
     }
     return s_ui.native_bms_dashboard && s_ui.pack_voltage_unit && s_ui.current_unit &&
+           s_ui.bms_cycle_capacity &&
            strcmp(lv_label_get_text(s_ui.pack_voltage_unit), "V") == 0 &&
-           strcmp(lv_label_get_text(s_ui.current_unit), "A") == 0;
+           strcmp(lv_label_get_text(s_ui.current_unit), "A") == 0 &&
+           simulator_tree_has_label(s_ui.battery_page, s_ui.bms_cycle_capacity_buf);
 }
 
 bool esp_bms_lvgl_ui_simulator_boot_gauge_matches(
@@ -449,34 +451,105 @@ bool esp_bms_lvgl_ui_simulator_settings_scroll_smoke(void)
     const uint32_t empty_bms_candidate_list_objects = esp_bms_lvgl_ui_simulator_object_count();
     lv_obj_t *const initial_bms_ble_status = s_ui.settings_bms_ble_status;
     lv_obj_t *const initial_bms_ble_list = s_ui.settings_bms_ble_list;
-    s_ui.last_snapshot.bms_scan_candidate_count = ESP_BMS_BMS_SCAN_MAX_CANDIDATES;
-    for (uint8_t index = 0; index < ESP_BMS_BMS_SCAN_MAX_CANDIDATES; ++index) {
+    s_ui.last_snapshot.bms_scan_candidate_count = 6U;
+    for (uint8_t index = 0; index < 6U; ++index) {
         esp_bms_bms_scan_candidate_t *candidate = &s_ui.last_snapshot.bms_scan_candidates[index];
         (void)snprintf(candidate->mac,
                        sizeof(candidate->mac),
                        "00:11:22:33:44:%02X",
                        (unsigned)index);
-        (void)snprintf(candidate->name, sizeof(candidate->name), "设备 %u", (unsigned)index + 1U);
+        (void)snprintf(candidate->name, sizeof(candidate->name), "BMS %u", (unsigned)index + 1U);
         candidate->rssi = (int8_t)(-45 - (int8_t)index);
         candidate->has_name = true;
     }
+    (void)snprintf(s_ui.last_snapshot.bms_scan_candidates[0].name,
+                   sizeof(s_ui.last_snapshot.bms_scan_candidates[0].name),
+                   "JK \"BMS\\#2");
     settings_bms_ble_refresh_rows(&s_ui.last_snapshot,
                                   SETTINGS_BLE_SOURCE_BMS,
                                   false,
-                                  "simulator-refresh");
+                                  "simulator-six");
+    const char *bms_list_text = lv_label_get_text(s_ui.settings_bms_ble_list);
+    const bool bms_six_direct = strstr(bms_list_text, "JK \"BMS\\#2") != NULL &&
+                                strstr(bms_list_text, "BMS 6") != NULL &&
+                                strstr(bms_list_text, "More devices") == NULL;
+
+    s_ui.last_snapshot.bms_scan_candidate_count = 7U;
+    esp_bms_bms_scan_candidate_t *candidate = &s_ui.last_snapshot.bms_scan_candidates[6];
+    (void)snprintf(candidate->mac, sizeof(candidate->mac), "00:11:22:33:44:06");
+    (void)snprintf(candidate->name, sizeof(candidate->name), "BMS 7");
+    candidate->rssi = -51;
+    candidate->has_name = true;
+    settings_bms_ble_refresh_rows(&s_ui.last_snapshot,
+                                  SETTINGS_BLE_SOURCE_BMS,
+                                  false,
+                                  "simulator-seven-first");
+    bms_list_text = lv_label_get_text(s_ui.settings_bms_ble_list);
+    bool more_action = false;
+    const bool bms_seven_first = strstr(bms_list_text, "More devices") != NULL &&
+                                 strstr(bms_list_text, "BMS 6") == NULL &&
+                                 settings_bms_ble_candidate_index(7U, false, 5U, &more_action) ==
+                                     UINT8_MAX &&
+                                 more_action;
+    s_ui.settings_ble_more_page = true;
+    settings_bms_ble_refresh_rows(&s_ui.last_snapshot,
+                                  SETTINGS_BLE_SOURCE_BMS,
+                                  false,
+                                  "simulator-seven-more");
+    bms_list_text = lv_label_get_text(s_ui.settings_bms_ble_list);
+    const bool bms_seven_more = strstr(bms_list_text, "BMS 6") != NULL &&
+                                strstr(bms_list_text, "BMS 7") != NULL &&
+                                strstr(bms_list_text, "More devices") == NULL &&
+                                settings_bms_ble_candidate_index(7U, true, 0U, NULL) == 5U;
+
+    s_ui.last_snapshot.bms_scan_candidate_count = ESP_BMS_BMS_SCAN_MAX_CANDIDATES;
+    for (uint8_t index = 7U; index < ESP_BMS_BMS_SCAN_MAX_CANDIDATES; ++index) {
+        candidate = &s_ui.last_snapshot.bms_scan_candidates[index];
+        (void)snprintf(candidate->mac,
+                       sizeof(candidate->mac),
+                       "00:11:22:33:44:%02X",
+                       (unsigned)index);
+        (void)snprintf(candidate->name, sizeof(candidate->name), "BMS %u", (unsigned)index + 1U);
+        candidate->rssi = (int8_t)(-45 - (int8_t)index);
+        candidate->has_name = true;
+    }
+    candidate = &s_ui.last_snapshot.bms_scan_candidates[11];
+    candidate->name[0] = '\0';
+    candidate->has_name = false;
+    s_ui.settings_ble_more_page = false;
+    settings_bms_ble_refresh_rows(&s_ui.last_snapshot,
+                                  SETTINGS_BLE_SOURCE_BMS,
+                                  false,
+                                  "simulator-twelve-first");
+    const bool bms_twelve_first =
+        strstr(lv_label_get_text(s_ui.settings_bms_ble_list), "More devices") != NULL &&
+        settings_bms_ble_candidate_index(12U, false, 6U, NULL) == UINT8_MAX;
+    s_ui.settings_ble_more_page = true;
+    settings_bms_ble_refresh_rows(&s_ui.last_snapshot,
+                                  SETTINGS_BLE_SOURCE_BMS,
+                                  false,
+                                  "simulator-twelve-more");
+    bms_list_text = lv_label_get_text(s_ui.settings_bms_ble_list);
     const bool bms_candidate_list_compact =
         esp_bms_lvgl_ui_simulator_object_count() == empty_bms_candidate_list_objects &&
         s_ui.settings_bms_ble_status == initial_bms_ble_status &&
         s_ui.settings_bms_ble_list == initial_bms_ble_list &&
         !lv_obj_has_flag(s_ui.settings_bms_ble_list, LV_OBJ_FLAG_HIDDEN) &&
-        strstr(lv_label_get_text(s_ui.settings_bms_ble_list), "设备 6") != NULL;
+        strstr(bms_list_text, "BMS 6") != NULL && strstr(bms_list_text, "设备 12") == NULL &&
+        settings_bms_ble_candidate_index(12U, true, 6U, NULL) == 11U;
+    settings_navigate_back();
+    const bool bms_more_back_returns_first =
+        !s_ui.settings_ble_more_page &&
+        s_ui.settings_bms_view == (uint8_t)SETTINGS_BMS_VIEW_BLE_LIST &&
+        s_ui.pending_event.action == ESP_BMS_LVGL_ACTION_NONE &&
+        strstr(lv_label_get_text(s_ui.settings_bms_ble_list), "More devices") != NULL;
     settings_navigate_back();
     const bool bms_back_cancels_scan =
         s_ui.settings_bms_view == (uint8_t)SETTINGS_BMS_VIEW_ROOT &&
         s_ui.pending_event.action == ESP_BMS_LVGL_ACTION_CANCEL_BMS_CONNECTION;
     memset(&s_ui.pending_event, 0, sizeof(s_ui.pending_event));
     settings_show_bms_ble_popup(SETTINGS_BLE_SOURCE_BMS, false);
-    esp_bms_bms_scan_candidate_t *candidate = &s_ui.last_snapshot.bms_scan_candidates[0];
+    candidate = &s_ui.last_snapshot.bms_scan_candidates[0];
     (void)snprintf(candidate->mac, sizeof(candidate->mac), "00:11:22:33:44:55");
     settings_show_bms_bind_confirm(candidate);
     native_gesture_back();
@@ -488,6 +561,79 @@ bool esp_bms_lvgl_ui_simulator_settings_scroll_smoke(void)
     const bool bms_back_cancels_scan = true;
     const bool bms_confirm_back_cancels_scan = true;
     const bool bms_candidate_list_compact = true;
+    const bool bms_more_back_returns_first = true;
+    const bool bms_six_direct = true;
+    const bool bms_seven_first = true;
+    const bool bms_seven_more = true;
+    const bool bms_twelve_first = true;
+#endif
+#if ESP_BMS_FEATURE_CONTROLLER
+    settings_show_detail(SETTINGS_DETAIL_CONTROLLER);
+    s_ui.last_snapshot.controller_scan_candidate_count = 0U;
+    memset(s_ui.last_snapshot.controller_scan_candidates,
+           0,
+           sizeof(s_ui.last_snapshot.controller_scan_candidates));
+    settings_show_bms_ble_popup(SETTINGS_BLE_SOURCE_CONTROLLER, false);
+    const bool controller_zero_empty =
+        lv_obj_has_flag(s_ui.settings_bms_ble_list, LV_OBJ_FLAG_HIDDEN);
+    s_ui.last_snapshot.controller_scan_candidate_count = 6U;
+    for (uint8_t index = 0U; index < ESP_BMS_BMS_SCAN_MAX_CANDIDATES; ++index) {
+        esp_bms_bms_scan_candidate_t *candidate =
+            &s_ui.last_snapshot.controller_scan_candidates[index];
+        (void)snprintf(candidate->mac,
+                       sizeof(candidate->mac),
+                       "10:11:22:33:44:%02X",
+                       (unsigned)index);
+        (void)snprintf(candidate->name, sizeof(candidate->name), "CTL %u", (unsigned)index + 1U);
+        candidate->rssi = (int8_t)(-55 - (int8_t)index);
+        candidate->has_name = true;
+    }
+    settings_bms_ble_refresh_rows(&s_ui.last_snapshot,
+                                  SETTINGS_BLE_SOURCE_CONTROLLER,
+                                  false,
+                                  "simulator-controller-six");
+    const bool controller_six_direct =
+        strstr(lv_label_get_text(s_ui.settings_bms_ble_list), "CTL 6") != NULL &&
+        strstr(lv_label_get_text(s_ui.settings_bms_ble_list), "More devices") == NULL;
+    s_ui.last_snapshot.controller_scan_candidate_count = 7U;
+    settings_bms_ble_refresh_rows(&s_ui.last_snapshot,
+                                  SETTINGS_BLE_SOURCE_CONTROLLER,
+                                  false,
+                                  "simulator-controller-seven");
+    const bool controller_seven_first =
+        strstr(lv_label_get_text(s_ui.settings_bms_ble_list), "More devices") != NULL &&
+        strstr(lv_label_get_text(s_ui.settings_bms_ble_list), "CTL 6") == NULL;
+    s_ui.last_snapshot.controller_scan_candidate_count = ESP_BMS_BMS_SCAN_MAX_CANDIDATES;
+    s_ui.last_snapshot.controller_scan_candidates[11].name[0] = '\0';
+    s_ui.last_snapshot.controller_scan_candidates[11].has_name = false;
+    s_ui.settings_ble_more_page = true;
+    settings_bms_ble_refresh_rows(&s_ui.last_snapshot,
+                                  SETTINGS_BLE_SOURCE_CONTROLLER,
+                                  false,
+                                  "simulator-controller-twelve-more");
+    const char *controller_list_text = lv_label_get_text(s_ui.settings_bms_ble_list);
+    const bool controller_twelve_more = strstr(controller_list_text, "CTL 6") != NULL &&
+                                        strstr(controller_list_text, "设备 12") == NULL &&
+                                        strcmp(s_ui.last_snapshot.controller_scan_candidates[
+                                                   settings_bms_ble_candidate_index(
+                                                       12U, true, 0U, NULL)]
+                                                   .mac,
+                                               "10:11:22:33:44:05") == 0;
+    settings_navigate_back();
+    const bool controller_more_back_returns_first =
+        !s_ui.settings_ble_more_page &&
+        s_ui.settings_controller_view == (uint8_t)SETTINGS_CONTROLLER_VIEW_BLE_LIST &&
+        strstr(lv_label_get_text(s_ui.settings_bms_ble_list), "More devices") != NULL;
+    settings_navigate_back();
+    const bool controller_back_returns_root =
+        s_ui.settings_controller_view == (uint8_t)SETTINGS_CONTROLLER_VIEW_ROOT;
+#else
+    const bool controller_zero_empty = true;
+    const bool controller_six_direct = true;
+    const bool controller_seven_first = true;
+    const bool controller_twelve_more = true;
+    const bool controller_more_back_returns_first = true;
+    const bool controller_back_returns_root = true;
 #endif
     esp_bms_dashboard_snapshot_t bluetooth_snapshot = s_ui.last_snapshot;
     bluetooth_snapshot.bms_error_text[0] = '\0';
@@ -509,8 +655,12 @@ bool esp_bms_lvgl_ui_simulator_settings_scroll_smoke(void)
         s_ui.settings_detail_id == (uint8_t)SETTINGS_DETAIL_BLUETOOTH &&
         !simulator_tree_has_label(s_ui.settings_detail, "PIN 123456");
     show_dashboard_view();
-    return scrolled && bms_back_cancels_scan && bms_confirm_back_cancels_scan &&
-           bms_candidate_list_compact && bluetooth_default_hides_pin &&
+    return scrolled && bms_six_direct && bms_seven_first && bms_seven_more &&
+           bms_twelve_first && bms_candidate_list_compact && bms_more_back_returns_first &&
+           bms_back_cancels_scan && bms_confirm_back_cancels_scan && controller_zero_empty &&
+           controller_six_direct && controller_seven_first && controller_twelve_more &&
+           controller_more_back_returns_first && controller_back_returns_root &&
+           bluetooth_default_hides_pin &&
            bluetooth_pin_visible && bluetooth_pin_hidden;
 }
 
@@ -546,4 +696,3 @@ esp_err_t esp_bms_lvgl_ui_simulator_play_boot_animation(void)
     return ESP_OK;
 }
 #endif
-

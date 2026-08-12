@@ -10,6 +10,33 @@ const char *settings_bms_type_label(uint8_t type)
                                                           SETTINGS_BMS_TYPE_LABELS[0];
 }
 
+uint8_t settings_bms_ble_candidate_index(uint8_t count,
+                                         bool more_page,
+                                         uint8_t row,
+                                         bool *more_action)
+{
+    if (more_action) {
+        *more_action = false;
+    }
+    if (count > ESP_BMS_BMS_SCAN_MAX_CANDIDATES) {
+        count = ESP_BMS_BMS_SCAN_MAX_CANDIDATES;
+    }
+    if (!more_page && count > SETTINGS_BLE_DIRECT_CANDIDATE_COUNT &&
+        row == SETTINGS_BLE_PRIMARY_CANDIDATE_COUNT) {
+        if (more_action) {
+            *more_action = true;
+        }
+        return UINT8_MAX;
+    }
+    if (!more_page && count > SETTINGS_BLE_DIRECT_CANDIDATE_COUNT &&
+        row >= SETTINGS_BLE_DIRECT_CANDIDATE_COUNT) {
+        return UINT8_MAX;
+    }
+
+    const uint8_t index = more_page ? (uint8_t)(row + SETTINGS_BLE_PRIMARY_CANDIDATE_COUNT) : row;
+    return index < count ? index : UINT8_MAX;
+}
+
 void settings_bms_ble_refresh_rows(const esp_bms_dashboard_snapshot_t *snapshot,
                                           settings_ble_source_t source,
                                           bool scan_requested,
@@ -29,6 +56,9 @@ void settings_bms_ble_refresh_rows(const esp_bms_dashboard_snapshot_t *snapshot,
     const uint8_t count = source_count > ESP_BMS_BMS_SCAN_MAX_CANDIDATES
                               ? ESP_BMS_BMS_SCAN_MAX_CANDIDATES
                               : source_count;
+    if (count <= SETTINGS_BLE_DIRECT_CANDIDATE_COUNT) {
+        s_ui.settings_ble_more_page = false;
+    }
 
     settings_bms_ble_format_status(s_ui.settings_bms_ble_status_text,
                                    sizeof(s_ui.settings_bms_ble_status_text),
@@ -50,28 +80,50 @@ void settings_bms_ble_refresh_rows(const esp_bms_dashboard_snapshot_t *snapshot,
 
     size_t used = 0U;
     s_ui.settings_bms_ble_list_text[0] = '\0';
-    for (uint8_t index = 0U; index < ESP_BMS_BMS_SCAN_MAX_CANDIDATES; ++index) {
-        if (index >= count || used >= sizeof(s_ui.settings_bms_ble_list_text)) {
+    const uint8_t row_count = s_ui.settings_ble_more_page
+                                  ? (uint8_t)(count - SETTINGS_BLE_PRIMARY_CANDIDATE_COUNT)
+                                  : count > SETTINGS_BLE_DIRECT_CANDIDATE_COUNT
+                                        ? SETTINGS_BLE_DIRECT_CANDIDATE_COUNT
+                                        : count;
+    for (uint8_t row = 0U; row < row_count; ++row) {
+        if (used >= sizeof(s_ui.settings_bms_ble_list_text)) {
+            break;
+        }
+        bool more_action = false;
+        const uint8_t index = settings_bms_ble_candidate_index(
+            count, s_ui.settings_ble_more_page, row, &more_action);
+        if (more_action) {
+            const int written = snprintf(s_ui.settings_bms_ble_list_text + used,
+                                         sizeof(s_ui.settings_bms_ble_list_text) - used,
+                                         "%sMore devices",
+                                         row == 0U ? "" : "\n");
+            if (written < 0) {
+                break;
+            }
+            const size_t remaining = sizeof(s_ui.settings_bms_ble_list_text) - used;
+            used += (size_t)written < remaining ? (size_t)written : remaining - 1U;
+            continue;
+        }
+        if (index == UINT8_MAX) {
             break;
         }
         const esp_bms_bms_scan_candidate_t *candidate = &candidates[index];
-        char fallback_name[16] = { 0 };
         const bool has_name = candidate->has_name && candidate->name[0] != '\0';
         if (!has_name) {
-            (void)snprintf(fallback_name, sizeof(fallback_name), "设备 %u", (unsigned)index + 1U);
+            continue;
         }
-        const char *name = has_name ? candidate->name : fallback_name;
+        const char *name = candidate->name;
         const int written = candidate->rssi > INT8_MIN
                                 ? snprintf(s_ui.settings_bms_ble_list_text + used,
                                            sizeof(s_ui.settings_bms_ble_list_text) - used,
                                            "%s%s  %d dBm",
-                                           index == 0U ? "" : "\n",
+                                           row == 0U ? "" : "\n",
                                            name,
                                            (int)candidate->rssi)
                                 : snprintf(s_ui.settings_bms_ble_list_text + used,
                                            sizeof(s_ui.settings_bms_ble_list_text) - used,
                                            "%s%s  --",
-                                           index == 0U ? "" : "\n",
+                                           row == 0U ? "" : "\n",
                                            name);
         if (written < 0) {
             break;
@@ -377,12 +429,24 @@ void settings_bms_ble_candidate_event_cb(lv_event_t *event)
     if (relative_y < 0 || relative_y % (row_h + gap) >= row_h) {
         return;
     }
-    const uint8_t index = (uint8_t)(relative_y / (row_h + gap));
+    const uint8_t row = (uint8_t)(relative_y / (row_h + gap));
     const esp_bms_dashboard_snapshot_t *snapshot = settings_current_snapshot();
     const uint8_t count = s_ui.settings_ble_source == (uint8_t)SETTINGS_BLE_SOURCE_BMS
                               ? snapshot->bms_scan_candidate_count
                               : snapshot->controller_scan_candidate_count;
-    if (index >= count || index >= ESP_BMS_BMS_SCAN_MAX_CANDIDATES) {
+    bool more_action = false;
+    const uint8_t index = settings_bms_ble_candidate_index(
+        count, s_ui.settings_ble_more_page, row, &more_action);
+    if (more_action) {
+        s_ui.settings_ble_more_page = true;
+        settings_bms_ble_refresh_rows(snapshot,
+                                      (settings_ble_source_t)s_ui.settings_ble_source,
+                                      false,
+                                      "more-page");
+        lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
+        return;
+    }
+    if (index == UINT8_MAX) {
         return;
     }
     const esp_bms_bms_scan_candidate_t *candidate =
@@ -953,4 +1017,3 @@ void settings_option_event_cb(lv_event_t *event)
         settings_show_detail(detail_id);
     }
 }
-

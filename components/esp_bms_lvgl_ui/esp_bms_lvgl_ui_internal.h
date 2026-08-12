@@ -70,6 +70,9 @@ LV_FONT_DECLARE(settings_zh_18);
 #endif
 #define SETTINGS_BLE_STATUS_TEXT_LEN 24U
 #define SETTINGS_BLE_ROW_TEXT_LEN (ESP_BMS_BMS_SCAN_NAME_LEN + 16U)
+#define SETTINGS_BLE_DIRECT_CANDIDATE_COUNT 6U
+#define SETTINGS_BLE_PRIMARY_CANDIDATE_COUNT 5U
+#define SETTINGS_BLE_MAX_VISIBLE_ROWS 7U
 #define QUICK_BLUETOOTH_SYMBOL "\xee\x9c\xa8"
 #define QUICK_HOTSPOT_SYMBOL "\xee\x98\xab"
 #define SETUP_AP_INFO_LINE_SPACE 4
@@ -343,7 +346,7 @@ _Static_assert(sizeof(esp_bms_boot_animation_style_t) == 4 &&
                    ESP_BMS_BOOT_ANIMATION_GAUGE_S1000RR == 1 &&
                    ESP_BMS_BOOT_ANIMATION_GAUGE_HONDA_FIREBLADE == 2,
                "esp_bms_boot_animation_style_t ABI changed; update runtime consumers too");
-_Static_assert(sizeof(esp_bms_dashboard_snapshot_t) == 1108,
+_Static_assert(sizeof(esp_bms_dashboard_snapshot_t) == 1652,
                "dashboard snapshot ABI size changed; update all C consumers too");
 _Static_assert(ESP_BMS_LVGL_ACTION_NONE == 0,
                "esp_bms_lvgl_action_t value changed; update C action consumers too");
@@ -479,10 +482,10 @@ typedef struct {
     char settings_bms_confirm_name[ESP_BMS_BMS_SCAN_NAME_LEN + 1U];
     char settings_bms_ble_status_text[SETTINGS_BLE_STATUS_TEXT_LEN];
     char settings_bms_ble_empty_text[SETTINGS_BLE_STATUS_TEXT_LEN];
-    char settings_bms_ble_list_text[ESP_BMS_BMS_SCAN_MAX_CANDIDATES *
-                                    SETTINGS_BLE_ROW_TEXT_LEN];
+    char settings_bms_ble_list_text[SETTINGS_BLE_MAX_VISIBLE_ROWS * SETTINGS_BLE_ROW_TEXT_LEN];
     lv_obj_t *settings_swipe_indicator;
     bool settings_bms_ble_popup_open;
+    bool settings_ble_more_page;
     bool quick_connecting_toast_active;
     bool settings_nav_hidden;
     bool settings_nav_layout_updating;
@@ -542,6 +545,7 @@ typedef struct {
     lv_obj_t *current_unit;
     lv_obj_t *capacity;
     lv_obj_t *bms_running_time;
+    lv_obj_t *bms_cycle_capacity;
     lv_obj_t *cell_stats;
     lv_obj_t *cell_stat_values[DASHBOARD_CELL_STAT_COUNT];
     lv_obj_t *bms_safety_values[ESP_BMS_BMS_SAFETY_COUNT];
@@ -621,6 +625,7 @@ typedef struct {
     char bms_soc_buf[8];
     char bms_capacity_buf[40];
     char bms_running_time_buf[32];
+    char bms_cycle_capacity_buf[24];
     char bms_pack_voltage_buf[24];
     char bms_current_buf[24];
     char bms_cell_stat_buf[DASHBOARD_CELL_STAT_COUNT][16];
@@ -1056,6 +1061,7 @@ void settings_controller_style_row(lv_obj_t *parent, int32_t y, int32_t w, int32
 /* ---- settings_system ---- */
 const char *settings_bms_type_label(uint8_t type);
 void settings_bms_ble_refresh_rows(const esp_bms_dashboard_snapshot_t *snapshot, settings_ble_source_t source, bool scan_requested, const char *phase);
+uint8_t settings_bms_ble_candidate_index(uint8_t count, bool more_page, uint8_t row, bool *more_action);
 bool settings_detail_action_uses_switch(esp_bms_lvgl_action_t action);
 bool settings_detail_action_switch_on(esp_bms_lvgl_action_t action);
 void settings_detail_switch(lv_obj_t *parent, int32_t x, int32_t y, bool enabled);
@@ -1135,4 +1141,3 @@ uint16_t boot_gauge_demo_speed(uint8_t progress_percent);
 esp_err_t esp_bms_lvgl_ui_boot_start(const esp_bms_dashboard_snapshot_t *snapshot);
 esp_err_t esp_bms_lvgl_ui_boot_update(uint8_t progress_percent, const char *status_text);
 esp_err_t esp_bms_lvgl_ui_boot_finish(const esp_bms_dashboard_snapshot_t *snapshot);
-

@@ -1581,7 +1581,10 @@ not add those hooks to the firmware symbol table.
 
 ### 2. Signatures
 
-- BLE service/characteristic: `0xFFE0` / `0xFFEC`.
+- Preferred BLE profile: Nordic UART service `6e400001-b5a3-f393-e0a9-e50e24dcca9e`,
+  notify `6e400003-...`, and write `6e400002-...`.
+- Compatibility BLE profile: service `0xFFE0`, notify `0xFFEC`, and write
+  `0xFFEF`.
 - Stable source API: `esp_bms_lvgl_ui_stable_data_source()` and
   `esp_bms_idf_runtime_set_active_data_source()`.
 - Unified dashboard source: `ESP_BMS_LVGL_DATA_SOURCE_SPEED_DASHBOARD` keeps
@@ -1612,6 +1615,17 @@ not add those hooks to the firmware symbol table.
 - `controller_connection_enabled` is the lifecycle switch. Disabling it stops
   scan intent and terminates current or late-arriving connections without
   clearing the bound MAC/name; enabling it reconnects a bound controller.
+- GAP connection and successful CCCD subscription are discovery states, not
+  controller-online proof. Discover Nordic UART first and fall back explicitly
+  to FFE0 only when the NUS service is absent. Publish `CONTROLLER_ONLINE`, play
+  the connected prompt, and expose controller-only settings only after a valid
+  frame sets RPM, current, controller-temperature, or motor-temperature
+  telemetry. Parameter-only blocks and a voltage value without an instrument
+  validity flag remain offline.
+- After CCCD acknowledgement, NUS sends the five-byte read-only poll every
+  200 ms; FFE0 sends its open command and existing keepalive. If no instrument
+  telemetry arrives within 10 seconds, log the profile/stage and terminate the
+  connection so a subscribed but empty instrument cannot appear online.
 - The unified speed dashboard object tree persists, but carousel participation
   is capability-gated by GPS module availability or controller online state. A
   stable visible speed dashboard enables the FFEC CCCD and high-rate projection
@@ -1653,6 +1667,8 @@ not add those hooks to the firmware symbol table.
   controller connection.
 - Connect callback arrives after controller connection was disabled ->
   terminate that connection immediately and skip GATT discovery.
+- CCCD subscribed but only parameter blocks arrive -> keep the controller
+  offline and terminate on the first-telemetry timeout.
 - Disconnect during rebind -> clear telemetry, then start the deferred scan
   only when connection remains enabled.
 - Offline controller -> keep the unified page present only when GPS capability
@@ -1664,9 +1680,11 @@ not add those hooks to the firmware symbol table.
 
 ### 5. Good/Base/Bad Cases
 
-- Good: the unified speed page settles, CCCD enables, validated FFEC frames
-  update fixed label buffers; `12-70-90` plus `RateRatio=60` projects about
-  `1353 mm` and ratio `1.00`, then schedules one persistence update.
+- Good: NUS or FFE0 discovery and CCCD subscription complete without exposing
+  controller-only settings; the first validated instrument-telemetry frame
+  marks the controller online and updates fixed label buffers. `12-70-90` plus
+  `RateRatio=60` projects about `1353 mm` and ratio `1.00`, then schedules one
+  persistence update.
 - Base: without a controller but with an available GPS module, the unified page
   remains available; telemetry stays invalid, controller-only settings and
   temperatures hide, gear renders `1`, and legacy `ctl_wheel` still loads safely.
@@ -1680,8 +1698,8 @@ not add those hooks to the firmware symbol table.
 - Run the host parser self-test for compact/extended frames, exact `D2/D3/D4`
   offsets, `12-70-90 ~= 1353 mm`, `RateRatio=60 -> 1.00`, exact fallback and
   controller-priority speed, CRC, zero divisors, and overflow.
-- Run `git diff --check`, `./scripts/esp-idf-env.sh build`, GitNexus
-  `detect-changes`, and one RFC2217 flash plus boot-log capture.
+- Run `git diff --check`, the selected profile build through `start.sh`,
+  GitNexus `detect_changes`, and one RFC2217 flash plus boot-log capture.
 - On hardware, verify three carousel positions with either speed capability and
   the compressed Battery/Cast mapping with neither, plus settings return,
   source fallback/recovery, rotation, rebind, and

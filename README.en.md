@@ -135,6 +135,26 @@ Interactive flashing defaults to a local serial port; remote RFC2217 requires an
 
 Erase Flash once when switching from a different partition table. See the [firmware hardware, build, and flash contract](./.trellis/spec/backend/hardware-build-flash.md) for build-only commands, erase flow, diagnostic images, partition layout, and troubleshooting.
 
+## Desktop Simulator
+
+On Debian, install `cmake`, `pkg-config`, a C compiler, and `libsdl2-dev`, then run:
+
+```bash
+./scripts/run-lvgl-simulator.sh --headless
+./scripts/run-lvgl-simulator.sh --headless --portrait
+./scripts/run-lvgl-simulator.sh
+```
+
+Windows runs natively without WSL. Download and extract an SDL2 development package, then pass its directory from PowerShell:
+
+```powershell
+.\scripts\run-lvgl-simulator.ps1 -SDL2Root C:\SDK\SDL2 --headless
+.\scripts\run-lvgl-simulator.ps1 -SDL2Root C:\SDK\SDL2 --headless --portrait
+.\scripts\run-lvgl-simulator.ps1 -SDL2Root C:\SDK\SDL2
+```
+
+Alternatively, set `SDL2_ROOT` in the current shell and omit `-SDL2Root`. The script only configures, builds, and launches the simulator; it does not install global dependencies or change system environment variables.
+
 ## 📁 Repository Layout
 
 ```text

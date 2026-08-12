@@ -25,6 +25,7 @@
 
 static const char *TAG = "esp_bms_bms_ble";
 
+#define BMS_SCAN_DEBUG_REPORT_LIMIT 32U
 #define BMS_FRAME_MIN_LEN 10U
 #define BMS_FRAME_START_1 0x7EU
 #define BMS_FRAME_START_2 0xA1U
@@ -262,6 +263,9 @@ static bool bms_apply_telemetry(esp_bms_idf_runtime_t *runtime,
     runtime->snapshot.capacity_remaining_mah = telemetry->partial ? 0U : telemetry->capacity_remaining_mah;
     runtime->snapshot.bms_running_time_seconds = telemetry->running_time_seconds;
     runtime->snapshot.bms_running_time_valid = !telemetry->partial && telemetry->running_time_valid;
+    runtime->snapshot.bms_cycle_capacity_mah = telemetry->total_cycle_mah;
+    runtime->snapshot.bms_cycle_capacity_valid =
+        !telemetry->partial && telemetry->total_cycle_valid;
     for (uint8_t index = 0U; index < ESP_BMS_BMS_TEMP_MAX_COUNT; ++index) {
         esp_bms_dashboard_snapshot_temperature_valid_set(&runtime->snapshot,
                                                          index,
@@ -496,6 +500,8 @@ static void bms_clear_telemetry(esp_bms_idf_runtime_t *runtime)
     runtime->snapshot.capacity_remaining_mah = 0U;
     runtime->snapshot.bms_running_time_seconds = 0U;
     runtime->snapshot.bms_running_time_valid = false;
+    runtime->snapshot.bms_cycle_capacity_mah = 0U;
+    runtime->snapshot.bms_cycle_capacity_valid = false;
     runtime->snapshot.bms_protection_count = 0U;
     runtime->snapshot.bms_warning_count = 0U;
     runtime->snapshot.bms_safety_supported_mask = 0U;
@@ -893,6 +899,43 @@ static void bms_addr_to_mac_text(const uint8_t addr[6], char *out, size_t out_le
                    bms_hex_char(addr[0] >> 4U), bms_hex_char(addr[0] & 0x0FU));
 }
 
+static bool bms_name_has_chinese(const uint8_t *name, size_t name_len)
+{
+    if (!name) {
+        return false;
+    }
+    for (size_t index = 0U; index < name_len;) {
+        const uint8_t first = name[index++];
+        uint32_t codepoint = first;
+        size_t continuation_count = 0U;
+        if ((first & 0xE0U) == 0xC0U) {
+            codepoint = first & 0x1FU;
+            continuation_count = 1U;
+        } else if ((first & 0xF0U) == 0xE0U) {
+            codepoint = first & 0x0FU;
+            continuation_count = 2U;
+        } else if ((first & 0xF8U) == 0xF0U) {
+            codepoint = first & 0x07U;
+            continuation_count = 3U;
+        }
+        if (index + continuation_count > name_len) {
+            return false;
+        }
+        for (size_t continuation = 0U; continuation < continuation_count; ++continuation) {
+            const uint8_t value = name[index++];
+            if ((value & 0xC0U) != 0x80U) {
+                continuation_count = 0U;
+                break;
+            }
+            codepoint = (codepoint << 6U) | (value & 0x3FU);
+        }
+        if (continuation_count == 2U && codepoint >= 0x4E00U && codepoint <= 0x9FFFU) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool bms_name_copy(char *out, size_t out_len, const uint8_t *name, size_t name_len)
 {
     if (!out || out_len == 0U) {
@@ -902,19 +945,26 @@ static bool bms_name_copy(char *out, size_t out_len, const uint8_t *name, size_t
     if (!name || name_len == 0U) {
         return false;
     }
-    const size_t limit = name_len < ESP_BMS_IDF_BMS_SCAN_NAME_LEN
-                             ? name_len
+    const size_t limit = out_len - 1U < ESP_BMS_IDF_BMS_SCAN_NAME_LEN
+                             ? out_len - 1U
                              : ESP_BMS_IDF_BMS_SCAN_NAME_LEN;
     size_t copied = 0U;
-    for (size_t index = 0U; index < limit && copied + 1U < out_len; ++index) {
-        const uint8_t value = name[index];
-        if (value < 0x20U || value > 0x7EU || value == '"' || value == '\\') {
-            /* Skip characters without a TFT glyph (e.g. UTF-8 Chinese)
-             * instead of truncating, so the printable ASCII part of the
-             * name is still shown. */
-            continue;
+    for (size_t index = 0U; index < name_len;) {
+        size_t sequence_len = 1U;
+        const uint8_t first = name[index];
+        if ((first & 0xE0U) == 0xC0U) {
+            sequence_len = 2U;
+        } else if ((first & 0xF0U) == 0xE0U) {
+            sequence_len = 3U;
+        } else if ((first & 0xF8U) == 0xF0U) {
+            sequence_len = 4U;
         }
-        out[copied++] = (char)value;
+        if (index + sequence_len > name_len || copied + sequence_len > limit) {
+            break;
+        }
+        memcpy(out + copied, name + index, sequence_len);
+        copied += sequence_len;
+        index += sequence_len;
     }
     out[copied] = '\0';
     return copied > 0U;
@@ -976,24 +1026,57 @@ static void bms_handle_notification(esp_bms_idf_runtime_t *runtime,
 
 static int bms_gap_event(struct ble_gap_event *event, void *arg)
 {
+    static uint8_t debug_report_count;
     esp_bms_idf_runtime_t *runtime = (esp_bms_idf_runtime_t *)arg;
     if (!runtime || !event) {
         return 0;
     }
     switch (event->type) {
     case BLE_GAP_EVENT_DISC: {
-        struct ble_hs_adv_fields fields = { 0 };
-        /* Tolerate malformed trailing fields from some peripherals: the
-         * parse may fail after the name was already filled in. A scan
-         * response arrives as its own DISCOVERY event, so both the adv
-         * data and the scan response data go through this same path. */
-        (void)ble_hs_adv_parse_fields(&fields, event->disc.data, event->disc.length_data);
+        const struct ble_hs_adv_field *name_field = NULL;
+        const struct ble_hs_adv_field *short_name_field = NULL;
+        const int complete_name_rc = ble_hs_adv_find_field(BLE_HS_ADV_TYPE_COMP_NAME,
+                                                            event->disc.data,
+                                                            event->disc.length_data,
+                                                            &name_field);
+        const int short_name_rc = ble_hs_adv_find_field(BLE_HS_ADV_TYPE_INCOMP_NAME,
+                                                         event->disc.data,
+                                                         event->disc.length_data,
+                                                         &short_name_field);
+        if (complete_name_rc != 0) {
+            name_field = short_name_field;
+        }
         char mac[sizeof(runtime->bms_bound_mac)] = { 0 };
         char name[ESP_BMS_IDF_BMS_SCAN_NAME_LEN + 1U] = { 0 };
         bms_addr_to_mac_text(event->disc.addr.val, mac, sizeof(mac));
-        const bool has_name = bms_name_copy(name, sizeof(name), fields.name, fields.name_len);
+        const bool has_chinese_name = name_field && name_field->length > 1U &&
+                                      bms_name_has_chinese(name_field->value,
+                                                           (size_t)name_field->length - 1U);
+        const bool has_name = has_chinese_name &&
+                              bms_name_copy(name,
+                                            sizeof(name),
+                                            name_field->value,
+                                            (size_t)name_field->length - 1U);
         const int8_t rssi = event->disc.rssi == 127 ? -128 : event->disc.rssi;
-        if (RUNTIME_FLAG(runtime, BMS_SCAN_ACTIVE)) {
+        if (debug_report_count < BMS_SCAN_DEBUG_REPORT_LIMIT) {
+            ESP_LOGI(TAG,
+                     "[bms-scan-debug] report=%u mac=%s event_type=%u addr_type=%u rssi=%d len=%u name_rc=%d/%d name=%s raw:",
+                     (unsigned)debug_report_count + 1U,
+                     mac,
+                     (unsigned)event->disc.event_type,
+                     (unsigned)event->disc.addr.type,
+                     (int)rssi,
+                     (unsigned)event->disc.length_data,
+                     complete_name_rc,
+                     short_name_rc,
+                     has_name ? name : "-");
+            ESP_LOG_BUFFER_HEX_LEVEL(TAG,
+                                     event->disc.data,
+                                     event->disc.length_data,
+                                     ESP_LOG_INFO);
+            debug_report_count++;
+        }
+        if (RUNTIME_FLAG(runtime, BMS_SCAN_ACTIVE) && has_chinese_name && has_name) {
             esp_bms_idf_runtime_bms_scan_store_candidate(runtime,
                                                          mac,
                                                          has_name ? name : NULL,
@@ -1056,6 +1139,11 @@ static int bms_gap_event(struct ble_gap_event *event, void *arg)
         }
         return 0;
     case BLE_GAP_EVENT_DISC_COMPLETE:
+        ESP_LOGI(TAG,
+                 "[bms-scan-debug] complete logged=%u limit=%u",
+                 (unsigned)debug_report_count,
+                 (unsigned)BMS_SCAN_DEBUG_REPORT_LIMIT);
+        debug_report_count = 0U;
         if (runtime->bms_ble_phase == (uint8_t)BMS_BLE_PHASE_SCANNING) {
             runtime->bms_ble_phase = RUNTIME_FLAG(runtime, BMS_BIND_ACTIVE)
                                          ? (uint8_t)BMS_BLE_PHASE_BACKOFF

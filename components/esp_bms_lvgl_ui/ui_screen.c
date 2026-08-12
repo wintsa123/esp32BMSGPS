@@ -984,7 +984,9 @@ static void create_music_page_content(void)
     const bool portrait = s_ui.width < s_ui.height;
     s_ui.music_title = NULL;
     const bool native_320x480 = s_ui.width == 320 && s_ui.height == 480;
-    const int32_t status_w = native_320x480 ? 192 : portrait ? 156 : 128;
+    const bool native_480x320 = s_ui.width == 480 && s_ui.height == 320;
+    const int32_t status_w =
+        native_320x480 ? 192 : native_480x320 ? 168 : portrait ? 156 : 128;
     const int32_t status_y = native_320x480 ? 42 : portrait ? 30 : 16;
     const int32_t status_h = native_320x480 ? 32 : 28;
     lv_obj_t *status_card = panel(s_ui.music_page,
@@ -1025,15 +1027,16 @@ static void create_music_page_content(void)
     };
     for (size_t index = 0U; index < MUSIC_CONTROL_COUNT; ++index) {
         const bool track_control = index < 3U;
+        /* 480x320 横屏按钮加大：第一行 3 个 112x96，第二行 2 个 172x112 */
         const int32_t button_w = track_control
-                                     ? (native_320x480 ? 84 : portrait ? 64 : 80)
-                                     : (native_320x480 ? 132 : portrait ? 100 : 128);
+                                     ? (native_320x480 ? 84 : native_480x320 ? 112 : portrait ? 64 : 80)
+                                     : (native_320x480 ? 132 : native_480x320 ? 172 : portrait ? 100 : 128);
         const int32_t button_h = track_control
-                                     ? (native_320x480 ? 104 : portrait ? 72 : 62)
-                                     : (native_320x480 ? 120 : portrait ? 82 : 64);
+                                     ? (native_320x480 ? 104 : native_480x320 ? 96 : portrait ? 72 : 62)
+                                     : (native_320x480 ? 120 : native_480x320 ? 112 : portrait ? 82 : 64);
         const int32_t gap = track_control
-                                ? (native_320x480 ? 12 : portrait ? 8 : 16)
-                                : (native_320x480 ? 16 : portrait ? 8 : 16);
+                                ? (native_320x480 ? 12 : native_480x320 ? 14 : portrait ? 8 : 16)
+                                : (native_320x480 ? 16 : native_480x320 ? 20 : portrait ? 8 : 16);
         const int32_t button_count = track_control ? 3 : 2;
         const int32_t row_index = track_control ? (int32_t)index : (int32_t)(index - 3U);
         const int32_t x = (s_ui.width - (button_w * button_count) -
@@ -1041,8 +1044,8 @@ static void create_music_page_content(void)
                               2 +
                           row_index * (button_w + gap);
         const int32_t y = track_control
-                              ? (native_320x480 ? 136 : portrait ? 82 : 62)
-                              : (native_320x480 ? 280 : portrait ? 168 : 140);
+                              ? (native_320x480 ? 136 : native_480x320 ? 62 : portrait ? 82 : 62)
+                              : (native_320x480 ? 280 : native_480x320 ? 174 : portrait ? 168 : 140);
         lv_obj_t *control = panel(s_ui.music_page,
                                   x,
                                   y,
@@ -1060,11 +1063,14 @@ static void create_music_page_content(void)
                             action_event_cb,
                             LV_EVENT_CLICKED,
                             (void *)(uintptr_t)music_actions[index]);
+        const int32_t icon_y = native_480x320
+                                   ? (button_h - 44) / 2 + 4
+                                   : track_control
+                                         ? (native_320x480 ? 20 : portrait ? 12 : 7)
+                                         : (native_320x480 ? 28 : portrait ? 17 : 9);
         lv_obj_t *icon = label(control,
                                0,
-                               track_control
-                                   ? (native_320x480 ? 20 : portrait ? 12 : 7)
-                                   : (native_320x480 ? 28 : portrait ? 17 : 9),
+                               icon_y,
                                button_w,
                                26,
                                &lv_font_montserrat_24);
@@ -1073,9 +1079,10 @@ static void create_music_page_content(void)
         lv_obj_set_style_text_color(icon,
                                     track_control ? COLOR_ACCENT : COLOR_WHITE,
                                     LV_PART_MAIN);
+        const int32_t caption_y = native_480x320 ? button_h - 24 : button_h - 22;
         lv_obj_t *caption = label(control,
                                   0,
-                                  button_h - 22,
+                                  caption_y,
                                   button_w,
                                   16,
                                   &media_zh_13);
@@ -1347,6 +1354,7 @@ static void dashboard_battery_pointers_reset(void)
     s_ui.current_unit = NULL;
     s_ui.capacity = NULL;
     s_ui.bms_running_time = NULL;
+    s_ui.bms_cycle_capacity = NULL;
     s_ui.cell_stats = NULL;
     memset(s_ui.cell_stat_values, 0, sizeof(s_ui.cell_stat_values));
     memset(s_ui.bms_safety_values, 0, sizeof(s_ui.bms_safety_values));
@@ -1968,4 +1976,3 @@ void create_screen(lv_display_t *display)
     dashboard_pages_release_except(ESP_BMS_LVGL_PAGE_BATTERY);
     lv_obj_add_flag(s_ui.header, LV_OBJ_FLAG_HIDDEN);
 }
-

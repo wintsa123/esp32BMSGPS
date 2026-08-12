@@ -960,4 +960,3 @@ void speed_page_sync(const esp_bms_dashboard_snapshot_t *snapshot)
         lv_obj_invalidate(s_ui.pages);
     }
 }
-

@@ -140,6 +140,39 @@ Windows 本地串口：
 
 如果设备此前使用其他分区表，首次切换时需要先擦除 Flash。详细的构建、擦除、诊断镜像、分区布局和故障排查见[固件硬件、构建与烧录规范](./.trellis/spec/backend/hardware-build-flash.md)。
 
+## 🖥️ 桌面模拟器
+
+Debian 安装 `cmake`、`pkg-config`、编译器和 `libsdl2-dev` 后运行：
+
+```bash
+./scripts/run-lvgl-simulator.sh --headless
+./scripts/run-lvgl-simulator.sh --headless --portrait
+./scripts/run-lvgl-simulator.sh
+```
+
+Windows 原生环境不需要 WSL。下载并解压 SDL2 开发包后，通过 PowerShell 指定目录：
+
+```powershell
+.\scripts\run-lvgl-simulator.ps1 -SDL2Root C:\SDK\SDL2 --headless
+.\scripts\run-lvgl-simulator.ps1 -SDL2Root C:\SDK\SDL2 --headless --portrait
+.\scripts\run-lvgl-simulator.ps1 -SDL2Root C:\SDK\SDL2
+```
+
+也可以设置当前终端的 `SDL2_ROOT`，之后省略 `-SDL2Root`。脚本只配置、构建并启动模拟器，不安装全局依赖或修改系统环境变量。
+
+Windows 模拟器默认启用本机蓝牙桥，以便扫描并连接真实 BMS 或远驱控制器。
+首次使用前安装宿主蓝牙桥依赖：
+
+```powershell
+py -3 -m pip install -r .\simulator\requirements-ble.txt
+.\scripts\run-lvgl-simulator.ps1 -SDL2Root C:\SDK\SDL2
+```
+
+模拟器使用 Windows 本机 BLE 适配器作为 Central。BMS 页面中先选择正确的
+保护板类型，再进入“蓝牙连接”扫描绑定；控制器页面使用相同的扫描绑定流程。
+需要只运行纯 UI 模拟数据时，显式传入 `-NoHostBle`。保留 `-HostBle` 参数以兼容
+已有启动命令，但本机蓝牙现在无需额外开关即可启用。
+
 ## 📁 目录结构
 
 ```text

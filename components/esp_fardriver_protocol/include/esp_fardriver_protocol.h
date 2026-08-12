@@ -9,6 +9,7 @@ extern "C" {
 #endif
 
 #define ESP_FARDRIVER_FRAME_LEN 16U
+#define ESP_FARDRIVER_READ_REQUEST_LEN 5U
 #define ESP_FARDRIVER_COMMAND_LEN 8U
 
 typedef struct {
@@ -40,6 +41,10 @@ typedef struct {
 } esp_fardriver_state_t;
 
 uint16_t esp_fardriver_crc(const uint8_t *data, size_t len);
+size_t esp_fardriver_poll_address_count(void);
+bool esp_fardriver_poll_address(size_t poll_index, uint8_t *address);
+bool esp_fardriver_build_read_request(uint8_t address,
+                                      uint8_t out[ESP_FARDRIVER_READ_REQUEST_LEN]);
 bool esp_fardriver_build_open_command(uint8_t out[ESP_FARDRIVER_COMMAND_LEN]);
 bool esp_fardriver_build_keepalive_command(uint8_t out[ESP_FARDRIVER_COMMAND_LEN]);
 bool esp_fardriver_tire_circumference_mm(uint8_t rim_inch,
@@ -49,6 +54,7 @@ bool esp_fardriver_tire_circumference_mm(uint8_t rim_inch,
 bool esp_fardriver_parse_frame(esp_fardriver_state_t *state,
                                const uint8_t *frame,
                                size_t len);
+bool esp_fardriver_has_instrument_telemetry(const esp_fardriver_state_t *state);
 void esp_fardriver_refresh_derived(esp_fardriver_state_t *state);
 
 #ifdef __cplusplus

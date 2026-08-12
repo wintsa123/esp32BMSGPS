@@ -290,8 +290,9 @@ static lv_obj_t *bms_native_safety_check(lv_obj_t *parent, int32_t x, int32_t y)
 void create_native_bms_dashboard(void)
 {
     const bms_native_layout_t layout = bms_native_layout();
-    const int32_t left_h = layout.cell_y + layout.cell_h - layout.top_y;
-    const int32_t soc_ring_size = LV_MIN(layout.left_w - 28, left_h - 96);
+    /* 左侧 SOC 面板从顶部一直拉长到底部，右侧列依次排 electrical/temp/cell/safety */
+    const int32_t left_h = s_ui.height - layout.top_y - layout.margin;
+    const int32_t soc_ring_size = LV_MIN(layout.left_w - 28, left_h - 180);
     s_ui.native_bms_dashboard = true;
 
     lv_obj_t *static_layer = dashboard_native_layer(s_ui.battery_page,
@@ -330,9 +331,9 @@ void create_native_bms_dashboard(void)
                                            COLOR_DASHBOARD_PANEL,
                                            COLOR_DASHBOARD_BORDER);
     lv_obj_t *safety_panel = dashboard_panel(static_layer,
-                                             layout.margin,
+                                             layout.right_x,
                                              layout.safety_y,
-                                             layout.content_w,
+                                             layout.right_w,
                                              layout.safety_h,
                                              COLOR_DASHBOARD_PANEL,
                                              COLOR_DASHBOARD_BORDER);
@@ -343,6 +344,26 @@ void create_native_bms_dashboard(void)
                             8,
                             layout.left_w - 20,
                             14,
+                            &settings_zh_10,
+                            COLOR_DASHBOARD_TITLE,
+                            LV_TEXT_ALIGN_LEFT);
+    dashboard_separator(soc_panel, 10, left_h - 144, layout.left_w - 20);
+    bms_native_static_label(soc_panel,
+                            "电池容量",
+                            10,
+                            left_h - 140,
+                            layout.left_w - 20,
+                            12,
+                            &settings_zh_10,
+                            COLOR_DASHBOARD_TITLE,
+                            LV_TEXT_ALIGN_LEFT);
+    dashboard_separator(soc_panel, 10, left_h - 108, layout.left_w - 20);
+    bms_native_static_label(soc_panel,
+                            "剩余里程",
+                            10,
+                            left_h - 104,
+                            layout.left_w - 20,
+                            12,
                             &settings_zh_10,
                             COLOR_DASHBOARD_TITLE,
                             LV_TEXT_ALIGN_LEFT);
@@ -358,7 +379,7 @@ void create_native_bms_dashboard(void)
                             LV_TEXT_ALIGN_LEFT);
     dashboard_separator(soc_panel, 10, left_h - 36, layout.left_w - 20);
     bms_native_static_label(soc_panel,
-                            "电池容量",
+                            "循环容量",
                             10,
                             left_h - 32,
                             layout.left_w - 20,
@@ -424,12 +445,12 @@ void create_native_bms_dashboard(void)
                             "告警与保护",
                             12,
                             7,
-                            layout.content_w - 24,
+                            layout.right_w - 24,
                             14,
                             &settings_zh_10,
                             COLOR_DASHBOARD_TITLE,
                             LV_TEXT_ALIGN_LEFT);
-    const int32_t safety_col_w = layout.content_w / 2;
+    const int32_t safety_col_w = layout.right_w / 2;
     const int32_t safety_row_h = (layout.safety_h - 25) / 4;
     const int32_t safety_text_h = (int32_t)settings_zh_10.line_height;
     for (uint8_t index = 0U; index < ESP_BMS_BMS_SAFETY_COUNT; ++index) {
@@ -460,11 +481,13 @@ void create_native_bms_dashboard(void)
                                                       0,
                                                       s_ui.width,
                                                       s_ui.height);
+    /* SOC 环在标题与底部 list 之间垂直居中 */
+    const int32_t soc_ring_y = layout.top_y + 25;
     s_ui.soc_arc = lv_arc_create(dynamic_layer);
     clear_style(s_ui.soc_arc);
     lv_obj_set_pos(s_ui.soc_arc,
                    layout.margin + (layout.left_w - soc_ring_size) / 2,
-                   layout.top_y + 24);
+                   soc_ring_y);
     lv_obj_set_size(s_ui.soc_arc, soc_ring_size, soc_ring_size);
     lv_arc_set_range(s_ui.soc_arc, 0, 100);
     lv_arc_set_bg_angles(s_ui.soc_arc, 0, 270);
@@ -477,23 +500,16 @@ void create_native_bms_dashboard(void)
     lv_obj_clear_flag(s_ui.soc_arc, LV_OBJ_FLAG_CLICKABLE);
     s_ui.soc = label(dynamic_layer,
                      layout.margin,
-                     layout.top_y + 24 + (soc_ring_size - 34) / 2,
+                     soc_ring_y + (soc_ring_size - 34) / 2,
                      layout.left_w,
                      34,
                      &lv_font_montserrat_28);
-#if LV_USE_FLEX
     lv_obj_t *range_group = dashboard_native_layer(
         dynamic_layer,
         layout.margin,
-        layout.top_y + 24 + (soc_ring_size - 34) / 2 + 36,
+        layout.top_y + left_h - 91,
         layout.left_w,
         18);
-    lv_obj_set_flex_flow(range_group, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(range_group,
-                          LV_FLEX_ALIGN_CENTER,
-                          LV_FLEX_ALIGN_END,
-                          LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_column(range_group, 1, LV_PART_MAIN);
     s_ui.remaining_range_value = label(range_group,
                                        0,
                                        0,
@@ -506,24 +522,10 @@ void create_native_bms_dashboard(void)
                                       LV_SIZE_CONTENT,
                                       LV_SIZE_CONTENT,
                                       &settings_zh_10);
-#else
-    s_ui.remaining_range_value = label(dynamic_layer,
-                                       layout.margin,
-                                       layout.top_y + 24 + (soc_ring_size - 34) / 2 + 36,
-                                       layout.left_w - 18,
-                                       18,
-                                       &lv_font_montserrat_14);
-    s_ui.remaining_range_unit = label(dynamic_layer,
-                                      layout.margin + layout.left_w - 18,
-                                      layout.top_y + 24 + (soc_ring_size - 34) / 2 + 40,
-                                      18,
-                                      12,
-                                      &settings_zh_10);
-#endif
     lv_label_set_text_static(s_ui.remaining_range_unit, "km");
     s_ui.capacity = label(dynamic_layer,
                           layout.margin + 8,
-                          layout.top_y + left_h - 18,
+                          layout.top_y + left_h - 127,
                           layout.left_w - 16,
                           18,
                           &lv_font_montserrat_14);
@@ -533,6 +535,12 @@ void create_native_bms_dashboard(void)
                                   layout.left_w - 20,
                                   18,
                                   &settings_zh_13);
+    s_ui.bms_cycle_capacity = label(dynamic_layer,
+                                    layout.margin + 8,
+                                    layout.top_y + left_h - 18,
+                                    layout.left_w - 16,
+                                    18,
+                                    &lv_font_montserrat_14);
 
     const int32_t electrical_value_w = layout.right_w / 2;
 #if LV_USE_FLEX
@@ -637,27 +645,29 @@ void create_native_bms_dashboard(void)
         const int32_t row_y = 24 + (int32_t)(index / 2U) * safety_row_h;
         const int32_t text_y = row_y + (safety_row_h - safety_text_h) / 2;
         s_ui.bms_safety_values[index] = label(dynamic_layer,
-                                              layout.margin + col_x + safety_col_w - 46,
+                                              layout.right_x + col_x + safety_col_w - 46,
                                               layout.safety_y + text_y,
                                               38,
                                               safety_text_h,
                                               &settings_zh_10);
         s_ui.bms_safety_checks[index] =
             bms_native_safety_check(dynamic_layer,
-                                    layout.margin + col_x + 12,
+                                    layout.right_x + col_x + 12,
                                     layout.safety_y + row_y + (safety_row_h - 12) / 2);
     }
 
     lv_obj_set_style_text_align(s_ui.soc, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_align(s_ui.capacity, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_align(s_ui.bms_running_time, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_align(s_ui.bms_cycle_capacity, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_align(s_ui.pack_voltage, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_align(s_ui.current, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_set_style_text_align(s_ui.remaining_range_value, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
-    lv_obj_set_style_text_align(s_ui.remaining_range_unit, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
+    lv_obj_set_style_text_align(s_ui.remaining_range_value, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_align(s_ui.remaining_range_unit, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_ui.soc, COLOR_WHITE, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_ui.capacity, COLOR_WHITE, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_ui.bms_running_time, COLOR_WHITE, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ui.bms_cycle_capacity, COLOR_WHITE, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_ui.pack_voltage, COLOR_WHITE, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_ui.pack_voltage_unit, COLOR_WHITE, LV_PART_MAIN);
     lv_obj_set_style_translate_y(s_ui.pack_voltage_unit, -2, LV_PART_MAIN);
@@ -933,18 +943,11 @@ void create_native_bms_portrait_dashboard(void)
                           metric_col_w,
                           18,
                           &settings_zh_13);
-#if LV_USE_FLEX
     lv_obj_t *range_group = dashboard_native_layer(dynamic_layer,
                                                     margin + metric_col_w,
                                                     metric_y + 24,
                                                     metric_col_w,
                                                     18);
-    lv_obj_set_flex_flow(range_group, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(range_group,
-                          LV_FLEX_ALIGN_CENTER,
-                          LV_FLEX_ALIGN_END,
-                          LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_column(range_group, 1, LV_PART_MAIN);
     s_ui.remaining_range_value = label(range_group,
                                        0,
                                        0,
@@ -957,20 +960,6 @@ void create_native_bms_portrait_dashboard(void)
                                       LV_SIZE_CONTENT,
                                       LV_SIZE_CONTENT,
                                       &settings_zh_10);
-#else
-    s_ui.remaining_range_value = label(dynamic_layer,
-                                       margin + metric_col_w,
-                                       metric_y + 24,
-                                       metric_col_w - 20,
-                                       18,
-                                       &lv_font_montserrat_14);
-    s_ui.remaining_range_unit = label(dynamic_layer,
-                                      margin + metric_col_w * 2 - 20,
-                                      metric_y + 25,
-                                      20,
-                                      16,
-                                      &settings_zh_10);
-#endif
     lv_label_set_text(s_ui.remaining_range_unit, "km");
     s_ui.bms_running_time = label(dynamic_layer,
                                   margin + metric_col_w * 2,
@@ -998,13 +987,8 @@ void create_native_bms_portrait_dashboard(void)
     lv_obj_set_style_text_align(s_ui.pack_voltage, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_align(s_ui.current, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_align(s_ui.capacity, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-#if LV_USE_FLEX
     lv_obj_set_style_text_align(s_ui.remaining_range_value, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
     lv_obj_set_style_text_align(s_ui.remaining_range_unit, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
-#else
-    lv_obj_set_style_text_align(s_ui.remaining_range_value, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
-    lv_obj_set_style_text_align(s_ui.remaining_range_unit, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
-#endif
     lv_obj_set_style_text_align(s_ui.bms_running_time, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_ui.soc, COLOR_WHITE, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_ui.pack_voltage, COLOR_WHITE, LV_PART_MAIN);
@@ -1103,4 +1087,3 @@ lv_color_t dashboard_soc_fill_color(uint8_t soc_percent, bool valid, bool chargi
     }
     return COLOR_BAD;
 }
-

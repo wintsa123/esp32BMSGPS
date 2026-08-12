@@ -1,0 +1,8 @@
+{"file":".trellis/spec/backend/index.md","reason":"Route firmware runtime, logging, quality, build and flash contracts."}
+{"file":".trellis/spec/backend/hardware-build-flash.md","reason":"Required ESP-IDF build and fixed RFC2217 hardware validation contract."}
+{"file":".trellis/spec/frontend/index.md","reason":"Route LVGL component, state and quality conventions."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Trace BLE report through runtime snapshot into UI and Web JSON."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Reuse the shared BMS/controller candidate renderer and existing state machine."}
+{"file":".trellis/tasks/08-08-fix-ble-scan-list-controller-connection/research/scan-list-name.md","reason":"Advertised-name root cause, JSON boundary and acquisition impact evidence."}
+{"file":".trellis/tasks/08-08-fix-ble-scan-list-controller-connection/research/controller-connection.md","reason":"Controller online pulse, GATT profile regression and validation evidence."}
+{"file":".trellis/tasks/08-08-fix-ble-scan-list-controller-connection/research/validation-scope.md","reason":"Minimum implementation boundary, dirty-worktree overlap and runnable gates."}

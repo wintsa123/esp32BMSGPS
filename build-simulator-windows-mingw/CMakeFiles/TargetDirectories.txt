@@ -1,0 +1,14 @@
+C:/Users/77077/Desktop/esp/build-simulator-windows-mingw/CMakeFiles/esp_bms_lvgl_simulator.dir
+C:/Users/77077/Desktop/esp/build-simulator-windows-mingw/CMakeFiles/edit_cache.dir
+C:/Users/77077/Desktop/esp/build-simulator-windows-mingw/CMakeFiles/rebuild_cache.dir
+C:/Users/77077/Desktop/esp/build-simulator-windows-mingw/CMakeFiles/list_install_components.dir
+C:/Users/77077/Desktop/esp/build-simulator-windows-mingw/CMakeFiles/install.dir
+C:/Users/77077/Desktop/esp/build-simulator-windows-mingw/CMakeFiles/install/local.dir
+C:/Users/77077/Desktop/esp/build-simulator-windows-mingw/CMakeFiles/install/strip.dir
+C:/Users/77077/Desktop/esp/build-simulator-windows-mingw/lvgl/CMakeFiles/lvgl.dir
+C:/Users/77077/Desktop/esp/build-simulator-windows-mingw/lvgl/CMakeFiles/edit_cache.dir
+C:/Users/77077/Desktop/esp/build-simulator-windows-mingw/lvgl/CMakeFiles/rebuild_cache.dir
+C:/Users/77077/Desktop/esp/build-simulator-windows-mingw/lvgl/CMakeFiles/list_install_components.dir
+C:/Users/77077/Desktop/esp/build-simulator-windows-mingw/lvgl/CMakeFiles/install.dir
+C:/Users/77077/Desktop/esp/build-simulator-windows-mingw/lvgl/CMakeFiles/install/local.dir
+C:/Users/77077/Desktop/esp/build-simulator-windows-mingw/lvgl/CMakeFiles/install/strip.dir

@@ -120,6 +120,7 @@ static const char *TAG = "bms_idf_runtime";
 #define CONTROLLER_RATIO_CENTI_DEFAULT ESP_BMS_CONTROLLER_RATIO_CENTI_DEFAULT
 #define HTTP_BODY_MAX_LEN 384U
 #define HTTP_JSON_MAX_LEN 1024U
+#define HTTP_BMS_CANDIDATES_JSON_MAX_LEN 2560U
 #define HTTP_MANIFEST_JSON_MAX_LEN 3072U
 #define CAST_PROTOCOL_VERSION 1U
 #define CAST_BLOCK_MAX_SIDE 16U
@@ -739,7 +740,11 @@ static void runtime_project_controller_snapshot(esp_bms_idf_runtime_t *runtime)
     const esp_fardriver_state_t *state = &runtime->controller_state;
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, CONTROLLER_CONNECTION_ENABLED, runtime->controller_connection_enabled);
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, CONTROLLER_PAGE_ENABLED, runtime->controller_page_enabled);
-    RUNTIME_SET_SNAPSHOT_FLAG(runtime, CONTROLLER_ONLINE, runtime->controller_conn_handle != 0xFFFFU);
+    RUNTIME_SET_SNAPSHOT_FLAG(runtime,
+                              CONTROLLER_ONLINE,
+                              runtime->controller_conn_handle != 0xFFFFU &&
+                                  runtime->controller_ble_phase == (uint8_t)BMS_BLE_PHASE_ONLINE &&
+                                  RUNTIME_FLAG(runtime, CONTROLLER_SUBSCRIBED));
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, CONTROLLER_SPEED_VALID, state->speed_valid);
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, CONTROLLER_RPM_VALID, state->rpm_valid);
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, CONTROLLER_GEAR_VALID, state->gear_valid);
@@ -940,18 +945,20 @@ static bool runtime_bms_name_copy(char *out, size_t out_len, const uint8_t *name
     }
 
     size_t copied = 0;
-    const size_t limit = name_len < ESP_BMS_IDF_BMS_SCAN_NAME_LEN
-                             ? name_len
+    const size_t limit = out_len - 1U < ESP_BMS_IDF_BMS_SCAN_NAME_LEN
+                             ? out_len - 1U
                              : ESP_BMS_IDF_BMS_SCAN_NAME_LEN;
-    for (size_t index = 0; index < limit && copied + 1U < out_len; index++) {
+    for (size_t index = 0; index < name_len; index++) {
         const unsigned char value = name[index];
-        if (value < 0x20U || value > 0x7EU || value == '"' || value == '\\') {
+        if (value < 0x20U || value > 0x7EU) {
             /* Skip characters without a TFT glyph (e.g. UTF-8 Chinese)
              * instead of truncating, so the printable ASCII part of the
              * name is still shown. */
             continue;
         }
-        out[copied++] = (char)value;
+        if (copied < limit) {
+            out[copied++] = (char)value;
+        }
     }
     out[copied] = '\0';
     return copied > 0U;
@@ -1155,6 +1162,8 @@ static void runtime_clear_bms_telemetry(esp_bms_idf_runtime_t *runtime)
     runtime->snapshot.capacity_remaining_mah = 0;
     runtime->snapshot.bms_running_time_seconds = 0U;
     runtime->snapshot.bms_running_time_valid = false;
+    runtime->snapshot.bms_cycle_capacity_mah = 0U;
+    runtime->snapshot.bms_cycle_capacity_valid = false;
     runtime->snapshot.bms_protection_count = 0;
     memset(runtime->snapshot.bms_protection_codes, 0, sizeof(runtime->snapshot.bms_protection_codes));
     runtime->snapshot.bms_warning_count = 0;
@@ -1239,7 +1248,7 @@ static void runtime_update_snapshot_speed(esp_bms_idf_runtime_t *runtime)
 {
     esp_bms_dashboard_snapshot_t *snapshot = &runtime->snapshot;
     const bool controller_online = runtime->controller_connection_enabled &&
-                                   runtime->controller_conn_handle != 0xFFFFU;
+                                   RUNTIME_SNAPSHOT_FLAG(runtime, CONTROLLER_ONLINE);
     const bool gps_available =
         snapshot->gps_module_state == (uint8_t)ESP_BMS_GPS_MODULE_AVAILABLE;
     snapshot->active_speed_source = esp_bms_speed_source_resolve(snapshot->speed_source,
@@ -1913,7 +1922,9 @@ static void runtime_reset_state(esp_bms_idf_runtime_t *runtime)
     RUNTIME_SET_FLAG(runtime, HTTP_BMS_SCAN_PENDING, false);
     RUNTIME_SET_FLAG(runtime, BMS_SCAN_REQUESTED, false);
     RUNTIME_SET_FLAG(runtime, BMS_SCAN_ACTIVE, false);
-    RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, false);
+    RUNTIME_SET_FLAG(runtime,
+                     BLUETOOTH_ADVERTISE_REQUESTED,
+                     ESP_BMS_FEATURE_BLE_MEDIA_HID != 0);
     RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISING, false);
     RUNTIME_SET_FLAG(runtime, BLUETOOTH_CONNECTED, false);
     RUNTIME_SET_FLAG(runtime, CONTROLLER_SCAN_REQUESTED, false);
@@ -3217,6 +3228,83 @@ static esp_err_t runtime_http_status_handler(httpd_req_t *req, esp_bms_idf_runti
     return runtime_http_send_json(req, json);
 }
 
+static bool runtime_json_escape(char *out,
+                                size_t out_len,
+                                const char *value,
+                                size_t value_len)
+{
+    if (!out || out_len == 0U || (!value && value_len != 0U)) {
+        return false;
+    }
+
+    size_t used = 0U;
+    for (size_t index = 0U; index < value_len; index++) {
+        const unsigned char byte = (unsigned char)value[index];
+        const char *escape = NULL;
+        size_t escape_len = 0U;
+        switch (byte) {
+        case '"':
+            escape = "\\\"";
+            escape_len = 2U;
+            break;
+        case '\\':
+            escape = "\\\\";
+            escape_len = 2U;
+            break;
+        case '\b':
+            escape = "\\b";
+            escape_len = 2U;
+            break;
+        case '\f':
+            escape = "\\f";
+            escape_len = 2U;
+            break;
+        case '\n':
+            escape = "\\n";
+            escape_len = 2U;
+            break;
+        case '\r':
+            escape = "\\r";
+            escape_len = 2U;
+            break;
+        case '\t':
+            escape = "\\t";
+            escape_len = 2U;
+            break;
+        default:
+            break;
+        }
+        if (byte < 0x20U && !escape) {
+            if (used + 6U >= out_len) {
+                return false;
+            }
+            const int written = snprintf(out + used,
+                                         out_len - used,
+                                         "\\u%04x",
+                                         (unsigned)byte);
+            if (written != 6) {
+                return false;
+            }
+            used += 6U;
+            continue;
+        }
+        if (escape) {
+            if (used + escape_len >= out_len) {
+                return false;
+            }
+            memcpy(out + used, escape, escape_len);
+            used += escape_len;
+            continue;
+        }
+        if (used + 1U >= out_len) {
+            return false;
+        }
+        out[used++] = (char)byte;
+    }
+    out[used] = '\0';
+    return true;
+}
+
 static esp_err_t runtime_http_bms_candidates_handler(httpd_req_t *req,
                                                      esp_bms_idf_runtime_t *runtime)
 {
@@ -3239,7 +3327,8 @@ static esp_err_t runtime_http_bms_candidates_handler(httpd_req_t *req,
         memcpy(candidates, runtime->bms_scan_candidates, sizeof(candidates));
     }
 
-    static char json[HTTP_JSON_MAX_LEN];
+    static char json[HTTP_BMS_CANDIDATES_JSON_MAX_LEN];
+    static char escaped_name[(ESP_BMS_IDF_BMS_SCAN_NAME_LEN * 6U) + 1U];
     size_t offset = 0;
     int written = snprintf(json,
                            sizeof(json),
@@ -3264,10 +3353,17 @@ static esp_err_t runtime_http_bms_candidates_handler(httpd_req_t *req,
         offset += (size_t)written;
 
         if (candidate->has_name && candidate->name[0] != '\0') {
+            const size_t name_len = strnlen(candidate->name, sizeof(candidate->name));
+            if (!runtime_json_escape(escaped_name,
+                                     sizeof(escaped_name),
+                                     candidate->name,
+                                     name_len)) {
+                return runtime_http_send_text(req, "500 Internal Server Error", "json too large");
+            }
             written = snprintf(json + offset,
                                sizeof(json) - offset,
                                ",\"name\":\"%s\"",
-                               candidate->name);
+                               escaped_name);
             if (written < 0 || (size_t)written >= sizeof(json) - offset) {
                 return runtime_http_send_text(req, "500 Internal Server Error", "json too large");
             }

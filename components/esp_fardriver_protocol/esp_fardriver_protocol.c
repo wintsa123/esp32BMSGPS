@@ -3,14 +3,8 @@
 #include <math.h>
 #include <string.h>
 
-/*
- * FarDriver BLE 协议（对齐已验证可用的 ndsl95/FarDriver-BLE）：
- * - 控制器连接后自动推送 16 字节帧：AA <id> <12字节数据> <crc_hi> <crc_lo>
- * - 帧 id = frame[1] & 0x3F，范围 0..54，映射到控制器内存地址 FLASH_READ_ADDR[id]
- * - 所有帧统一使用 CRC16-IBM（初始 0x7F3C，多项式 0xA001）校验
- * - 实时数据在特定 id 帧的固定偏移：0=RPM/档位/相电流、1=电压、4=控制器温度、13=电机温度
- * - 连接后需发送 open 命令开启数据流，之后每 3 秒发送 keepalive 保活
- */
+/* FFE0 controllers push low-bit CRC frames; Nordic UART controllers answer
+ * five-byte read requests with additive compact or high-bit CRC frames. */
 static const uint8_t FLASH_READ_ADDR[] = {
     0xE2, 0xE8, 0xEE, 0xE4, 0x06, 0x0C, 0x12,
     0xE2, 0xE8, 0xEE, 0x18, 0x1E, 0x24, 0x2A,
@@ -20,6 +14,24 @@ static const uint8_t FLASH_READ_ADDR[] = {
     0xE2, 0xE8, 0xEE, 0xAC, 0xB2, 0xB8, 0xBE,
     0xE2, 0xE8, 0xEE, 0xC4, 0xCA, 0xD0,
     0xE2, 0xE8, 0xEE, 0xD6, 0xDC, 0xF4, 0xFA,
+};
+
+static const uint8_t NUS_FLASH_READ_ADDR[] = {
+    0xE2, 0xE8, 0xEE, 0x00, 0x06, 0x0C, 0x12,
+    0xE2, 0xE8, 0xEE, 0x18, 0x1E, 0x24, 0x2A,
+    0xE2, 0xE8, 0xEE, 0x30, 0x5D, 0x63, 0x69,
+    0xE2, 0xE8, 0xEE, 0x7C, 0x82, 0x88, 0x8E,
+    0xE2, 0xE8, 0xEE, 0x94, 0x9A, 0xA0, 0xA6,
+    0xE2, 0xE8, 0xEE, 0xAC, 0xB2, 0xB8, 0xBE,
+    0xE2, 0xE8, 0xEE, 0xC4, 0xCA, 0xD0,
+    0xE2, 0xE8, 0xEE, 0xD6, 0xDC, 0xF4, 0xFA,
+};
+
+static const uint8_t POLL_READ_ADDR[] = {
+    0xE2, 0xE8, 0xEE, 0xF4, 0xFA, 0xD6, 0x24, 0x2A, 0x30, 0x18, 0x69, 0x7C, 0xD0,
+    0xA0, 0xA6, 0x63, 0x69, 0x12, 0xD0, 0x24, 0x18, 0x1E, 0x2A, 0x30, 0xBE, 0xC4,
+    0x06, 0x0C, 0x9A, 0x94, 0x7C, 0xF4, 0x88, 0x8E, 0x00, 0x82, 0xB8, 0xCA, 0x22,
+    0xAC,
 };
 
 static uint16_t crc_table_entry(uint8_t index)
@@ -44,6 +56,35 @@ uint16_t esp_fardriver_crc(const uint8_t *data, size_t len)
         b = (uint8_t)(entry >> 8U);
     }
     return (uint16_t)(((uint16_t)a << 8U) | b);
+}
+
+size_t esp_fardriver_poll_address_count(void)
+{
+    return sizeof(POLL_READ_ADDR);
+}
+
+bool esp_fardriver_poll_address(size_t poll_index, uint8_t *address)
+{
+    if (!address || poll_index >= sizeof(POLL_READ_ADDR)) {
+        return false;
+    }
+    *address = POLL_READ_ADDR[poll_index];
+    return true;
+}
+
+bool esp_fardriver_build_read_request(uint8_t address,
+                                      uint8_t out[ESP_FARDRIVER_READ_REQUEST_LEN])
+{
+    if (!out) {
+        return false;
+    }
+    out[0] = address;
+    out[1] = address;
+    out[2] = 0x80U;
+    const uint16_t crc = esp_fardriver_crc(out, 3U);
+    out[3] = (uint8_t)(crc >> 8U);
+    out[4] = (uint8_t)crc;
+    return true;
 }
 
 static bool build_command(uint8_t cmd, uint8_t sub, uint8_t v1, uint8_t v2,
@@ -121,6 +162,26 @@ static void store_extended_block(esp_fardriver_state_t *state, uint8_t base, con
         state->blocks[address][0] = data[offset * 2U];
         state->blocks[address][1] = data[offset * 2U + 1U];
         block_valid_set(state, address);
+    }
+}
+
+static void parse_compact(esp_fardriver_state_t *state, uint8_t index, const uint8_t *data)
+{
+    if (index == 0U) {
+        state->rpm = be16(data + 4U);
+        state->rpm_valid = true;
+        state->gear = (uint8_t)(data[2] & 0x03U);
+        state->gear_valid = true;
+    } else if (index == 1U) {
+        state->voltage_deci_v = be16(data);
+        state->current_centi_a = (int32_t)(int16_t)be16(data + 2U) * 25;
+        state->current_valid = true;
+    } else if (index == 4U) {
+        state->controller_temp_c = (int8_t)data[2];
+        state->controller_temp_valid = true;
+    } else if (index == 13U) {
+        state->motor_temp_c = (int8_t)data[0];
+        state->motor_temp_valid = true;
     }
 }
 
@@ -215,16 +276,41 @@ bool esp_fardriver_parse_frame(esp_fardriver_state_t *state,
     if (!state || !frame || len != ESP_FARDRIVER_FRAME_LEN || frame[0] != 0xAAU) {
         return false;
     }
-    const uint16_t checksum = esp_fardriver_crc(frame, ESP_FARDRIVER_FRAME_LEN - 2U);
-    if (frame[14] != (uint8_t)(checksum >> 8U) || frame[15] != (uint8_t)checksum) {
-        return false;
+    const uint16_t wire_checksum = (uint16_t)(((uint16_t)frame[14] << 8U) | frame[15]);
+    if ((frame[1] & 0x80U) != 0U) {
+        const uint8_t index = (uint8_t)(frame[1] & 0x7FU);
+        if (index >= sizeof(NUS_FLASH_READ_ADDR) ||
+            wire_checksum != esp_fardriver_crc(frame, ESP_FARDRIVER_FRAME_LEN - 2U)) {
+            return false;
+        }
+        store_extended_block(state, NUS_FLASH_READ_ADDR[index], frame + 2U);
+    } else {
+        uint16_t additive_checksum = 0U;
+        for (size_t index = 0U; index < ESP_FARDRIVER_FRAME_LEN - 2U; ++index) {
+            additive_checksum = (uint16_t)(additive_checksum + frame[index]);
+        }
+        if (wire_checksum == additive_checksum) {
+            const uint8_t index = (uint8_t)(frame[1] & 0x7FU);
+            if (index > 29U) {
+                return false;
+            }
+            parse_compact(state, index, frame + 2U);
+        } else {
+            const uint8_t id = (uint8_t)(frame[1] & 0x3FU);
+            if (id >= sizeof(FLASH_READ_ADDR) ||
+                wire_checksum != esp_fardriver_crc(frame, ESP_FARDRIVER_FRAME_LEN - 2U)) {
+                return false;
+            }
+            store_extended_block(state, FLASH_READ_ADDR[id], frame + 2U);
+            parse_live_telemetry(state, id, frame + 2U);
+        }
     }
-    const uint8_t id = (uint8_t)(frame[1] & 0x3FU);
-    if (id >= sizeof(FLASH_READ_ADDR)) {
-        return false;
-    }
-    store_extended_block(state, FLASH_READ_ADDR[id], frame + 2U);
-    parse_live_telemetry(state, id, frame + 2U);
     esp_fardriver_refresh_derived(state);
     return true;
+}
+
+bool esp_fardriver_has_instrument_telemetry(const esp_fardriver_state_t *state)
+{
+    return state && (state->rpm_valid || state->current_valid ||
+                     state->controller_temp_valid || state->motor_temp_valid);
 }

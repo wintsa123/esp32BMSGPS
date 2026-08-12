@@ -47,6 +47,62 @@ static void format_temp_c(char *out, size_t len, bool valid, int16_t celsius)
     snprintf(out, len, "%dC", (int)celsius);
 }
 
+static void bms_charge_arc_opa_anim_cb(void *object, int32_t opa)
+{
+    lv_obj_set_style_arc_opa((lv_obj_t *)object, (lv_opa_t)opa, LV_PART_INDICATOR);
+}
+
+static void bms_charge_arc_animation_set(bool charging)
+{
+    if (!s_ui.soc_arc) {
+        return;
+    }
+    if (!charging) {
+        lv_anim_delete(s_ui.soc_arc, bms_charge_arc_opa_anim_cb);
+        lv_obj_set_style_arc_opa(s_ui.soc_arc, LV_OPA_COVER, LV_PART_INDICATOR);
+        return;
+    }
+    if (lv_anim_get(s_ui.soc_arc, bms_charge_arc_opa_anim_cb)) {
+        return;
+    }
+
+    lv_anim_t animation;
+    lv_anim_init(&animation);
+    lv_anim_set_var(&animation, s_ui.soc_arc);
+    lv_anim_set_values(&animation, LV_OPA_70, LV_OPA_COVER);
+    lv_anim_set_duration(&animation, 700);
+    lv_anim_set_reverse_duration(&animation, 700);
+    lv_anim_set_path_cb(&animation, lv_anim_path_ease_in_out);
+    lv_anim_set_exec_cb(&animation, bms_charge_arc_opa_anim_cb);
+    lv_anim_set_repeat_count(&animation, LV_ANIM_REPEAT_INFINITE);
+    lv_anim_start(&animation);
+}
+
+static void bms_native_range_center(void)
+{
+    if (!s_ui.native_bms_dashboard || !s_ui.remaining_range_value ||
+        !s_ui.remaining_range_unit) {
+        return;
+    }
+    lv_obj_t *group = lv_obj_get_parent(s_ui.remaining_range_value);
+    if (!group || lv_obj_get_parent(s_ui.remaining_range_unit) != group) {
+        return;
+    }
+
+    lv_obj_update_layout(group);
+    const int32_t value_width = lv_obj_get_width(s_ui.remaining_range_value);
+    const int32_t unit_width = lv_obj_get_width(s_ui.remaining_range_unit);
+    const int32_t group_width = lv_obj_get_content_width(group);
+    const int32_t group_height = lv_obj_get_content_height(group);
+    const int32_t x = (group_width - value_width - unit_width) / 2;
+    lv_obj_set_pos(s_ui.remaining_range_value,
+                   x,
+                   (group_height - lv_obj_get_height(s_ui.remaining_range_value)) / 2);
+    lv_obj_set_pos(s_ui.remaining_range_unit,
+                   x + value_width,
+                   (group_height - lv_obj_get_height(s_ui.remaining_range_unit)) / 2);
+}
+
 void set_header(const esp_bms_dashboard_snapshot_t *snapshot)
 {
 #if ESP_BMS_FEATURE_GPS
@@ -226,6 +282,7 @@ void set_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
     char current[24];
     char ah[40];
     char running_time[32];
+    char cycle_capacity[24];
     char min_cell[16];
     char avg_cell[16];
     char max_cell[16];
@@ -285,6 +342,19 @@ void set_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
                   s_ui.bms_running_time_buf,
                   sizeof(s_ui.bms_running_time_buf),
                   running_time);
+    if (snapshot->bms_cycle_capacity_valid) {
+        (void)snprintf(cycle_capacity,
+                       sizeof(cycle_capacity),
+                       "%lu.%01luAh",
+                       (unsigned long)(snapshot->bms_cycle_capacity_mah / 1000U),
+                       (unsigned long)((snapshot->bms_cycle_capacity_mah % 1000U) / 100U));
+    } else {
+        (void)snprintf(cycle_capacity, sizeof(cycle_capacity), "--");
+    }
+    bms_label_set(s_ui.bms_cycle_capacity,
+                  s_ui.bms_cycle_capacity_buf,
+                  sizeof(s_ui.bms_cycle_capacity_buf),
+                  cycle_capacity);
 
     const bool current_valid = SNAPSHOT_FLAG(snapshot, CURRENT_VALID);
     format_mv(voltage, sizeof(voltage), SNAPSHOT_FLAG(snapshot, PACK_VOLTAGE_VALID), snapshot->pack_voltage_mv);
@@ -315,6 +385,7 @@ void set_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
                                    dashboard_soc_fill_color(soc_percent, soc_valid, charging),
                                    LV_PART_INDICATOR);
     }
+    bms_charge_arc_animation_set(charging && soc_valid);
     update_dashboard_battery_icon(soc_percent, soc_valid, charging);
     bms_label_set(s_ui.pack_voltage,
                   s_ui.bms_pack_voltage_buf,
@@ -400,6 +471,7 @@ void set_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
             (void)snprintf(s_ui.bms_range_buf, sizeof(s_ui.bms_range_buf), "--");
         }
         lv_label_set_text_static(s_ui.remaining_range_value, s_ui.bms_range_buf);
+        bms_native_range_center();
     }
 
     format_temp_c(t1, sizeof(t1), esp_bms_dashboard_snapshot_temperature_valid(snapshot, 0U), snapshot->bms_temperature_celsius[0]);
@@ -428,4 +500,3 @@ void set_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
     set_quick_volume_value(snapshot->volume_percent, false, true);
     update_quick_item_colors(snapshot);
 }
-

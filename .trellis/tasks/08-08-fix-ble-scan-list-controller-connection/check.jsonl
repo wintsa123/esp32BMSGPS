@@ -1,0 +1,7 @@
+{"file":".trellis/spec/backend/index.md","reason":"Check runtime, logging, test, build and hardware compliance."}
+{"file":".trellis/spec/backend/hardware-build-flash.md","reason":"Verify required build and RFC2217 flash evidence."}
+{"file":".trellis/spec/frontend/index.md","reason":"Check shared LVGL navigation, visibility and UI quality contracts."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Review acquisition-to-snapshot-to-UI/Web data flow end to end."}
+{"file":".trellis/tasks/08-08-fix-ble-scan-list-controller-connection/research/scan-list-name.md","reason":"Validate name and JSON root-cause coverage."}
+{"file":".trellis/tasks/08-08-fix-ble-scan-list-controller-connection/research/controller-connection.md","reason":"Validate controller ready semantics and dual-profile compatibility."}
+{"file":".trellis/tasks/08-08-fix-ble-scan-list-controller-connection/research/validation-scope.md","reason":"Check dirty-worktree preservation and executable validation limits."}

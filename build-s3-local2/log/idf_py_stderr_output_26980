@@ -1,0 +1,21 @@
+Command: cmake -G Ninja -B C:\Users\77077\Desktop\esp\build-s3-local2 -DPYTHON_DEPS_CHECKED=1 -DPYTHON=C:\Users\77077\.espressif\python_env\idf6.0_py3.11_env\Scripts\python.exe -DESP_PLATFORM=1 -DIDF_TARGET=esp32s3 -DSDKCONFIG=sdkconfig-s3-local -DESP_BMS_PROFILE_FILE=C:\Users\77077\Desktop\esp\firmware-builds\esp32s3-n16r8-st7796u-gt1151\generated\profile.cmake -DCCACHE_ENABLE=True C:\Users\77077\Desktop\esp
+CMake Error at C:/esp/esp-idf-v6.0.2/tools/cmake/build.cmake:697 (message):
+  WARNING: 1 unexpected files and directories were found in the
+  "managed_components" directory: atanisoft__esp_lcd_touch_xpt2046
+
+  Content of the managed components directory is managed automatically and
+  it's not recommended to place any files there manually.  To suppress this
+  warning set the environment variable:
+  IDF_COMPONENT_SUPPRESS_UNKNOWN_FILE_WARNINGS=1
+
+  ERROR: File .component_hash or CHECKSUMS.json for component
+  "espressif/button" in the managed components directory does not exist or
+  cannot be parsed.  These files are used by the component manager for
+  component integrity checks.  If they exist in the component source, please
+  ask the component maintainer to remove them.
+
+Call Stack (most recent call first):
+  C:/esp/esp-idf-v6.0.2/tools/cmake/project.cmake:773 (idf_build_process)
+  CMakeLists.txt:17 (project)
+
+

@@ -1,0 +1,8 @@
+{
+	"InstallScripts" : 
+	[
+		"C:/Users/77077/Desktop/esp/build-simulator-windows-runcheck/cmake_install.cmake",
+		"C:/Users/77077/Desktop/esp/build-simulator-windows-runcheck/lvgl/cmake_install.cmake"
+	],
+	"Parallel" : false
+}
