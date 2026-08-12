@@ -294,7 +294,10 @@ static esp_err_t service_process_command(const esp_bms_display_service_command_t
         return esp_bms_lvgl_ui_boot_update(command->data.boot_update.progress_percent,
                                            command->data.boot_update.status_text);
     case ESP_BMS_DISPLAY_SERVICE_COMMAND_BOOT_FINISH:
-        s_service.last_snapshot = command->data.boot_finish.snapshot;
+        if (!command->data.boot_finish.snapshot) {
+            return ESP_ERR_INVALID_ARG;
+        }
+        s_service.last_snapshot = *command->data.boot_finish.snapshot;
         return esp_bms_lvgl_ui_boot_finish(&s_service.last_snapshot);
     case ESP_BMS_DISPLAY_SERVICE_COMMAND_SET_BRIGHTNESS:
         return esp_bms_lvgl_bridge_set_brightness(command->data.brightness.percent);
@@ -363,6 +366,9 @@ static void service_process_snapshot(void)
 
     drag_perf_record_queue_delay(false, item.queued_us);
     s_service.last_snapshot = item.snapshot;
+    if (item.snapshot.cast_active) {
+        return;
+    }
     const esp_err_t ret = esp_bms_lvgl_ui_update(&s_service.last_snapshot);
     if (ret != ESP_OK) {
         ESP_LOGW(TAG, "snapshot queue_us=%lld result=%s",
@@ -389,7 +395,34 @@ static void service_process_actions(void)
         return;
     }
 
-    if (xQueueSend(s_service.action_queue, &event, 0) != pdTRUE) {
+    if (event.action == ESP_BMS_LVGL_ACTION_SET_BRIGHTNESS) {
+        esp_bms_lvgl_action_event_t queued[DISPLAY_SERVICE_ACTION_QUEUE_LENGTH] = { 0 };
+        UBaseType_t count = uxQueueMessagesWaiting(s_service.action_queue);
+        if (count >= DISPLAY_SERVICE_ACTION_QUEUE_LENGTH) {
+            count = DISPLAY_SERVICE_ACTION_QUEUE_LENGTH;
+        }
+        bool brightness_replaced = false;
+        for (UBaseType_t index = 0; index < count; ++index) {
+            if (xQueueReceive(s_service.action_queue, &queued[index], 0) != pdTRUE) {
+                break;
+            }
+            if (queued[index].action == ESP_BMS_LVGL_ACTION_SET_BRIGHTNESS) {
+                queued[index] = event;
+                brightness_replaced = true;
+                event.action = ESP_BMS_LVGL_ACTION_NONE;
+            }
+        }
+        if (event.action != ESP_BMS_LVGL_ACTION_NONE && count < DISPLAY_SERVICE_ACTION_QUEUE_LENGTH) {
+            queued[count++] = event;
+        }
+        for (UBaseType_t index = 0; index < count; ++index) {
+            (void)xQueueSend(s_service.action_queue, &queued[index], 0);
+        }
+        if (brightness_replaced) {
+            return;
+        }
+    }
+    if (event.action != ESP_BMS_LVGL_ACTION_NONE && xQueueSend(s_service.action_queue, &event, 0) != pdTRUE) {
         ESP_LOGW(TAG, "action queue full; dropping action=%u", (unsigned)event.action);
     }
 }

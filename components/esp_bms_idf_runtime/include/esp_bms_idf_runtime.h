@@ -298,6 +298,8 @@ void esp_bms_idf_runtime_register_network_driver(
     esp_bms_idf_runtime_t *runtime,
     const esp_bms_idf_runtime_network_driver_t *driver);
 esp_err_t esp_bms_idf_runtime_http_api_handler(httpd_req_t *req);
+esp_err_t esp_bms_idf_runtime_http_cast_accept(httpd_req_t *req);
+esp_err_t esp_bms_idf_runtime_http_cast_connected(httpd_req_t *req);
 esp_err_t esp_bms_idf_runtime_http_cast_ws_handler(httpd_req_t *req);
 void esp_bms_idf_runtime_stop_cast(esp_bms_idf_runtime_t *runtime, const char *reason);
 esp_err_t esp_bms_idf_runtime_load_bms_binding(esp_bms_idf_runtime_t *runtime);

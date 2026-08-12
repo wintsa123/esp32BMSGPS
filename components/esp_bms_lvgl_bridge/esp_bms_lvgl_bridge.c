@@ -2,6 +2,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdatomic.h>
 #include <string.h>
 #include "driver/gpio.h"
 #include "driver/i2c_master.h"
@@ -60,6 +61,11 @@ static const char *TAG = "bms_lvgl_bridge";
 #define BACKLIGHT_PWM_MODE LEDC_LOW_SPEED_MODE
 #define BACKLIGHT_PWM_TIMER LEDC_TIMER_0
 #define BACKLIGHT_PWM_CHANNEL LEDC_CHANNEL_0
+#define XL9555_BACKLIGHT_PWM_PERIOD_US 2000U
+#define XL9555_BACKLIGHT_NOTIFY_TIMER BIT0
+#define XL9555_BACKLIGHT_NOTIFY_UPDATE BIT1
+#define XL9555_BACKLIGHT_TASK_STACK_BYTES 3072U
+#define XL9555_BACKLIGHT_TASK_PRIORITY 7U
 #define XL9555_I2C_ADDRESS 0x20U
 #define XL9555_I2C_CLOCK_HZ 400000U
 #define XL9555_OUTPUT_PORT0_REG 0x02U
@@ -125,6 +131,12 @@ static bool s_touch_base_mirror_y;
 static bool s_backlight_pwm_ready;
 static bool s_xl9555_backlight;
 static uint8_t s_xl9555_output_port0;
+static atomic_uchar s_xl9555_brightness_percent;
+static esp_timer_handle_t s_xl9555_backlight_timer;
+static TaskHandle_t s_xl9555_backlight_task;
+static StaticTask_t s_xl9555_backlight_task_storage;
+static StackType_t s_xl9555_backlight_task_stack[XL9555_BACKLIGHT_TASK_STACK_BYTES /
+                                                sizeof(StackType_t)];
 static bool s_initialized;
 static TickType_t s_touch_last_log_tick;
 static TickType_t s_touch_last_filter_log_tick;
@@ -255,6 +267,68 @@ static esp_err_t xl9555_set_backlight(bool on)
         s_xl9555_output_port0 &= (uint8_t)~XL9555_BACKLIGHT_BIT;
     }
     return xl9555_write(XL9555_OUTPUT_PORT0_REG, s_xl9555_output_port0, 0U);
+}
+
+static void xl9555_backlight_timer_cb(void *arg)
+{
+    (void)xTaskNotify((TaskHandle_t)arg, XL9555_BACKLIGHT_NOTIFY_TIMER, eSetBits);
+}
+
+static void xl9555_backlight_wait(uint32_t delay_us)
+{
+    uint32_t notification = 0U;
+    (void)xTaskNotifyWait(0U, UINT32_MAX, &notification, 0);
+    const esp_err_t ret = esp_timer_start_once(s_xl9555_backlight_timer, delay_us);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "start XL9555 backlight timer failed: %s", esp_err_to_name(ret));
+        return;
+    }
+    do {
+        (void)xTaskNotifyWait(0U, UINT32_MAX, &notification, portMAX_DELAY);
+    } while ((notification & XL9555_BACKLIGHT_NOTIFY_TIMER) == 0U);
+    (void)esp_timer_stop(s_xl9555_backlight_timer);
+}
+
+static void xl9555_backlight_task(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        const uint8_t percent = atomic_load(&s_xl9555_brightness_percent);
+        if (percent == 0U || percent >= 100U) {
+            ESP_ERROR_CHECK_WITHOUT_ABORT(xl9555_set_backlight(percent >= 100U));
+            uint32_t notification = 0U;
+            (void)xTaskNotifyWait(0U, UINT32_MAX, &notification, portMAX_DELAY);
+            continue;
+        }
+
+        ESP_ERROR_CHECK_WITHOUT_ABORT(xl9555_set_backlight(true));
+        xl9555_backlight_wait((XL9555_BACKLIGHT_PWM_PERIOD_US * percent) / 100U);
+        ESP_ERROR_CHECK_WITHOUT_ABORT(xl9555_set_backlight(false));
+        xl9555_backlight_wait((XL9555_BACKLIGHT_PWM_PERIOD_US * (100U - percent)) / 100U);
+    }
+}
+
+static esp_err_t configure_xl9555_backlight_pwm(void)
+{
+    s_xl9555_backlight_task = xTaskCreateStatic(xl9555_backlight_task,
+                                                "lcd_bl",
+                                                sizeof(s_xl9555_backlight_task_stack) /
+                                                    sizeof(s_xl9555_backlight_task_stack[0]),
+                                                NULL,
+                                                XL9555_BACKLIGHT_TASK_PRIORITY,
+                                                s_xl9555_backlight_task_stack,
+                                                &s_xl9555_backlight_task_storage);
+    ESP_RETURN_ON_FALSE(s_xl9555_backlight_task, ESP_ERR_NO_MEM, TAG,
+                        "create XL9555 backlight task failed");
+    const esp_timer_create_args_t timer_args = {
+        .callback = xl9555_backlight_timer_cb,
+        .arg = s_xl9555_backlight_task,
+        .dispatch_method = ESP_TIMER_TASK,
+        .name = "lcd_bl",
+    };
+    ESP_RETURN_ON_ERROR(esp_timer_create(&timer_args, &s_xl9555_backlight_timer), TAG,
+                        "create XL9555 backlight timer failed");
+    return ESP_OK;
 }
 
 static esp_err_t init_xl9555(const esp_bms_lvgl_bridge_config_t *config)
@@ -855,7 +929,7 @@ static esp_err_t configure_backlight(gpio_num_t pin, int on_level)
     s_backlight_pin = pin;
     s_backlight_pwm_ready = false;
     if (s_xl9555_backlight) {
-        return ESP_OK;
+        return configure_xl9555_backlight_pwm();
     }
     if (pin == GPIO_NUM_NC) {
         return ESP_OK;
@@ -891,7 +965,9 @@ static esp_err_t configure_backlight(gpio_num_t pin, int on_level)
 esp_err_t esp_bms_lvgl_bridge_set_brightness(uint8_t percent)
 {
     if (s_xl9555_backlight) {
-        return xl9555_set_backlight(percent > 0U);
+        atomic_store(&s_xl9555_brightness_percent, percent > 100U ? 100U : percent);
+        (void)xTaskNotify(s_xl9555_backlight_task, XL9555_BACKLIGHT_NOTIFY_UPDATE, eSetBits);
+        return ESP_OK;
     }
     if (s_backlight_pin == GPIO_NUM_NC) {
         return ESP_OK;

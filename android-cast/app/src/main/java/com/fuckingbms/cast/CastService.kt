@@ -32,6 +32,7 @@ class CastService : Service() {
     @Volatile private var latest: ByteArray? = null
     @Volatile private var encoder: FrameEncoder? = null
     private var socket: CastSocket? = null
+    private var failed = false
     private val projectionCallback = object : MediaProjection.Callback() {
         override fun onStop() {
             running = false
@@ -49,7 +50,8 @@ class CastService : Service() {
         val info = CastInfo(intent.getIntExtra("width", 0), intent.getIntExtra("height", 0), intent.getIntExtra("rotation", 0), intent.getIntExtra("block", 16))
         val result = intent.getIntExtra("result", 0); val grant = intent.getParcelableExtra<Intent>("grant") ?: return START_NOT_STICKY
         val host = intent.getStringExtra("host") ?: return START_NOT_STICKY
-        running = true; encoder = FrameEncoder(info.width, info.height, info.maxBlockSide)
+        running = true; failed = false; encoder = FrameEncoder(info.width, info.height, info.maxBlockSide)
+        report(STATE_CONNECTING)
         projection = (getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager).getMediaProjection(result, grant)
         projection!!.registerCallback(projectionCallback, Handler(Looper.getMainLooper()))
         val metrics = (getSystemService(WINDOW_SERVICE) as WindowManager).defaultDisplay
@@ -85,19 +87,27 @@ class CastService : Service() {
         for (attempt in 1..3) {
             if (!running) break
             try {
-                report("正在连接设备（$attempt/3）")
+                report(if (attempt == 1) STATE_CONNECTING else STATE_RETRYING)
                 socket = CastSocket(host)
-                report("设备已连接，正在传输画面")
+                report(STATE_STREAMING)
                 var sequence = 1
                 while (running) {
                     val pixels = latest
                     if (pixels != null) {
                         val packets = encoder!!.encode(sequence, rotation, pixels)
-                        packets.forEach { socket!!.send(it) }
+                        var heartbeatAt = System.currentTimeMillis() + 2_000
+                        packets.forEach {
+                            socket!!.send(it)
+                            if (System.currentTimeMillis() >= heartbeatAt) {
+                                socket!!.send(byteArrayOf(CastProtocol.HEARTBEAT))
+                                heartbeatAt = System.currentTimeMillis() + 2_000
+                            }
+                        }
                         if (socket!!.readAck() != sequence) throw IOException("设备未确认画面")
                         encoder!!.acknowledge(pixels)
                         sequence++
                     }
+                    socket!!.send(byteArrayOf(CastProtocol.HEARTBEAT))
                     Thread.sleep(500)
                 }
                 return
@@ -106,15 +116,21 @@ class CastService : Service() {
                 socket?.close()
                 socket = null
                 if (attempt < 3 && running) {
-                    report("连接失败：${e.message ?: e.javaClass.simpleName}；1 秒后重试")
+                    report(STATE_RETRYING)
                     Thread.sleep(1_000)
                 }
             }
         }
-        if (running && failure != null) report("投屏连接失败（已重试 3 次）：${failure.message ?: failure.javaClass.simpleName}")
+        if (running && failure != null) {
+            failed = true
+            report(STATE_FAILED, "投屏连接失败（已重试 3 次）：${failure.message ?: failure.javaClass.simpleName}")
+        }
         stopSelf()
     }
-    private fun report(message: String) { sendBroadcast(Intent(ACTION_STATUS).setPackage(packageName).putExtra(EXTRA_STATUS, message)) }
+    private fun report(state: String, detail: String? = null) {
+        currentState = state
+        sendBroadcast(Intent(ACTION_STATUS).setPackage(packageName).putExtra(EXTRA_STATE, state).putExtra(EXTRA_DETAIL, detail))
+    }
     override fun onDestroy() {
         running = false
         socket?.close()
@@ -124,11 +140,25 @@ class CastService : Service() {
         projection?.unregisterCallback(projectionCallback)
         projection?.stop()
         projection = null
+        if (!failed) report(STATE_STOPPED)
         super.onDestroy()
     }
     override fun onBind(intent: Intent?): IBinder? = null
     private fun notification(): Notification { val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager; val channel = NotificationChannel("cast", "BMS 投屏", NotificationManager.IMPORTANCE_LOW); manager.createNotificationChannel(channel); return Notification.Builder(this, "cast").setContentTitle("BMS 投屏进行中").setSmallIcon(android.R.drawable.presence_video_online).build() }
-    companion object { const val ACTION_STATUS = "com.fuckingbms.cast.STATUS"; const val EXTRA_STATUS = "status"; fun intent(context: Context, result: Int, grant: Intent, host: String, info: CastInfo) = Intent(context, CastService::class.java).apply { putExtra("result", result); putExtra("grant", grant); putExtra("host", host); putExtra("width", info.width); putExtra("height", info.height); putExtra("rotation", info.rotation); putExtra("block", info.maxBlockSide) } }
+    companion object {
+        const val ACTION_STATUS = "com.fuckingbms.cast.STATUS"
+        const val EXTRA_STATE = "state"
+        const val EXTRA_DETAIL = "detail"
+        const val STATE_CONNECTING = "connecting"
+        const val STATE_RETRYING = "retrying"
+        const val STATE_STREAMING = "streaming"
+        const val STATE_FAILED = "failed"
+        const val STATE_STOPPED = "stopped"
+        @Volatile var currentState = STATE_STOPPED
+            private set
+
+        fun intent(context: Context, result: Int, grant: Intent, host: String, info: CastInfo) = Intent(context, CastService::class.java).apply { putExtra("result", result); putExtra("grant", grant); putExtra("host", host); putExtra("width", info.width); putExtra("height", info.height); putExtra("rotation", info.rotation); putExtra("block", info.maxBlockSide) }
+    }
 }
 
 private class CastSocket(host: String) {
@@ -137,7 +167,13 @@ private class CastSocket(host: String) {
         connect(InetSocketAddress(requireNotNull(endpoint.host), if (endpoint.port >= 0) endpoint.port else 80), 4_000)
         soTimeout = 4_000
     }; private val output = BufferedOutputStream(socket.getOutputStream()); private val input = BufferedInputStream(socket.getInputStream()); private val random = SecureRandom()
-    init { val key = Base64.encodeToString(ByteArray(16).also { random.nextBytes(it) }, Base64.NO_WRAP); output.write("GET /cast HTTP/1.1\r\nHost: $host\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: $key\r\n\r\n".toByteArray()); output.flush(); val response = generateSequence { readLine() }.takeWhile { it.isNotEmpty() }.toList(); check(response.firstOrNull()?.contains(" 101 ") == true) }
+    init {
+        val key = Base64.encodeToString(ByteArray(16).also { random.nextBytes(it) }, Base64.NO_WRAP)
+        output.write("GET /cast HTTP/1.1\r\nHost: $host\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: $key\r\n\r\n".toByteArray())
+        output.flush()
+        val response = generateSequence { readLine() }.takeWhile { it.isNotEmpty() }.toList()
+        check(response.firstOrNull()?.contains(" 101 ") == true) { "WebSocket 握手失败" }
+    }
     fun send(payload: ByteArray) { val mask = ByteArray(4).also { random.nextBytes(it) }; output.write(0x82); when { payload.size < 126 -> output.write(0x80 or payload.size); else -> { output.write(0x80 or 126); output.write(payload.size ushr 8); output.write(payload.size) } }; output.write(mask); payload.forEachIndexed { i, b -> output.write(b.toInt() xor mask[i % 4].toInt()) }; output.flush() }
     fun readAck(): Int? { val first = input.read(); val second = input.read(); if (first < 0 || second < 0) return null; var length = second and 0x7f; if (length == 126) length = (input.read() shl 8) or input.read(); if (length !in 1..512) return null; val data = ByteArray(length); var offset = 0; while (offset < length) { val read = input.read(data, offset, length - offset); if (read < 0) return null; offset += read }; return CastProtocol.ackSequence(data) }
     private fun readLine(): String { val bytes = ArrayList<Byte>(); while (true) { val value = input.read(); if (value < 0 || value == '\n'.code) return bytes.toByteArray().toString(Charsets.ISO_8859_1).trimEnd('\r'); bytes += value.toByte() } }

@@ -449,11 +449,14 @@ static void quick_level_overlay_update(quick_level_kind_t kind, uint8_t value)
 void set_quick_brightness_value(uint8_t brightness_percent, bool queue, bool committed)
 {
     const uint8_t clamped = clamp_brightness_percent(brightness_percent);
+    const bool changed = s_ui.quick_brightness_percent != clamped;
     s_ui.quick_brightness_percent = clamped;
-    if (s_ui.quick_brightness_label) {
+    if (changed && s_ui.quick_brightness_label) {
         label_set_text_if_changed(s_ui.quick_brightness_label, LV_SYMBOL_EYE_OPEN);
     }
-    quick_level_overlay_update(QUICK_LEVEL_BRIGHTNESS, clamped);
+    if (changed) {
+        quick_level_overlay_update(QUICK_LEVEL_BRIGHTNESS, clamped);
+    }
     if (queue) {
         quick_level_queue_value(QUICK_LEVEL_BRIGHTNESS, clamped, committed);
     }
@@ -1911,4 +1914,3 @@ void quick_toast_create(lv_obj_t *parent)
     lv_obj_add_event_cb(s_ui.quick_toast, quick_rotate_toast_event_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_add_flag(s_ui.quick_toast, LV_OBJ_FLAG_HIDDEN);
 }
-

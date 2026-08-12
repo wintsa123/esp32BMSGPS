@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/index.md","reason":"Android 手机 App 属于前端范围；读取当前前端规范索引及有效约束。"}
+{"file":".trellis/tasks/08-13-optimize-android-interaction-ui/prd.md","reason":"本任务最终需求、范围和可观察验收标准。"}
+{"file":".trellis/tasks/08-13-optimize-android-interaction-ui/design.md","reason":"最小原生 View 状态模型、布局和兼容边界。"}
+{"file":".trellis/tasks/08-13-optimize-android-interaction-ui/implement.md","reason":"实施顺序、GitNexus 门禁、验证命令和回滚点。"}

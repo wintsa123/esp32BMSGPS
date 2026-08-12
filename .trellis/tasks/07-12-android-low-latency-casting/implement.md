@@ -1,11 +1,11 @@
 # 实施清单：Android 低延迟遥控投屏
 
 1. 读取固件 HTTP、运行时、LVGL UI/bridge 现状，完成 GitNexus 影响分析；记录直接调用者、流程与风险。
-2. 建立独立 cast 协议/会话组件和 host-side 单测：认证、长度/坐标检查、单客户端、ACK/超时/恢复。
+2. 建立独立 cast 协议/会话组件和 host-side 单测：长度/坐标检查、单客户端、ACK/超时/恢复。
 3. 在 LVGL bridge 中实现固定块区域写入；在运行时注册 `cast-info`、WebSocket 和状态转移；接入主循环。
 4. 追加投屏主页、二维码和投屏触摸导航；渲染预览至 `preview/`。
-5. 创建 Android Gradle Kotlin app，实施深链、热点连接、MediaProjection、块差分 WebSocket、Back/Home 与可选无障碍服务；添加单测。
-6. 构建固件与 Android APK，运行测试、尺寸检查及 `detect_changes`；按 LAN RFC2217 流程做可用的硬件验证。
+5. 创建 Android Gradle Kotlin app，实施无凭据深链、已连接热点识别、MediaProjection 和块差分 WebSocket；添加单测。
+6. 构建 ESP32-S3 固件与 Android APK，运行测试、尺寸检查及 `detect_changes`；按 LAN RFC2217 流程做可用的硬件验证。
 
 ## 风险点和检查门
 

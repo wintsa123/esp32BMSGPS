@@ -1282,7 +1282,7 @@ catalog_option_description() {
         module:audio) zh='音频提示'; en='Audio feedback' ;;
         module:network) zh='Wi-Fi、设置热点与本地网页'; en='Wi-Fi, setup AP, and local web UI' ;;
         module:ota) zh='本地 Web OTA 更新（自动需要 network）'; en='Local web OTA update (automatically requires network)' ;;
-        module:cast) zh='实验性手机投屏（当前使用 legacy runtime）'; en='Experimental phone casting (uses the legacy runtime)' ;;
+        module:cast) zh='手机投屏'; en='Phone casting' ;;
         module:ble-media-hid) zh='BLE HID 媒体按键（免 App，系统蓝牙直接配对）'; en='BLE HID media keys (no app needed, pair via system Bluetooth)' ;;
         module:classic-media-hid) zh='Classic Bluetooth 媒体控制验证（ESP32 专用）'; en='Classic Bluetooth media control validation (ESP32 only)' ;;
         dashboard:s1000rr) zh='宝马 S1000RR 速度仪表'; en='BMW S1000RR speed dashboard' ;;

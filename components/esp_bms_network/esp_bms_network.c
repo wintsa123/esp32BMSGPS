@@ -298,7 +298,9 @@ static esp_err_t network_start_http_server(esp_bms_idf_runtime_t *runtime)
 #if ESP_BMS_FEATURE_CAST
     const httpd_uri_t cast = { .uri = "/cast", .method = HTTP_GET,
                                .handler = esp_bms_idf_runtime_http_cast_ws_handler,
-                               .user_ctx = runtime, .is_websocket = true };
+                               .user_ctx = runtime, .is_websocket = true,
+                               .ws_pre_handshake_cb = esp_bms_idf_runtime_http_cast_accept,
+                               .ws_post_handshake_cb = esp_bms_idf_runtime_http_cast_connected };
 #endif
     ret = httpd_register_uri_handler(s_http_server, &root);
     if (ret == ESP_OK) {

@@ -389,7 +389,7 @@ void app_main(void)
 
     const esp_bms_display_service_command_t boot_finish_command = {
         .kind = ESP_BMS_DISPLAY_SERVICE_COMMAND_BOOT_FINISH,
-        .data.boot_finish.snapshot = runtime.snapshot,
+        .data.boot_finish.snapshot = &runtime.snapshot,
     };
     const esp_err_t boot_finish_ret =
         esp_bms_display_service_submit_command(&boot_finish_command, 1000U);

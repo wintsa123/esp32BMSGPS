@@ -210,15 +210,10 @@ void set_cast_page(const esp_bms_dashboard_snapshot_t *snapshot)
         set_obj_hidden(s_ui.cast_qr, true);
         return;
     }
-    const char *ssid = snapshot->setup_ap_ssid[0] != '\0' ? snapshot->setup_ap_ssid : "--";
-    const char *password = snapshot->setup_ap_password[0] != '\0' ? snapshot->setup_ap_password : "--";
 #if LV_USE_QRCODE
     if (s_ui.cast_qr) {
-        /* Keep room for the full HTTPS landing URL plus the longest SSID and password. */
-        char payload[256] = { 0 };
-        const int written = snprintf(payload, sizeof(payload),
-                                     "https://esp-bms-setting.vercel.app/cast?ssid=%s&password=%s&host=192.168.4.1&v=1",
-                                     ssid, password);
+        const char payload[] = "fuckingbms://cast/v1?host=192.168.4.1&v=1";
+        const int written = sizeof(payload) - 1;
         if (written > 0 && (size_t)written < sizeof(payload)) {
             if (lv_qrcode_update(s_ui.cast_qr, payload, (size_t)written) != LV_RESULT_OK) {
                 ESP_LOGW(TAG, "[cast-qr] encode failed");

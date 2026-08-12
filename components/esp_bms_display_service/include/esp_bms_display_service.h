@@ -35,7 +35,7 @@ typedef struct {
             char status_text[ESP_BMS_DISPLAY_SERVICE_STATUS_TEXT_MAX];
         } boot_update;
         struct {
-            esp_bms_dashboard_snapshot_t snapshot;
+            const esp_bms_dashboard_snapshot_t *snapshot;
         } boot_finish;
         struct {
             uint8_t percent;

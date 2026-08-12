@@ -18,9 +18,9 @@ are defined in [Hardware, Build, and Flash](./hardware-build-flash.md).
 
 ## Scenario: 投屏二维码可见性
 
-- `set_cast_page()` 的二维码载荷包含 HTTPS 落地页、SSID、密码与设备地址；缓冲区必须至少为 `256` 字节，不能沿用短域名时代的 `128` 字节假设。
+- `set_cast_page()` 的二维码载荷必须使用离线 App 深链 `fuckingbms://cast/v1?host=192.168.4.1&v=1`，不得包含 Setup AP SSID、密码或依赖互联网的 HTTPS 落地页。Setup AP 页面继续使用包含当前 SSID 与密码的标准 `WIFI:` 二维码。
 - 投屏二维码是常驻界面元素：热点关闭时仍显示；页面只显示“扫码投屏”标题，不显示连接状态、SSID 或密码文字。
-- 修改投屏 URL、SSID 长度或二维码逻辑后，必须用最长可能载荷验证 `snprintf()` 未截断，并确认 `lv_qrcode_update()` 返回成功；不得把编码失败静默处理成隐藏二维码。
+- 修改投屏深链或二维码逻辑后，必须确认载荷仍不含热点凭据并检查 `lv_qrcode_update()` 返回成功；不得把编码失败静默处理成隐藏二维码。
 
 Run GitNexus change detection before commit:
 

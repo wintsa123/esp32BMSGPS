@@ -3751,6 +3751,35 @@ static esp_err_t runtime_http_cast_info_handler(httpd_req_t *req, esp_bms_idf_ru
     return runtime_http_send_json(req, json);
 }
 
+esp_err_t esp_bms_idf_runtime_http_cast_accept(httpd_req_t *req)
+{
+    esp_bms_idf_runtime_t *runtime = req ? (esp_bms_idf_runtime_t *)req->user_ctx : NULL;
+    if (!runtime) {
+        return ESP_FAIL;
+    }
+    if (__atomic_load_n(&runtime->cast_active, __ATOMIC_RELAXED)) {
+        httpd_resp_set_status(req, "409 Conflict");
+        (void)httpd_resp_send(req, NULL, 0);
+        return ESP_ERR_INVALID_STATE;
+    }
+    return ESP_OK;
+}
+
+esp_err_t esp_bms_idf_runtime_http_cast_connected(httpd_req_t *req)
+{
+    esp_bms_idf_runtime_t *runtime = req ? (esp_bms_idf_runtime_t *)req->user_ctx : NULL;
+    if (!runtime) {
+        return ESP_FAIL;
+    }
+    __atomic_store_n(&runtime->cast_active, true, __ATOMIC_RELAXED);
+    runtime->cast_frame_active = false;
+    runtime->cast_socket_fd = httpd_req_to_sockfd(req);
+    runtime->cast_sequence = 0U;
+    runtime->cast_heartbeat_elapsed_ms = 0U;
+    ESP_LOGI(TAG, "[cast] client connected fd=%d", runtime->cast_socket_fd);
+    return ESP_OK;
+}
+
 static uint16_t runtime_cast_u16(const uint8_t *value)
 {
     return (uint16_t)((uint16_t)value[0] << 8U) | value[1];
@@ -3783,22 +3812,17 @@ esp_err_t esp_bms_idf_runtime_http_cast_ws_handler(httpd_req_t *req)
     if (!runtime) {
         return ESP_FAIL;
     }
-    if (req->method == HTTP_GET) {
-        if (__atomic_load_n(&runtime->cast_active, __ATOMIC_RELAXED)) {
-            ESP_LOGW(TAG, "[cast] reject second client fd=%d", httpd_req_to_sockfd(req));
-            return ESP_FAIL;
-        }
-        __atomic_store_n(&runtime->cast_active, true, __ATOMIC_RELAXED);
-        runtime->cast_frame_active = false;
-        runtime->cast_socket_fd = httpd_req_to_sockfd(req);
-        runtime->cast_sequence = 0U;
-        runtime->cast_heartbeat_elapsed_ms = 0U;
-        ESP_LOGI(TAG, "[cast] client connected fd=%d", runtime->cast_socket_fd);
-        return ESP_OK;
+    if (!__atomic_load_n(&runtime->cast_active, __ATOMIC_RELAXED) ||
+        runtime->cast_socket_fd != httpd_req_to_sockfd(req)) {
+        return ESP_ERR_INVALID_STATE;
     }
 
     httpd_ws_frame_t frame = { 0 };
-    ESP_RETURN_ON_ERROR(httpd_ws_recv_frame(req, &frame, 0), TAG, "read cast frame header failed");
+    esp_err_t ret = httpd_ws_recv_frame(req, &frame, 0);
+    if (ret != ESP_OK) {
+        esp_bms_idf_runtime_stop_cast(runtime, "socket closed");
+        return ret;
+    }
     if (frame.type != HTTPD_WS_TYPE_BINARY || frame.len == 0U || frame.len > CAST_MESSAGE_MAX_BYTES) {
         esp_bms_idf_runtime_stop_cast(runtime, "invalid frame");
         return ESP_ERR_INVALID_SIZE;
@@ -3806,7 +3830,11 @@ esp_err_t esp_bms_idf_runtime_http_cast_ws_handler(httpd_req_t *req)
     static uint8_t message[CAST_MESSAGE_MAX_BYTES];
     memset(message, 0, sizeof(message));
     frame.payload = message;
-    ESP_RETURN_ON_ERROR(httpd_ws_recv_frame(req, &frame, frame.len), TAG, "read cast frame failed");
+    ret = httpd_ws_recv_frame(req, &frame, frame.len);
+    if (ret != ESP_OK) {
+        esp_bms_idf_runtime_stop_cast(runtime, "socket read failed");
+        return ret;
+    }
     runtime->cast_heartbeat_elapsed_ms = 0U;
 
     if (message[0] == CAST_TYPE_HEARTBEAT && frame.len == 1U) {

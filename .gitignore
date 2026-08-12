@@ -25,6 +25,8 @@
 /logs/
 /androguard.log
 /preview/*
+!/preview/android-cast-app-portrait.png
+!/preview/android-cast-app-landscape.png
 /docs/hardware/
 /.idf-builds/
 /.idf-validation/

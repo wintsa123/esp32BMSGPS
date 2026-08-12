@@ -1283,7 +1283,7 @@ function Get-CatalogOptionDescription([string]$Kind, [string]$Id) {
         'module/audio' = @('音频提示', 'Audio feedback')
         'module/network' = @('Wi-Fi、设置热点与本地网页', 'Wi-Fi, setup AP, and local web UI')
         'module/ota' = @('本地 Web OTA 更新（自动需要 network）', 'Local web OTA update (automatically requires network)')
-        'module/cast' = @('实验性手机投屏（当前使用 legacy runtime）', 'Experimental phone casting (uses the legacy runtime)')
+        'module/cast' = @('手机投屏', 'Phone casting')
         'module/ble-media-hid' = @('BLE HID 媒体按键（免 App，系统蓝牙直接配对）', 'BLE HID media keys (no app needed, pair via system Bluetooth)')
         'module/classic-media-hid' = @('Classic Bluetooth 媒体控制验证（ESP32 专用）', 'Classic Bluetooth media control validation (ESP32 only)')
         'dashboard/s1000rr' = @('宝马 S1000RR 速度仪表', 'BMW S1000RR speed dashboard')

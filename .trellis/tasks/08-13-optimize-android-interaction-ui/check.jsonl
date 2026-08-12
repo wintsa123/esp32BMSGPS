@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/index.md","reason":"检查 Android 前端改动是否符合项目当前前端约束。"}
+{"file":".trellis/tasks/08-13-optimize-android-interaction-ui/prd.md","reason":"逐项核对范围、用户行为和验收标准。"}
+{"file":".trellis/tasks/08-13-optimize-android-interaction-ui/design.md","reason":"检查实现是否保持原生 View、单页和最小状态边界。"}
+{"file":".trellis/tasks/08-13-optimize-android-interaction-ui/implement.md","reason":"核对测试、构建、预览和 detect_changes 门禁。"}
