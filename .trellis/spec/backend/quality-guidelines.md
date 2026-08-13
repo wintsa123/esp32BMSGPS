@@ -732,8 +732,8 @@ if (action == ESP_BMS_LVGL_ACTION_ENABLE_WIFI_REPROVISIONING) {
 - ST7789 is initialized through ESP LCD panel APIs and registered through the
   LVGL adapter.
 - Touch uses XPT2046 through `esp_lcd_touch_xpt2046` and the LVGL adapter.
-- Brightness changes must call `esp_bms_lvgl_bridge_set_brightness()` and drive
-  GPIO21 through LEDC PWM.
+- Brightness changes must call `esp_bms_lvgl_bridge_set_brightness()`; the
+  bridge selects the board-specific LEDC or XL9555 implementation.
 - Rotation changes must keep ST7789 panel flags, LVGL resolution/layout, and
   XPT2046 touch transforms in sync.
 - Dynamic LVGL labels and QR widgets should update only when their rendered
@@ -747,6 +747,80 @@ if (action == ESP_BMS_LVGL_ACTION_ENABLE_WIFI_REPROVISIONING) {
 - Do not move hot code, the LVGL worker stack, or existing ARGB8888 canvases
   into PSRAM solely for FPS. Double buffering overlaps rendering with panel DMA
   but cannot exceed the display-bus limit.
+
+## Scenario: ST7796U XL9555 Backlight Brightness
+
+### 1. Scope / Trigger
+
+- Apply when changing brightness, the quick-panel level control, display-task
+  priorities, XL9555 I2C access, or the
+  `esp32s3-n16r8-st7796u-gt1151` hardware profile.
+- This board routes `BL_CTR` through XL9555 `IO1_3` to an S8050 transistor. It
+  does not route an ESP32 GPIO or the ST7796U `CABC_PWM` signal to the LEDs.
+
+### 2. Signatures
+
+- `esp_bms_lvgl_bridge_set_brightness(uint8_t percent)` accepts `0..100` and
+  clamps larger values to `100`.
+- `ESP_BMS_LVGL_ACTION_SET_BRIGHTNESS` carries the latest quick-panel value
+  through `esp_bms_display_service`.
+
+### 3. Contracts
+
+- GPIO-backed profiles keep using LEDC. The XL9555 profile uses the bridge's
+  500 Hz software PWM task and one-shot timer; do not replace it with a binary
+  `percent > 0` write.
+- The PWM task priority must remain above the display service priority so LVGL
+  drag and quick-panel animations cannot delay PWM edges and produce visible
+  flicker. Brightness updates take effect at PWM period boundaries.
+- The quick-panel widget updates its label/overlay geometry only when the
+  clamped value changes. The display service coalesces pending brightness
+  actions to the newest value without reordering other actions.
+- Do not use ST7796U commands `0x51`/`0x53` as a substitute: the panel command
+  path cannot modulate this board's physical LED backlight.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required response |
+| --- | --- |
+| Brightness is `0` or `100` | Hold a static XL9555 output; do not keep scheduling PWM edges. |
+| Brightness changes during a pulse | Store the target and apply it at the next complete PWM period. |
+| A newer brightness action is queued | Replace the older brightness action; preserve all non-brightness action order. |
+| XL9555 timer or I2C operation fails | Log the ESP-IDF error; do not silently claim brightness was applied. |
+| UI animation causes visible flicker | Check PWM task priority and I2C/timer errors before changing PWM frequency. |
+
+### 5. Good / Base / Bad Cases
+
+- Good: continuously dragging brightness changes duty cycle without repeated
+  overlay animation or visible flashes while the status panel moves.
+- Base: `0` and `100` produce stable off/on levels with no periodic I2C writes.
+- Bad: every snapshot redraws the brightness overlay, or LVGL work preempts the
+  XL9555 PWM task and stretches individual pulses.
+
+### 6. Tests Required
+
+- Build the S3 profile with casting enabled and run
+  `./scripts/run-host-selftests.sh` plus `git diff --check`.
+- Flash through RFC2217 and verify hash completion, normal display/touch/BLE
+  startup, and no timer, I2C, watchdog, assertion, or reboot errors.
+- On hardware, hold and drag the brightness control through intermediate
+  values while repeatedly pulling down the status panel; assert no visible
+  flicker and no duplicate brightness-overlay animation.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```c
+return xl9555_set_backlight(percent > 0U);
+```
+
+#### Correct
+
+```c
+atomic_store(&s_xl9555_brightness_percent, percent > 100U ? 100U : percent);
+xTaskNotify(s_xl9555_backlight_task, XL9555_BACKLIGHT_NOTIFY_UPDATE, eSetBits);
+```
 
 ## Scenario: Single-Owner LVGL Display Service
 

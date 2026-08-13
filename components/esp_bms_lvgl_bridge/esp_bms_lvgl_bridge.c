@@ -101,11 +101,8 @@ static const char *TAG = "bms_lvgl_bridge";
 #else
 #define LVGL_REQUIRE_DOUBLE_BUFFER false
 #endif
-#if CONFIG_ESP_BMS_LVGL_BRIDGE_FULL_REFRESH_DOUBLE_BUFFER
-#define LVGL_FULL_REFRESH_DOUBLE_BUFFER true
-#else
+/* Keep object invalidation local; full-frame mode refreshes the whole TFT for every widget change. */
 #define LVGL_FULL_REFRESH_DOUBLE_BUFFER false
-#endif
 
 static esp_lcd_panel_io_handle_t s_panel_io;
 static esp_lcd_panel_handle_t s_panel;

@@ -17,7 +17,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Directory Structure](./directory-structure.md) | Module organization and file layout | To fill |
 | [Database Guidelines](./database-guidelines.md) | ORM patterns, queries, migrations | To fill |
 | [Error Handling](./error-handling.md) | Error types, handling strategies | To fill |
-| [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | To fill |
+| [Quality Guidelines](./quality-guidelines.md) | Runtime, display, backlight, and code safety contracts | Active |
 | [Logging Guidelines](./logging-guidelines.md) | Structured logging, log levels | Started |
 | [Hardware, Build, and Flash](./hardware-build-flash.md) | GPIO ownership, board conflicts, toolchains, partitions, and supported flash paths | Active |
 | [FarDriver Gear Telemetry](./fardriver-gear-telemetry.md) | Compact-frame gear extraction and dashboard display contract | Active |

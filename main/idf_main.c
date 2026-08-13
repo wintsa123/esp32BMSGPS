@@ -19,6 +19,7 @@ static const char *TAG = "bms_idf_main";
 #define MAIN_LOOP_PERIOD_MS 50U
 #define BOOT_READY_HOLD_MS 80U
 #define SETUP_AP_IDLE_TIMEOUT_MS (5U * 60U * 1000U)
+#define SETUP_AP_START_GUARD_MS 500U
 #define RESOURCE_DIAGNOSTICS_WINDOW_MS 1000U
 #define RESOURCE_DIAGNOSTICS_MAX_TASKS 48U
 #define RESOURCE_DIAGNOSTICS_TOP_TASKS 3U
@@ -402,6 +403,7 @@ void app_main(void)
     bool delayed_display_settings_save_pending = false;
     uint32_t delayed_display_settings_save_ms = 0;
     uint32_t setup_ap_idle_elapsed_ms = 0;
+    uint32_t setup_ap_start_guard_ms = 0;
 #if ESP_BMS_FEATURE_CAST
     bool cast_ui_active = false;
 #endif
@@ -415,6 +417,11 @@ void app_main(void)
         const bool tick_changed = esp_bms_idf_runtime_tick(&runtime, 50);
         const bool module_tick_changed =
             esp_bms_module_registry_tick(&runtime, MAIN_LOOP_PERIOD_MS);
+        if (setup_ap_start_guard_ms > MAIN_LOOP_PERIOD_MS) {
+            setup_ap_start_guard_ms -= MAIN_LOOP_PERIOD_MS;
+        } else {
+            setup_ap_start_guard_ms = 0;
+        }
         const uint8_t connection_audio_events =
             esp_bms_idf_runtime_take_connection_audio_events(&runtime);
         esp_bms_module_registry_play_connection_audio(connection_audio_events,
@@ -431,7 +438,7 @@ void app_main(void)
         }
         esp_bms_idf_runtime_set_active_data_source(&runtime,
                                                    esp_bms_display_service_stable_data_source());
-        const esp_bms_lvgl_action_t action = action_event.action;
+        esp_bms_lvgl_action_t action = action_event.action;
         if (action != ESP_BMS_LVGL_ACTION_NONE) {
             resource_diagnostics_begin(&s_resource_diagnostics,
                                        esp_bms_idf_runtime_action_name(action));
@@ -445,6 +452,12 @@ void app_main(void)
         const bool setup_ap_enabled =
             esp_bms_dashboard_snapshot_flag_get(&runtime.snapshot,
                                                 ESP_BMS_DASHBOARD_FLAG_SETUP_AP_ENABLED);
+        if (action == ESP_BMS_LVGL_ACTION_ENABLE_WIFI_REPROVISIONING &&
+            setup_ap_enabled && setup_ap_start_guard_ms > 0U) {
+            action_event.action = ESP_BMS_LVGL_ACTION_NONE;
+            action = ESP_BMS_LVGL_ACTION_NONE;
+            ESP_LOGW(TAG, "ignored duplicate setup AP toggle during startup");
+        }
         if ((setup_ap_started || http_server_started) && runtime.setup_ap_clients == 0U) {
             if (setup_ap_idle_elapsed_ms <= SETUP_AP_IDLE_TIMEOUT_MS - MAIN_LOOP_PERIOD_MS) {
                 setup_ap_idle_elapsed_ms += MAIN_LOOP_PERIOD_MS;
@@ -604,6 +617,7 @@ void app_main(void)
         }
 
         if (should_start_setup_services) {
+            setup_ap_start_guard_ms = SETUP_AP_START_GUARD_MS;
             setup_service_start_stage = setup_ap_started ? SETUP_SERVICE_START_HTTP : SETUP_SERVICE_START_AP;
             ESP_LOGI(TAG, "setup services queued: first_stage=%s",
                      setup_service_start_stage == SETUP_SERVICE_START_AP ? "ap" : "http");
