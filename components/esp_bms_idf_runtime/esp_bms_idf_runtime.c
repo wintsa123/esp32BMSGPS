@@ -1922,9 +1922,7 @@ static void runtime_reset_state(esp_bms_idf_runtime_t *runtime)
     RUNTIME_SET_FLAG(runtime, HTTP_BMS_SCAN_PENDING, false);
     RUNTIME_SET_FLAG(runtime, BMS_SCAN_REQUESTED, false);
     RUNTIME_SET_FLAG(runtime, BMS_SCAN_ACTIVE, false);
-    RUNTIME_SET_FLAG(runtime,
-                     BLUETOOTH_ADVERTISE_REQUESTED,
-                     ESP_BMS_FEATURE_BLE_MEDIA_HID != 0);
+    RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, false);
     RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISING, false);
     RUNTIME_SET_FLAG(runtime, BLUETOOTH_CONNECTED, false);
     RUNTIME_SET_FLAG(runtime, CONTROLLER_SCAN_REQUESTED, false);

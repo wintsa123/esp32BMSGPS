@@ -447,6 +447,10 @@ ble_gattc_disc_all_dscs(conn, chr->val_handle, service_end, cb, arg);
 - Cache non-empty candidate names by MAC in bounded component memory. A later
   nameless advertisement or visible-list refresh must reuse that name rather
   than downgrade the row to `设备 N`.
+- While the matching scan is active, store every observed MAC as a candidate.
+  A local name is optional metadata: ASCII, UTF-8 Chinese, and nameless reports
+  must all reach the existing per-MAC candidate store. Never use name language
+  or successful name decoding as the candidate admission filter.
 - Candidate array slots are immutable during one scan. When the array is full,
   ignore unseen MACs; never reuse a visible row for a different device until an
   explicit refresh clears the list.
@@ -463,8 +467,12 @@ ble_gattc_disc_all_dscs(conn, chr->val_handle, service_end, cb, arg);
 
 - Good: repeated refresh during discovery logs `reused active discovery`.
 - Base: idle host starts a new 10-second discovery.
+- Base: a nameless advertisement creates a placeholder row; a later named scan
+  response for the same MAC upgrades that row without adding another slot.
 - Bad: call `ble_gap_disc_cancel()` and immediately call `ble_gap_disc()`;
   asynchronous cancellation can return busy and surface `BLE FAIL`.
+- Bad: store candidates only when the local name contains a particular language;
+  normal ASCII BMS and controller advertisements then produce an empty list.
 
 ### 6. Tests Required
 
@@ -648,6 +656,10 @@ touch_canonical_to_display(x, y, &display_x, &display_y);
   encryption event, and resume advertising after a pairing failure.
 - The discoverable switch represents user intent while pairing. Turning it off
   during pairing terminates the pending local Bluetooth connection.
+- `runtime_reset_state()` initializes `BLUETOOTH_ADVERTISE_REQUESTED` to false,
+  including builds with BLE media HID. Compiling a local Bluetooth service must
+  never imply consent to advertise it at boot; only the existing user action
+  may set the request flag and start discoverability.
 - Wi-Fi STA scan/connect is started from Wi-Fi settings actions only.
 
 ### 4. Validation & Error Matrix
@@ -670,8 +682,12 @@ touch_canonical_to_display(x, y, &display_x, &display_y);
   reconnects; a silent link is terminated and rescanned after the backoff.
 - Base: tapping hotspot starts SoftAP and HTTP; tapping Wi-Fi scan starts Wi-Fi
   scan; tapping BMS bind starts NimBLE scan.
+- Base: booting with BLE media HID compiled keeps local advertising off until
+  the discoverable switch is explicitly enabled.
 - Bad: calling `esp_bms_idf_runtime_start_setup_ap()` from boot as a catch-all
   initializer that also starts HTTP, Wi-Fi STA, or NimBLE.
+- Bad: derive `BLUETOOTH_ADVERTISE_REQUESTED` from a compile-time HID feature;
+  this makes the device discoverable without current user intent.
 
 ### 6. Tests Required
 
@@ -1208,8 +1224,9 @@ Correct: ESP32 hashes received bytes -> compare code -> validate image -> set bo
 
 ### 3. Contracts
 
-- Scan records candidates only from ANT-looking advertisements, service
-  advertisements, or the currently bound MAC.
+- An explicit BMS scan records every observed MAC in the bounded candidate list;
+  protocol suitability is determined only after the user binds and the known
+  GATT service/characteristic contract is discovered.
 - Binding persists a normalized uppercase MAC in NVS key `bms_mac`.
 - A saved or newly bound MAC should trigger a scan; a matching advertisement
   may start a GATT connection.

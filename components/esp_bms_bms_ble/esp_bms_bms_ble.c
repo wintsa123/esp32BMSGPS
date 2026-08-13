@@ -899,43 +899,6 @@ static void bms_addr_to_mac_text(const uint8_t addr[6], char *out, size_t out_le
                    bms_hex_char(addr[0] >> 4U), bms_hex_char(addr[0] & 0x0FU));
 }
 
-static bool bms_name_has_chinese(const uint8_t *name, size_t name_len)
-{
-    if (!name) {
-        return false;
-    }
-    for (size_t index = 0U; index < name_len;) {
-        const uint8_t first = name[index++];
-        uint32_t codepoint = first;
-        size_t continuation_count = 0U;
-        if ((first & 0xE0U) == 0xC0U) {
-            codepoint = first & 0x1FU;
-            continuation_count = 1U;
-        } else if ((first & 0xF0U) == 0xE0U) {
-            codepoint = first & 0x0FU;
-            continuation_count = 2U;
-        } else if ((first & 0xF8U) == 0xF0U) {
-            codepoint = first & 0x07U;
-            continuation_count = 3U;
-        }
-        if (index + continuation_count > name_len) {
-            return false;
-        }
-        for (size_t continuation = 0U; continuation < continuation_count; ++continuation) {
-            const uint8_t value = name[index++];
-            if ((value & 0xC0U) != 0x80U) {
-                continuation_count = 0U;
-                break;
-            }
-            codepoint = (codepoint << 6U) | (value & 0x3FU);
-        }
-        if (continuation_count == 2U && codepoint >= 0x4E00U && codepoint <= 0x9FFFU) {
-            return true;
-        }
-    }
-    return false;
-}
-
 static bool bms_name_copy(char *out, size_t out_len, const uint8_t *name, size_t name_len)
 {
     if (!out || out_len == 0U) {
@@ -1049,10 +1012,7 @@ static int bms_gap_event(struct ble_gap_event *event, void *arg)
         char mac[sizeof(runtime->bms_bound_mac)] = { 0 };
         char name[ESP_BMS_IDF_BMS_SCAN_NAME_LEN + 1U] = { 0 };
         bms_addr_to_mac_text(event->disc.addr.val, mac, sizeof(mac));
-        const bool has_chinese_name = name_field && name_field->length > 1U &&
-                                      bms_name_has_chinese(name_field->value,
-                                                           (size_t)name_field->length - 1U);
-        const bool has_name = has_chinese_name &&
+        const bool has_name = name_field && name_field->length > 1U &&
                               bms_name_copy(name,
                                             sizeof(name),
                                             name_field->value,
@@ -1076,7 +1036,7 @@ static int bms_gap_event(struct ble_gap_event *event, void *arg)
                                      ESP_LOG_INFO);
             debug_report_count++;
         }
-        if (RUNTIME_FLAG(runtime, BMS_SCAN_ACTIVE) && has_chinese_name && has_name) {
+        if (RUNTIME_FLAG(runtime, BMS_SCAN_ACTIVE)) {
             esp_bms_idf_runtime_bms_scan_store_candidate(runtime,
                                                          mac,
                                                          has_name ? name : NULL,
