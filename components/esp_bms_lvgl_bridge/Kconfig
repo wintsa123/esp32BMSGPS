@@ -1,5 +1,14 @@
 menu "ESP BMS LVGL Bridge"
 
+    config ESP_BMS_LVGL_BRIDGE_BACKLIGHT_DIMMING
+        bool "Enable backlight dimming"
+        default y
+        help
+            Enable the brightness controls and backlight PWM implementation.
+            XL9555 boards use software PWM; boards with a dedicated backlight
+            GPIO use LEDC hardware PWM. When disabled, the backlight stays on
+            and brightness controls are omitted from the device UI.
+
     config ESP_BMS_LVGL_BRIDGE_SPI_DRAW_BUFFER_HEIGHT
         int "SPI draw buffer height"
         range 10 120

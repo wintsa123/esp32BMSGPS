@@ -61,6 +61,24 @@ class BleScanSourceContractTest(unittest.TestCase):
         )
         self.assertNotIn("ESP_BMS_FEATURE_BLE_MEDIA_HID", body)
 
+    def test_candidate_name_updates_are_scoped_to_the_same_mac(self):
+        runtime_path = ROOT / "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c"
+        bms_store = function_body(runtime_path, "esp_bms_idf_runtime_bms_scan_store_candidate")
+        bms_find = function_body(runtime_path, "runtime_bms_scan_find_candidate")
+        self.assertIn("runtime_bms_scan_find_candidate(runtime, mac)", bms_store)
+        self.assertRegex(bms_find, r"strcmp\([^,]+\.mac,\s*mac\)\s*==\s*0")
+        self.assertIn("runtime_bms_scan_cache_name_locked(mac, name)", bms_store)
+
+        controller_store = function_body(
+            ROOT / "components/esp_bms_controller_ble/esp_bms_controller_ble.c",
+            "controller_store_candidate",
+        )
+        self.assertRegex(
+            controller_store,
+            r"strcmp\(runtime->controller_scan_candidates\[index\]\.mac,\s*mac\)\s*==\s*0",
+        )
+        self.assertIn("controller_cache_name_locked(mac, name)", controller_store)
+
 
 if __name__ == "__main__":
     unittest.main()

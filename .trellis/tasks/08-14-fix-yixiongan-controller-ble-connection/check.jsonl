@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Verify build, diff, change-detection, and hardware completion gates."}
+{"file":".trellis/spec/backend/hardware-build-flash.md","reason":"Verify target and RFC2217 flash/monitor compliance."}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"Verify connection-stage logging remains bounded and safe."}
+{"file":".trellis/tasks/08-14-fix-yixiongan-controller-ble-connection/prd.md","reason":"Audit every approved acceptance criterion against current evidence."}
+{"file":".trellis/tasks/08-14-fix-yixiongan-controller-ble-connection/design.md","reason":"Check that implementation stays within the known FFE1 contract without generic probing."}
+{"file":".trellis/tasks/08-14-fix-yixiongan-controller-ble-connection/implement.md","reason":"Check all planned validation commands and hardware evidence."}

@@ -109,22 +109,29 @@ void settings_bms_ble_refresh_rows(const esp_bms_dashboard_snapshot_t *snapshot,
         }
         const esp_bms_bms_scan_candidate_t *candidate = &candidates[index];
         const bool has_name = candidate->has_name && candidate->name[0] != '\0';
-        if (!has_name) {
-            continue;
-        }
-        const char *name = candidate->name;
+        const char *name = has_name ? candidate->name : "设备";
+        const size_t mac_len = strnlen(candidate->mac, sizeof(candidate->mac));
+        const size_t mac_suffix_len = mac_len > 5U ? 5U : mac_len;
+        char mac_suffix[6] = { 0 };
+        (void)snprintf(mac_suffix,
+                       sizeof(mac_suffix),
+                       "%.*s",
+                       (int)mac_suffix_len,
+                       candidate->mac + mac_len - mac_suffix_len);
         const int written = candidate->rssi > INT8_MIN
                                 ? snprintf(s_ui.settings_bms_ble_list_text + used,
                                            sizeof(s_ui.settings_bms_ble_list_text) - used,
-                                           "%s%s  %d dBm",
+                                           "%s%s %s %d dBm",
                                            row == 0U ? "" : "\n",
                                            name,
+                                           mac_suffix,
                                            (int)candidate->rssi)
                                 : snprintf(s_ui.settings_bms_ble_list_text + used,
                                            sizeof(s_ui.settings_bms_ble_list_text) - used,
-                                           "%s%s  --",
+                                           "%s%s %s --",
                                            row == 0U ? "" : "\n",
-                                           name);
+                                           name,
+                                           mac_suffix);
         if (written < 0) {
             break;
         }
@@ -175,6 +182,10 @@ static void settings_detail_switch_event_cb(lv_event_t *event)
     lv_obj_t *track = lv_event_get_current_target(event);
     lv_obj_t *box = lv_obj_get_parent(track);
     if (box) {
+        if (box == s_ui.setup_ap_control_row) {
+            set_setup_ap_control(!settings_detail_action_switch_on(
+                ESP_BMS_LVGL_ACTION_ENABLE_WIFI_REPROVISIONING));
+        }
         lv_obj_send_event(box, LV_EVENT_CLICKED, NULL);
     }
 }
@@ -409,25 +420,13 @@ void settings_bms_bind_confirm_accept_event_cb(lv_event_t *event)
              mac);
 }
 
-void settings_bms_ble_candidate_event_cb(lv_event_t *event)
+static bool settings_bms_ble_activate_relative_y(int32_t relative_y)
 {
-    if (!settings_bms_popup_click_ready(event)) {
-        return;
-    }
-
-    lv_point_t point = { 0 };
-    lv_area_t area = { 0 };
-    lv_obj_t *list = lv_event_get_target_obj(event);
-    if (!list || !get_active_pointer(&point)) {
-        return;
-    }
-    lv_obj_get_coords(list, &area);
     const int32_t row_h = s_ui.width < s_ui.height ? SETTINGS_CHOICE_ROW_H_PORTRAIT :
                                                      SETTINGS_CHOICE_ROW_H_LANDSCAPE;
     const int32_t gap = s_ui.width < s_ui.height ? 7 : 5;
-    const int32_t relative_y = point.y - area.y1;
     if (relative_y < 0 || relative_y % (row_h + gap) >= row_h) {
-        return;
+        return false;
     }
     const uint8_t row = (uint8_t)(relative_y / (row_h + gap));
     const esp_bms_dashboard_snapshot_t *snapshot = settings_current_snapshot();
@@ -444,17 +443,17 @@ void settings_bms_ble_candidate_event_cb(lv_event_t *event)
                                       false,
                                       "more-page");
         lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
-        return;
+        return true;
     }
     if (index == UINT8_MAX) {
-        return;
+        return false;
     }
     const esp_bms_bms_scan_candidate_t *candidate =
         s_ui.settings_ble_source == (uint8_t)SETTINGS_BLE_SOURCE_BMS
             ? &snapshot->bms_scan_candidates[index]
             : &snapshot->controller_scan_candidates[index];
     if (!candidate || candidate->mac[0] == '\0') {
-        return;
+        return false;
     }
 
     ESP_LOGI(TAG,
@@ -463,6 +462,30 @@ void settings_bms_ble_candidate_event_cb(lv_event_t *event)
                                                                           : "controller",
              candidate->mac);
     settings_show_bms_bind_confirm(candidate);
+    return true;
+}
+
+#if ESP_BMS_LVGL_UI_SIMULATOR
+bool settings_bms_ble_simulator_activate_relative_y(int32_t relative_y)
+{
+    return settings_bms_ble_activate_relative_y(relative_y);
+}
+#endif
+
+void settings_bms_ble_candidate_event_cb(lv_event_t *event)
+{
+    if (!settings_bms_popup_click_ready(event)) {
+        return;
+    }
+
+    lv_point_t point = { 0 };
+    lv_area_t area = { 0 };
+    lv_obj_t *list = lv_event_get_target_obj(event);
+    if (!list || !get_active_pointer(&point)) {
+        return;
+    }
+    lv_obj_get_coords(list, &area);
+    (void)settings_bms_ble_activate_relative_y(point.y - area.y1);
 }
 
 void settings_bms_ble_refresh_event_cb(lv_event_t *event)
@@ -844,6 +867,11 @@ static void settings_show_boot_animation_picker(void)
 
 void settings_show_system_view(settings_system_view_t view)
 {
+#if !CONFIG_ESP_BMS_LVGL_BRIDGE_BACKLIGHT_DIMMING
+    if (view == SETTINGS_SYSTEM_VIEW_BRIGHTNESS) {
+        view = SETTINGS_SYSTEM_VIEW_ROOT;
+    }
+#endif
     if (view == SETTINGS_SYSTEM_VIEW_TOUCH_CALIBRATION &&
         !s_touch_calibration_supported) {
         view = SETTINGS_SYSTEM_VIEW_ROOT;
@@ -863,10 +891,12 @@ void settings_show_system_view(settings_system_view_t view)
     lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
 
     switch (view) {
+#if CONFIG_ESP_BMS_LVGL_BRIDGE_BACKLIGHT_DIMMING
     case SETTINGS_SYSTEM_VIEW_BRIGHTNESS:
         label_set_text_if_changed(s_ui.settings_detail_title, "亮度");
         settings_show_system_slider(QUICK_LEVEL_BRIGHTNESS);
         break;
+#endif
 #if ESP_BMS_FEATURE_AUDIO
     case SETTINGS_SYSTEM_VIEW_VOLUME:
         label_set_text_if_changed(s_ui.settings_detail_title, "音量");

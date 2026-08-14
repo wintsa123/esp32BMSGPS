@@ -495,6 +495,70 @@ ble_gap_disc(...);
 if (BMS_SCAN_ACTIVE || ble_gap_disc_active()) return ESP_OK;
 ```
 
+## Scenario: BLE Candidate Row Identity
+
+### 1. Scope / Trigger
+
+- Trigger: changing BMS/controller scan candidates, their snapshot projection,
+  candidate-list text, pagination, or click handling.
+
+### 2. Signatures
+
+- Candidate identity: complete MAC text in `esp_bms_bms_scan_candidate_t.mac`.
+- Shared renderer: `settings_bms_ble_refresh_rows(...)`.
+- Row mapping: `settings_bms_ble_candidate_index(count, more_page, row, ...)`.
+
+### 3. Contracts
+
+- A candidate name belongs only to the same complete MAC's advertisement or
+  bounded name-cache entry. Never propagate another MAC's name based on row,
+  RSSI, discovery order, or a guessed device count.
+- Every candidate selected by the pagination mapper produces exactly one
+  visual line. A missing name renders `设备` and must not skip the line.
+- Candidate lines include the last two MAC octets so equal advertised names
+  remain distinguishable. Copy the suffix through a bounded local buffer.
+- The multiline label's visual row and click row remain one-to-one. When more
+  than six candidates exist, row 5 is `More devices`; activating it changes
+  pages and must not open a binding confirmation.
+
+### 4. Validation & Error Matrix
+
+- Named report -> preserve that name for its MAC and render one line.
+- Nameless report without same-MAC cache -> render `设备 XX:XX` on one line.
+- Two `midea` MACs plus another name -> only the two matching MACs show
+  `midea`; all three keep distinct suffixes.
+- More row -> open page two with no confirmation MAC/name populated.
+
+### 5. Good / Base / Bad Cases
+
+- Good: `midea 11:4D`, `Other BMS 44:01`, and `设备 38:84` remain separate.
+- Base: a later named report upgrades only the matching nameless MAC.
+- Bad: omit a nameless row; every following touch then selects the wrong
+  candidate and `More devices` can open a device confirmation.
+
+### 6. Tests Required
+
+- Run the BLE source contract test and both LVGL simulator orientations.
+- Exercise the real row coordinate for `More devices`, then a page-two row;
+  assert page transition first and exact confirmation MAC/name second.
+- Build and flash the selected profile. Compare raw scan logs and visible rows
+  by MAC; do not accept MAC suffixes as a substitute for a correct name.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```c
+if (!candidate->has_name) continue;
+```
+
+#### Correct
+
+```c
+const char *name = candidate->has_name ? candidate->name : "设备";
+append_one_row(name, bounded_mac_suffix(candidate->mac));
+```
+
 ## Scenario: Persistent Touch Calibration
 
 ### 1. Scope / Trigger

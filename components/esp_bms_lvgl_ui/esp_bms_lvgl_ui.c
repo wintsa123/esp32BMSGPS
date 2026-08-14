@@ -881,7 +881,9 @@ _Static_assert(ARRAY_SIZE(SETTINGS_BMS_TYPE_LABELS) == ARRAY_SIZE(SETTINGS_BMS_T
                "BMS type labels must match runtime BMS type count");
 
 const settings_detail_row_t SETTINGS_SYSTEM_ROWS[SETTINGS_SYSTEM_ROWS_COUNT] = {
+#if CONFIG_ESP_BMS_LVGL_BRIDGE_BACKLIGHT_DIMMING
     { "亮度", "调节屏幕亮度", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_BRIGHTNESS },
+#endif
 #if ESP_BMS_FEATURE_AUDIO
     { "音量", "调节提示音量", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_VOLUME },
 #endif
@@ -1529,4 +1531,3 @@ esp_err_t esp_bms_lvgl_ui_take_action(esp_bms_lvgl_action_t *action)
     *action = event.action;
     return ESP_OK;
 }
-

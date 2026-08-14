@@ -1901,6 +1901,7 @@ void create_screen(lv_display_t *display)
     lv_obj_add_event_cb(s_ui.quick_panel, return_swipe_event_cb, LV_EVENT_RELEASED, NULL);
     lv_obj_add_event_cb(s_ui.quick_panel, return_swipe_event_cb, LV_EVENT_PRESS_LOST, NULL);
 
+#if CONFIG_ESP_BMS_LVGL_BRIDGE_BACKLIGHT_DIMMING
     (void)quick_level_tile(s_ui.quick_panel,
                            quick_layout->brightness.x,
                            quick_layout->brightness.y,
@@ -1908,6 +1909,7 @@ void create_screen(lv_display_t *display)
                            quick_layout->brightness.h,
                            QUICK_LEVEL_BRIGHTNESS,
                            85U);
+#endif
 #if ESP_BMS_FEATURE_AUDIO
     (void)quick_level_tile(s_ui.quick_panel,
                            quick_layout->volume.x,

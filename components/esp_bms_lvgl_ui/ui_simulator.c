@@ -5,6 +5,8 @@
 #include "esp_bms_lvgl_ui_internal.h"
 
 #if ESP_BMS_LVGL_UI_SIMULATOR
+extern bool settings_bms_ble_simulator_activate_relative_y(int32_t relative_y);
+
 static uint32_t simulator_object_count(const lv_obj_t *obj)
 {
     if (!obj) {
@@ -464,14 +466,25 @@ bool esp_bms_lvgl_ui_simulator_settings_scroll_smoke(void)
     }
     (void)snprintf(s_ui.last_snapshot.bms_scan_candidates[0].name,
                    sizeof(s_ui.last_snapshot.bms_scan_candidates[0].name),
-                   "JK \"BMS\\#2");
+                   "midea");
+    (void)snprintf(s_ui.last_snapshot.bms_scan_candidates[1].name,
+                   sizeof(s_ui.last_snapshot.bms_scan_candidates[1].name),
+                   "Other BMS");
+    (void)snprintf(s_ui.last_snapshot.bms_scan_candidates[2].name,
+                   sizeof(s_ui.last_snapshot.bms_scan_candidates[2].name),
+                   "midea");
+    s_ui.last_snapshot.bms_scan_candidates[3].name[0] = '\0';
+    s_ui.last_snapshot.bms_scan_candidates[3].has_name = false;
     settings_bms_ble_refresh_rows(&s_ui.last_snapshot,
                                   SETTINGS_BLE_SOURCE_BMS,
                                   false,
                                   "simulator-six");
     const char *bms_list_text = lv_label_get_text(s_ui.settings_bms_ble_list);
-    const bool bms_six_direct = strstr(bms_list_text, "JK \"BMS\\#2") != NULL &&
-                                strstr(bms_list_text, "BMS 6") != NULL &&
+    const bool bms_six_direct = strstr(bms_list_text, "midea 44:00 -45 dBm") != NULL &&
+                                strstr(bms_list_text, "Other BMS 44:01 -46 dBm") != NULL &&
+                                strstr(bms_list_text, "midea 44:02 -47 dBm") != NULL &&
+                                strstr(bms_list_text, "设备 44:03 -48 dBm") != NULL &&
+                                strstr(bms_list_text, "BMS 6 44:05 -50 dBm") != NULL &&
                                 strstr(bms_list_text, "More devices") == NULL;
 
     s_ui.last_snapshot.bms_scan_candidate_count = 7U;
@@ -491,16 +504,21 @@ bool esp_bms_lvgl_ui_simulator_settings_scroll_smoke(void)
                                  settings_bms_ble_candidate_index(7U, false, 5U, &more_action) ==
                                      UINT8_MAX &&
                                  more_action;
-    s_ui.settings_ble_more_page = true;
-    settings_bms_ble_refresh_rows(&s_ui.last_snapshot,
-                                  SETTINGS_BLE_SOURCE_BMS,
-                                  false,
-                                  "simulator-seven-more");
+    const int32_t bms_row_stride =
+        (s_ui.width < s_ui.height ? SETTINGS_CHOICE_ROW_H_PORTRAIT :
+                                    SETTINGS_CHOICE_ROW_H_LANDSCAPE) +
+        (s_ui.width < s_ui.height ? 7 : 5);
+    s_ui.settings_bms_confirm_mac[0] = '\0';
+    const bool bms_more_clicked =
+        settings_bms_ble_simulator_activate_relative_y(5 * bms_row_stride) &&
+        s_ui.settings_ble_more_page && !s_ui.settings_bms_popup &&
+        s_ui.settings_bms_confirm_mac[0] == '\0';
     bms_list_text = lv_label_get_text(s_ui.settings_bms_ble_list);
     const bool bms_seven_more = strstr(bms_list_text, "BMS 6") != NULL &&
                                 strstr(bms_list_text, "BMS 7") != NULL &&
                                 strstr(bms_list_text, "More devices") == NULL &&
-                                settings_bms_ble_candidate_index(7U, true, 0U, NULL) == 5U;
+                                settings_bms_ble_candidate_index(7U, true, 0U, NULL) == 5U &&
+                                bms_more_clicked;
 
     s_ui.last_snapshot.bms_scan_candidate_count = ESP_BMS_BMS_SCAN_MAX_CANDIDATES;
     for (uint8_t index = 7U; index < ESP_BMS_BMS_SCAN_MAX_CANDIDATES; ++index) {
@@ -535,7 +553,8 @@ bool esp_bms_lvgl_ui_simulator_settings_scroll_smoke(void)
         s_ui.settings_bms_ble_status == initial_bms_ble_status &&
         s_ui.settings_bms_ble_list == initial_bms_ble_list &&
         !lv_obj_has_flag(s_ui.settings_bms_ble_list, LV_OBJ_FLAG_HIDDEN) &&
-        strstr(bms_list_text, "BMS 6") != NULL && strstr(bms_list_text, "设备 12") == NULL &&
+        strstr(bms_list_text, "BMS 6 44:05") != NULL &&
+        strstr(bms_list_text, "设备 44:0B") != NULL &&
         settings_bms_ble_candidate_index(12U, true, 6U, NULL) == 11U;
     settings_navigate_back();
     const bool bms_more_back_returns_first =
@@ -557,6 +576,20 @@ bool esp_bms_lvgl_ui_simulator_settings_scroll_smoke(void)
         !s_ui.settings_bms_popup &&
         s_ui.pending_event.action == ESP_BMS_LVGL_ACTION_CANCEL_BMS_CONNECTION;
     memset(&s_ui.pending_event, 0, sizeof(s_ui.pending_event));
+    settings_show_bms_ble_popup(SETTINGS_BLE_SOURCE_BMS, false);
+    s_ui.settings_ble_more_page = true;
+    settings_bms_ble_refresh_rows(&s_ui.last_snapshot,
+                                  SETTINGS_BLE_SOURCE_BMS,
+                                  false,
+                                  "simulator-bms-more-click");
+    s_ui.settings_bms_confirm_mac[0] = '\0';
+    s_ui.settings_bms_confirm_name[0] = '\0';
+    const bool bms_more_candidate_clicked =
+        settings_bms_ble_simulator_activate_relative_y(6 * bms_row_stride) &&
+        s_ui.settings_bms_popup &&
+        strcmp(s_ui.settings_bms_confirm_mac, "00:11:22:33:44:0B") == 0 &&
+        strcmp(s_ui.settings_bms_confirm_name, "设备") == 0;
+    settings_bms_popup_close();
 #else
     const bool bms_back_cancels_scan = true;
     const bool bms_confirm_back_cancels_scan = true;
@@ -566,6 +599,7 @@ bool esp_bms_lvgl_ui_simulator_settings_scroll_smoke(void)
     const bool bms_seven_first = true;
     const bool bms_seven_more = true;
     const bool bms_twelve_first = true;
+    const bool bms_more_candidate_clicked = true;
 #endif
 #if ESP_BMS_FEATURE_CONTROLLER
     settings_show_detail(SETTINGS_DETAIL_CONTROLLER);
@@ -613,7 +647,7 @@ bool esp_bms_lvgl_ui_simulator_settings_scroll_smoke(void)
                                   "simulator-controller-twelve-more");
     const char *controller_list_text = lv_label_get_text(s_ui.settings_bms_ble_list);
     const bool controller_twelve_more = strstr(controller_list_text, "CTL 6") != NULL &&
-                                        strstr(controller_list_text, "设备 12") == NULL &&
+                                        strstr(controller_list_text, "设备 44:0B") != NULL &&
                                         strcmp(s_ui.last_snapshot.controller_scan_candidates[
                                                    settings_bms_ble_candidate_index(
                                                        12U, true, 0U, NULL)]
@@ -627,6 +661,19 @@ bool esp_bms_lvgl_ui_simulator_settings_scroll_smoke(void)
     settings_navigate_back();
     const bool controller_back_returns_root =
         s_ui.settings_controller_view == (uint8_t)SETTINGS_CONTROLLER_VIEW_ROOT;
+    settings_show_bms_ble_popup(SETTINGS_BLE_SOURCE_CONTROLLER, false);
+    s_ui.settings_ble_more_page = true;
+    settings_bms_ble_refresh_rows(&s_ui.last_snapshot,
+                                  SETTINGS_BLE_SOURCE_CONTROLLER,
+                                  false,
+                                  "simulator-controller-more-click");
+    s_ui.settings_bms_confirm_mac[0] = '\0';
+    s_ui.settings_bms_confirm_name[0] = '\0';
+    const bool controller_more_candidate_clicked =
+        settings_bms_ble_simulator_activate_relative_y(0) && s_ui.settings_bms_popup &&
+        strcmp(s_ui.settings_bms_confirm_mac, "10:11:22:33:44:05") == 0 &&
+        strcmp(s_ui.settings_bms_confirm_name, "CTL 6") == 0;
+    settings_bms_popup_close();
 #else
     const bool controller_zero_empty = true;
     const bool controller_six_direct = true;
@@ -634,6 +681,7 @@ bool esp_bms_lvgl_ui_simulator_settings_scroll_smoke(void)
     const bool controller_twelve_more = true;
     const bool controller_more_back_returns_first = true;
     const bool controller_back_returns_root = true;
+    const bool controller_more_candidate_clicked = true;
 #endif
     esp_bms_dashboard_snapshot_t bluetooth_snapshot = s_ui.last_snapshot;
     bluetooth_snapshot.bms_error_text[0] = '\0';
@@ -657,9 +705,11 @@ bool esp_bms_lvgl_ui_simulator_settings_scroll_smoke(void)
     show_dashboard_view();
     return scrolled && bms_six_direct && bms_seven_first && bms_seven_more &&
            bms_twelve_first && bms_candidate_list_compact && bms_more_back_returns_first &&
-           bms_back_cancels_scan && bms_confirm_back_cancels_scan && controller_zero_empty &&
+           bms_more_candidate_clicked && bms_back_cancels_scan &&
+           bms_confirm_back_cancels_scan && controller_zero_empty &&
            controller_six_direct && controller_seven_first && controller_twelve_more &&
-           controller_more_back_returns_first && controller_back_returns_root &&
+           controller_more_candidate_clicked && controller_more_back_returns_first &&
+           controller_back_returns_root &&
            bluetooth_default_hides_pin &&
            bluetooth_pin_visible && bluetooth_pin_hidden;
 }

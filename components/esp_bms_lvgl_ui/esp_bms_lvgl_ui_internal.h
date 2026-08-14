@@ -48,6 +48,14 @@ LV_FONT_DECLARE(settings_zh_18);
 #define SETTINGS_S3_FONT_ENABLED 0
 #endif
 
+#ifndef CONFIG_ESP_BMS_LVGL_BRIDGE_BACKLIGHT_DIMMING
+#if ESP_BMS_LVGL_UI_SIMULATOR
+#define CONFIG_ESP_BMS_LVGL_BRIDGE_BACKLIGHT_DIMMING 1
+#else
+#define CONFIG_ESP_BMS_LVGL_BRIDGE_BACKLIGHT_DIMMING 0
+#endif
+#endif
+
 #define QUICK_PANEL_BUTTON_COUNT \
     (3 + ((ESP_BMS_FEATURE_BMS || ESP_BMS_FEATURE_CONTROLLER) ? 1 : 0) + \
      (ESP_BMS_FEATURE_NETWORK ? 1 : 0) + \
@@ -55,7 +63,8 @@ LV_FONT_DECLARE(settings_zh_18);
 #define QUICK_PANEL_GRID_COLS 4
 #define QUICK_PANEL_GRID_ROWS 2
 #define QUICK_PANEL_GRID_SLOT_COUNT (QUICK_PANEL_GRID_COLS * QUICK_PANEL_GRID_ROWS)
-#define QUICK_PANEL_LEVEL_COUNT (1 + ESP_BMS_FEATURE_AUDIO)
+#define QUICK_PANEL_LEVEL_COUNT \
+    (CONFIG_ESP_BMS_LVGL_BRIDGE_BACKLIGHT_DIMMING + ESP_BMS_FEATURE_AUDIO)
 #define QUICK_PANEL_CONTROL_COUNT (QUICK_PANEL_BUTTON_COUNT + QUICK_PANEL_LEVEL_COUNT)
 #define QUICK_EDIT_BUTTON_SIZE 28
 #define QUICK_EDIT_BUTTON_SIZE_S3 36
@@ -884,7 +893,8 @@ extern const quick_panel_item_t QUICK_PANEL_ITEMS[QUICK_PANEL_BUTTON_COUNT];
 #define SETTINGS_BLUETOOTH_ROWS_COUNT 3
 #define SETTINGS_BMS_ROWS_COUNT 1
 #define SETTINGS_BMS_TYPE_COUNT 5
-#define SETTINGS_SYSTEM_ROWS_COUNT (7 + (ESP_BMS_FEATURE_AUDIO ? 1 : 0))
+#define SETTINGS_SYSTEM_ROWS_COUNT \
+    (6 + CONFIG_ESP_BMS_LVGL_BRIDGE_BACKLIGHT_DIMMING + (ESP_BMS_FEATURE_AUDIO ? 1 : 0))
 #define SETTINGS_ABOUT_ROWS_COUNT 3
 extern const settings_option_t SETTINGS_OPTIONS[SETTINGS_OPTIONS_COUNT];
 extern const settings_detail_row_t SETTINGS_HOTSPOT_ROWS[SETTINGS_HOTSPOT_ROWS_COUNT];
@@ -1088,6 +1098,7 @@ void settings_option_event_cb(lv_event_t *event);
 /* ---- pages_common ---- */
 void set_header(const esp_bms_dashboard_snapshot_t *snapshot);
 void set_setup_ap(const esp_bms_dashboard_snapshot_t *snapshot);
+void set_setup_ap_control(bool enabled);
 void set_cast_page(const esp_bms_dashboard_snapshot_t *snapshot);
 void set_music_page(const esp_bms_dashboard_snapshot_t *snapshot);
 void set_dashboard(const esp_bms_dashboard_snapshot_t *snapshot);

@@ -88,9 +88,11 @@ static void quick_layout_make_default(quick_panel_layout_t *layout,
                        quick_tile);
     }
 
+#if CONFIG_ESP_BMS_LVGL_BRIDGE_BACKLIGHT_DIMMING
     layout->brightness = slots[0];
+#endif
 #if ESP_BMS_FEATURE_AUDIO
-    layout->volume = slots[1];
+    layout->volume = slots[CONFIG_ESP_BMS_LVGL_BRIDGE_BACKLIGHT_DIMMING ? 1 : 0];
 #endif
     for (uint32_t index = 0; index < QUICK_PANEL_BUTTON_COUNT; ++index) {
         layout->items[index] = slots[index + QUICK_PANEL_LEVEL_COUNT];
@@ -243,19 +245,25 @@ static void quick_layout_find_drop_target(quick_panel_layout_t *layout,
                                           quick_drag_target_kind_t *target_kind,
                                           uint8_t *target_index)
 {
-    quick_drag_target_kind_t best_kind = QUICK_DRAG_TARGET_BRIGHTNESS;
+    quick_drag_target_kind_t best_kind = QUICK_DRAG_TARGET_ITEM;
     uint8_t best_index = 0;
     int32_t best_distance = INT32_MAX;
 
     for (uint32_t slot = 0; slot < QUICK_PANEL_CONTROL_COUNT; ++slot) {
         quick_drag_target_kind_t kind = QUICK_DRAG_TARGET_ITEM;
         uint8_t index = (uint8_t)(slot - QUICK_PANEL_LEVEL_COUNT);
+#if CONFIG_ESP_BMS_LVGL_BRIDGE_BACKLIGHT_DIMMING
         if (slot == 0U) {
             kind = QUICK_DRAG_TARGET_BRIGHTNESS;
             index = 0U;
         }
+#endif
 #if ESP_BMS_FEATURE_AUDIO
+#if CONFIG_ESP_BMS_LVGL_BRIDGE_BACKLIGHT_DIMMING
         else if (slot == 1U) {
+#else
+        if (slot == 0U) {
+#endif
             kind = QUICK_DRAG_TARGET_VOLUME;
             index = 0U;
         }

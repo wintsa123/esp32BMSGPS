@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Firmware build, GitNexus change detection, and RFC2217 completion gates."}
+{"file":".trellis/spec/backend/hardware-build-flash.md","reason":"ESP32-S3 target, ESP-IDF 6.0.2, and fixed remote hardware validation contract."}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"BLE state transition logging requirements and sensitive-data restrictions."}
+{"file":".trellis/tasks/08-14-fix-yixiongan-controller-ble-connection/prd.md","reason":"Approved requirements and acceptance criteria, including captured hardware evidence."}
+{"file":".trellis/tasks/08-14-fix-yixiongan-controller-ble-connection/design.md","reason":"Minimal FFE1 single-characteristic compatibility design and preserved state machine."}
+{"file":".trellis/tasks/08-14-fix-yixiongan-controller-ble-connection/implement.md","reason":"Ordered implementation and hardware validation plan."}

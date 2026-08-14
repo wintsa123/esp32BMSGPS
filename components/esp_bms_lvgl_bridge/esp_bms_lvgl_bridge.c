@@ -2,7 +2,9 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#if CONFIG_ESP_BMS_LVGL_BRIDGE_BACKLIGHT_DIMMING
 #include <stdatomic.h>
+#endif
 #include <string.h>
 #include "driver/gpio.h"
 #include "driver/i2c_master.h"
@@ -61,11 +63,13 @@ static const char *TAG = "bms_lvgl_bridge";
 #define BACKLIGHT_PWM_MODE LEDC_LOW_SPEED_MODE
 #define BACKLIGHT_PWM_TIMER LEDC_TIMER_0
 #define BACKLIGHT_PWM_CHANNEL LEDC_CHANNEL_0
+#if CONFIG_ESP_BMS_LVGL_BRIDGE_BACKLIGHT_DIMMING
 #define XL9555_BACKLIGHT_PWM_PERIOD_US 2000U
 #define XL9555_BACKLIGHT_NOTIFY_TIMER BIT0
 #define XL9555_BACKLIGHT_NOTIFY_UPDATE BIT1
 #define XL9555_BACKLIGHT_TASK_STACK_BYTES 3072U
 #define XL9555_BACKLIGHT_TASK_PRIORITY 7U
+#endif
 #define XL9555_I2C_ADDRESS 0x20U
 #define XL9555_I2C_CLOCK_HZ 400000U
 #define XL9555_OUTPUT_PORT0_REG 0x02U
@@ -79,8 +83,10 @@ static const char *TAG = "bms_lvgl_bridge";
 #define LVGL_TASK_MAX_DELAY_MS CONFIG_ESP_BMS_LVGL_BRIDGE_TASK_MAX_DELAY_MS
 #if CONFIG_FREERTOS_NUMBER_OF_CORES > 1
 #define LVGL_TASK_CORE_ID 1
+#define BACKLIGHT_TASK_CORE_ID 1
 #else
 #define LVGL_TASK_CORE_ID 0
+#define BACKLIGHT_TASK_CORE_ID 0
 #endif
 #define TOUCH_CALIBRATION_VERSION 1U
 #define TOUCH_CALIBRATION_POINT_COUNT 4U
@@ -128,12 +134,14 @@ static bool s_touch_base_mirror_y;
 static bool s_backlight_pwm_ready;
 static bool s_xl9555_backlight;
 static uint8_t s_xl9555_output_port0;
+#if CONFIG_ESP_BMS_LVGL_BRIDGE_BACKLIGHT_DIMMING
 static atomic_uchar s_xl9555_brightness_percent;
 static esp_timer_handle_t s_xl9555_backlight_timer;
 static TaskHandle_t s_xl9555_backlight_task;
 static StaticTask_t s_xl9555_backlight_task_storage;
 static StackType_t s_xl9555_backlight_task_stack[XL9555_BACKLIGHT_TASK_STACK_BYTES /
                                                 sizeof(StackType_t)];
+#endif
 static bool s_initialized;
 static TickType_t s_touch_last_log_tick;
 static TickType_t s_touch_last_filter_log_tick;
@@ -266,6 +274,7 @@ static esp_err_t xl9555_set_backlight(bool on)
     return xl9555_write(XL9555_OUTPUT_PORT0_REG, s_xl9555_output_port0, 0U);
 }
 
+#if CONFIG_ESP_BMS_LVGL_BRIDGE_BACKLIGHT_DIMMING
 static void xl9555_backlight_timer_cb(void *arg)
 {
     (void)xTaskNotify((TaskHandle_t)arg, XL9555_BACKLIGHT_NOTIFY_TIMER, eSetBits);
@@ -307,14 +316,15 @@ static void xl9555_backlight_task(void *arg)
 
 static esp_err_t configure_xl9555_backlight_pwm(void)
 {
-    s_xl9555_backlight_task = xTaskCreateStatic(xl9555_backlight_task,
-                                                "lcd_bl",
-                                                sizeof(s_xl9555_backlight_task_stack) /
-                                                    sizeof(s_xl9555_backlight_task_stack[0]),
-                                                NULL,
-                                                XL9555_BACKLIGHT_TASK_PRIORITY,
-                                                s_xl9555_backlight_task_stack,
-                                                &s_xl9555_backlight_task_storage);
+    s_xl9555_backlight_task = xTaskCreateStaticPinnedToCore(
+        xl9555_backlight_task,
+        "lcd_bl",
+        sizeof(s_xl9555_backlight_task_stack) / sizeof(s_xl9555_backlight_task_stack[0]),
+        NULL,
+        XL9555_BACKLIGHT_TASK_PRIORITY,
+        s_xl9555_backlight_task_stack,
+        &s_xl9555_backlight_task_storage,
+        BACKLIGHT_TASK_CORE_ID);
     ESP_RETURN_ON_FALSE(s_xl9555_backlight_task, ESP_ERR_NO_MEM, TAG,
                         "create XL9555 backlight task failed");
     const esp_timer_create_args_t timer_args = {
@@ -327,6 +337,7 @@ static esp_err_t configure_xl9555_backlight_pwm(void)
                         "create XL9555 backlight timer failed");
     return ESP_OK;
 }
+#endif
 
 static esp_err_t init_xl9555(const esp_bms_lvgl_bridge_config_t *config)
 {
@@ -926,7 +937,11 @@ static esp_err_t configure_backlight(gpio_num_t pin, int on_level)
     s_backlight_pin = pin;
     s_backlight_pwm_ready = false;
     if (s_xl9555_backlight) {
+#if CONFIG_ESP_BMS_LVGL_BRIDGE_BACKLIGHT_DIMMING
         return configure_xl9555_backlight_pwm();
+#else
+        return xl9555_set_backlight(true);
+#endif
     }
     if (pin == GPIO_NUM_NC) {
         return ESP_OK;
@@ -962,9 +977,13 @@ static esp_err_t configure_backlight(gpio_num_t pin, int on_level)
 esp_err_t esp_bms_lvgl_bridge_set_brightness(uint8_t percent)
 {
     if (s_xl9555_backlight) {
+#if CONFIG_ESP_BMS_LVGL_BRIDGE_BACKLIGHT_DIMMING
         atomic_store(&s_xl9555_brightness_percent, percent > 100U ? 100U : percent);
         (void)xTaskNotify(s_xl9555_backlight_task, XL9555_BACKLIGHT_NOTIFY_UPDATE, eSetBits);
         return ESP_OK;
+#else
+        return xl9555_set_backlight(percent > 0U);
+#endif
     }
     if (s_backlight_pin == GPIO_NUM_NC) {
         return ESP_OK;

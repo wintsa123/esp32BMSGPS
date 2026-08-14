@@ -134,44 +134,49 @@ void set_header(const esp_bms_dashboard_snapshot_t *snapshot)
                               SNAPSHOT_FLAG(snapshot, SETUP_AP_ENABLED) ? "AP" : "AP OFF");
 }
 
-void set_setup_ap(const esp_bms_dashboard_snapshot_t *snapshot)
+void set_setup_ap_control(bool enabled)
 {
     if (s_ui.setup_ap_control_row) {
-        const bool enabled = SNAPSHOT_FLAG(snapshot, SETUP_AP_ENABLED);
         if (lv_obj_get_child_count(s_ui.setup_ap_control_row) > 1U) {
             label_set_text_if_changed(lv_obj_get_child(s_ui.setup_ap_control_row, 1),
                                       enabled ? "热点已打开" : "未打开");
         }
         if (lv_obj_get_child_count(s_ui.setup_ap_control_row) > 2U) {
             lv_obj_t *track = lv_obj_get_child(s_ui.setup_ap_control_row, 2);
-            lv_obj_set_style_bg_color(track,
-                                      enabled ? COLOR_SWITCH_ACTIVE : COLOR_SETTINGS_BORDER,
-                                      LV_PART_MAIN);
-            lv_obj_set_style_border_color(track,
-                                          enabled ? COLOR_SWITCH_ACTIVE : COLOR_SETTINGS_BORDER,
-                                          LV_PART_MAIN);
+            const lv_color_t track_color = enabled ? COLOR_SWITCH_ACTIVE : COLOR_SETTINGS_BORDER;
+            if (!lv_color_eq(lv_obj_get_style_bg_color(track, LV_PART_MAIN), track_color)) {
+                lv_obj_set_style_bg_color(track, track_color, LV_PART_MAIN);
+                lv_obj_set_style_border_color(track, track_color, LV_PART_MAIN);
+            }
             if (lv_obj_get_child_count(track) > 0U) {
                 lv_obj_t *thumb = lv_obj_get_child(track, 0);
                 const int32_t knob = lv_obj_get_width(thumb);
-                lv_obj_set_x(thumb, enabled ? (lv_obj_get_width(track) - knob - 2) : 2);
-                lv_obj_set_style_bg_color(thumb,
-                                          enabled ? COLOR_WHITE : COLOR_SETTINGS_MUTED,
-                                          LV_PART_MAIN);
+                const int32_t thumb_x = enabled ? (lv_obj_get_width(track) - knob - 2) : 2;
+                const lv_color_t thumb_color = enabled ? COLOR_WHITE : COLOR_SETTINGS_MUTED;
+                if (lv_obj_get_x(thumb) != thumb_x) {
+                    lv_obj_set_x(thumb, thumb_x);
+                }
+                if (!lv_color_eq(lv_obj_get_style_bg_color(thumb, LV_PART_MAIN), thumb_color)) {
+                    lv_obj_set_style_bg_color(thumb, thumb_color, LV_PART_MAIN);
+                }
             }
         }
     }
+}
+
+void set_setup_ap(const esp_bms_dashboard_snapshot_t *snapshot)
+{
+    set_setup_ap_control(SNAPSHOT_FLAG(snapshot, SETUP_AP_ENABLED));
 
     if (s_ui.setup_ap_info) {
         const char *ssid = snapshot->setup_ap_ssid[0] != '\0' ? snapshot->setup_ap_ssid : "--";
         const char *password = snapshot->setup_ap_password[0] != '\0' ? snapshot->setup_ap_password : "--";
         if (s_ui.width < s_ui.height) {
-            label_set_text_fmt_if_changed(s_ui.setup_ap_info, "SETUP %s\nSSID %.31s\nPW %.8s",
-                                          SNAPSHOT_FLAG(snapshot, SETUP_AP_ENABLED) ? "ON" : "OFF",
+            label_set_text_fmt_if_changed(s_ui.setup_ap_info, "SSID %.31s\nPW %.8s",
                                           ssid,
                                           password);
         } else {
-            label_set_text_fmt_if_changed(s_ui.setup_ap_info, "SETUP %s\nSSID\n%.31s\nPW %.8s",
-                                          SNAPSHOT_FLAG(snapshot, SETUP_AP_ENABLED) ? "ON" : "OFF",
+            label_set_text_fmt_if_changed(s_ui.setup_ap_info, "SSID\n%.31s\nPW %.8s",
                                           ssid,
                                           password);
         }

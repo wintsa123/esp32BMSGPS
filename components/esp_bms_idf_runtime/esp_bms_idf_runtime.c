@@ -3473,7 +3473,9 @@ static esp_err_t runtime_http_settings_manifest_handler(httpd_req_t *req,
         ok = ok && runtime_json_append(json, sizeof(json), &offset, __VA_ARGS__); \
         first_item = false; \
     } while (0)
+#if CONFIG_ESP_BMS_LVGL_BRIDGE_BACKLIGHT_DIMMING
     MANIFEST_ITEM("{\"id\":\"brightness\",\"kind\":\"range\",\"label\":{\"zh\":\"亮度\",\"en\":\"Brightness\"},\"value\":%u,\"min\":10,\"max\":100,\"step\":1}", runtime->brightness_percent);
+#endif
     MANIFEST_ITEM("{\"id\":\"volume\",\"kind\":\"range\",\"label\":{\"zh\":\"音量\",\"en\":\"Volume\"},\"value\":%u,\"min\":0,\"max\":100,\"step\":1}", runtime->volume_percent);
     MANIFEST_ITEM("{\"id\":\"display_rotation\",\"kind\":\"select\",\"label\":{\"zh\":\"屏幕方向\",\"en\":\"Screen rotation\"},\"value\":\"%s\",\"options\":[{\"value\":\"portrait\",\"label\":{\"zh\":\"竖屏\",\"en\":\"Portrait\"}},{\"value\":\"landscape\",\"label\":{\"zh\":\"横屏\",\"en\":\"Landscape\"}},{\"value\":\"inverted_portrait\",\"label\":{\"zh\":\"反向竖屏\",\"en\":\"Inverted portrait\"}},{\"value\":\"inverted_landscape\",\"label\":{\"zh\":\"反向横屏\",\"en\":\"Inverted landscape\"}}]}", runtime_rotation_config_text(runtime->display_rotation));
 #if ESP_BMS_FEATURE_GPS || ESP_BMS_FEATURE_CONTROLLER
