@@ -52,7 +52,7 @@ CONTROLLER_PROFILES = (
         "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
         "6e400002-b5a3-f393-e0a9-e50e24dcca9e",
     ),
-    GattProfile("FFE0", expand_uuid("FFE0"), expand_uuid("FFEC"), expand_uuid("FFEF")),
+    GattProfile("FFE0", expand_uuid("FFE0"), expand_uuid("FFEC"), expand_uuid("FFEC")),
 )
 
 

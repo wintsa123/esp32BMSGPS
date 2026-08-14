@@ -24,6 +24,19 @@ def function_body(path, name):
 
 
 class BleScanSourceContractTest(unittest.TestCase):
+    def test_fardriver_ffe0_profile_writes_through_ffec(self):
+        source = (
+            ROOT / "components/esp_bms_controller_ble/esp_bms_controller_ble.c"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "CONTROLLER_FFE0_WRITE_UUID = BLE_UUID16_INIT(0xFFECU);",
+            source,
+        )
+        self.assertNotIn(
+            "CONTROLLER_FFE0_WRITE_UUID = BLE_UUID16_INIT(0xFFEFU);",
+            source,
+        )
+
     def test_bms_scan_stores_named_and_unnamed_candidates_only_while_active(self):
         body = function_body(
             ROOT / "components/esp_bms_bms_ble/esp_bms_bms_ble.c",

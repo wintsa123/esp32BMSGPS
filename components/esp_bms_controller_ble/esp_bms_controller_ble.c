@@ -89,7 +89,7 @@ static const ble_uuid128_t CONTROLLER_NUS_WRITE_UUID =
                      0x93, 0xf3, 0xa3, 0xb5, 0x02, 0x00, 0x40, 0x6e);
 static const ble_uuid16_t CONTROLLER_FFE0_SERVICE_UUID = BLE_UUID16_INIT(0xFFE0U);
 static const ble_uuid16_t CONTROLLER_FFE0_NOTIFY_UUID = BLE_UUID16_INIT(0xFFECU);
-static const ble_uuid16_t CONTROLLER_FFE0_WRITE_UUID = BLE_UUID16_INIT(0xFFEFU);
+static const ble_uuid16_t CONTROLLER_FFE0_WRITE_UUID = BLE_UUID16_INIT(0xFFECU);
 
 static const controller_profile_config_t CONTROLLER_PROFILES[] = {
     [CONTROLLER_PROFILE_NONE] = { .name = "none" },

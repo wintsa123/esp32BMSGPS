@@ -91,6 +91,9 @@ class BleHostBridgeTest(unittest.IsolatedAsyncioTestCase):
             bridge_module.BMS_PROFILES[4].notify,
             "8ec90002-f315-4f60-9fb8-838830daea50",
         )
+        ffe0 = bridge_module.CONTROLLER_PROFILES[1]
+        self.assertEqual(ffe0.notify, "0000ffec-0000-1000-8000-00805f9b34fb")
+        self.assertEqual(ffe0.write, ffe0.notify)
 
     def test_parse_valid_commands(self):
         command = bridge_module.parse_command("CONNECT BMS 4 AA:BB:CC:DD:EE:FF")
@@ -219,6 +222,12 @@ class BleHostBridgeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bridge.profiles["CONTROLLER"].name, "FFE0")
         self.assertEqual(bridge.clients["CONTROLLER"].notifications[0][0],
                          bridge_module.CONTROLLER_PROFILES[1].notify)
+        await bridge.write("CONTROLLER", "AA13EC0701F1A25D")
+        self.assertEqual(bridge.clients["CONTROLLER"].writes, [(
+            bridge_module.CONTROLLER_PROFILES[1].write,
+            bytes.fromhex("AA13EC0701F1A25D"),
+            False,
+        )])
 
     async def test_controller_without_supported_service_reports_error(self):
         bridge = RecordingBridge(self.make_bleak())
