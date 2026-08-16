@@ -1,5 +1,6 @@
 #include "esp_bms_lvgl_bridge.h"
 
+#include <limits.h>
 #include <stdbool.h>
 #include <stddef.h>
 #if CONFIG_ESP_BMS_LVGL_BRIDGE_BACKLIGHT_DIMMING
@@ -48,6 +49,7 @@
 #include "esp_bms_lvgl_contract.h"
 #include "esp_lv_adapter.h"
 #include "esp_lv_adapter_input.h"
+#include "esp_jpeg_dec.h"
 #include "src/draw/sw/lv_draw_sw.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -97,6 +99,8 @@ static const char *TAG = "bms_lvgl_bridge";
 #define TOUCH_FILTER_MAX_SPEED_PX_PER_MS 4U
 #define TOUCH_FILTER_LOG_INTERVAL_MS 1000U
 #define TOUCH_FILTER_PRESS_STABILITY_DISTANCE 16U
+#define CAST_FRAME_BUFFER_ALIGNMENT 16U
+#define CAST_PRESENT_STRIP_ROWS 40U
 #if ESP_BMS_PROFILE_TOUCH_GT1151
 #define GT1151_GESTURE_REGISTER 0x814CU
 #define GT1151_POINT_STATUS_REGISTER 0x814EU
@@ -143,6 +147,10 @@ static StackType_t s_xl9555_backlight_task_stack[XL9555_BACKLIGHT_TASK_STACK_BYT
                                                 sizeof(StackType_t)];
 #endif
 static bool s_initialized;
+static bool s_cast_mode;
+static bool s_cast_adapter_paused;
+static uint8_t *s_cast_frame_buffer;
+static size_t s_cast_frame_buffer_bytes;
 static TickType_t s_touch_last_log_tick;
 static TickType_t s_touch_last_filter_log_tick;
 static bool s_touch_read_callback_logged;
@@ -1068,8 +1076,121 @@ esp_err_t esp_bms_lvgl_bridge_set_rotation(esp_bms_display_rotation_t rotation)
                                   ? s_physical_width
                                   : s_physical_height;
         lv_display_set_resolution(s_display, hres, vres);
-        lv_obj_invalidate(lv_screen_active());
+        lv_obj_t *const active_screen = lv_display_get_screen_active(s_display);
+        if (active_screen) {
+            lv_obj_invalidate(active_screen);
+        }
     }
+    return ESP_OK;
+}
+
+esp_err_t esp_bms_lvgl_bridge_get_logical_resolution(esp_bms_display_rotation_t rotation,
+                                                      uint16_t *width,
+                                                      uint16_t *height)
+{
+    ESP_RETURN_ON_FALSE(width && height, ESP_ERR_INVALID_ARG, TAG, "resolution outputs are required");
+    ESP_RETURN_ON_FALSE(s_initialized && s_display, ESP_ERR_INVALID_STATE, TAG,
+                        "bridge is not initialized");
+
+    switch (rotation) {
+    case ESP_BMS_DISPLAY_ROTATION_PORTRAIT:
+    case ESP_BMS_DISPLAY_ROTATION_INVERTED_PORTRAIT:
+        *width = s_physical_width;
+        *height = s_physical_height;
+        return ESP_OK;
+    case ESP_BMS_DISPLAY_ROTATION_LANDSCAPE:
+    case ESP_BMS_DISPLAY_ROTATION_INVERTED_LANDSCAPE:
+        *width = s_physical_height;
+        *height = s_physical_width;
+        return ESP_OK;
+    default:
+        return ESP_ERR_INVALID_ARG;
+    }
+}
+
+esp_err_t esp_bms_lvgl_bridge_pause_for_cast(void)
+{
+    ESP_RETURN_ON_FALSE(s_initialized && s_display, ESP_ERR_INVALID_STATE, TAG,
+                        "bridge is not initialized");
+    ESP_RETURN_ON_FALSE(!s_cast_mode && !s_cast_adapter_paused,
+                        ESP_ERR_INVALID_STATE,
+                        TAG,
+                        "cast mode is already prepared");
+
+    ESP_RETURN_ON_ERROR(esp_lv_adapter_pause(-1), TAG, "pause LVGL adapter failed");
+    s_cast_adapter_paused = true;
+    return ESP_OK;
+}
+
+esp_err_t esp_bms_lvgl_bridge_enter_cast(void)
+{
+    ESP_RETURN_ON_FALSE(s_initialized && s_display, ESP_ERR_INVALID_STATE, TAG,
+                        "bridge is not initialized");
+    ESP_RETURN_ON_FALSE(!s_cast_mode, ESP_ERR_INVALID_STATE, TAG, "cast mode is already active");
+    ESP_RETURN_ON_FALSE(s_cast_adapter_paused, ESP_ERR_INVALID_STATE, TAG,
+                        "LVGL adapter is not paused for cast");
+
+    s_cast_frame_buffer_bytes = (size_t)s_physical_width * s_physical_height * sizeof(uint16_t);
+    s_cast_frame_buffer = heap_caps_aligned_alloc(CAST_FRAME_BUFFER_ALIGNMENT,
+                                                  s_cast_frame_buffer_bytes,
+                                                  MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    ESP_RETURN_ON_FALSE(s_cast_frame_buffer, ESP_ERR_NO_MEM, TAG,
+                        "allocate cast RGB565 frame buffer failed");
+
+    if (s_touch_indev) {
+        lv_indev_reset(s_touch_indev, NULL);
+        lv_indev_enable(s_touch_indev, false);
+    }
+
+    const esp_err_t ret = esp_lv_adapter_set_dummy_draw(s_display, true);
+    if (ret != ESP_OK) {
+        heap_caps_free(s_cast_frame_buffer);
+        s_cast_frame_buffer = NULL;
+        s_cast_frame_buffer_bytes = 0U;
+        if (s_touch_indev) {
+            lv_indev_reset(s_touch_indev, NULL);
+            lv_indev_enable(s_touch_indev, true);
+        }
+        return ret;
+    }
+
+    s_cast_mode = true;
+    return ESP_OK;
+}
+
+esp_err_t esp_bms_lvgl_bridge_exit_cast(void)
+{
+    ESP_RETURN_ON_FALSE(s_initialized && s_display, ESP_ERR_INVALID_STATE, TAG,
+                        "bridge is not initialized");
+    ESP_RETURN_ON_FALSE(s_cast_mode, ESP_ERR_INVALID_STATE, TAG, "cast mode is not active");
+    ESP_RETURN_ON_FALSE(s_cast_adapter_paused, ESP_ERR_INVALID_STATE, TAG,
+                        "LVGL adapter is not paused for cast");
+
+    ESP_RETURN_ON_ERROR(esp_lv_adapter_set_dummy_draw(s_display, false), TAG,
+                        "disable dummy draw failed");
+    if (s_touch_indev) {
+        lv_indev_reset(s_touch_indev, NULL);
+        lv_indev_enable(s_touch_indev, true);
+    }
+
+    s_cast_mode = false;
+    heap_caps_free(s_cast_frame_buffer);
+    s_cast_frame_buffer = NULL;
+    s_cast_frame_buffer_bytes = 0U;
+    return ESP_OK;
+}
+
+esp_err_t esp_bms_lvgl_bridge_resume_after_cast(void)
+{
+    ESP_RETURN_ON_FALSE(s_initialized && s_display, ESP_ERR_INVALID_STATE, TAG,
+                        "bridge is not initialized");
+    ESP_RETURN_ON_FALSE(s_cast_adapter_paused && !s_cast_mode,
+                        ESP_ERR_INVALID_STATE,
+                        TAG,
+                        "cast mode is not ready to resume");
+
+    ESP_RETURN_ON_ERROR(esp_lv_adapter_resume(), TAG, "resume LVGL adapter failed");
+    s_cast_adapter_paused = false;
     return ESP_OK;
 }
 
@@ -1708,30 +1829,118 @@ void esp_bms_lvgl_bridge_unlock(void)
     esp_lv_adapter_unlock();
 }
 
-esp_err_t esp_bms_lvgl_bridge_write_rgb565(uint16_t x,
-                                           uint16_t y,
-                                           uint16_t width,
-                                           uint16_t height,
-                                           const uint8_t *pixels,
-                                           size_t pixel_bytes)
+static uint32_t cast_elapsed_us(int64_t started_us)
 {
-    ESP_RETURN_ON_FALSE(s_initialized && s_panel && s_display,
-                        ESP_ERR_INVALID_STATE,
-                        TAG,
-                        "bridge is not initialized");
-    ESP_RETURN_ON_FALSE(pixels && width > 0U && height > 0U,
-                        ESP_ERR_INVALID_ARG,
-                        TAG,
-                        "invalid RGB565 block");
-    const uint16_t hres = lv_display_get_horizontal_resolution(s_display);
-    const uint16_t vres = lv_display_get_vertical_resolution(s_display);
-    const size_t expected = (size_t)width * height * sizeof(uint16_t);
-    ESP_RETURN_ON_FALSE(pixel_bytes == expected && x < hres && y < vres &&
-                            width <= hres - x && height <= vres - y,
-                        ESP_ERR_INVALID_SIZE,
-                        TAG,
-                        "RGB565 block out of bounds");
-    return esp_lcd_panel_draw_bitmap(s_panel, x, y, x + width, y + height, pixels);
+    const int64_t elapsed_us = esp_timer_get_time() - started_us;
+    if (elapsed_us <= 0) {
+        return 0U;
+    }
+    return elapsed_us > UINT32_MAX ? UINT32_MAX : (uint32_t)elapsed_us;
+}
+
+esp_err_t esp_bms_lvgl_bridge_present_jpeg(uint32_t sequence,
+                                           esp_bms_display_rotation_t rotation,
+                                           const uint8_t *jpeg,
+                                           size_t jpeg_bytes,
+                                           esp_bms_lvgl_bridge_cast_metrics_t *metrics)
+{
+    ESP_RETURN_ON_FALSE(s_initialized && s_panel && s_display && s_cast_mode &&
+                            s_cast_frame_buffer &&
+                            esp_lv_adapter_get_dummy_draw_enabled(s_display),
+                        ESP_ERR_INVALID_STATE, TAG, "cast mode is not active");
+    ESP_RETURN_ON_FALSE(jpeg && jpeg_bytes > 0U && jpeg_bytes <= INT_MAX,
+                        ESP_ERR_INVALID_ARG, TAG, "invalid cast JPEG");
+    if (metrics) {
+        memset(metrics, 0, sizeof(*metrics));
+    }
+
+    uint16_t expected_width = 0U;
+    uint16_t expected_height = 0U;
+    ESP_RETURN_ON_ERROR(esp_bms_lvgl_bridge_get_logical_resolution(rotation,
+                                                                   &expected_width,
+                                                                   &expected_height),
+                        TAG, "resolve cast JPEG dimensions failed");
+    const size_t expected_bytes = (size_t)expected_width * expected_height * sizeof(uint16_t);
+    ESP_RETURN_ON_FALSE(expected_bytes <= s_cast_frame_buffer_bytes,
+                        ESP_ERR_INVALID_SIZE, TAG, "cast JPEG output exceeds frame buffer");
+
+    const int64_t decode_started_us = esp_timer_get_time();
+    jpeg_dec_config_t config = DEFAULT_JPEG_DEC_CONFIG();
+    config.output_type = JPEG_PIXEL_FORMAT_RGB565_LE;
+    jpeg_dec_handle_t decoder = NULL;
+    jpeg_error_t jpeg_ret = jpeg_dec_open(&config, &decoder);
+    if (jpeg_ret != JPEG_ERR_OK || !decoder) {
+        ESP_LOGE(TAG, "cast JPEG seq=%u decoder open failed: %d", (unsigned)sequence, (int)jpeg_ret);
+        return ESP_FAIL;
+    }
+
+    jpeg_dec_io_t io = {
+        .inbuf = (uint8_t *)jpeg,
+        .inbuf_len = (int)jpeg_bytes,
+        .outbuf = s_cast_frame_buffer,
+    };
+    jpeg_dec_header_info_t header = { 0 };
+    jpeg_ret = jpeg_dec_parse_header(decoder, &io, &header);
+    if (jpeg_ret != JPEG_ERR_OK || header.width != expected_width || header.height != expected_height) {
+        ESP_LOGE(TAG,
+                 "cast JPEG seq=%u header failed: err=%d got=%ux%u expected=%ux%u",
+                 (unsigned)sequence,
+                 (int)jpeg_ret,
+                 (unsigned)header.width,
+                 (unsigned)header.height,
+                 (unsigned)expected_width,
+                 (unsigned)expected_height);
+        (void)jpeg_dec_close(decoder);
+        return ESP_ERR_INVALID_SIZE;
+    }
+    jpeg_ret = jpeg_dec_process(decoder, &io);
+    (void)jpeg_dec_close(decoder);
+    if (jpeg_ret != JPEG_ERR_OK) {
+        ESP_LOGE(TAG, "cast JPEG seq=%u decode failed: %d", (unsigned)sequence, (int)jpeg_ret);
+        return ESP_FAIL;
+    }
+    if (metrics) {
+        metrics->decode_us = cast_elapsed_us(decode_started_us);
+    }
+
+    const int64_t present_started_us = esp_timer_get_time();
+    ESP_RETURN_ON_ERROR(esp_bms_lvgl_bridge_set_rotation(rotation), TAG,
+                        "apply cast JPEG rotation failed");
+    ESP_RETURN_ON_FALSE(lv_display_get_horizontal_resolution(s_display) == expected_width &&
+                            lv_display_get_vertical_resolution(s_display) == expected_height,
+                        ESP_ERR_INVALID_SIZE, TAG, "cast JPEG display dimensions changed");
+
+    uint16_t strip_rows = CAST_PRESENT_STRIP_ROWS;
+#if ESP_BMS_PROFILE_PANEL_ST7796
+    if (s_i80_draw_buffer_bytes > 0U) {
+        const size_t capacity_rows = s_i80_draw_buffer_bytes /
+                                     ((size_t)expected_width * sizeof(uint16_t));
+        ESP_RETURN_ON_FALSE(capacity_rows > 0U, ESP_ERR_INVALID_SIZE, TAG,
+                            "I80 cast strip buffer is too small");
+        if (capacity_rows < strip_rows) {
+            strip_rows = (uint16_t)capacity_rows;
+        }
+    }
+#endif
+    for (uint16_t y = 0U; y < expected_height; y = (uint16_t)(y + strip_rows)) {
+        const uint16_t height = (uint16_t)((expected_height - y) < strip_rows
+                                               ? (expected_height - y)
+                                               : strip_rows);
+        ESP_RETURN_ON_ERROR(
+            esp_lv_adapter_dummy_draw_blit(s_display,
+                                           0,
+                                           y,
+                                           expected_width,
+                                           y + height,
+                                           s_cast_frame_buffer + (size_t)y * expected_width * sizeof(uint16_t),
+                                           true),
+            TAG,
+            "present cast JPEG strip failed");
+    }
+    if (metrics) {
+        metrics->present_us = cast_elapsed_us(present_started_us);
+    }
+    return ESP_OK;
 }
 
 lv_display_t *esp_bms_lvgl_bridge_get_display(void)

@@ -426,6 +426,7 @@ static inline void esp_bms_dashboard_snapshot_temperature_valid_set(esp_bms_dash
 esp_err_t esp_bms_lvgl_ui_init(lv_display_t *display,
                                bool touch_calibration_supported,
                                bool native_gestures_supported);
+esp_err_t esp_bms_lvgl_ui_suspend(void);
 esp_err_t esp_bms_lvgl_ui_update(const esp_bms_dashboard_snapshot_t *snapshot);
 esp_err_t esp_bms_lvgl_ui_boot_start(const esp_bms_dashboard_snapshot_t *snapshot);
 esp_err_t esp_bms_lvgl_ui_boot_update(uint8_t progress_percent, const char *status_text);

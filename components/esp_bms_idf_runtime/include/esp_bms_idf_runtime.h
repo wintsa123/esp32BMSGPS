@@ -202,6 +202,7 @@ struct esp_bms_idf_runtime {
     uint8_t controller_scan_candidate_count;
     uint8_t pending_audio_events;
     bool cast_active;
+    bool cast_display_active;
     bool cast_frame_active;
     bool ride_records_session_started;
     bool ride_records_dirty;
@@ -209,8 +210,18 @@ struct esp_bms_idf_runtime {
     bool ble_media_hid_input_report_subscribed;
     bool ble_media_hid_worker_started;
     int cast_socket_fd;
+    uint8_t *cast_receive_buffer;
+    uint8_t cast_rotation;
+    uint16_t cast_width;
+    uint16_t cast_height;
     uint32_t cast_sequence;
     uint32_t cast_heartbeat_elapsed_ms;
+    uint32_t cast_metric_frames;
+    uint64_t cast_metric_bytes;
+    uint64_t cast_metric_decode_us;
+    uint64_t cast_metric_present_us;
+    uint64_t cast_metric_total_us;
+    int64_t cast_metric_started_us;
     bool controller_connection_enabled;
     bool controller_page_enabled;
     uint8_t controller_fallback_tire_rim_inch;

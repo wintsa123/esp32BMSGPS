@@ -110,10 +110,22 @@ typedef struct {
     uint32_t flush_wait_max_us;
 } esp_bms_lvgl_bridge_metrics_t;
 
+typedef struct {
+    uint32_t decode_us;
+    uint32_t present_us;
+} esp_bms_lvgl_bridge_cast_metrics_t;
+
 esp_err_t esp_bms_lvgl_bridge_init(const esp_bms_lvgl_bridge_config_t *config);
 esp_err_t esp_bms_lvgl_bridge_start(void);
 esp_err_t esp_bms_lvgl_bridge_set_brightness(uint8_t percent);
 esp_err_t esp_bms_lvgl_bridge_set_rotation(esp_bms_display_rotation_t rotation);
+esp_err_t esp_bms_lvgl_bridge_get_logical_resolution(esp_bms_display_rotation_t rotation,
+                                                      uint16_t *width,
+                                                      uint16_t *height);
+esp_err_t esp_bms_lvgl_bridge_pause_for_cast(void);
+esp_err_t esp_bms_lvgl_bridge_enter_cast(void);
+esp_err_t esp_bms_lvgl_bridge_exit_cast(void);
+esp_err_t esp_bms_lvgl_bridge_resume_after_cast(void);
 esp_err_t esp_bms_lvgl_bridge_load_touch_calibration(void);
 esp_err_t esp_bms_lvgl_bridge_begin_touch_calibration(void);
 esp_err_t esp_bms_lvgl_bridge_add_touch_calibration_sample(uint8_t target_index,
@@ -129,13 +141,12 @@ bool esp_bms_lvgl_bridge_native_gestures_supported(void);
 bool esp_bms_lvgl_bridge_take_native_gesture(esp_bms_lvgl_native_gesture_t *gesture);
 esp_err_t esp_bms_lvgl_bridge_lock(int32_t timeout_ms);
 void esp_bms_lvgl_bridge_unlock(void);
-/* Caller holds the LVGL bridge lock. Pixels are RGB565 big-endian. */
-esp_err_t esp_bms_lvgl_bridge_write_rgb565(uint16_t x,
-                                           uint16_t y,
-                                           uint16_t width,
-                                           uint16_t height,
-                                           const uint8_t *pixels,
-                                           size_t pixel_bytes);
+/* Caller holds the LVGL bridge lock. Decoded cast pixels stay RGB565 little-endian. */
+esp_err_t esp_bms_lvgl_bridge_present_jpeg(uint32_t sequence,
+                                           esp_bms_display_rotation_t rotation,
+                                           const uint8_t *jpeg,
+                                           size_t jpeg_bytes,
+                                           esp_bms_lvgl_bridge_cast_metrics_t *metrics);
 lv_display_t *esp_bms_lvgl_bridge_get_display(void);
 lv_indev_t *esp_bms_lvgl_bridge_get_touch(void);
 /* Call these while holding the bridge lock. */

@@ -1,5 +1,6 @@
 #include "esp_bms_idf_runtime.h"
 #include "esp_bms_ble_media_hid.h"
+#include "esp_bms_cast_protocol.h"
 #if ESP_BMS_FEATURE_CLASSIC_MEDIA_HID
 #include "esp_bms_classic_media_hid.h"
 #endif
@@ -122,48 +123,44 @@ static const char *TAG = "bms_idf_runtime";
 #define HTTP_JSON_MAX_LEN 1024U
 #define HTTP_BMS_CANDIDATES_JSON_MAX_LEN 2560U
 #define HTTP_MANIFEST_JSON_MAX_LEN 3072U
-#define CAST_PROTOCOL_VERSION 1U
-#define CAST_BLOCK_MAX_SIDE 16U
-#define CAST_BLOCK_MAX_BYTES (CAST_BLOCK_MAX_SIDE * CAST_BLOCK_MAX_SIDE * 2U)
-#define CAST_MESSAGE_MAX_BYTES (8U + CAST_BLOCK_MAX_BYTES)
 #define CAST_HEARTBEAT_TIMEOUT_MS 5000U
-#define CAST_TYPE_FRAME_BEGIN 1U
-#define CAST_TYPE_RGB565_BLOCK 2U
-#define CAST_TYPE_FRAME_END 3U
-#define CAST_TYPE_HEARTBEAT 4U
-#define CAST_TYPE_ACK 0x81U
-#define CAST_FRAME_BEGIN_BYTES 7U
-#define CAST_FRAME_END_BYTES 5U
-#define CAST_BLOCK_HEADER_BYTES 7U
+#define CAST_METRICS_LOG_WINDOW_US INT64_C(5000000)
 #define BLE_MEDIA_HID_USAGE_QUEUE_LEN 8U
 #define BLE_MEDIA_HID_WORKER_STACK 2048U
 #define BLE_MEDIA_HID_WORKER_PRIORITY 4U
 #define BLE_MEDIA_HID_REPORT_RELEASE_DELAY_MS 30U
 #define BLE_HOST_MIN_INTERNAL_FREE_BYTES (24U * 1024U)
 
-static uint16_t runtime_cast_width(const esp_bms_idf_runtime_t *runtime)
+static bool runtime_cast_rotation_valid(uint8_t rotation)
 {
-    return runtime->display_rotation == ESP_BMS_IDF_DISPLAY_ROTATION_LANDSCAPE ||
-                   runtime->display_rotation == ESP_BMS_IDF_DISPLAY_ROTATION_INVERTED_LANDSCAPE
-               ? 320U
-               : 240U;
+    return esp_bms_cast_protocol_rotation_valid(rotation);
 }
 
-static uint16_t runtime_cast_height(const esp_bms_idf_runtime_t *runtime)
+static esp_err_t runtime_cast_resolution(uint8_t rotation, uint16_t *width, uint16_t *height)
 {
-    return runtime_cast_width(runtime) == 320U ? 240U : 320U;
+    if (!runtime_cast_rotation_valid(rotation) || !width || !height) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    return esp_bms_display_service_get_logical_resolution(
+        (esp_bms_display_rotation_t)rotation, width, height);
 }
 
 void esp_bms_idf_runtime_stop_cast(esp_bms_idf_runtime_t *runtime, const char *reason)
 {
-    if (__atomic_load_n(&runtime->cast_active, __ATOMIC_RELAXED)) {
+    if (!runtime) {
+        return;
+    }
+    if (__atomic_exchange_n(&runtime->cast_active, false, __ATOMIC_ACQ_REL)) {
         ESP_LOGI(TAG, "[cast] stopped: %s", reason);
     }
     __atomic_store_n(&runtime->cast_active, false, __ATOMIC_RELAXED);
     runtime->cast_frame_active = false;
     runtime->cast_socket_fd = -1;
+    runtime->cast_rotation = (uint8_t)ESP_BMS_DISPLAY_ROTATION_PORTRAIT;
+    runtime->cast_width = 0U;
+    runtime->cast_height = 0U;
     runtime->cast_sequence = 0U;
-    runtime->cast_heartbeat_elapsed_ms = 0U;
+    __atomic_store_n(&runtime->cast_heartbeat_elapsed_ms, 0U, __ATOMIC_RELAXED);
 }
 
 static void runtime_log_heap_state(const char *stage)
@@ -3734,16 +3731,37 @@ static esp_err_t runtime_http_post_bms_scan_handler(httpd_req_t *req, esp_bms_id
 
 static esp_err_t runtime_http_cast_info_handler(httpd_req_t *req, esp_bms_idf_runtime_t *runtime)
 {
-    char json[192] = { 0 };
+    uint16_t portrait_width = 0U;
+    uint16_t portrait_height = 0U;
+    uint16_t landscape_width = 0U;
+    uint16_t landscape_height = 0U;
+    if (runtime_cast_resolution(ESP_BMS_DISPLAY_ROTATION_PORTRAIT,
+                                &portrait_width,
+                                &portrait_height) != ESP_OK ||
+        runtime_cast_resolution(ESP_BMS_DISPLAY_ROTATION_LANDSCAPE,
+                                &landscape_width,
+                                &landscape_height) != ESP_OK) {
+        return runtime_http_send_text(req, "500 Internal Server Error", "cast resolution unavailable");
+    }
+
+    char json[320] = { 0 };
     const int written = snprintf(json,
                                  sizeof(json),
-                                 "{\"protocol_version\":%u,\"width\":%u,\"height\":%u,"
-                                 "\"rotation\":%u,\"max_block_side\":%u,\"active\":%s}",
-                                 CAST_PROTOCOL_VERSION,
-                                 runtime_cast_width(runtime),
-                                 runtime_cast_height(runtime),
-                                 runtime->display_rotation,
-                                 CAST_BLOCK_MAX_SIDE,
+                                 "{\"protocol_version\":%u,\"physical_width\":%u,"
+                                 "\"physical_height\":%u,\"codec\":\"jpeg\",\"jpeg_quality\":80,"
+                                 "\"target_fps\":20,\"max_frame_bytes\":%u,\"orientations\":["
+                                 "{\"rotation\":%u,\"width\":%u,\"height\":%u},"
+                                 "{\"rotation\":%u,\"width\":%u,\"height\":%u}],\"active\":%s}",
+                                 ESP_BMS_CAST_PROTOCOL_VERSION,
+                                 portrait_width,
+                                 portrait_height,
+                                 ESP_BMS_CAST_MAX_FRAME_BYTES,
+                                 ESP_BMS_DISPLAY_ROTATION_PORTRAIT,
+                                 portrait_width,
+                                 portrait_height,
+                                 ESP_BMS_DISPLAY_ROTATION_LANDSCAPE,
+                                 landscape_width,
+                                 landscape_height,
                                  __atomic_load_n(&runtime->cast_active, __ATOMIC_RELAXED) ? "true" : "false");
     if (written < 0 || (size_t)written >= sizeof(json)) {
         return runtime_http_send_text(req, "500 Internal Server Error", "cast info format error");
@@ -3757,7 +3775,8 @@ esp_err_t esp_bms_idf_runtime_http_cast_accept(httpd_req_t *req)
     if (!runtime) {
         return ESP_FAIL;
     }
-    if (__atomic_load_n(&runtime->cast_active, __ATOMIC_RELAXED)) {
+    if (__atomic_load_n(&runtime->cast_active, __ATOMIC_RELAXED) ||
+        __atomic_load_n(&runtime->cast_display_active, __ATOMIC_RELAXED)) {
         httpd_resp_set_status(req, "409 Conflict");
         (void)httpd_resp_send(req, NULL, 0);
         return ESP_ERR_INVALID_STATE;
@@ -3771,33 +3790,55 @@ esp_err_t esp_bms_idf_runtime_http_cast_connected(httpd_req_t *req)
     if (!runtime) {
         return ESP_FAIL;
     }
-    __atomic_store_n(&runtime->cast_active, true, __ATOMIC_RELAXED);
+    bool expected = false;
+    if (!__atomic_compare_exchange_n(&runtime->cast_active,
+                                     &expected,
+                                     true,
+                                     false,
+                                     __ATOMIC_ACQ_REL,
+                                     __ATOMIC_RELAXED)) {
+        return ESP_ERR_INVALID_STATE;
+    }
     runtime->cast_frame_active = false;
     runtime->cast_socket_fd = httpd_req_to_sockfd(req);
+    runtime->cast_rotation = (uint8_t)ESP_BMS_DISPLAY_ROTATION_PORTRAIT;
+    runtime->cast_width = 0U;
+    runtime->cast_height = 0U;
     runtime->cast_sequence = 0U;
-    runtime->cast_heartbeat_elapsed_ms = 0U;
+    __atomic_store_n(&runtime->cast_heartbeat_elapsed_ms, 0U, __ATOMIC_RELAXED);
+    if (!runtime->cast_receive_buffer) {
+        runtime->cast_receive_buffer = heap_caps_malloc(ESP_BMS_CAST_MESSAGE_MAX_BYTES,
+                                                        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!runtime->cast_receive_buffer) {
+            esp_bms_idf_runtime_stop_cast(runtime, "receive buffer allocation failed");
+            return ESP_ERR_NO_MEM;
+        }
+    }
+    runtime->cast_metric_frames = 0U;
+    runtime->cast_metric_bytes = 0U;
+    runtime->cast_metric_decode_us = 0U;
+    runtime->cast_metric_present_us = 0U;
+    runtime->cast_metric_total_us = 0U;
+    runtime->cast_metric_started_us = esp_timer_get_time();
+    const esp_bms_display_service_command_t command = {
+        .kind = ESP_BMS_DISPLAY_SERVICE_COMMAND_ENTER_CAST,
+    };
+    const esp_err_t ret = esp_bms_display_service_submit_command(&command, 1000U);
+    if (ret != ESP_OK) {
+        esp_bms_idf_runtime_stop_cast(runtime, "display enter failed");
+        return ret;
+    }
+    __atomic_store_n(&runtime->cast_display_active, true, __ATOMIC_RELEASE);
     ESP_LOGI(TAG, "[cast] client connected fd=%d", runtime->cast_socket_fd);
     return ESP_OK;
 }
 
-static uint16_t runtime_cast_u16(const uint8_t *value)
-{
-    return (uint16_t)((uint16_t)value[0] << 8U) | value[1];
-}
-
-static uint32_t runtime_cast_u32(const uint8_t *value)
-{
-    return ((uint32_t)value[0] << 24U) | ((uint32_t)value[1] << 16U) |
-           ((uint32_t)value[2] << 8U) | value[3];
-}
-
 static esp_err_t runtime_cast_send_ack(httpd_req_t *req, uint32_t sequence)
 {
-    uint8_t ack[] = { CAST_TYPE_ACK, 0U, 0U, 0U, 0U };
-    ack[1] = (uint8_t)(sequence >> 24U);
-    ack[2] = (uint8_t)(sequence >> 16U);
-    ack[3] = (uint8_t)(sequence >> 8U);
-    ack[4] = (uint8_t)sequence;
+    uint8_t ack[ESP_BMS_CAST_ACK_BYTES] = { 0 };
+    if (!esp_bms_cast_protocol_encode_ack(sequence, ack, sizeof(ack))) {
+        return ESP_ERR_INVALID_ARG;
+    }
     httpd_ws_frame_t frame = {
         .type = HTTPD_WS_TYPE_BINARY,
         .payload = ack,
@@ -3806,13 +3847,57 @@ static esp_err_t runtime_cast_send_ack(httpd_req_t *req, uint32_t sequence)
     return httpd_ws_send_frame(req, &frame);
 }
 
+static void runtime_cast_record_metrics(esp_bms_idf_runtime_t *runtime,
+                                        size_t jpeg_bytes,
+                                        uint32_t decode_us,
+                                        uint32_t present_us,
+                                        uint32_t total_us)
+{
+    ++runtime->cast_metric_frames;
+    runtime->cast_metric_bytes += jpeg_bytes;
+    runtime->cast_metric_decode_us += decode_us;
+    runtime->cast_metric_present_us += present_us;
+    runtime->cast_metric_total_us += total_us;
+
+    const int64_t now_us = esp_timer_get_time();
+    const int64_t elapsed_us = now_us - runtime->cast_metric_started_us;
+    if (elapsed_us < CAST_METRICS_LOG_WINDOW_US) {
+        return;
+    }
+    const uint32_t frames = runtime->cast_metric_frames;
+    const uint32_t fps_centi = elapsed_us > 0
+                                   ? (uint32_t)(((uint64_t)frames * UINT64_C(100000000)) /
+                                                (uint64_t)elapsed_us)
+                                   : 0U;
+    ESP_LOGI(TAG,
+             "[cast] frames=%u avg_bytes=%u avg_decode_ms=%u.%02u avg_present_ms=%u.%02u "
+             "avg_total_ms=%u.%02u fps=%u.%02u",
+             (unsigned)frames,
+             (unsigned)(runtime->cast_metric_bytes / frames),
+             (unsigned)(runtime->cast_metric_decode_us / frames / 1000U),
+             (unsigned)(runtime->cast_metric_decode_us / frames / 10U % 100U),
+             (unsigned)(runtime->cast_metric_present_us / frames / 1000U),
+             (unsigned)(runtime->cast_metric_present_us / frames / 10U % 100U),
+             (unsigned)(runtime->cast_metric_total_us / frames / 1000U),
+             (unsigned)(runtime->cast_metric_total_us / frames / 10U % 100U),
+             (unsigned)(fps_centi / 100U),
+             (unsigned)(fps_centi % 100U));
+    runtime->cast_metric_frames = 0U;
+    runtime->cast_metric_bytes = 0U;
+    runtime->cast_metric_decode_us = 0U;
+    runtime->cast_metric_present_us = 0U;
+    runtime->cast_metric_total_us = 0U;
+    runtime->cast_metric_started_us = now_us;
+}
+
 esp_err_t esp_bms_idf_runtime_http_cast_ws_handler(httpd_req_t *req)
 {
     esp_bms_idf_runtime_t *runtime = (esp_bms_idf_runtime_t *)req->user_ctx;
     if (!runtime) {
         return ESP_FAIL;
     }
-    if (!__atomic_load_n(&runtime->cast_active, __ATOMIC_RELAXED) ||
+    if (!__atomic_load_n(&runtime->cast_active, __ATOMIC_ACQUIRE) ||
+        !__atomic_load_n(&runtime->cast_display_active, __ATOMIC_ACQUIRE) ||
         runtime->cast_socket_fd != httpd_req_to_sockfd(req)) {
         return ESP_ERR_INVALID_STATE;
     }
@@ -3823,64 +3908,67 @@ esp_err_t esp_bms_idf_runtime_http_cast_ws_handler(httpd_req_t *req)
         esp_bms_idf_runtime_stop_cast(runtime, "socket closed");
         return ret;
     }
-    if (frame.type != HTTPD_WS_TYPE_BINARY || frame.len == 0U || frame.len > CAST_MESSAGE_MAX_BYTES) {
+    if (frame.type != HTTPD_WS_TYPE_BINARY || frame.len == 0U ||
+        frame.len > ESP_BMS_CAST_MESSAGE_MAX_BYTES) {
         esp_bms_idf_runtime_stop_cast(runtime, "invalid frame");
         return ESP_ERR_INVALID_SIZE;
     }
-    static uint8_t message[CAST_MESSAGE_MAX_BYTES];
-    memset(message, 0, sizeof(message));
-    frame.payload = message;
+    if (!runtime->cast_receive_buffer) {
+        esp_bms_idf_runtime_stop_cast(runtime, "receive buffer unavailable");
+        return ESP_ERR_NO_MEM;
+    }
+    const int64_t frame_started_us = esp_timer_get_time();
+    frame.payload = runtime->cast_receive_buffer;
     ret = httpd_ws_recv_frame(req, &frame, frame.len);
     if (ret != ESP_OK) {
         esp_bms_idf_runtime_stop_cast(runtime, "socket read failed");
         return ret;
     }
-    runtime->cast_heartbeat_elapsed_ms = 0U;
+    __atomic_store_n(&runtime->cast_heartbeat_elapsed_ms, 0U, __ATOMIC_RELAXED);
 
-    if (message[0] == CAST_TYPE_HEARTBEAT && frame.len == 1U) {
+    if (esp_bms_cast_protocol_is_heartbeat(runtime->cast_receive_buffer, frame.len)) {
         return ESP_OK;
     }
-    if (message[0] == CAST_TYPE_FRAME_BEGIN && frame.len == CAST_FRAME_BEGIN_BYTES &&
-        message[1] == CAST_PROTOCOL_VERSION && message[6] <= 3U && !runtime->cast_frame_active) {
-        runtime->cast_sequence = runtime_cast_u32(&message[2]);
-        runtime->cast_frame_active = true;
-        return ESP_OK;
-    }
-    if (message[0] == CAST_TYPE_FRAME_END && frame.len == CAST_FRAME_END_BYTES &&
-        runtime->cast_frame_active && runtime_cast_u32(&message[1]) == runtime->cast_sequence) {
-        runtime->cast_frame_active = false;
-        return runtime_cast_send_ack(req, runtime->cast_sequence);
-    }
-    if (message[0] != CAST_TYPE_RGB565_BLOCK || !runtime->cast_frame_active ||
-        frame.len < CAST_BLOCK_HEADER_BYTES) {
-        esp_bms_idf_runtime_stop_cast(runtime, "unknown message");
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    const uint16_t x = runtime_cast_u16(&message[1]);
-    const uint16_t y = runtime_cast_u16(&message[3]);
-    const uint8_t width = message[5];
-    const uint8_t height = message[6];
-    const size_t pixel_bytes = (size_t)width * height * sizeof(uint16_t);
-    if (width == 0U || height == 0U || width > CAST_BLOCK_MAX_SIDE || height > CAST_BLOCK_MAX_SIDE ||
-        x >= runtime_cast_width(runtime) || y >= runtime_cast_height(runtime) ||
-        width > runtime_cast_width(runtime) - x || height > runtime_cast_height(runtime) - y ||
-        frame.len != CAST_BLOCK_HEADER_BYTES + pixel_bytes) {
-        esp_bms_idf_runtime_stop_cast(runtime, "block out of bounds");
+    esp_bms_cast_jpeg_frame_t jpeg_frame = { 0 };
+    if (!esp_bms_cast_protocol_parse_jpeg_frame(runtime->cast_receive_buffer,
+                                                frame.len,
+                                                &jpeg_frame)) {
+        esp_bms_idf_runtime_stop_cast(runtime, "invalid JPEG frame");
         return ESP_ERR_INVALID_SIZE;
     }
+    esp_bms_lvgl_bridge_cast_metrics_t metrics = { 0 };
     const esp_bms_display_service_command_t command = {
-        .kind = ESP_BMS_DISPLAY_SERVICE_COMMAND_WRITE_RGB565,
-        .data.rgb565 = {
-            .x = x,
-            .y = y,
-            .width = width,
-            .height = height,
-            .pixels = &message[CAST_BLOCK_HEADER_BYTES],
-            .pixel_bytes = pixel_bytes,
+        .kind = ESP_BMS_DISPLAY_SERVICE_COMMAND_PRESENT_JPEG,
+        .data.jpeg = {
+            .sequence = jpeg_frame.sequence,
+            .rotation = (esp_bms_display_rotation_t)jpeg_frame.rotation,
+            .bytes = jpeg_frame.jpeg,
+            .byte_count = jpeg_frame.jpeg_bytes,
+            .metrics = &metrics,
         },
     };
-    return esp_bms_display_service_submit_command(&command, 1000U);
+    /* The queued command borrows both the receive buffer and stack metrics. */
+    ret = esp_bms_display_service_submit_command(&command, UINT32_MAX);
+    if (ret != ESP_OK) {
+        esp_bms_idf_runtime_stop_cast(runtime, "JPEG present failed");
+        return ret;
+    }
+    const int64_t total_elapsed_us = esp_timer_get_time() - frame_started_us;
+    const uint32_t total_us = total_elapsed_us <= 0
+                                  ? 0U
+                                  : total_elapsed_us > UINT32_MAX
+                                        ? UINT32_MAX
+                                        : (uint32_t)total_elapsed_us;
+    runtime_cast_record_metrics(runtime,
+                                jpeg_frame.jpeg_bytes,
+                                metrics.decode_us,
+                                metrics.present_us,
+                                total_us);
+    ret = runtime_cast_send_ack(req, jpeg_frame.sequence);
+    if (ret != ESP_OK) {
+        esp_bms_idf_runtime_stop_cast(runtime, "ack send failed");
+    }
+    return ret;
 }
 
 esp_err_t esp_bms_idf_runtime_http_api_handler(httpd_req_t *req)
@@ -5179,12 +5267,21 @@ bool esp_bms_idf_runtime_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_m
         return false;
     }
 
-    const bool cast_active = __atomic_load_n(&runtime->cast_active, __ATOMIC_RELAXED);
+    bool cast_active = __atomic_load_n(&runtime->cast_active, __ATOMIC_ACQUIRE);
     if (cast_active) {
-        runtime->cast_heartbeat_elapsed_ms += elapsed_ms;
-        if (runtime->cast_heartbeat_elapsed_ms >= CAST_HEARTBEAT_TIMEOUT_MS) {
+        const uint32_t elapsed =
+            __atomic_add_fetch(&runtime->cast_heartbeat_elapsed_ms, elapsed_ms, __ATOMIC_RELAXED);
+        if (elapsed >= CAST_HEARTBEAT_TIMEOUT_MS) {
             esp_bms_idf_runtime_stop_cast(runtime, "heartbeat timeout");
+            cast_active = false;
         }
+
+        bool changed = false;
+        if (runtime->snapshot.cast_active != cast_active) {
+            runtime->snapshot.cast_active = cast_active;
+            changed = true;
+        }
+        return changed;
     }
 
     bool changed = RUNTIME_FLAG(runtime, BLUETOOTH_SNAPSHOT_DIRTY) ||

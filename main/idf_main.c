@@ -405,7 +405,7 @@ void app_main(void)
     uint32_t setup_ap_idle_elapsed_ms = 0;
     uint32_t setup_ap_start_guard_ms = 0;
 #if ESP_BMS_FEATURE_CAST
-    bool cast_ui_active = false;
+    bool cast_modules_suspended = false;
 #endif
     setup_service_start_stage_t setup_service_start_stage = SETUP_SERVICE_START_IDLE;
 
@@ -415,6 +415,48 @@ void app_main(void)
         const uint8_t previous_brightness = runtime.brightness_percent;
         const esp_bms_idf_display_rotation_t previous_rotation = runtime.display_rotation;
         const bool tick_changed = esp_bms_idf_runtime_tick(&runtime, 50);
+        esp_err_t ret = ESP_OK;
+#if ESP_BMS_FEATURE_CAST
+        const bool cast_active = __atomic_load_n(&runtime.cast_active, __ATOMIC_ACQUIRE);
+        if (cast_active) {
+            if (!cast_modules_suspended) {
+                log_heap_state("cast_suspend_before");
+                esp_bms_module_registry_suspend_for_cast(&runtime);
+                cast_modules_suspended = true;
+                log_heap_state("cast_suspend_after");
+            }
+            continue;
+        }
+
+        if (__atomic_load_n(&runtime.cast_display_active, __ATOMIC_ACQUIRE)) {
+            const esp_bms_display_service_command_t exit_cast_command = {
+                .kind = ESP_BMS_DISPLAY_SERVICE_COMMAND_EXIT_CAST,
+            };
+            ret = esp_bms_display_service_submit_command(&exit_cast_command, 1000U);
+            if (ret != ESP_OK) {
+                ESP_LOGE(TAG, "restore cast display failed: %s", esp_err_to_name(ret));
+                continue;
+            }
+            __atomic_store_n(&runtime.cast_display_active, false, __ATOMIC_RELEASE);
+            ret = esp_bms_display_service_publish_snapshot(&runtime.snapshot);
+            if (ret != ESP_OK) {
+                ESP_LOGE(TAG, "restore cast UI snapshot failed: %s", esp_err_to_name(ret));
+                continue;
+            }
+        }
+
+        if (cast_modules_suspended) {
+            log_heap_state("cast_resume_before");
+            ret = esp_bms_module_registry_resume_after_cast(&runtime);
+            if (ret != ESP_OK) {
+                ESP_LOGW(TAG, "resume cast modules failed: %s", esp_err_to_name(ret));
+                continue;
+            }
+            cast_modules_suspended = false;
+            log_heap_state("cast_resume_after");
+            continue;
+        }
+#endif
         const bool module_tick_changed =
             esp_bms_module_registry_tick(&runtime, MAIN_LOOP_PERIOD_MS);
         if (setup_ap_start_guard_ms > MAIN_LOOP_PERIOD_MS) {
@@ -427,7 +469,6 @@ void app_main(void)
         esp_bms_module_registry_play_connection_audio(connection_audio_events,
                                                        runtime.volume_percent);
 
-        esp_err_t ret = ESP_OK;
         const bool http_config_changed =
             esp_bms_idf_runtime_apply_pending_http_config(&runtime);
         esp_bms_lvgl_action_event_t action_event = { 0 };
@@ -537,39 +578,6 @@ void app_main(void)
                 display_apply_failed = true;
             }
         }
-#if ESP_BMS_FEATURE_CAST
-        if (!display_apply_failed && cast_ui_active != runtime.snapshot.cast_active) {
-            const esp_bms_display_service_command_t show_dashboard_command = {
-                .kind = ESP_BMS_DISPLAY_SERVICE_COMMAND_SHOW_DASHBOARD,
-            };
-            ret = esp_bms_display_service_submit_command(&show_dashboard_command, 1000U);
-            if (ret == ESP_OK) {
-                const esp_bms_lvgl_page_t target_page = runtime.snapshot.cast_active
-                                                            ? ESP_BMS_LVGL_PAGE_CAST
-                                                            : ESP_BMS_LVGL_PAGE_BATTERY;
-                const esp_bms_display_service_command_t page_command = {
-                    .kind = ESP_BMS_DISPLAY_SERVICE_COMMAND_SET_PAGE,
-                    .data.page = {
-                        .page = target_page,
-                        .animated = false,
-                    },
-                };
-                ret = esp_bms_display_service_submit_command(&page_command, 1000U);
-            }
-            if (ret == ESP_OK) {
-                cast_ui_active = runtime.snapshot.cast_active;
-                ESP_LOGI(TAG,
-                         "cast UI %s; page=%s",
-                         cast_ui_active ? "entered" : "restored",
-                         cast_ui_active ? "cast" : "battery");
-            } else {
-                ESP_LOGE(TAG,
-                         "apply cast UI transition failed: %s",
-                         esp_err_to_name(ret));
-                display_apply_failed = true;
-            }
-        }
-#endif
         const bool action_committed =
             esp_bms_lvgl_action_event_flag_get(&action_event, ESP_BMS_LVGL_ACTION_EVENT_FLAG_COMMITTED);
         const bool controller_settings_save_requested =

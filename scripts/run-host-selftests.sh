@@ -68,6 +68,14 @@ printf '%s\n' "Capacity estimate self-test passed"
 
 "${cc_bin}" "${cflags[@]}" \
     -I"${repo_root}/components/esp_bms_idf_runtime/include" \
+    "${repo_root}/tests/cast_protocol_selftest.c" \
+    "${repo_root}/components/esp_bms_idf_runtime/esp_bms_cast_protocol.c" \
+    -o "${build_dir}/cast_protocol_selftest"
+"${build_dir}/cast_protocol_selftest"
+printf '%s\n' "Cast protocol self-test passed"
+
+"${cc_bin}" "${cflags[@]}" \
+    -I"${repo_root}/components/esp_bms_idf_runtime/include" \
     "${repo_root}/tests/ble_media_hid_protocol_selftest.c" \
     -o "${build_dir}/ble_media_hid_protocol_selftest"
 "${build_dir}/ble_media_hid_protocol_selftest"

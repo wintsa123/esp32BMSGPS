@@ -472,6 +472,7 @@ typedef struct {
     lv_obj_t *settings_detail_edge_zone;
     lv_obj_t *settings_boot_preview_button;
     lv_timer_t *settings_boot_preview_timer;
+    lv_timer_t *settings_calibration_start_timer;
     uint32_t settings_boot_preview_started_ms;
     lv_obj_t *settings_bms_popup;
     lv_obj_t *settings_bms_ble_status;
@@ -1089,6 +1090,7 @@ void settings_bms_ble_refresh_event_cb(lv_event_t *event);
 void settings_system_slider_event_cb(lv_event_t *event);
 void settings_system_position_option_event_cb(lv_event_t *event);
 void settings_boot_preview_timer_cancel(void);
+void settings_calibration_start_timer_cancel(void);
 void settings_boot_preview_button_event_cb(lv_event_t *event);
 void settings_boot_animation_option_event_cb(lv_event_t *event);
 void settings_show_system_view(settings_system_view_t view);

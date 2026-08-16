@@ -929,9 +929,33 @@ xTaskNotify(s_xl9555_backlight_task, XL9555_BACKLIGHT_NOTIFY_UPDATE, eSetBits);
   `esp_lv_adapter_start()` remains unused; the service runs the sole timer loop.
 - Snapshots use a depth-one static overwrite queue. A drag/settle retains only
   the newest snapshot and applies it once after the gesture completes.
-- Commands and action events use bounded static queues. RGB565 input is only
-  dereferenced while its synchronous command is pending; callers must not pass
-  a buffer that expires before `submit_command()` returns.
+- Commands and action events use bounded static queues. Borrowed JPEG input and
+  metrics output are dereferenced only while their synchronous command is
+  pending; callers must keep both valid until `submit_command()` returns.
+- Cast is a display-service-owned `ENTER_CAST -> ACTIVE -> EXIT_CAST` session.
+  Entering it pauses the adapter/input, enables dummy draw, and suspends the
+  UI tree; while active only cast rotation and complete JPEG presentation
+  commands may reach the bridge. Keep a recovery guard active until the saved
+  rotation, UI tree, and full refresh are restored, then resume the adapter and
+  paused modules.
+- Cast uses protocol v3 single-message baseline JPEG frames. The payload is a
+  7-byte header (`type`, version, big-endian sequence, rotation) followed by
+  at most `262144` JPEG bytes; v2 RGB565 block messages are rejected. Android
+  advertises `codec=jpeg`, quality `80`, target `20 fps`, and this same byte
+  limit, lowering quality to `60` once before dropping an oversized frame.
+- The display service receives only a complete validated message. It parses
+  the JPEG dimensions, decodes with `esp_new_jpeg` to a 16-byte-aligned
+  `RGB565_LE` frame buffer, applies rotation only after decode succeeds, then
+  submits contiguous 40-row dummy-draw DMA strips. The existing I80 callback
+  performs the sole wire-byte swap; no RGB565 conversion or swap occurs on
+  Android.
+- Runtime owns one PSRAM receive buffer for the lifetime of the device and
+  sends the ACK only after synchronous decode and all display strips complete.
+  Truncated, oversized, invalid-version/rotation, wrong-size, decode, or
+  display failures leave the previous frame visible and terminate the cast
+  session; the main loop then exits cast mode and resumes paused modules.
+- Delete and null every screen-owned timer before deleting, rebuilding, or
+  suspending the root, including one-shot touch-calibration startup timers.
 - S3 BMS and Fireblade static RGB565 images and the 480x120 draw buffers are
   created at UI initialization/rebuild and reused. Gesture and telemetry paths
   must not allocate or free them.
@@ -961,6 +985,8 @@ xTaskNotify(s_xl9555_backlight_task, XL9555_BACKLIGHT_NOTIFY_UPDATE, eSetBits);
 - `tests/configurator_selftest.sh` asserts S3 480x120 buffers, snapshot cache
   enablement, static queues, the 20 MHz ST7796U-only clock, and no direct
   main/runtime LVGL bridge/UI calls.
+- Cast changes run the host protocol self-test, Android unit tests, and both
+  headless LVGL simulator orientations in addition to the selected S3 build.
 - Build and run the 480x320 Fireblade simulator stress path; assert two
   307200-byte caches, rotation rebuild stability, deferred latest-snapshot
   replay, and no object growth.

@@ -229,10 +229,7 @@ class MainActivity : Activity() {
                 }
                 if (connection.responseCode != 200) error("HTTP ${connection.responseCode}")
                 val json = connection.inputStream.bufferedReader().use { it.readText() }
-                fun value(name: String) = Regex("\\\"$name\\\":(\\d+)").find(json)?.groupValues?.get(1)?.toInt()
-                    ?: error("设备返回数据无效")
-                check(value("protocol_version") == CastProtocol.VERSION) { "设备协议版本不兼容" }
-                val loaded = CastInfo(value("width"), value("height"), value("rotation"), value("max_block_side"))
+                val loaded = CastInfo.parse(json)
                 runOnUiThread {
                     if (requestId != infoRequestId) return@runOnUiThread
                     infoRequestInFlight = false
@@ -313,5 +310,3 @@ class MainActivity : Activity() {
 
     companion object { private const val PROJECTION_REQUEST = 10 }
 }
-
-data class CastInfo(val width: Int, val height: Int, val rotation: Int, val maxBlockSide: Int)

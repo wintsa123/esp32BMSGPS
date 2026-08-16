@@ -576,9 +576,20 @@ static void settings_calibration_target_place(void)
 
 static void settings_calibration_start_timer_cb(lv_timer_t *timer)
 {
-    (void)timer;
+    if (timer != s_ui.settings_calibration_start_timer) {
+        return;
+    }
+    s_ui.settings_calibration_start_timer = NULL;
     if (s_ui.settings_system_view == (uint8_t)SETTINGS_SYSTEM_VIEW_TOUCH_CALIBRATION) {
         settings_calibration_target_place();
+    }
+}
+
+void settings_calibration_start_timer_cancel(void)
+{
+    if (s_ui.settings_calibration_start_timer) {
+        lv_timer_delete(s_ui.settings_calibration_start_timer);
+        s_ui.settings_calibration_start_timer = NULL;
     }
 }
 
@@ -617,6 +628,7 @@ static void settings_calibration_cancel_event_cb(lv_event_t *event)
 
 static void settings_show_touch_calibration(void)
 {
+    settings_calibration_start_timer_cancel();
     s_ui.settings_calibration_target_index = 0;
     queue_action(ESP_BMS_LVGL_ACTION_START_TOUCH_CALIBRATION);
 
@@ -662,9 +674,11 @@ static void settings_show_touch_calibration(void)
     lv_obj_set_style_text_align(cancel_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(cancel_label, COLOR_SETTINGS_TEXT, LV_PART_MAIN);
 
-    lv_timer_t *timer = lv_timer_create(settings_calibration_start_timer_cb, 100, NULL);
-    if (timer) {
-        lv_timer_set_repeat_count(timer, 1);
+    s_ui.settings_calibration_start_timer = lv_timer_create(settings_calibration_start_timer_cb,
+                                                            100,
+                                                            NULL);
+    if (s_ui.settings_calibration_start_timer) {
+        lv_timer_set_repeat_count(s_ui.settings_calibration_start_timer, 1);
     }
 }
 

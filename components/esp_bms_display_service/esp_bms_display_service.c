@@ -88,7 +88,11 @@ typedef struct {
     esp_err_t init_result;
     uint32_t next_command_token;
     esp_bms_lvgl_data_source_t stable_data_source;
+    esp_bms_display_rotation_t current_rotation;
+    esp_bms_display_rotation_t cast_saved_rotation;
     drag_perf_t drag_perf;
+    bool cast_restore_pending;
+    bool cast_active;
     bool ready;
     bool running;
 } display_service_t;
@@ -253,6 +257,26 @@ static TickType_t timeout_to_ticks(uint32_t timeout_ms)
     return ticks == 0U ? 1U : ticks;
 }
 
+static bool service_cast_active(void)
+{
+    return __atomic_load_n(&s_service.cast_active, __ATOMIC_RELAXED);
+}
+
+static bool service_rotation_is_valid(esp_bms_display_rotation_t rotation)
+{
+    return rotation == ESP_BMS_DISPLAY_ROTATION_PORTRAIT ||
+           rotation == ESP_BMS_DISPLAY_ROTATION_LANDSCAPE ||
+           rotation == ESP_BMS_DISPLAY_ROTATION_INVERTED_PORTRAIT ||
+           rotation == ESP_BMS_DISPLAY_ROTATION_INVERTED_LANDSCAPE;
+}
+
+static void service_discard_action_events(void)
+{
+    esp_bms_lvgl_action_event_t event;
+    while (xQueueReceive(s_service.action_queue, &event, 0) == pdTRUE) {
+    }
+}
+
 static esp_err_t service_process_touch_calibration(const esp_bms_lvgl_action_event_t *event)
 {
     switch (event->action) {
@@ -287,9 +311,100 @@ static esp_err_t service_process_touch_calibration(const esp_bms_lvgl_action_eve
     }
 }
 
+static esp_err_t service_enter_cast_locked(void)
+{
+    ESP_RETURN_ON_FALSE(!service_cast_active(), ESP_ERR_INVALID_STATE, TAG,
+                        "cast mode is already active");
+    ESP_RETURN_ON_FALSE(service_rotation_is_valid(s_service.current_rotation), ESP_ERR_INVALID_STATE, TAG,
+                        "saved display rotation is invalid");
+
+    if (s_service.drag_perf.active) {
+        drag_perf_finish();
+    }
+    s_service.cast_saved_rotation = s_service.current_rotation;
+    ESP_RETURN_ON_ERROR(esp_bms_lvgl_bridge_enter_cast(), TAG, "enter bridge cast mode failed");
+    esp_bms_lvgl_bridge_cancel_touch_calibration();
+
+    const esp_err_t ret = esp_bms_lvgl_ui_suspend();
+    if (ret != ESP_OK) {
+        (void)esp_bms_lvgl_bridge_exit_cast();
+        return ret;
+    }
+
+    service_discard_action_events();
+    __atomic_store_n(&s_service.stable_data_source,
+                     ESP_BMS_LVGL_DATA_SOURCE_NONE,
+                     __ATOMIC_RELAXED);
+    __atomic_store_n(&s_service.cast_active, true, __ATOMIC_RELAXED);
+    return ESP_OK;
+}
+
+static void service_cleanup_partial_cast_restore_locked(void)
+{
+    const esp_err_t ret = esp_bms_lvgl_ui_suspend();
+    if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
+        ESP_LOGW(TAG, "release partial cast restore UI failed: %s", esp_err_to_name(ret));
+    }
+}
+
+static esp_err_t service_exit_cast_locked(void)
+{
+    ESP_RETURN_ON_FALSE(service_cast_active(), ESP_ERR_INVALID_STATE, TAG,
+                        "cast mode is not active");
+
+    if (s_service.cast_restore_pending) {
+        return ESP_OK;
+    }
+
+    ESP_RETURN_ON_ERROR(esp_bms_lvgl_bridge_set_rotation(s_service.cast_saved_rotation), TAG,
+                        "restore display rotation failed");
+    s_service.last_snapshot.cast_active = false;
+    esp_err_t ret = esp_bms_lvgl_ui_init(esp_bms_lvgl_bridge_get_display(),
+                                         esp_bms_lvgl_bridge_touch_calibration_supported(),
+                                         esp_bms_lvgl_bridge_native_gestures_supported());
+    if (ret != ESP_OK) {
+        service_cleanup_partial_cast_restore_locked();
+        return ret;
+    }
+    ret = esp_bms_lvgl_ui_update(&s_service.last_snapshot);
+    if (ret != ESP_OK) {
+        service_cleanup_partial_cast_restore_locked();
+        return ret;
+    }
+    ret = esp_bms_lvgl_bridge_exit_cast();
+    if (ret != ESP_OK) {
+        service_cleanup_partial_cast_restore_locked();
+        return ret;
+    }
+
+    s_service.cast_restore_pending = true;
+    return ESP_OK;
+}
+
+static esp_err_t service_resume_after_cast(void)
+{
+    ESP_RETURN_ON_FALSE(s_service.cast_restore_pending, ESP_ERR_INVALID_STATE, TAG,
+                        "cast mode is not ready to resume");
+
+    ESP_RETURN_ON_ERROR(esp_bms_lvgl_bridge_resume_after_cast(), TAG,
+                        "resume bridge cast mode failed");
+    s_service.current_rotation = s_service.cast_saved_rotation;
+    s_service.cast_restore_pending = false;
+    __atomic_store_n(&s_service.cast_active, false, __ATOMIC_RELAXED);
+    return ESP_OK;
+}
+
 static esp_err_t service_process_command(const esp_bms_display_service_command_t *command)
 {
+    if (service_cast_active() && command->kind != ESP_BMS_DISPLAY_SERVICE_COMMAND_EXIT_CAST &&
+        command->kind != ESP_BMS_DISPLAY_SERVICE_COMMAND_PRESENT_JPEG) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
     switch (command->kind) {
+    case ESP_BMS_DISPLAY_SERVICE_COMMAND_ENTER_CAST:
+    case ESP_BMS_DISPLAY_SERVICE_COMMAND_EXIT_CAST:
+        return ESP_ERR_INVALID_STATE;
     case ESP_BMS_DISPLAY_SERVICE_COMMAND_BOOT_UPDATE:
         return esp_bms_lvgl_ui_boot_update(command->data.boot_update.progress_percent,
                                            command->data.boot_update.status_text);
@@ -303,8 +418,12 @@ static esp_err_t service_process_command(const esp_bms_display_service_command_t
         return esp_bms_lvgl_bridge_set_brightness(command->data.brightness.percent);
     case ESP_BMS_DISPLAY_SERVICE_COMMAND_SET_ROTATION:
         {
+            if (!service_rotation_is_valid(command->data.rotation.rotation)) {
+                return ESP_ERR_INVALID_ARG;
+            }
             esp_err_t ret = esp_bms_lvgl_bridge_set_rotation(command->data.rotation.rotation);
             if (ret == ESP_OK) {
+                s_service.current_rotation = command->data.rotation.rotation;
                 ret = esp_bms_lvgl_ui_update(&s_service.last_snapshot);
             }
             return ret;
@@ -318,13 +437,12 @@ static esp_err_t service_process_command(const esp_bms_display_service_command_t
             command->data.touch_calibration_result.success);
     case ESP_BMS_DISPLAY_SERVICE_COMMAND_RESET_TOUCH_CALIBRATION:
         return esp_bms_lvgl_bridge_reset_touch_calibration();
-    case ESP_BMS_DISPLAY_SERVICE_COMMAND_WRITE_RGB565:
-        return esp_bms_lvgl_bridge_write_rgb565(command->data.rgb565.x,
-                                                 command->data.rgb565.y,
-                                                 command->data.rgb565.width,
-                                                 command->data.rgb565.height,
-                                                 command->data.rgb565.pixels,
-                                                 command->data.rgb565.pixel_bytes);
+    case ESP_BMS_DISPLAY_SERVICE_COMMAND_PRESENT_JPEG:
+        return esp_bms_lvgl_bridge_present_jpeg(command->data.jpeg.sequence,
+                                                command->data.jpeg.rotation,
+                                                command->data.jpeg.bytes,
+                                                command->data.jpeg.byte_count,
+                                                command->data.jpeg.metrics);
     case ESP_BMS_DISPLAY_SERVICE_COMMAND_OTA_UPDATE:
         return esp_bms_lvgl_ui_ota_update(command->data.ota_update.progress_percent,
                                           command->data.ota_update.status_text,
@@ -339,7 +457,12 @@ static esp_err_t service_process_command(const esp_bms_display_service_command_t
 static void service_process_commands(void)
 {
     command_item_t item = { 0 };
-    while (xQueueReceive(s_service.command_queue, &item, 0) == pdTRUE) {
+    while (xQueuePeek(s_service.command_queue, &item, 0) == pdTRUE) {
+        if (item.command.kind == ESP_BMS_DISPLAY_SERVICE_COMMAND_ENTER_CAST ||
+            item.command.kind == ESP_BMS_DISPLAY_SERVICE_COMMAND_EXIT_CAST) {
+            return;
+        }
+        (void)xQueueReceive(s_service.command_queue, &item, 0);
         drag_perf_record_queue_delay(true, item.queued_us);
         const esp_err_t result = service_process_command(&item.command);
         const command_result_t response = {
@@ -357,6 +480,67 @@ static void service_process_commands(void)
     }
 }
 
+static void service_publish_command_result(const command_item_t *item, esp_err_t result)
+{
+    const command_result_t response = {
+        .token = item->token,
+        .result = result,
+    };
+    (void)xQueueOverwrite(s_service.result_queue, &response);
+    if (result != ESP_OK) {
+        ESP_LOGW(TAG,
+                 "command=%u queue_us=%lld result=%s",
+                 (unsigned)item->command.kind,
+                 (long long)(esp_timer_get_time() - item->queued_us),
+                 esp_err_to_name(result));
+    }
+}
+
+static bool service_process_cast_transition(void)
+{
+    command_item_t item = { 0 };
+    if (xQueuePeek(s_service.command_queue, &item, 0) != pdTRUE ||
+        (item.command.kind != ESP_BMS_DISPLAY_SERVICE_COMMAND_ENTER_CAST &&
+         item.command.kind != ESP_BMS_DISPLAY_SERVICE_COMMAND_EXIT_CAST)) {
+        return false;
+    }
+    (void)xQueueReceive(s_service.command_queue, &item, 0);
+
+    esp_err_t result = ESP_OK;
+    if (item.command.kind == ESP_BMS_DISPLAY_SERVICE_COMMAND_ENTER_CAST) {
+        if (service_cast_active()) {
+            result = ESP_ERR_INVALID_STATE;
+        } else {
+            result = esp_bms_lvgl_bridge_pause_for_cast();
+            if (result == ESP_OK) {
+                result = esp_bms_lvgl_bridge_lock(-1);
+                if (result == ESP_OK) {
+                    result = service_enter_cast_locked();
+                    esp_bms_lvgl_bridge_unlock();
+                }
+                if (result != ESP_OK) {
+                    const esp_err_t resume_result = esp_bms_lvgl_bridge_resume_after_cast();
+                    if (resume_result != ESP_OK) {
+                        ESP_LOGE(TAG, "rollback cast pause failed: %s", esp_err_to_name(resume_result));
+                    }
+                }
+            }
+        }
+    } else {
+        result = esp_bms_lvgl_bridge_lock(-1);
+        if (result == ESP_OK) {
+            result = service_exit_cast_locked();
+            esp_bms_lvgl_bridge_unlock();
+        }
+        if (result == ESP_OK) {
+            result = service_resume_after_cast();
+        }
+    }
+
+    service_publish_command_result(&item, result);
+    return true;
+}
+
 static void service_process_snapshot(void)
 {
     snapshot_item_t item = { 0 };
@@ -366,7 +550,7 @@ static void service_process_snapshot(void)
 
     drag_perf_record_queue_delay(false, item.queued_us);
     s_service.last_snapshot = item.snapshot;
-    if (item.snapshot.cast_active) {
+    if (service_cast_active() || item.snapshot.cast_active) {
         return;
     }
     const esp_err_t ret = esp_bms_lvgl_ui_update(&s_service.last_snapshot);
@@ -470,37 +654,45 @@ static void display_service_task(void *arg)
 
     while (s_service.running) {
         uint32_t delay_ms = DISPLAY_SERVICE_LOOP_MAX_DELAY_MS;
+        (void)service_process_cast_transition();
         if (esp_bms_lvgl_bridge_lock(-1) == ESP_OK) {
-            if (esp_bms_lvgl_ui_drag_active() && !s_service.drag_perf.active) {
-                drag_perf_start();
-            }
             service_process_commands();
-            service_process_snapshot();
-            service_process_actions();
-            __atomic_store_n(&s_service.stable_data_source,
-                             esp_bms_lvgl_ui_stable_data_source(),
-                             __ATOMIC_RELAXED);
-            const int64_t timer_started_us = esp_timer_get_time();
-            delay_ms = lv_timer_handler();
-            const uint32_t timer_elapsed_us = elapsed_us_since(timer_started_us);
-            esp_bms_lvgl_native_gesture_t gesture = ESP_BMS_LVGL_NATIVE_GESTURE_NONE;
-            if (esp_bms_lvgl_bridge_take_native_gesture(&gesture)) {
-                const esp_err_t gesture_ret = esp_bms_lvgl_ui_handle_native_gesture(gesture);
-                if (gesture_ret != ESP_OK) {
-                    ESP_LOGW(TAG, "native gesture=%u failed: %s",
-                             (unsigned)gesture,
-                             esp_err_to_name(gesture_ret));
+            if (service_cast_active()) {
+                service_process_snapshot();
+                __atomic_store_n(&s_service.stable_data_source,
+                                 ESP_BMS_LVGL_DATA_SOURCE_NONE,
+                                 __ATOMIC_RELAXED);
+            } else {
+                if (esp_bms_lvgl_ui_drag_active() && !s_service.drag_perf.active) {
+                    drag_perf_start();
                 }
-            }
-            const bool drag_active = esp_bms_lvgl_ui_drag_active();
-            if (drag_active && !s_service.drag_perf.active) {
-                drag_perf_start();
-            }
-            if (s_service.drag_perf.active) {
-                drag_perf_record_frame(timer_elapsed_us);
-                drag_perf_sample_memory();
-                if (!drag_active) {
-                    drag_perf_finish();
+                service_process_snapshot();
+                service_process_actions();
+                __atomic_store_n(&s_service.stable_data_source,
+                                 esp_bms_lvgl_ui_stable_data_source(),
+                                 __ATOMIC_RELAXED);
+                const int64_t timer_started_us = esp_timer_get_time();
+                delay_ms = lv_timer_handler();
+                const uint32_t timer_elapsed_us = elapsed_us_since(timer_started_us);
+                esp_bms_lvgl_native_gesture_t gesture = ESP_BMS_LVGL_NATIVE_GESTURE_NONE;
+                if (esp_bms_lvgl_bridge_take_native_gesture(&gesture)) {
+                    const esp_err_t gesture_ret = esp_bms_lvgl_ui_handle_native_gesture(gesture);
+                    if (gesture_ret != ESP_OK) {
+                        ESP_LOGW(TAG, "native gesture=%u failed: %s",
+                                 (unsigned)gesture,
+                                 esp_err_to_name(gesture_ret));
+                    }
+                }
+                const bool drag_active = esp_bms_lvgl_ui_drag_active();
+                if (drag_active && !s_service.drag_perf.active) {
+                    drag_perf_start();
+                }
+                if (s_service.drag_perf.active) {
+                    drag_perf_record_frame(timer_elapsed_us);
+                    drag_perf_sample_memory();
+                    if (!drag_active) {
+                        drag_perf_finish();
+                    }
                 }
             }
             esp_bms_lvgl_bridge_unlock();
@@ -511,7 +703,10 @@ static void display_service_task(void *arg)
         if (delay_ms == 0U) {
             delay_ms = 1U;
         }
-        vTaskDelay(pdMS_TO_TICKS(delay_ms));
+        command_item_t pending_command;
+        (void)xQueuePeek(s_service.command_queue,
+                         &pending_command,
+                         timeout_to_ticks(delay_ms));
     }
     vTaskDelete(NULL);
 }
@@ -529,6 +724,7 @@ esp_err_t esp_bms_display_service_start(const esp_bms_lvgl_bridge_config_t *conf
     s_service.config = *config;
     s_service.initial_snapshot = *snapshot;
     s_service.initial_brightness_percent = brightness_percent;
+    s_service.current_rotation = config->rotation;
     s_service.snapshot_queue = xQueueCreateStatic(1,
                                                    sizeof(snapshot_item_t),
                                                    s_service.snapshot_queue_buffer,
@@ -616,6 +812,9 @@ esp_err_t esp_bms_display_service_take_action_event(esp_bms_lvgl_action_event_t 
     ESP_RETURN_ON_FALSE(s_service.running, ESP_ERR_INVALID_STATE, TAG,
                         "display service is not running");
     memset(event, 0, sizeof(*event));
+    if (service_cast_active()) {
+        return ESP_OK;
+    }
     (void)xQueueReceive(s_service.action_queue, event, 0);
     return ESP_OK;
 }
@@ -633,4 +832,15 @@ bool esp_bms_display_service_speed_dashboard_style_available(esp_bms_speed_dashb
 esp_bms_speed_dashboard_style_t esp_bms_display_service_default_speed_dashboard_style(void)
 {
     return esp_bms_lvgl_ui_default_speed_dashboard_style();
+}
+
+esp_err_t esp_bms_display_service_get_logical_resolution(
+    esp_bms_display_rotation_t rotation,
+    uint16_t *width,
+    uint16_t *height)
+{
+    ESP_RETURN_ON_FALSE(width && height, ESP_ERR_INVALID_ARG, TAG, "resolution outputs are required");
+    ESP_RETURN_ON_FALSE(s_service.running, ESP_ERR_INVALID_STATE, TAG,
+                        "display service is not running");
+    return esp_bms_lvgl_bridge_get_logical_resolution(rotation, width, height);
 }

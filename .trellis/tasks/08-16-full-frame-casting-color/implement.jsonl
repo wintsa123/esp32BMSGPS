@@ -1,0 +1,3 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Defines the Android to protocol to firmware to LCD format boundary that must have one explicit owner per conversion."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Defines cast behavior, GitNexus change detection, and firmware quality expectations."}
+{"file":".trellis/spec/backend/hardware-build-flash.md","reason":"Defines ESP-IDF dependency, cast-s3 build, RFC2217 flash, and hardware validation requirements."}

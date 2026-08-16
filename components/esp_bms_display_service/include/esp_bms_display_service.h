@@ -22,9 +22,11 @@ typedef enum {
     ESP_BMS_DISPLAY_SERVICE_COMMAND_SET_PAGE,
     ESP_BMS_DISPLAY_SERVICE_COMMAND_TOUCH_CALIBRATION_RESULT,
     ESP_BMS_DISPLAY_SERVICE_COMMAND_RESET_TOUCH_CALIBRATION,
-    ESP_BMS_DISPLAY_SERVICE_COMMAND_WRITE_RGB565,
+    ESP_BMS_DISPLAY_SERVICE_COMMAND_PRESENT_JPEG,
     ESP_BMS_DISPLAY_SERVICE_COMMAND_OTA_UPDATE,
     ESP_BMS_DISPLAY_SERVICE_COMMAND_OTA_FINISH,
+    ESP_BMS_DISPLAY_SERVICE_COMMAND_ENTER_CAST,
+    ESP_BMS_DISPLAY_SERVICE_COMMAND_EXIT_CAST,
 } esp_bms_display_service_command_kind_t;
 
 typedef struct {
@@ -51,13 +53,12 @@ typedef struct {
             bool success;
         } touch_calibration_result;
         struct {
-            uint16_t x;
-            uint16_t y;
-            uint16_t width;
-            uint16_t height;
-            const uint8_t *pixels;
-            size_t pixel_bytes;
-        } rgb565;
+            uint32_t sequence;
+            esp_bms_display_rotation_t rotation;
+            const uint8_t *bytes;
+            size_t byte_count;
+            esp_bms_lvgl_bridge_cast_metrics_t *metrics;
+        } jpeg;
         struct {
             uint8_t progress_percent;
             bool failed;
@@ -77,6 +78,10 @@ esp_err_t esp_bms_display_service_take_action_event(esp_bms_lvgl_action_event_t 
 esp_bms_lvgl_data_source_t esp_bms_display_service_stable_data_source(void);
 bool esp_bms_display_service_speed_dashboard_style_available(esp_bms_speed_dashboard_style_t style);
 esp_bms_speed_dashboard_style_t esp_bms_display_service_default_speed_dashboard_style(void);
+esp_err_t esp_bms_display_service_get_logical_resolution(
+    esp_bms_display_rotation_t rotation,
+    uint16_t *width,
+    uint16_t *height);
 
 #ifdef __cplusplus
 }

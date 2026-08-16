@@ -1162,6 +1162,11 @@ esp_err_t rebuild_screen_if_needed(const esp_bms_dashboard_snapshot_t *snapshot)
         lv_obj_stop_scroll_anim(s_ui.pages);
     }
     quick_toast_cancel();
+    settings_calibration_start_timer_cancel();
+    if (s_ui.quick_level_save_timer) {
+        lv_timer_delete(s_ui.quick_level_save_timer);
+        s_ui.quick_level_save_timer = NULL;
+    }
     screen_unlock_timer_cancel();
     settings_boot_preview_timer_cancel();
     settings_bms_popup_close();
@@ -1217,6 +1222,41 @@ esp_err_t esp_bms_lvgl_ui_init(lv_display_t *display,
     s_native_gestures_supported = native_gestures_supported;
     create_screen(display);
     UI_SET_FLAG(INITIALIZED, true);
+    return ESP_OK;
+}
+
+esp_err_t esp_bms_lvgl_ui_suspend(void)
+{
+    ESP_RETURN_ON_FALSE(UI_FLAG(INITIALIZED), ESP_ERR_INVALID_STATE, TAG, "UI is not initialized");
+
+    lv_indev_reset(NULL, NULL);
+    if (s_ui.pages) {
+        lv_obj_stop_scroll_anim(s_ui.pages);
+    }
+    quick_toast_cancel();
+    settings_calibration_start_timer_cancel();
+    if (s_ui.quick_level_save_timer) {
+        lv_timer_delete(s_ui.quick_level_save_timer);
+        s_ui.quick_level_save_timer = NULL;
+    }
+    screen_unlock_timer_cancel();
+    settings_boot_preview_timer_cancel();
+    settings_bms_popup_close();
+    settings_restore_popup_close();
+    if (s_ui.settings_swipe_indicator) {
+        lv_obj_delete(s_ui.settings_swipe_indicator);
+        s_ui.settings_swipe_indicator = NULL;
+    }
+    if (s_ui.staging_screen) {
+        lv_obj_delete(s_ui.staging_screen);
+        s_ui.staging_screen = NULL;
+    }
+    if (s_ui.root) {
+        lv_obj_delete(s_ui.root);
+    }
+    dashboard_static_cache_release();
+
+    memset(&s_ui, 0, sizeof(s_ui));
     return ESP_OK;
 }
 

@@ -1,1 +1,3 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Cast QR, build and firmware quality constraints."}
+{"file":".trellis/spec/backend/hardware-build-flash.md","reason":"ESP32-S3 I80 profile and required build/flash workflow."}
+{"file":".trellis/spec/frontend/lvgl-dashboard-layout.md","reason":"Rotation-aware LVGL screen lifecycle and layout constraints."}
