@@ -141,7 +141,7 @@ bool esp_bms_lvgl_bridge_native_gestures_supported(void);
 bool esp_bms_lvgl_bridge_take_native_gesture(esp_bms_lvgl_native_gesture_t *gesture);
 esp_err_t esp_bms_lvgl_bridge_lock(int32_t timeout_ms);
 void esp_bms_lvgl_bridge_unlock(void);
-/* Caller holds the LVGL bridge lock. Decoded cast pixels stay RGB565 little-endian. */
+/* Caller holds the LVGL bridge lock. Cast pixels stay RGB565 big-endian. */
 esp_err_t esp_bms_lvgl_bridge_present_jpeg(uint32_t sequence,
                                            esp_bms_display_rotation_t rotation,
                                            const uint8_t *jpeg,

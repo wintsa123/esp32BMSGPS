@@ -972,10 +972,13 @@ esp_bms_lvgl_bridge_config_t.panel_mirror_x
 
   Red, green, and blue render correctly with this exact combination. Do not
   replace it with `RGB_ORDER=RGB` or `I80_SWAP_COLOR_BYTES=1`.
-- On that board, RGB565 byte swapping belongs exclusively to
-  `custom_draw_bitmap`: call `lv_draw_sw_rgb565_swap()` immediately before
-  `esp_lcd_panel_draw_bitmap()`. Do not rely on the adapter flush path or
-  enable `I80_SWAP_COLOR_BYTES`, which would duplicate the conversion.
+- On that board, the final RGB565 conversion at the I80 submission boundary
+  belongs to `custom_draw_bitmap`: call `lv_draw_sw_rgb565_swap()` immediately
+  before `esp_lcd_panel_draw_bitmap()`. Normal LVGL flush first applies the
+  adapter's `OTHER`-interface RGB565 pre-swap; cast dummy draw bypasses that
+  step and therefore decodes directly to `RGB565_BE` before entering the same
+  callback. Do not enable `I80_SWAP_COLOR_BYTES`, which would add another
+  conversion.
 - ESP LCD Touch applies `MIRROR_X` and `MIRROR_Y` before `SWAP_XY`. For this
   board's final landscape orientation, `SWAP_XY=1`, `MIRROR_X=1`, and
   `MIRROR_Y=0` produce `screen_y = 320 - raw_x`.

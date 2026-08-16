@@ -7,9 +7,14 @@ mkdir -p "${repo_root}/firmware-builds"
 profile_dir="$(mktemp -d "${repo_root}/firmware-builds/.configurator-requires.XXXXXX")"
 trap 'rm -rf "${work_dir}" "${profile_dir}"' EXIT
 
+cast_present_source="$(sed -n '/^esp_err_t esp_bms_lvgl_bridge_present_jpeg(/,/^}/p' \
+    "${repo_root}/components/esp_bms_lvgl_bridge/esp_bms_lvgl_bridge.c")"
+rg -Fq 'config.output_type = JPEG_PIXEL_FORMAT_RGB565_BE;' <<<"${cast_present_source}"
+! rg -q 'CONFIG_IDF_TARGET' <<<"${cast_present_source}"
+
 rg -Fq 'default y if SPIRAM' "${repo_root}/components/esp_bms_lvgl_bridge/Kconfig"
 rg -qx 'CONFIG_ESP_BMS_LVGL_BRIDGE_DOUBLE_BUFFER=y' "${repo_root}/config/sdkconfig/sdkconfig.defaults.esp32s3"
-rg -qx 'CONFIG_ESP_BMS_LVGL_BRIDGE_SPI_DRAW_BUFFER_HEIGHT=120' "${repo_root}/config/sdkconfig/sdkconfig.defaults.esp32s3"
+rg -qx 'CONFIG_ESP_BMS_LVGL_BRIDGE_SPI_DRAW_BUFFER_HEIGHT=40' "${repo_root}/config/sdkconfig/sdkconfig.defaults.esp32s3"
 rg -qx 'CONFIG_LV_USE_SNAPSHOT=y' "${repo_root}/config/sdkconfig/sdkconfig.defaults.esp32s3"
 rg -qx 'CONFIG_BT_NIMBLE_SM_LVL=2' "${repo_root}/config/sdkconfig/sdkconfig.defaults.esp32s3"
 for target in '' .esp32c3 .esp32s3 .esp32p4; do

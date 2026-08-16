@@ -2,7 +2,7 @@
 
 ## 架构与数据流
 
-`MediaProjection ImageReader -> Android Bitmap 原生复制/拉伸 -> JPEG quality 80 -> WebSocket v3 单帧消息 -> ESP32 PSRAM 接收缓冲 -> esp_new_jpeg RGB565_LE -> 完整帧提交 -> ACK`。
+`MediaProjection ImageReader -> Android Bitmap 原生复制/拉伸 -> JPEG quality 80 -> WebSocket v3 单帧消息 -> ESP32 PSRAM 接收缓冲 -> esp_new_jpeg RGB565_BE -> 完整帧提交 -> ACK`。
 
 Android 捕获线程最多每 50 ms 生成一帧，使用 `Bitmap.copyPixelsFromBuffer()` 和 `Canvas.drawBitmap()` 处理行跨度与目标尺寸，避免继续用 Kotlin 逐像素转换。发送线程只读取最新 JPEG；设备 ACK 前不会发送下一帧，捕获期间产生的旧帧由最新帧覆盖。
 
@@ -34,7 +34,7 @@ Android 捕获线程最多每 50 ms 生成一帧，使用 `Bitmap.copyPixelsFrom
 
 - Runtime 在首次投屏连接时从 PSRAM 懒分配一个 `262144 + 7 B` 接收缓冲，后续会话复用；启动不因未使用的投屏功能永久占用该空间，也避免逐帧 malloc/free。
 - LVGL bridge 在进入投屏时从 PSRAM 分配一个 16 字节对齐的最大物理帧缓冲，`320 * 480 * 2 = 307200 B`；退出投屏时释放。
-- JPEG decoder 输出固定为 `JPEG_PIXEL_FORMAT_RGB565_LE`。该缓冲只由显示任务拥有，HTTP handler 只持有同步 display command 返回前有效的压缩输入指针。
+- 当前已验证的 S3 ST7796U 路径使用 `JPEG_PIXEL_FORMAT_RGB565_BE`。该缓冲只由显示任务拥有，HTTP handler 只持有同步 display command 返回前有效的压缩输入指针。
 - 预计投屏新增 PSRAM 峰值约 `563 KiB`，低于真机日志显示的 `8.25 MB` 最大连续块。
 
 Runtime 接收缓冲在首次成功分配后保留到设备生命周期结束，避免心跳超时与 HTTP handler 并发时出现释放竞态。这个固定上限是有意的简化；只有未来支持更高分辨率时才扩大或改成分块压缩输入。
@@ -44,12 +44,14 @@ Runtime 接收缓冲在首次成功分配后保留到设备生命周期结束，
 显示服务新增一个同步 `PRESENT_JPEG` 命令，携带 sequence、rotation 和 JPEG 指针/长度。Bridge 的提交顺序为：
 
 1. 解析 JPEG header，并验证宽高等于目标 rotation 的逻辑分辨率。
-2. 解码到 16 字节对齐的 RGB565_LE PSRAM 帧缓冲。
+2. 解码到 16 字节对齐的 RGB565_BE PSRAM 帧缓冲。
 3. 解码成功后才切换临时显示方向。
 4. 按现有 40 行 DMA 容量把完整帧连续提交到 panel；网络接收过程中不触碰 LCD。
 5. 全部 DMA 完成后返回，Runtime 才发送 ACK。
 
-RGB565_LE 是唯一的设备内部投屏像素格式。I80 的现有 `i80_draw_bitmap_swap()` 负责唯一一次 LCD wire byte swap；删除旧投屏块路径的大端 wire 转 LVGL 再转 I80 的双阶段色序处理。Android 只负责生成标准 JPEG，不再手工定义 RGB565 线格式。
+颜色格式按最终显示提交链路区分，不按 MCU 型号分支。当前已实测的 S3 ST7796U partial-refresh 链路中，普通 LVGL flush 会先按 `OTHER` 接口规则把 native RGB565 预交换，再由 `i80_draw_bitmap_swap()` 交换到 16-bit I80 DMA staging buffer；cast 的 dummy draw 不经过该 flush 预交换，因此 decoder 必须直接输出 `RGB565_BE`，再由同一 callback 交换一次后提交。Android 只负责生成标准 JPEG，不手工定义 RGB565 线格式。
+
+旧 ESP32 的 ST7789 SPI 路径以及启用 `I80_SWAP_COLOR_BYTES=1` 的 I80 profile 需要各自连板验证后，才能确认或调整 decoder 输出格式；不能把 S3 ST7796U 的验证结果外推成全 MCU 通用结论。
 
 LCD 没有接入 TE 信号，因此不能做到电子意义上的垂直同步原子翻转。25 MHz 16-bit I80 全屏像素传输理论约 `6.2 ms`，连续 40 行条带提交应在一个肉眼不可见的短窗口内完成；若真机仍观察到撕裂，TE/双 GRAM 属于后续硬件级工作。
 

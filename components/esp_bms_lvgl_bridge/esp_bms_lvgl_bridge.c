@@ -1866,7 +1866,9 @@ esp_err_t esp_bms_lvgl_bridge_present_jpeg(uint32_t sequence,
 
     const int64_t decode_started_us = esp_timer_get_time();
     jpeg_dec_config_t config = DEFAULT_JPEG_DEC_CONFIG();
-    config.output_type = JPEG_PIXEL_FORMAT_RGB565_LE;
+    /* dummy_draw bypasses the adapter's OTHER/RGB565 pre-swap, so decode into
+     * that same big-endian panel submission format for both SPI and I80. */
+    config.output_type = JPEG_PIXEL_FORMAT_RGB565_BE;
     jpeg_dec_handle_t decoder = NULL;
     jpeg_error_t jpeg_ret = jpeg_dec_open(&config, &decoder);
     if (jpeg_ret != JPEG_ERR_OK || !decoder) {

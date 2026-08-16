@@ -944,11 +944,14 @@ xTaskNotify(s_xl9555_backlight_task, XL9555_BACKLIGHT_NOTIFY_UPDATE, eSetBits);
   advertises `codec=jpeg`, quality `80`, target `20 fps`, and this same byte
   limit, lowering quality to `60` once before dropping an oversized frame.
 - The display service receives only a complete validated message. It parses
-  the JPEG dimensions, decodes with `esp_new_jpeg` to a 16-byte-aligned
-  `RGB565_LE` frame buffer, applies rotation only after decode succeeds, then
-  submits contiguous 40-row dummy-draw DMA strips. The existing I80 callback
-  performs the sole wire-byte swap; no RGB565 conversion or swap occurs on
-  Android.
+  the JPEG dimensions, applies rotation only after decode succeeds, then
+  submits contiguous 40-row dummy-draw DMA strips. Select JPEG RGB565 byte
+  order by the final panel submission path, never by `CONFIG_IDF_TARGET_*`.
+  The verified S3 ST7796U 16-bit I80 partial path decodes `RGB565_BE` because
+  dummy draw bypasses the adapter's normal `OTHER`-interface pre-swap and the
+  I80 callback swaps it once into its DMA staging buffer. SPI paths and I80
+  profiles using `I80_SWAP_COLOR_BYTES=1` need their own connected-board color
+  matrix before being declared compatible. Android performs no RGB565 swap.
 - Runtime owns one PSRAM receive buffer for the lifetime of the device and
   sends the ACK only after synchronous decode and all display strips complete.
   Truncated, oversized, invalid-version/rotation, wrong-size, decode, or
@@ -956,7 +959,7 @@ xTaskNotify(s_xl9555_backlight_task, XL9555_BACKLIGHT_NOTIFY_UPDATE, eSetBits);
   session; the main loop then exits cast mode and resumes paused modules.
 - Delete and null every screen-owned timer before deleting, rebuilding, or
   suspending the root, including one-shot touch-calibration startup timers.
-- S3 BMS and Fireblade static RGB565 images and the 480x120 draw buffers are
+- S3 BMS and Fireblade static RGB565 images and the 480x40 draw buffers are
   created at UI initialization/rebuild and reused. Gesture and telemetry paths
   must not allocate or free them.
 - `drag_perf` logs P95 handler time plus render/flush/DMA wait, invalidation,
@@ -970,7 +973,7 @@ xTaskNotify(s_xl9555_backlight_task, XL9555_BACKLIGHT_NOTIFY_UPDATE, eSetBits);
 | Snapshot arrives during drag or settle | Overwrite the pending snapshot; do not rebuild dynamic widgets mid-gesture. |
 | Static cache allocation or snapshot creation fails | Log `dashboard_cache ... cache=off`, retain the object-tree fallback, and do not claim the FPS target. |
 | Display command times out or returns an error | Log `esp_err_to_name(ret)`, retain the previous persisted setting, and keep the runtime loop alive. |
-| Hardware I80 clock is unstable at 20 MHz | Keep the service/cache changes and roll only the ST7796U catalog clock back to 10 MHz. |
+| Hardware I80 clock is unstable at 25 MHz | Keep the service/cache changes and roll only the ST7796U catalog clock back to 10 MHz. |
 
 ### 5. Good / Base / Bad Cases
 
@@ -982,8 +985,8 @@ xTaskNotify(s_xl9555_backlight_task, XL9555_BACKLIGHT_NOTIFY_UPDATE, eSetBits);
 
 ### 6. Tests Required
 
-- `tests/configurator_selftest.sh` asserts S3 480x120 buffers, snapshot cache
-  enablement, static queues, the 20 MHz ST7796U-only clock, and no direct
+- `tests/configurator_selftest.sh` asserts S3 480x40 buffers, snapshot cache
+  enablement, static queues, the 25 MHz ST7796U-only clock, and no direct
   main/runtime LVGL bridge/UI calls.
 - Cast changes run the host protocol self-test, Android unit tests, and both
   headless LVGL simulator orientations in addition to the selected S3 build.

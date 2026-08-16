@@ -1,0 +1,3 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Defines required cast regression checks, ownership boundaries, and RFC2217 completion validation."}
+{"file":".trellis/spec/backend/hardware-build-flash.md","reason":"Defines the target profile build and RGB565 I80 validation contract."}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"Checks that metrics remain bounded and omit credentials or raw payloads."}

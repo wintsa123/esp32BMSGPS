@@ -152,6 +152,40 @@ void esp_bms_module_registry_stop(esp_bms_idf_runtime_t *runtime)
 #endif
 }
 
+void esp_bms_module_registry_suspend_for_cast(esp_bms_idf_runtime_t *runtime)
+{
+#if ESP_BMS_FEATURE_CONTROLLER
+    esp_bms_idf_runtime_stop_controller_ble(runtime);
+#endif
+#if ESP_BMS_FEATURE_GPS
+    esp_bms_gps_stop(runtime);
+#elif !ESP_BMS_FEATURE_CONTROLLER
+    (void)runtime;
+#endif
+}
+
+esp_err_t esp_bms_module_registry_resume_after_cast(esp_bms_idf_runtime_t *runtime)
+{
+    if (!runtime) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    esp_err_t first_error = ESP_OK;
+#if ESP_BMS_FEATURE_GPS
+    const esp_err_t gps_ret = esp_bms_gps_init(runtime);
+    if (gps_ret != ESP_OK) {
+        first_error = gps_ret;
+    }
+#endif
+#if ESP_BMS_FEATURE_CONTROLLER
+    const esp_err_t controller_ret = esp_bms_idf_runtime_start_controller_ble_if_enabled(runtime);
+    if (first_error == ESP_OK) {
+        first_error = controller_ret;
+    }
+#endif
+    return first_error;
+}
+
 esp_err_t esp_bms_module_registry_start_setup_ap(esp_bms_idf_runtime_t *runtime)
 {
 #if ESP_BMS_FEATURE_NETWORK
