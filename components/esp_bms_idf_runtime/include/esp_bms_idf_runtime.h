@@ -52,6 +52,21 @@ typedef enum {
 #define ESP_BMS_IDF_BMS_SCAN_MAX_CANDIDATES ESP_BMS_BMS_SCAN_MAX_CANDIDATES
 #define ESP_BMS_IDF_BMS_SCAN_NAME_LEN ESP_BMS_BMS_SCAN_NAME_LEN
 #define ESP_BMS_IDF_BMS_FRAME_MAX_LEN 320U
+#define ESP_BMS_GPS_TRACK_MAX_POINTS 128U
+#define ESP_BMS_GPS_TRACK_FORMAT_VERSION 1U
+
+typedef struct {
+    int32_t latitude_e7;
+    int32_t longitude_e7;
+    uint32_t timestamp_s;
+} esp_bms_gps_track_point_t;
+
+typedef struct {
+    uint32_t format_version;
+    uint16_t count;
+    uint16_t reserved;
+    esp_bms_gps_track_point_t points[ESP_BMS_GPS_TRACK_MAX_POINTS];
+} esp_bms_gps_track_t;
 
 #define ESP_BMS_IDF_RUNTIME_FLAG_BATTERY_ADC_READY (UINT64_C(1) << 0)
 #define ESP_BMS_IDF_RUNTIME_FLAG_NVS_READY (UINT64_C(1) << 2)
@@ -139,6 +154,7 @@ typedef struct {
 struct esp_bms_idf_runtime {
     esp_bms_dashboard_snapshot_t snapshot;
     esp_bms_ride_records_t ride_records;
+    esp_bms_gps_track_t gps_track;
     esp_bms_capacity_estimate_t capacity_estimate;
     esp_bms_capacity_integrator_t capacity_integrator;
     adc_oneshot_unit_handle_t battery_adc;
@@ -149,13 +165,27 @@ struct esp_bms_idf_runtime {
     uint32_t battery_samples_seen;
     uint32_t battery_read_failures;
     uint32_t gps_speed_knots_milli;
+    int32_t gps_last_latitude_e7;
+    int32_t gps_last_longitude_e7;
+    uint32_t history_sample_elapsed_ms;
+    uint32_t history_elapsed_s;
+    uint64_t history_session_id;
+    uint64_t gps_utc_epoch_s;
+    uint16_t history_fault_mask;
+    uint16_t history_fault_supported_mask;
+    bool gps_last_fix_valid;
+    bool gps_utc_valid;
+    bool history_session_started;
+    bool history_time_anchored;
     int64_t bms_telemetry_last_us;
     uint32_t bms_status_poll_elapsed_ms;
     uint32_t controller_keepalive_elapsed_ms;
     uint32_t controller_scan_revision;
     uint32_t ride_records_generation;
+    uint32_t gps_track_generation;
     uint32_t capacity_estimate_generation;
     int64_t ride_records_retry_after_us;
+    int64_t gps_track_retry_after_us;
     int64_t capacity_estimate_retry_after_us;
     uint16_t bms_frame_len;
     uint16_t bms_conn_handle;
@@ -193,6 +223,7 @@ struct esp_bms_idf_runtime {
     SemaphoreHandle_t http_pending_lock;
     SemaphoreHandle_t bms_scan_lock;
     SemaphoreHandle_t ride_records_lock;
+    SemaphoreHandle_t gps_track_lock;
     SemaphoreHandle_t capacity_estimate_lock;
     QueueHandle_t ble_media_hid_usage_queue;
     esp_bms_idf_bms_scan_candidate_t bms_scan_candidates[ESP_BMS_IDF_BMS_SCAN_MAX_CANDIDATES];
@@ -206,6 +237,8 @@ struct esp_bms_idf_runtime {
     bool cast_frame_active;
     bool ride_records_session_started;
     bool ride_records_dirty;
+    bool gps_track_dirty;
+    int64_t gps_track_last_sample_us;
     bool capacity_estimate_dirty;
     bool ble_media_hid_input_report_subscribed;
     bool ble_media_hid_worker_started;
@@ -340,12 +373,18 @@ bool esp_bms_idf_runtime_set_gps_module_state(esp_bms_idf_runtime_t *runtime,
 bool esp_bms_idf_runtime_publish_gps_sample(esp_bms_idf_runtime_t *runtime,
                                             bool fix_valid,
                                             uint32_t speed_knots_milli);
+bool esp_bms_idf_runtime_publish_gps_position(esp_bms_idf_runtime_t *runtime,
+                                               bool fix_valid,
+                                               int32_t latitude_e7,
+                                               int32_t longitude_e7);
 void esp_bms_idf_runtime_publish_gps_datetime(esp_bms_idf_runtime_t *runtime,
                                               uint16_t year,
                                               uint8_t month,
                                               uint8_t day,
                                               uint8_t hour,
                                               uint8_t minute,
+                                              uint8_t second,
+                                              uint64_t utc_epoch_s,
                                               bool valid);
 bool esp_bms_idf_runtime_publish_gps_satellites(esp_bms_idf_runtime_t *runtime,
                                                 uint8_t satellites_visible,

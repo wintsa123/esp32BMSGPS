@@ -22,6 +22,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Base64
+import android.util.Log
 import android.view.Display
 import android.view.WindowManager
 import java.io.BufferedInputStream
@@ -34,6 +35,9 @@ import java.net.URI
 import java.nio.ByteBuffer
 import java.security.SecureRandom
 import kotlin.concurrent.thread
+import kotlin.math.ceil
+
+private const val CAST_METRICS_LOG_WINDOW_NANOS = 5_000_000_000L
 
 class CastService : Service() {
     private var projection: MediaProjection? = null
@@ -104,7 +108,9 @@ class CastService : Service() {
     private fun configureCapture() {
         if (!running) return
         val info = castInfo ?: return
-        val (width, height) = captureSize()
+        val (sourceWidth, sourceHeight) = captureSize()
+        val target = info.targetFor(sourceWidth, sourceHeight)
+        val (width, height) = captureSizeFor(sourceWidth, sourceHeight, target)
         if (width == captureWidth && height == captureHeight && reader != null) return
         val next = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
         next.setOnImageAvailableListener({ consumeImage(it, info) }, captureHandler)
@@ -150,10 +156,10 @@ class CastService : Service() {
         } ?: return
         try {
             val target = info.targetFor(image.width, image.height)
-            val now = SystemClock.elapsedRealtimeNanos()
+            val capturedAtNanos = SystemClock.elapsedRealtimeNanos()
             val minimumIntervalNanos = 1_000_000_000L / info.targetFps
-            if (now - lastCaptureAtNanos < minimumIntervalNanos) return
-            lastCaptureAtNanos = now
+            if (capturedAtNanos - lastCaptureAtNanos < minimumIntervalNanos) return
+            lastCaptureAtNanos = capturedAtNanos
 
             val plane = image.planes[0]
             if (plane.pixelStride != 4 || plane.rowStride < image.width * 4 || plane.rowStride % 4 != 0) return
@@ -190,8 +196,18 @@ class CastService : Service() {
                 Rect(0, 0, target.width, target.height),
                 scalePaint,
             )
+            val encodeStartedAtNanos = SystemClock.elapsedRealtimeNanos()
             val jpeg = compressJpeg(output, info) ?: return
-            latest = CapturedFrame(++captureSequence, target, jpeg)
+            latest = CapturedFrame(
+                id = ++captureSequence,
+                target = target,
+                jpeg = jpeg,
+                capturedAtNanos = capturedAtNanos,
+                encodeNanos = SystemClock.elapsedRealtimeNanos() - encodeStartedAtNanos,
+            )
+        } catch (_: IllegalStateException) {
+            // A rotation can close the old ImageReader while its callback is in flight.
+            return
         } finally { image.close() }
     }
 
@@ -220,15 +236,23 @@ class CastService : Service() {
                 socket = CastSocket(host)
                 report(STATE_STREAMING)
                 var sequence = 1
-                var sentFrameId = -1L
+                var sentFrameId = 0L
                 var heartbeatAt = System.currentTimeMillis() + 2_000
+                val metrics = CastSenderMetrics()
                 while (running) {
                     val frame = latest
                     if (frame != null && frame.id != sentFrameId) {
+                        val sentAtNanos = SystemClock.elapsedRealtimeNanos()
                         socket!!.send(CastProtocol.jpegFrame(sequence, frame.target.rotation, frame.jpeg))
                         if (socket!!.readAck() != sequence) {
                             throw IOException("设备未确认画面 $sequence")
                         }
+                        metrics.record(
+                            frame = frame,
+                            previousFrameId = sentFrameId,
+                            sentAtNanos = sentAtNanos,
+                            acknowledgedAtNanos = SystemClock.elapsedRealtimeNanos(),
+                        )
                         sentFrameId = frame.id
                         sequence = if (sequence == Int.MAX_VALUE) 1 else sequence + 1
                     } else {
@@ -282,7 +306,7 @@ class CastService : Service() {
         super.onDestroy()
     }
     override fun onBind(intent: Intent?): IBinder? = null
-    private fun notification(): Notification { val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager; val channel = NotificationChannel("cast", "BMS 投屏", NotificationManager.IMPORTANCE_LOW); manager.createNotificationChannel(channel); return Notification.Builder(this, "cast").setContentTitle("BMS 投屏进行中").setSmallIcon(android.R.drawable.presence_video_online).build() }
+    private fun notification(): Notification { val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager; val channel = NotificationChannel("cast", "两轮智控", NotificationManager.IMPORTANCE_LOW); manager.createNotificationChannel(channel); return Notification.Builder(this, "cast").setContentTitle("两轮智控投屏中").setSmallIcon(android.R.drawable.presence_video_online).build() }
     companion object {
         const val ACTION_STATUS = "com.fuckingbms.cast.STATUS"
         const val EXTRA_STATE = "state"
@@ -310,7 +334,65 @@ class CastService : Service() {
     }
 }
 
-private data class CapturedFrame(val id: Long, val target: CastTarget, val jpeg: ByteArray)
+internal fun captureSizeFor(sourceWidth: Int, sourceHeight: Int, target: CastTarget): Pair<Int, Int> {
+    require(sourceWidth > 0 && sourceHeight > 0)
+    val scale = maxOf(
+        target.width.toDouble() / sourceWidth,
+        target.height.toDouble() / sourceHeight,
+    )
+    return ceil(sourceWidth * scale).toInt() to ceil(sourceHeight * scale).toInt()
+}
+
+private data class CapturedFrame(
+    val id: Long,
+    val target: CastTarget,
+    val jpeg: ByteArray,
+    val capturedAtNanos: Long,
+    val encodeNanos: Long,
+)
+
+private class CastSenderMetrics {
+    private var startedAtNanos = SystemClock.elapsedRealtimeNanos()
+    private var sentFrames = 0L
+    private var coalescedFrames = 0L
+    private var totalEncodeNanos = 0L
+    private var totalAckNanos = 0L
+    private var totalFrameAgeNanos = 0L
+    private var maxFrameAgeNanos = 0L
+
+    fun record(
+        frame: CapturedFrame,
+        previousFrameId: Long,
+        sentAtNanos: Long,
+        acknowledgedAtNanos: Long,
+    ) {
+        val ackNanos = (acknowledgedAtNanos - sentAtNanos).coerceAtLeast(0L)
+        val frameAgeNanos = (acknowledgedAtNanos - frame.capturedAtNanos).coerceAtLeast(0L)
+        ++sentFrames
+        coalescedFrames += (frame.id - previousFrameId - 1L).coerceAtLeast(0L)
+        totalEncodeNanos += frame.encodeNanos.coerceAtLeast(0L)
+        totalAckNanos += ackNanos
+        totalFrameAgeNanos += frameAgeNanos
+        maxFrameAgeNanos = maxOf(maxFrameAgeNanos, frameAgeNanos)
+
+        if (acknowledgedAtNanos - startedAtNanos < CAST_METRICS_LOG_WINDOW_NANOS) return
+        Log.i(
+            "CastService",
+            "[cast] sent=$sentFrames coalesced=$coalescedFrames " +
+                "avg_encode_ms=${totalEncodeNanos.toDouble() / sentFrames / 1_000_000.0} " +
+                "avg_send_ack_ms=${totalAckNanos.toDouble() / sentFrames / 1_000_000.0} " +
+                "avg_ack_age_ms=${totalFrameAgeNanos.toDouble() / sentFrames / 1_000_000.0} " +
+                "max_ack_age_ms=${maxFrameAgeNanos.toDouble() / 1_000_000.0}",
+        )
+        startedAtNanos = acknowledgedAtNanos
+        sentFrames = 0L
+        coalescedFrames = 0L
+        totalEncodeNanos = 0L
+        totalAckNanos = 0L
+        totalFrameAgeNanos = 0L
+        maxFrameAgeNanos = 0L
+    }
+}
 
 private fun Intent.castInfo(): CastInfo? = runCatching {
     val values = getIntArrayExtra("targets") ?: error("缺少投屏方向")

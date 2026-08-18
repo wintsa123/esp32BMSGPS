@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/08-17-cast-latency-frame-loss/prd.md", "reason": "Low-latency outcome, constraints, and acceptance criteria."}
+{"file": ".trellis/tasks/08-17-cast-latency-frame-loss/design.md", "reason": "Approved design boundary for Android capture and firmware decode lifecycle."}
+{"file": ".trellis/tasks/08-16-full-frame-casting-color/design.md", "reason": "Existing JPEG v3 ownership, color, ACK, and full-frame constraints."}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Bounded diagnostic logging requirements."}

@@ -151,6 +151,9 @@ static bool s_cast_mode;
 static bool s_cast_adapter_paused;
 static uint8_t *s_cast_frame_buffer;
 static size_t s_cast_frame_buffer_bytes;
+static jpeg_dec_handle_t s_cast_decoder;
+static uint16_t s_cast_decoder_width;
+static uint16_t s_cast_decoder_height;
 static TickType_t s_touch_last_log_tick;
 static TickType_t s_touch_last_filter_log_tick;
 static bool s_touch_read_callback_logged;
@@ -165,6 +168,16 @@ static esp_bms_lvgl_bridge_metrics_t s_metrics;
 static int64_t s_render_started_us;
 static int64_t s_flush_started_us;
 static int64_t s_flush_wait_started_us;
+
+static void cast_close_decoder(void)
+{
+    if (s_cast_decoder) {
+        (void)jpeg_dec_close(s_cast_decoder);
+        s_cast_decoder = NULL;
+    }
+    s_cast_decoder_width = 0U;
+    s_cast_decoder_height = 0U;
+}
 
 static void bridge_metrics_record_interval(int64_t started_us,
                                            int64_t finished_us,
@@ -1166,6 +1179,7 @@ esp_err_t esp_bms_lvgl_bridge_exit_cast(void)
     ESP_RETURN_ON_FALSE(s_cast_adapter_paused, ESP_ERR_INVALID_STATE, TAG,
                         "LVGL adapter is not paused for cast");
 
+    cast_close_decoder();
     ESP_RETURN_ON_ERROR(esp_lv_adapter_set_dummy_draw(s_display, false), TAG,
                         "disable dummy draw failed");
     if (s_touch_indev) {
@@ -1865,15 +1879,27 @@ esp_err_t esp_bms_lvgl_bridge_present_jpeg(uint32_t sequence,
                         ESP_ERR_INVALID_SIZE, TAG, "cast JPEG output exceeds frame buffer");
 
     const int64_t decode_started_us = esp_timer_get_time();
-    jpeg_dec_config_t config = DEFAULT_JPEG_DEC_CONFIG();
-    /* dummy_draw bypasses the adapter's OTHER/RGB565 pre-swap, so decode into
-     * that same big-endian panel submission format for both SPI and I80. */
-    config.output_type = JPEG_PIXEL_FORMAT_RGB565_BE;
-    jpeg_dec_handle_t decoder = NULL;
-    jpeg_error_t jpeg_ret = jpeg_dec_open(&config, &decoder);
-    if (jpeg_ret != JPEG_ERR_OK || !decoder) {
-        ESP_LOGE(TAG, "cast JPEG seq=%u decoder open failed: %d", (unsigned)sequence, (int)jpeg_ret);
-        return ESP_FAIL;
+    if (s_cast_decoder && (s_cast_decoder_width != expected_width ||
+                           s_cast_decoder_height != expected_height)) {
+        cast_close_decoder();
+    }
+    if (!s_cast_decoder) {
+        jpeg_dec_config_t config = DEFAULT_JPEG_DEC_CONFIG();
+        /* dummy_draw bypasses the adapter's OTHER/RGB565 pre-swap, so decode into
+         * that same big-endian panel submission format for both SPI and I80. */
+        config.output_type = JPEG_PIXEL_FORMAT_RGB565_BE;
+        jpeg_dec_handle_t decoder = NULL;
+        jpeg_error_t jpeg_ret = jpeg_dec_open(&config, &decoder);
+        if (jpeg_ret != JPEG_ERR_OK || !decoder) {
+            if (decoder) {
+                (void)jpeg_dec_close(decoder);
+            }
+            ESP_LOGE(TAG, "cast JPEG seq=%u decoder open failed: %d", (unsigned)sequence, (int)jpeg_ret);
+            return ESP_FAIL;
+        }
+        s_cast_decoder = decoder;
+        s_cast_decoder_width = expected_width;
+        s_cast_decoder_height = expected_height;
     }
 
     jpeg_dec_io_t io = {
@@ -1882,7 +1908,7 @@ esp_err_t esp_bms_lvgl_bridge_present_jpeg(uint32_t sequence,
         .outbuf = s_cast_frame_buffer,
     };
     jpeg_dec_header_info_t header = { 0 };
-    jpeg_ret = jpeg_dec_parse_header(decoder, &io, &header);
+    jpeg_error_t jpeg_ret = jpeg_dec_parse_header(s_cast_decoder, &io, &header);
     if (jpeg_ret != JPEG_ERR_OK || header.width != expected_width || header.height != expected_height) {
         ESP_LOGE(TAG,
                  "cast JPEG seq=%u header failed: err=%d got=%ux%u expected=%ux%u",
@@ -1892,13 +1918,13 @@ esp_err_t esp_bms_lvgl_bridge_present_jpeg(uint32_t sequence,
                  (unsigned)header.height,
                  (unsigned)expected_width,
                  (unsigned)expected_height);
-        (void)jpeg_dec_close(decoder);
+        cast_close_decoder();
         return ESP_ERR_INVALID_SIZE;
     }
-    jpeg_ret = jpeg_dec_process(decoder, &io);
-    (void)jpeg_dec_close(decoder);
+    jpeg_ret = jpeg_dec_process(s_cast_decoder, &io);
     if (jpeg_ret != JPEG_ERR_OK) {
         ESP_LOGE(TAG, "cast JPEG seq=%u decode failed: %d", (unsigned)sequence, (int)jpeg_ret);
+        cast_close_decoder();
         return ESP_FAIL;
     }
     if (metrics) {

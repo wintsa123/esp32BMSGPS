@@ -38,4 +38,8 @@ if [[ ! -f "$APK" ]]; then
     exit 1
 fi
 
+RENAMED_APK="$ROOT_DIR/两轮智控.apk"
+cp "$APK" "$RENAMED_APK"
+
 echo "APK built: $APK"
+echo "Renamed APK: $RENAMED_APK"

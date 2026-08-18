@@ -1,0 +1,17 @@
+#ifndef ESP_BMS_FLASHDB_CFG_H
+#define ESP_BMS_FLASHDB_CFG_H
+
+#ifndef FDB_USING_TSDB
+#define FDB_USING_TSDB
+#endif
+#ifndef FDB_USING_FAL_MODE
+#define FDB_USING_FAL_MODE
+#endif
+#ifndef FDB_WRITE_GRAN
+#define FDB_WRITE_GRAN 1
+#endif
+#ifndef FDB_USING_TIMESTAMP_64BIT
+#define FDB_USING_TIMESTAMP_64BIT
+#endif
+
+#endif

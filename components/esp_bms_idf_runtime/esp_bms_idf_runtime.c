@@ -1,4 +1,5 @@
 #include "esp_bms_idf_runtime.h"
+#include "esp_bms_flashdb.h"
 #include "esp_bms_ble_media_hid.h"
 #include "esp_bms_cast_protocol.h"
 #if ESP_BMS_FEATURE_CLASSIC_MEDIA_HID
@@ -51,6 +52,7 @@
 #include <ctype.h>
 #include <stdio.h>
 #include <stdarg.h>
+#include <stdlib.h>
 #include <string.h>
 
 static const char *TAG = "bms_idf_runtime";
@@ -83,6 +85,11 @@ static const char *TAG = "bms_idf_runtime";
 #define BMS_NVS_BOUND_NAME_KEY "bms_name"
 #define RIDE_RECORDS_NVS_KEY "ride_records"
 #define RIDE_RECORDS_PERSIST_RETRY_US INT64_C(5000000)
+#define GPS_TRACK_NVS_KEY "gps_track"
+#define GPS_TRACK_MIGRATION_NVS_KEY "gps_mig"
+#define GPS_TRACK_MIGRATION_SESSION_NVS_KEY "gps_mig_sid"
+#define GPS_TRACK_PERSIST_RETRY_US INT64_C(5000000)
+#define GPS_TRACK_SAMPLE_INTERVAL_US INT64_C(5000000)
 #define CAPACITY_ESTIMATE_NVS_KEY "bms_cap_est"
 #define CAPACITY_ESTIMATE_MAGIC UINT32_C(0x43415031)
 #define CAPACITY_ESTIMATE_VERSION 2U
@@ -120,7 +127,7 @@ static const char *TAG = "bms_idf_runtime";
 #define CONTROLLER_RATIO_CENTI_MAX ESP_BMS_CONTROLLER_RATIO_CENTI_MAX
 #define CONTROLLER_RATIO_CENTI_DEFAULT ESP_BMS_CONTROLLER_RATIO_CENTI_DEFAULT
 #define HTTP_BODY_MAX_LEN 384U
-#define HTTP_JSON_MAX_LEN 1024U
+#define HTTP_JSON_MAX_LEN 2048U
 #define HTTP_BMS_CANDIDATES_JSON_MAX_LEN 2560U
 #define HTTP_MANIFEST_JSON_MAX_LEN 3072U
 #define CAST_HEARTBEAT_TIMEOUT_MS 5000U
@@ -217,6 +224,8 @@ static void runtime_ensure_setup_ap_credentials(esp_bms_idf_runtime_t *runtime);
 static char runtime_hex_char(uint8_t value);
 static void runtime_update_snapshot_speed(esp_bms_idf_runtime_t *runtime);
 static bool runtime_project_bluetooth_snapshot(esp_bms_idf_runtime_t *runtime);
+static void runtime_reset_gps_track(esp_bms_gps_track_t *track);
+static bool runtime_gps_track_valid(const esp_bms_gps_track_t *track);
 
 #define RUNTIME_FLAG(runtime, name) \
     esp_bms_idf_runtime_flag_get((runtime), ESP_BMS_IDF_RUNTIME_FLAG_##name)
@@ -1365,12 +1374,62 @@ bool esp_bms_idf_runtime_publish_gps_sample(esp_bms_idf_runtime_t *runtime,
     return true;
 }
 
+bool esp_bms_idf_runtime_publish_gps_position(esp_bms_idf_runtime_t *runtime,
+                                               bool fix_valid,
+                                               int32_t latitude_e7,
+                                               int32_t longitude_e7)
+{
+    if (!runtime || !fix_valid || latitude_e7 < -900000000 || latitude_e7 > 900000000 ||
+        longitude_e7 < -1800000000 || longitude_e7 > 1800000000) {
+        return false;
+    }
+    runtime->gps_last_latitude_e7 = latitude_e7;
+    runtime->gps_last_longitude_e7 = longitude_e7;
+    runtime->gps_last_fix_valid = true;
+    const int64_t now_us = esp_timer_get_time();
+    const bool locked = runtime->gps_track_lock != NULL;
+    if (locked && xSemaphoreTake(runtime->gps_track_lock, portMAX_DELAY) != pdTRUE) {
+        return false;
+    }
+    if (runtime->gps_track_last_sample_us > 0 &&
+        now_us - runtime->gps_track_last_sample_us < GPS_TRACK_SAMPLE_INTERVAL_US) {
+        if (locked) {
+            xSemaphoreGive(runtime->gps_track_lock);
+        }
+        return false;
+    }
+    if (!runtime_gps_track_valid(&runtime->gps_track)) {
+        runtime_reset_gps_track(&runtime->gps_track);
+    }
+    if (runtime->gps_track.count == ESP_BMS_GPS_TRACK_MAX_POINTS) {
+        memmove(runtime->gps_track.points,
+                runtime->gps_track.points + 1U,
+                sizeof(runtime->gps_track.points) - sizeof(runtime->gps_track.points[0]));
+        runtime->gps_track.count--;
+    }
+    esp_bms_gps_track_point_t *point =
+        &runtime->gps_track.points[runtime->gps_track.count++];
+    point->latitude_e7 = latitude_e7;
+    point->longitude_e7 = longitude_e7;
+    point->timestamp_s = (uint32_t)(now_us / INT64_C(1000000));
+    runtime->gps_track_last_sample_us = now_us;
+    runtime->gps_track_generation++;
+    runtime->gps_track_dirty = true;
+    runtime->gps_track_retry_after_us = 0;
+    if (locked) {
+        xSemaphoreGive(runtime->gps_track_lock);
+    }
+    return true;
+}
+
 void esp_bms_idf_runtime_publish_gps_datetime(esp_bms_idf_runtime_t *runtime,
                                               uint16_t year,
                                               uint8_t month,
                                               uint8_t day,
                                               uint8_t hour,
                                               uint8_t minute,
+                                              uint8_t second,
+                                              uint64_t utc_epoch_s,
                                               bool valid)
 {
     if (!runtime) {
@@ -1383,6 +1442,16 @@ void esp_bms_idf_runtime_publish_gps_datetime(esp_bms_idf_runtime_t *runtime,
     runtime->snapshot.gps_local_minute = minute;
     runtime->snapshot.gps_local_date_valid = valid;
     runtime->snapshot.gps_local_time_valid = valid;
+    (void)second;
+    runtime->gps_utc_epoch_s = valid ? utc_epoch_s : 0U;
+    runtime->gps_utc_valid = valid && utc_epoch_s != 0U;
+    if (runtime->gps_utc_valid && runtime->history_session_started &&
+        !runtime->history_time_anchored &&
+        esp_bms_flashdb_set_session_anchor(runtime->history_session_id,
+                                           runtime->history_elapsed_s,
+                                           utc_epoch_s) == ESP_OK) {
+        runtime->history_time_anchored = true;
+    }
 }
 
 bool esp_bms_idf_runtime_publish_gps_satellites(esp_bms_idf_runtime_t *runtime,
@@ -1821,8 +1890,14 @@ static bool runtime_json_get_string(const char *body,
 
     size_t len = 0;
     while (*cursor && *cursor != '"') {
-        if (*cursor == '\\' || (unsigned char)*cursor < 0x20U || len + 1U >= out_len) {
+        if ((unsigned char)*cursor < 0x20U || len + 1U >= out_len) {
             return false;
+        }
+        if (*cursor == '\\') {
+            cursor++;
+            if (*cursor != '/') {
+                return false;
+            }
         }
         out_value[len++] = *cursor++;
     }
@@ -1837,6 +1912,7 @@ static void runtime_reset_state(esp_bms_idf_runtime_t *runtime)
 {
     memset(&runtime->snapshot, 0, sizeof(runtime->snapshot));
     esp_bms_ride_records_reset(&runtime->ride_records);
+    runtime_reset_gps_track(&runtime->gps_track);
     (void)snprintf(runtime->snapshot.firmware_version,
                    sizeof(runtime->snapshot.firmware_version),
                    "%s",
@@ -1847,6 +1923,14 @@ static void runtime_reset_state(esp_bms_idf_runtime_t *runtime)
     runtime->battery_samples_seen = 0;
     runtime->battery_read_failures = 0;
     runtime->gps_speed_knots_milli = 0;
+    runtime->gps_last_latitude_e7 = 0;
+    runtime->gps_last_longitude_e7 = 0;
+    runtime->gps_last_fix_valid = false;
+    runtime->history_sample_elapsed_ms = 0;
+    runtime->history_elapsed_s = 0;
+    runtime->history_session_id = 0;
+    runtime->history_fault_mask = 0;
+    runtime->history_session_started = false;
     runtime->bms_telemetry_last_us = 0;
     runtime->bms_status_poll_elapsed_ms = 0;
     runtime->bms_frame_len = 0;
@@ -1871,6 +1955,10 @@ static void runtime_reset_state(esp_bms_idf_runtime_t *runtime)
     runtime->ride_records_retry_after_us = 0;
     runtime->ride_records_session_started = false;
     runtime->ride_records_dirty = false;
+    runtime->gps_track_generation = 0U;
+    runtime->gps_track_retry_after_us = 0;
+    runtime->gps_track_dirty = false;
+    runtime->gps_track_last_sample_us = 0;
     runtime->capacity_estimate_generation = 0U;
     runtime->capacity_estimate_retry_after_us = 0;
     runtime->capacity_estimate_dirty = false;
@@ -2151,6 +2239,210 @@ static void runtime_persist_ride_records(esp_bms_idf_runtime_t *runtime)
     }
     if (ret != ESP_OK) {
         ESP_LOGW(TAG, "[bms] ride record save failed: %s", esp_err_to_name(ret));
+    }
+}
+
+static void runtime_reset_gps_track(esp_bms_gps_track_t *track)
+{
+    if (!track) {
+        return;
+    }
+    memset(track, 0, sizeof(*track));
+    track->format_version = ESP_BMS_GPS_TRACK_FORMAT_VERSION;
+}
+
+static bool runtime_gps_track_valid(const esp_bms_gps_track_t *track)
+{
+    return track && track->format_version == ESP_BMS_GPS_TRACK_FORMAT_VERSION &&
+           track->count <= ESP_BMS_GPS_TRACK_MAX_POINTS;
+}
+
+static bool runtime_copy_gps_track(esp_bms_idf_runtime_t *runtime,
+                                   esp_bms_gps_track_t *track,
+                                   uint32_t *generation,
+                                   bool *dirty,
+                                   int64_t *retry_after_us)
+{
+    if (!runtime || !track) {
+        return false;
+    }
+    const bool locked = runtime->gps_track_lock != NULL;
+    if (locked && xSemaphoreTake(runtime->gps_track_lock, pdMS_TO_TICKS(100)) != pdTRUE) {
+        return false;
+    }
+    memcpy(track, &runtime->gps_track, sizeof(*track));
+    if (generation) {
+        *generation = runtime->gps_track_generation;
+    }
+    if (dirty) {
+        *dirty = runtime->gps_track_dirty;
+    }
+    if (retry_after_us) {
+        *retry_after_us = runtime->gps_track_retry_after_us;
+    }
+    if (locked) {
+        xSemaphoreGive(runtime->gps_track_lock);
+    }
+    return true;
+}
+
+static esp_err_t runtime_load_gps_track(esp_bms_idf_runtime_t *runtime)
+{
+    ESP_RETURN_ON_FALSE(runtime, ESP_ERR_INVALID_ARG, TAG, "runtime is required");
+    ESP_RETURN_ON_ERROR(runtime_init_nvs(runtime), TAG, "NVS init failed");
+
+    esp_bms_gps_track_t loaded;
+    runtime_reset_gps_track(&loaded);
+    nvs_handle_t handle = 0;
+    esp_err_t ret = nvs_open(SETUP_AP_NVS_NAMESPACE, NVS_READONLY, &handle);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    size_t blob_len = 0U;
+    ret = nvs_get_blob(handle, GPS_TRACK_NVS_KEY, NULL, &blob_len);
+    if (ret == ESP_OK && blob_len == sizeof(loaded)) {
+        ret = nvs_get_blob(handle, GPS_TRACK_NVS_KEY, &loaded, &blob_len);
+    }
+    nvs_close(handle);
+    if (ret == ESP_ERR_NVS_NOT_FOUND) {
+        return ESP_OK;
+    }
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    if (blob_len != sizeof(loaded) || !runtime_gps_track_valid(&loaded)) {
+        ESP_LOGW(TAG, "[gps] ignored invalid track history");
+        return ESP_OK;
+    }
+    runtime->gps_track = loaded;
+    return ESP_OK;
+}
+
+static esp_err_t runtime_migrate_gps_track(esp_bms_idf_runtime_t *runtime)
+{
+    if (!runtime || !esp_bms_flashdb_ready() || runtime->gps_track.count == 0U) return ESP_OK;
+    nvs_handle_t handle = 0;
+    ESP_RETURN_ON_ERROR(nvs_open(SETUP_AP_NVS_NAMESPACE, NVS_READWRITE, &handle),
+                        TAG, "GPS migration NVS open failed");
+    uint8_t state = 0U;
+    uint64_t session_id = 0U;
+    (void)nvs_get_u8(handle, GPS_TRACK_MIGRATION_NVS_KEY, &state);
+    (void)nvs_get_u64(handle, GPS_TRACK_MIGRATION_SESSION_NVS_KEY, &session_id);
+    if (state == 2U) {
+        esp_err_t ret = nvs_erase_key(handle, GPS_TRACK_NVS_KEY);
+        if (ret == ESP_ERR_NVS_NOT_FOUND) ret = ESP_OK;
+        if (ret == ESP_OK) ret = nvs_commit(handle);
+        nvs_close(handle);
+        return ret;
+    }
+
+    size_t imported = 0U;
+    esp_err_t ret = state == 1U
+                        ? esp_bms_flashdb_resume_session(session_id, &imported)
+                        : ESP_ERR_NOT_FOUND;
+    if (ret == ESP_ERR_NOT_FOUND) {
+        ret = esp_bms_flashdb_start_session(&session_id);
+        if (ret == ESP_OK) {
+            state = 1U;
+            ret = nvs_set_u8(handle, GPS_TRACK_MIGRATION_NVS_KEY, state);
+        }
+        if (ret == ESP_OK) ret = nvs_set_u64(handle, GPS_TRACK_MIGRATION_SESSION_NVS_KEY, session_id);
+        if (ret == ESP_OK) ret = nvs_commit(handle);
+        imported = 0U;
+    }
+    if (ret != ESP_OK || imported > runtime->gps_track.count) {
+        nvs_close(handle);
+        return ret != ESP_OK ? ret : ESP_ERR_INVALID_SIZE;
+    }
+
+    const uint32_t first_timestamp = runtime->gps_track.points[0].timestamp_s;
+    uint32_t previous_elapsed = 0U;
+    for (size_t i = 0; i < runtime->gps_track.count; ++i) {
+        const esp_bms_gps_track_point_t *point = &runtime->gps_track.points[i];
+        uint32_t elapsed = point->timestamp_s >= first_timestamp
+                               ? point->timestamp_s - first_timestamp
+                               : (uint32_t)i;
+        if (i > 0U && elapsed <= previous_elapsed) elapsed = previous_elapsed + 1U;
+        previous_elapsed = elapsed;
+        if (i < imported) continue;
+        esp_bms_flashdb_sample_t sample = {
+            .version = ESP_BMS_FLASHDB_SAMPLE_VERSION,
+            .flags = ESP_BMS_FLASHDB_FLAG_GPS_VALID,
+            .elapsed_s = elapsed > UINT16_MAX ? UINT16_MAX : (uint16_t)elapsed,
+            .latitude_e7 = point->latitude_e7,
+            .longitude_e7 = point->longitude_e7,
+        };
+        ret = esp_bms_flashdb_append_sample((session_id << 32) | elapsed, &sample);
+        if (ret != ESP_OK) {
+            nvs_close(handle);
+            return ret;
+        }
+    }
+
+    ret = nvs_set_u8(handle, GPS_TRACK_MIGRATION_NVS_KEY, 2U);
+    if (ret == ESP_OK) ret = nvs_commit(handle);
+    if (ret == ESP_OK) ret = nvs_erase_key(handle, GPS_TRACK_NVS_KEY);
+    if (ret == ESP_ERR_NVS_NOT_FOUND) ret = ESP_OK;
+    if (ret == ESP_OK) ret = nvs_commit(handle);
+    nvs_close(handle);
+    if (ret == ESP_OK) ESP_LOGI(TAG, "[history] migrated %u legacy GPS points", (unsigned)imported);
+    return ret;
+}
+
+static esp_err_t runtime_save_gps_track(esp_bms_idf_runtime_t *runtime,
+                                        const esp_bms_gps_track_t *track)
+{
+    ESP_RETURN_ON_FALSE(runtime && track && runtime_gps_track_valid(track),
+                        ESP_ERR_INVALID_ARG,
+                        TAG,
+                        "invalid GPS track");
+    ESP_RETURN_ON_ERROR(runtime_init_nvs(runtime), TAG, "NVS init failed");
+
+    nvs_handle_t handle = 0;
+    esp_err_t ret = nvs_open(SETUP_AP_NVS_NAMESPACE, NVS_READWRITE, &handle);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    ret = nvs_set_blob(handle, GPS_TRACK_NVS_KEY, track, sizeof(*track));
+    if (ret == ESP_OK) {
+        ret = nvs_commit(handle);
+    }
+    nvs_close(handle);
+    return ret;
+}
+
+static void runtime_persist_gps_track(esp_bms_idf_runtime_t *runtime)
+{
+    const int64_t now_us = esp_timer_get_time();
+    esp_bms_gps_track_t track;
+    uint32_t generation = 0U;
+    bool dirty = false;
+    int64_t retry_after_us = 0;
+    if (!runtime_copy_gps_track(runtime,
+                                &track,
+                                &generation,
+                                &dirty,
+                                &retry_after_us) ||
+        !dirty || now_us < retry_after_us) {
+        return;
+    }
+    const esp_err_t ret = runtime_save_gps_track(runtime, &track);
+    const bool locked = runtime->gps_track_lock != NULL;
+    if (locked && xSemaphoreTake(runtime->gps_track_lock, pdMS_TO_TICKS(100)) != pdTRUE) {
+        return;
+    }
+    if (runtime->gps_track_generation == generation) {
+        if (ret == ESP_OK) {
+            runtime->gps_track_dirty = false;
+        } else {
+            runtime->gps_track_retry_after_us = now_us + GPS_TRACK_PERSIST_RETRY_US;
+        }
+    }
+    if (locked) {
+        xSemaphoreGive(runtime->gps_track_lock);
+    }
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "[gps] track save failed: %s", esp_err_to_name(ret));
     }
 }
 
@@ -3053,6 +3345,46 @@ static esp_err_t runtime_http_ride_records_handler(httpd_req_t *req,
     return httpd_resp_send_chunk(req, NULL, 0);
 }
 
+static esp_err_t runtime_http_gps_track_handler(httpd_req_t *req,
+                                                 esp_bms_idf_runtime_t *runtime)
+{
+    /* HTTPD serializes handlers; static avoids overflowing its small task stack. */
+    static esp_bms_gps_track_t track;
+    if (!runtime_copy_gps_track(runtime, &track, NULL, NULL, NULL)) {
+        return runtime_http_send_text(req, "503 Service Unavailable", "gps track busy");
+    }
+    if (!runtime_gps_track_valid(&track)) {
+        runtime_reset_gps_track(&track);
+    }
+
+    ESP_RETURN_ON_ERROR(runtime_http_set_common_headers(req), TAG, "set HTTP headers failed");
+    ESP_RETURN_ON_ERROR(httpd_resp_set_type(req, "application/json"), TAG, "set HTTP type failed");
+    ESP_RETURN_ON_ERROR(httpd_resp_send_chunk(req, "{\"points\":[", HTTPD_RESP_USE_STRLEN),
+                        TAG,
+                        "send GPS track header failed");
+    for (uint16_t index = 0U; index < track.count; index++) {
+        char point[96];
+        const esp_bms_gps_track_point_t *value = &track.points[index];
+        const int written = snprintf(point,
+                                     sizeof(point),
+                                     "%s{\"lat_e7\":%ld,\"lon_e7\":%ld,\"timestamp_s\":%lu}",
+                                     index == 0U ? "" : ",",
+                                     (long)value->latitude_e7,
+                                     (long)value->longitude_e7,
+                                     (unsigned long)value->timestamp_s);
+        if (written < 0 || (size_t)written >= sizeof(point)) {
+            return runtime_http_send_text(req, "500 Internal Server Error", "gps track format error");
+        }
+        ESP_RETURN_ON_ERROR(httpd_resp_send_chunk(req, point, HTTPD_RESP_USE_STRLEN),
+                            TAG,
+                            "send GPS track point failed");
+    }
+    ESP_RETURN_ON_ERROR(httpd_resp_send_chunk(req, "]}", HTTPD_RESP_USE_STRLEN),
+                        TAG,
+                        "send GPS track end failed");
+    return httpd_resp_send_chunk(req, NULL, 0);
+}
+
 static bool runtime_json_write_bms_codes(char *out,
                                          size_t out_len,
                                          const char codes[][ESP_BMS_BMS_CODE_TEXT_LEN],
@@ -3131,6 +3463,14 @@ static esp_err_t runtime_http_status_handler(httpd_req_t *req, esp_bms_idf_runti
     char protections[96] = { 0 };
     char warnings[96] = { 0 };
     char temperatures[80] = { 0 };
+    char min_cell[16] = { 0 };
+    char average_cell[16] = { 0 };
+    char max_cell[16] = { 0 };
+    char delta_cell[16] = { 0 };
+    char total_capacity[16] = { 0 };
+    char remaining_capacity[16] = { 0 };
+    char running_time[16] = { 0 };
+    char cycle_capacity[16] = { 0 };
     bool capacity_ready = false;
     uint32_t capacity_estimate_mah = 0U;
     if (runtime_bms_supports_capacity_estimate(runtime->bms_type) &&
@@ -3169,7 +3509,39 @@ static esp_err_t runtime_http_status_handler(httpd_req_t *req, esp_bms_idf_runti
                                       sizeof(warnings),
                                       runtime->snapshot.bms_warning_codes,
                                       runtime->snapshot.bms_warning_count) ||
-        !runtime_json_write_bms_temperatures(temperatures, sizeof(temperatures), &runtime->snapshot)) {
+        !runtime_json_write_bms_temperatures(temperatures, sizeof(temperatures), &runtime->snapshot) ||
+        !runtime_json_write_u32_or_null(min_cell,
+                                        sizeof(min_cell),
+                                        RUNTIME_SNAPSHOT_FLAG(runtime, MIN_CELL_VALID),
+                                        runtime->snapshot.min_cell_voltage_mv) ||
+        !runtime_json_write_u32_or_null(average_cell,
+                                        sizeof(average_cell),
+                                        RUNTIME_SNAPSHOT_FLAG(runtime, AVERAGE_CELL_VALID),
+                                        runtime->snapshot.average_cell_voltage_mv) ||
+        !runtime_json_write_u32_or_null(max_cell,
+                                        sizeof(max_cell),
+                                        RUNTIME_SNAPSHOT_FLAG(runtime, MAX_CELL_VALID),
+                                        runtime->snapshot.max_cell_voltage_mv) ||
+        !runtime_json_write_u32_or_null(delta_cell,
+                                        sizeof(delta_cell),
+                                        RUNTIME_SNAPSHOT_FLAG(runtime, DELTA_CELL_VALID),
+                                        runtime->snapshot.delta_cell_voltage_mv) ||
+        !runtime_json_write_u32_or_null(total_capacity,
+                                        sizeof(total_capacity),
+                                        RUNTIME_SNAPSHOT_FLAG(runtime, TOTAL_CAPACITY_VALID),
+                                        runtime->snapshot.total_capacity_mah) ||
+        !runtime_json_write_u32_or_null(remaining_capacity,
+                                        sizeof(remaining_capacity),
+                                        RUNTIME_SNAPSHOT_FLAG(runtime, CAPACITY_REMAINING_VALID),
+                                        runtime->snapshot.capacity_remaining_mah) ||
+        !runtime_json_write_u32_or_null(running_time,
+                                        sizeof(running_time),
+                                        runtime->snapshot.bms_running_time_valid,
+                                        runtime->snapshot.bms_running_time_seconds) ||
+        !runtime_json_write_u32_or_null(cycle_capacity,
+                                        sizeof(cycle_capacity),
+                                        runtime->snapshot.bms_cycle_capacity_valid,
+                                        runtime->snapshot.bms_cycle_capacity_mah)) {
         return runtime_http_send_text(req, "500 Internal Server Error", "json format error");
     }
 
@@ -3196,7 +3568,11 @@ static esp_err_t runtime_http_status_handler(httpd_req_t *req, esp_bms_idf_runti
                                  "\"current_deci_amps\":%s,\"soc_percent\":%s,"
                                  "\"local_battery_mv\":%s,\"bms_info\":\"%s\","
                                  "\"bms_protections\":%s,\"bms_warnings\":%s,"
-                                 "\"bms_temperatures_c\":%s,\"wifi\":\"%s\","
+                                 "\"bms_temperatures_c\":%s,\"min_cell_voltage_mv\":%s,"
+                                 "\"average_cell_voltage_mv\":%s,\"max_cell_voltage_mv\":%s,"
+                                 "\"delta_cell_voltage_mv\":%s,\"total_capacity_mah\":%s,"
+                                 "\"capacity_remaining_mah\":%s,\"bms_running_time_seconds\":%s,"
+                                 "\"bms_cycle_capacity_mah\":%s,\"wifi\":\"%s\","
                                  "\"setup_ap_enabled\":%s,\"bms_capacity_estimate_mah\":%s,"
                                  "\"bms_capacity_estimate_state\":\"%s\"}",
                                  runtime->snapshot.firmware_version,
@@ -3213,6 +3589,14 @@ static esp_err_t runtime_http_status_handler(httpd_req_t *req, esp_bms_idf_runti
                                  protections,
                                  warnings,
                                  temperatures,
+                                 min_cell,
+                                 average_cell,
+                                 max_cell,
+                                 delta_cell,
+                                 total_capacity,
+                                 remaining_capacity,
+                                 running_time,
+                                 cycle_capacity,
                                  runtime_wifi_config_text(runtime->snapshot.wifi),
                                  RUNTIME_SNAPSHOT_FLAG(runtime, SETUP_AP_ENABLED) ? "true" : "false",
                                  capacity_estimate,
@@ -3487,6 +3871,11 @@ static esp_err_t runtime_http_settings_manifest_handler(httpd_req_t *req,
 #endif
 #undef MANIFEST_ITEM
     ok = ok && runtime_json_append(json, sizeof(json), &offset, "]}");
+#if ESP_BMS_FEATURE_GPS
+    ok = ok && runtime_json_append(json, sizeof(json), &offset,
+        ",{\"id\":\"records\",\"label\":{\"zh\":\"记录\",\"en\":\"Records\"},\"items\":["
+        "{\"id\":\"gps_track\",\"kind\":\"map\",\"label\":{\"zh\":\"GPS 轨迹\",\"en\":\"GPS track\"},\"endpoint\":\"/api/gps/track\"}]}");
+#endif
 #if ESP_BMS_FEATURE_BMS
     ok = ok && runtime_json_append(json, sizeof(json), &offset,
         ",{\"id\":\"bms\",\"label\":{\"zh\":\"保护板\",\"en\":\"BMS\"},\"items\":["
@@ -3748,7 +4137,7 @@ static esp_err_t runtime_http_cast_info_handler(httpd_req_t *req, esp_bms_idf_ru
     const int written = snprintf(json,
                                  sizeof(json),
                                  "{\"protocol_version\":%u,\"physical_width\":%u,"
-                                 "\"physical_height\":%u,\"codec\":\"jpeg\",\"jpeg_quality\":80,"
+                                 "\"physical_height\":%u,\"codec\":\"jpeg\",\"jpeg_quality\":60,"
                                  "\"target_fps\":20,\"max_frame_bytes\":%u,\"orientations\":["
                                  "{\"rotation\":%u,\"width\":%u,\"height\":%u},"
                                  "{\"rotation\":%u,\"width\":%u,\"height\":%u}],\"active\":%s}",
@@ -3971,6 +4360,125 @@ esp_err_t esp_bms_idf_runtime_http_cast_ws_handler(httpd_req_t *req)
     return ret;
 }
 
+static bool runtime_http_uri_is(const char *uri, const char *path)
+{
+    if (!uri || !path) return false;
+    const size_t len = strcspn(uri, "?");
+    return strlen(path) == len && strncmp(uri, path, len) == 0;
+}
+
+static uint64_t runtime_http_query_u64(httpd_req_t *req, const char *key, uint64_t fallback)
+{
+    char value[24] = {0};
+    char query[128] = {0};
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
+        httpd_query_key_value(query, key, value, sizeof(value)) != ESP_OK) return fallback;
+    char *end = NULL;
+    const unsigned long long parsed = strtoull(value, &end, 10);
+    return end == value ? fallback : (uint64_t)parsed;
+}
+
+static size_t runtime_http_query_limit(httpd_req_t *req)
+{
+    uint64_t value = runtime_http_query_u64(req, "limit", 200U);
+    if (value == 0U) value = 200U;
+    return value > 500U ? 500U : (size_t)value;
+}
+
+static esp_err_t runtime_http_history_sessions_handler(httpd_req_t *req, esp_bms_idf_runtime_t *runtime)
+{
+    static char json[768];
+    size_t used = 0;
+    used += (size_t)snprintf(json + used, sizeof(json) - used,
+                             "{\"version\":1,\"ready\":%s,\"backend\":\"flash\",\"capacity_bytes\":%u,\"sessions\":[",
+                             esp_bms_flashdb_ready() ? "true" : "false",
+                             (unsigned)esp_bms_flashdb_capacity_bytes());
+    bool first = true;
+    for (size_t i = 0; i < ESP_BMS_FLASHDB_MAX_SESSIONS; ++i) {
+        esp_bms_flashdb_session_t session;
+        if (esp_bms_flashdb_get_session(i, &session) != ESP_OK) continue;
+        used += (size_t)snprintf(json + used, sizeof(json) - used,
+                                 "%s{\"id\":%llu,\"samples\":%u,\"capacity_samples\":%u,\"elapsed_s\":%u,\"calibrated\":%s,\"truncated\":%s,\"capacity_reached\":%s}",
+                                 first ? "" : ",", (unsigned long long)session.session_id,
+                                 (unsigned)session.sample_count, (unsigned)session.capacity_samples,
+                                 (unsigned)session.elapsed_seconds, session.calibrated ? "true" : "false",
+                                 session.truncated ? "true" : "false", session.capacity_reached ? "true" : "false");
+        first = false;
+        if (used + 160U >= sizeof(json)) break;
+    }
+    used += (size_t)snprintf(json + used, sizeof(json) - used, "]}");
+    (void)runtime;
+    return runtime_http_send_json(req, json);
+}
+
+typedef struct { httpd_req_t *req; bool first; } history_http_query_t;
+static bool runtime_http_sample_json_cb(uint64_t timestamp, const esp_bms_flashdb_sample_t *sample, void *ctx)
+{
+    history_http_query_t *query = ctx;
+    char json[320];
+    const int len = snprintf(json, sizeof(json),
+                             "%s{\"t\":%llu,\"elapsed_s\":%u,\"flags\":%u,\"lat_e7\":%ld,\"lon_e7\":%ld,\"pack_voltage_mv\":%u,\"current_deci_amps\":%d,\"soc_percent\":%u,\"cell_min_mv\":%u,\"cell_avg_mv\":%u,\"cell_max_mv\":%u,\"cell_delta_mv\":%u,\"temperatures_c\":[%d,%d,%d,%d,%d,%d]}",
+                             query->first ? "" : ",", (unsigned long long)timestamp, (unsigned)sample->elapsed_s,
+                             (unsigned)sample->flags, (long)sample->latitude_e7, (long)sample->longitude_e7,
+                             (unsigned)sample->pack_voltage_mv, (int)sample->current_deci_amps,
+                             (unsigned)sample->soc_percent, (unsigned)sample->cell_min_mv, (unsigned)sample->cell_avg_mv,
+                             (unsigned)sample->cell_max_mv, (unsigned)sample->cell_delta_mv,
+                             sample->temperatures_c[0], sample->temperatures_c[1], sample->temperatures_c[2],
+                             sample->temperatures_c[3], sample->temperatures_c[4], sample->temperatures_c[5]);
+    if (len <= 0 || (size_t)len >= sizeof(json) || httpd_resp_send_chunk(query->req, json, len) != ESP_OK) return false;
+    query->first = false;
+    return true;
+}
+
+static esp_err_t runtime_http_history_samples_handler(httpd_req_t *req, esp_bms_idf_runtime_t *runtime)
+{
+    const uint64_t session = runtime_http_query_u64(req, "session", 0U);
+    const uint64_t from = runtime_http_query_u64(req, "from", 0U);
+    const uint64_t to = runtime_http_query_u64(req, "to", UINT64_MAX);
+    history_http_query_t query = {.req = req, .first = true};
+    ESP_RETURN_ON_ERROR(runtime_http_set_common_headers(req), TAG, "set headers failed");
+    ESP_RETURN_ON_ERROR(httpd_resp_set_type(req, "application/json"), TAG, "set type failed");
+    ESP_RETURN_ON_ERROR(httpd_resp_send_chunk(req, "{\"version\":1,\"samples\":[", HTTPD_RESP_USE_STRLEN), TAG, "send failed");
+    size_t returned = 0;
+    esp_err_t ret = session ? esp_bms_flashdb_query_session_samples(session, from, to, runtime_http_query_limit(req), runtime_http_sample_json_cb, &query, &returned)
+                            : esp_bms_flashdb_query_samples(from, to, runtime_http_query_limit(req), runtime_http_sample_json_cb, &query, &returned);
+    if (ret == ESP_ERR_NOT_FOUND) return runtime_http_send_text(req, "404 Not Found", "session not found");
+    ESP_RETURN_ON_ERROR(ret, TAG, "sample query failed");
+    char tail[64];
+    snprintf(tail, sizeof(tail), "],\"returned\":%u}", (unsigned)returned);
+    ESP_RETURN_ON_ERROR(httpd_resp_send_chunk(req, tail, HTTPD_RESP_USE_STRLEN), TAG, "send failed");
+    return httpd_resp_send_chunk(req, NULL, 0);
+}
+
+static bool runtime_http_fault_json_cb(const esp_bms_flashdb_fault_t *fault, void *ctx)
+{
+    history_http_query_t *query = ctx;
+    char json[160];
+    const int len = snprintf(json, sizeof(json), "%s{\"t\":%llu,\"active_mask\":%u,\"supported_mask\":%u,\"bms_type\":%u}",
+                             query->first ? "" : ",", (unsigned long long)fault->timestamp,
+                             (unsigned)fault->active_mask, (unsigned)fault->supported_mask, (unsigned)fault->bms_type);
+    if (len <= 0 || (size_t)len >= sizeof(json) || httpd_resp_send_chunk(query->req, json, len) != ESP_OK) return false;
+    query->first = false;
+    return true;
+}
+
+static esp_err_t runtime_http_history_faults_handler(httpd_req_t *req, esp_bms_idf_runtime_t *runtime)
+{
+    const uint64_t from = runtime_http_query_u64(req, "from", 0U);
+    const uint64_t to = runtime_http_query_u64(req, "to", UINT64_MAX);
+    history_http_query_t query = {.req = req, .first = true};
+    ESP_RETURN_ON_ERROR(runtime_http_set_common_headers(req), TAG, "set headers failed");
+    ESP_RETURN_ON_ERROR(httpd_resp_set_type(req, "application/json"), TAG, "set type failed");
+    ESP_RETURN_ON_ERROR(httpd_resp_send_chunk(req, "{\"version\":1,\"faults\":[", HTTPD_RESP_USE_STRLEN), TAG, "send failed");
+    size_t returned = 0;
+    ESP_RETURN_ON_ERROR(esp_bms_flashdb_query_faults(from, to, runtime_http_query_limit(req), runtime_http_fault_json_cb, &query, &returned), TAG, "fault query failed");
+    char tail[64];
+    snprintf(tail, sizeof(tail), "],\"returned\":%u}", (unsigned)returned);
+    ESP_RETURN_ON_ERROR(httpd_resp_send_chunk(req, tail, HTTPD_RESP_USE_STRLEN), TAG, "send failed");
+    (void)runtime;
+    return httpd_resp_send_chunk(req, NULL, 0);
+}
+
 esp_err_t esp_bms_idf_runtime_http_api_handler(httpd_req_t *req)
 {
     esp_bms_idf_runtime_t *runtime = (esp_bms_idf_runtime_t *)req->user_ctx;
@@ -3988,11 +4496,23 @@ esp_err_t esp_bms_idf_runtime_http_api_handler(httpd_req_t *req)
              (unsigned)runtime->setup_ap_clients);
     runtime_log_heap_state("http_api");
 
+    if (req->method == HTTP_GET && runtime_http_uri_is(req->uri, "/api/history/sessions")) {
+        return runtime_http_history_sessions_handler(req, runtime);
+    }
+    if (req->method == HTTP_GET && runtime_http_uri_is(req->uri, "/api/history/samples")) {
+        return runtime_http_history_samples_handler(req, runtime);
+    }
+    if (req->method == HTTP_GET && runtime_http_uri_is(req->uri, "/api/history/faults")) {
+        return runtime_http_history_faults_handler(req, runtime);
+    }
     if (req->method == HTTP_GET && strcmp(req->uri, "/api/status") == 0) {
         return runtime_http_status_handler(req, runtime);
     }
     if (req->method == HTTP_GET && strcmp(req->uri, "/api/bms/ride-records") == 0) {
         return runtime_http_ride_records_handler(req, runtime);
+    }
+    if (req->method == HTTP_GET && strcmp(req->uri, "/api/gps/track") == 0) {
+        return runtime_http_gps_track_handler(req, runtime);
     }
     if (req->method == HTTP_GET && strcmp(req->uri, "/api/cast/info") == 0) {
         return runtime_http_cast_info_handler(req, runtime);
@@ -4289,17 +4809,6 @@ static bool runtime_apply_pending_http_bms_scan(esp_bms_idf_runtime_t *runtime)
     }
 
     ESP_LOGI(TAG, "[bms] consume pending BLE scan request");
-    if (RUNTIME_FLAG(runtime, WIFI_STACK_READY) || RUNTIME_FLAG(runtime, WIFI_DRIVER_READY) ||
-        RUNTIME_FLAG(runtime, SETUP_AP_STARTED) || RUNTIME_FLAG(runtime, HTTP_SERVER_STARTED)) {
-        ESP_LOGI(TAG, "[bms] stopping setup services before BLE scan");
-        const esp_err_t stop_ret = esp_bms_idf_runtime_stop_setup_services(runtime);
-        if (stop_ret != ESP_OK) {
-            runtime_set_bms_info(runtime, "BLE FAIL");
-            ESP_LOGW(TAG, "[bms] setup service stop failed: %s", esp_err_to_name(stop_ret));
-            runtime_log_heap_state("bms_scan_blocked");
-            return true;
-        }
-    }
     RUNTIME_SET_FLAG(runtime, BMS_BIND_ACTIVE, false);
     const esp_err_t ret = runtime->bms_ble_driver && runtime->bms_ble_driver->start_for_bind
                               ? runtime->bms_ble_driver->start_for_bind(runtime)
@@ -5063,15 +5572,33 @@ void esp_bms_idf_runtime_init(esp_bms_idf_runtime_t *runtime)
     if (!runtime->ride_records_lock) {
         ESP_LOGW(TAG, "[bms] ride record mutex allocation failed");
     }
+    runtime->gps_track_lock = xSemaphoreCreateMutex();
+    if (!runtime->gps_track_lock) {
+        ESP_LOGW(TAG, "[gps] track mutex allocation failed");
+    }
     runtime->capacity_estimate_lock = xSemaphoreCreateMutex();
     if (!runtime->capacity_estimate_lock) {
         ESP_LOGW(TAG, "[bms] capacity estimate mutex allocation failed");
     }
     runtime_reset_state(runtime);
+    const esp_err_t flashdb_ret = esp_bms_flashdb_init();
+    if (flashdb_ret != ESP_OK) {
+        ESP_LOGW(TAG, "[history] FlashDB unavailable: %s", esp_err_to_name(flashdb_ret));
+    }
     runtime_ensure_setup_ap_credentials(runtime);
     const esp_err_t ride_records_ret = runtime_load_ride_records(runtime);
     if (ride_records_ret != ESP_OK) {
         ESP_LOGW(TAG, "[bms] ride record load failed: %s", esp_err_to_name(ride_records_ret));
+    }
+    const esp_err_t gps_track_ret = runtime_load_gps_track(runtime);
+    if (gps_track_ret != ESP_OK) {
+        ESP_LOGW(TAG, "[gps] track load failed: %s", esp_err_to_name(gps_track_ret));
+    } else {
+        const esp_err_t migration_ret = runtime_migrate_gps_track(runtime);
+        if (migration_ret != ESP_OK) {
+            ESP_LOGW(TAG, "[history] legacy GPS migration deferred: %s",
+                     esp_err_to_name(migration_ret));
+        }
     }
     const esp_err_t capacity_ret = runtime_load_capacity_estimate(runtime);
     if (capacity_ret != ESP_OK) {
@@ -5261,6 +5788,66 @@ void esp_bms_idf_runtime_register_optional_http_handler(
     runtime->optional_http_context = context;
 }
 
+static void runtime_flashdb_sample(esp_bms_idf_runtime_t *runtime)
+{
+    const esp_bms_dashboard_snapshot_t *s = &runtime->snapshot;
+    const bool gps_valid = runtime->gps_last_fix_valid && RUNTIME_SNAPSHOT_FLAG(runtime, GPS_FIX_VALID);
+    const bool bms_valid = RUNTIME_SNAPSHOT_FLAG(runtime, BMS_ONLINE);
+    if (!runtime->history_session_started && (gps_valid || bms_valid)) {
+        if (esp_bms_flashdb_start_session(&runtime->history_session_id) != ESP_OK) return;
+        runtime->history_session_started = true;
+        runtime->history_elapsed_s = 0;
+        runtime->history_time_anchored = false;
+        if (runtime->gps_utc_valid &&
+            esp_bms_flashdb_set_session_anchor(runtime->history_session_id, 0U,
+                                               runtime->gps_utc_epoch_s) == ESP_OK) {
+            runtime->history_time_anchored = true;
+        }
+    }
+    if (!runtime->history_session_started || esp_bms_flashdb_session_full()) return;
+    esp_bms_flashdb_sample_t sample = { .version = ESP_BMS_FLASHDB_SAMPLE_VERSION,
+                                        .flags = (gps_valid ? ESP_BMS_FLASHDB_FLAG_GPS_VALID : 0) |
+                                                 (bms_valid ? ESP_BMS_FLASHDB_FLAG_BMS_VALID : 0),
+                                        .bms_type = s->bms_type,
+                                        .temperature_count = 0,
+                                        .elapsed_s = (uint16_t)(runtime->history_elapsed_s > UINT16_MAX ? UINT16_MAX : runtime->history_elapsed_s),
+                                        .latitude_e7 = runtime->gps_last_latitude_e7,
+                                        .longitude_e7 = runtime->gps_last_longitude_e7,
+                                        .pack_voltage_mv = s->pack_voltage_mv > UINT16_MAX ? UINT16_MAX : (uint16_t)s->pack_voltage_mv,
+                                        .current_deci_amps = s->current_deci_amps,
+                                        .soc_percent = s->soc_percent > 100U ? 100U : (uint8_t)s->soc_percent,
+                                        .cell_delta_mv = s->delta_cell_voltage_mv > UINT8_MAX ? UINT8_MAX : (uint8_t)s->delta_cell_voltage_mv,
+                                        .cell_min_mv = s->min_cell_voltage_mv,
+                                        .cell_max_mv = s->max_cell_voltage_mv,
+                                        .cell_avg_mv = s->average_cell_voltage_mv };
+    for (size_t i = 0; i < 6U; ++i) {
+        if (esp_bms_dashboard_snapshot_temperature_valid(s, i)) {
+            int16_t temp = s->bms_temperature_celsius[i];
+            sample.temperatures_c[sample.temperature_count++] =
+                (int8_t)(temp < INT8_MIN ? INT8_MIN : temp > INT8_MAX ? INT8_MAX : temp);
+        }
+    }
+    const uint32_t sample_elapsed_s = runtime->history_elapsed_s;
+    const uint64_t key = (runtime->history_session_id << 32) | sample_elapsed_s;
+    if (esp_bms_flashdb_append_sample(key, &sample) == ESP_OK) ++runtime->history_elapsed_s;
+    const uint16_t fault_mask = s->bms_safety_active_mask;
+    const uint16_t supported_mask = s->bms_safety_supported_mask;
+    if (fault_mask != runtime->history_fault_mask ||
+        supported_mask != runtime->history_fault_supported_mask) {
+        const esp_bms_flashdb_fault_t fault = { .timestamp = key,
+                                                .session_id = runtime->history_session_id,
+                                                .elapsed_s = sample_elapsed_s,
+                                                .active_mask = fault_mask,
+                                                .supported_mask = supported_mask,
+                                                .bms_type = s->bms_type,
+                                                .flags = 1U };
+        if (esp_bms_flashdb_append_fault(&fault) == ESP_OK) {
+            runtime->history_fault_mask = fault_mask;
+            runtime->history_fault_supported_mask = supported_mask;
+        }
+    }
+}
+
 bool esp_bms_idf_runtime_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_ms)
 {
     if (!runtime) {
@@ -5367,6 +5954,11 @@ bool esp_bms_idf_runtime_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_m
         runtime->elapsed_ms -= 1000;
         runtime->tick_count++;
     }
+    runtime->history_sample_elapsed_ms += elapsed_ms;
+    while (runtime->history_sample_elapsed_ms >= 1000U) {
+        runtime->history_sample_elapsed_ms -= 1000U;
+        runtime_flashdb_sample(runtime);
+    }
     const uint64_t uptime_seconds = (uint64_t)esp_timer_get_time() / UINT64_C(1000000);
     const uint32_t displayed_uptime = uptime_seconds > UINT32_MAX
                                           ? UINT32_MAX
@@ -5376,6 +5968,7 @@ bool esp_bms_idf_runtime_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_m
         changed = true;
     }
     runtime_persist_ride_records(runtime);
+    /* FlashDB is the durable history; keep the legacy NVS blob read-only for migration. */
     runtime_persist_capacity_estimate(runtime);
     return changed;
 }

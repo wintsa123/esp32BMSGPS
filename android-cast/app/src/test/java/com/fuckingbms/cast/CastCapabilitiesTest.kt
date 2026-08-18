@@ -13,7 +13,7 @@ class CastCapabilitiesTest {
                   "physical_width": 320,
                   "physical_height": 480,
                   "codec": "jpeg",
-                  "jpeg_quality": 80,
+                  "jpeg_quality": 60,
                   "target_fps": 20,
                   "max_frame_bytes": 262144,
                   "orientations": [
@@ -27,7 +27,15 @@ class CastCapabilitiesTest {
 
         assertEquals(CastTarget(1, 480, 320), info.targetFor(2400, 1080))
         assertEquals(CastTarget(0, 320, 480), info.targetFor(1080, 2400))
+        assertEquals(60, info.jpegQuality)
+        assertEquals(CastProtocol.DEFAULT_JPEG_QUALITY, info.jpegQuality)
         assertEquals(262_144, info.maxFrameBytes)
+    }
+
+    @Test fun captureSizeCoversTargetAtSourceAspectRatio() {
+        assertEquals(712 to 320, captureSizeFor(2400, 1080, CastTarget(1, 480, 320)))
+        assertEquals(320 to 712, captureSizeFor(1080, 2400, CastTarget(0, 320, 480)))
+        assertEquals(270 to 480, captureSizeFor(1080, 1920, CastTarget(0, 270, 480)))
     }
 
     @Test fun rejectsV2Capabilities() {
@@ -48,7 +56,7 @@ class CastCapabilitiesTest {
           "physical_width": 320,
           "physical_height": 480,
           "codec": "jpeg",
-          "jpeg_quality": 80,
+          "jpeg_quality": 60,
           "target_fps": 20,
           "max_frame_bytes": 262144,
           "orientations": [

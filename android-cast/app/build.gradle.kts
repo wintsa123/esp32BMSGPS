@@ -7,4 +7,7 @@ android { namespace = "com.fuckingbms.cast"; compileSdk = 35
     testOptions { unitTests.isIncludeAndroidResources = true }
 }
 
-dependencies { testImplementation("junit:junit:4.13.2") }
+dependencies {
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
+}

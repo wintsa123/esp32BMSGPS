@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/hardware-build-flash.md","reason":"分区、构建输入、GPIO 所有权和固件刷写验证契约。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"固件质量门、GitNexus detect_changes 和真机验证要求。"}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"存储降级、容量、网络和错误日志的项目约定。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"FlashDB、HTTP API 与 Android 类型化数据流的边界要求。"}
+{"file":".trellis/tasks/08-18-flashdb-timeseries-storage/research/flashdb-2.2.0.md","reason":"FlashDB 2.2.0 TSDB rollover、clean、时间戳和 ESP32 FAL 研究结论。"}

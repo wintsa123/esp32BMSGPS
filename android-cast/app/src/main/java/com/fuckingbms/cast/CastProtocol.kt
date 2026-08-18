@@ -6,7 +6,7 @@ import java.nio.ByteOrder
 object CastProtocol {
     const val VERSION = 3
     const val MAX_FRAME_BYTES = 262_144
-    const val DEFAULT_JPEG_QUALITY = 80
+    const val DEFAULT_JPEG_QUALITY = 60
     const val FALLBACK_JPEG_QUALITY = 60
     const val TARGET_FPS = 20
     const val FRAME_HEADER_BYTES = 7

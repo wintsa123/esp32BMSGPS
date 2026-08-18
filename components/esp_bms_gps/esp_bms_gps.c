@@ -197,13 +197,75 @@ static bool gps_parse_utc_time(const char *field, size_t field_len, gps_datetime
     return true;
 }
 
+static bool gps_parse_coordinate_e7(const char *field,
+                                    size_t field_len,
+                                    bool latitude,
+                                    int32_t *value)
+{
+    if (!field || !value || field_len == 0U) {
+        return false;
+    }
+    const size_t degree_digits = latitude ? 2U : 3U;
+    if (field_len <= degree_digits + 2U) {
+        return false;
+    }
+    uint32_t degrees = 0U;
+    for (size_t index = 0U; index < degree_digits; index++) {
+        if (!isdigit((unsigned char)field[index])) {
+            return false;
+        }
+        degrees = degrees * 10U + (uint32_t)(field[index] - '0');
+    }
+    size_t dot = degree_digits;
+    while (dot < field_len && field[dot] != '.') {
+        dot++;
+    }
+    if (dot - degree_digits != 2U || dot + 1U >= field_len) {
+        return false;
+    }
+    uint32_t minute_million = 0U;
+    for (size_t index = degree_digits; index < dot; index++) {
+        if (!isdigit((unsigned char)field[index])) {
+            return false;
+        }
+        minute_million = minute_million * 10U + (uint32_t)(field[index] - '0');
+    }
+    if (minute_million >= 60U) {
+        return false;
+    }
+    uint32_t fraction_digits = 0U;
+    size_t fraction_count = 0U;
+    for (size_t index = dot + 1U; index < field_len; index++) {
+        if (!isdigit((unsigned char)field[index]) || fraction_count == 6U) {
+            return false;
+        }
+        fraction_digits = fraction_digits * 10U + (uint32_t)(field[index] - '0');
+        fraction_count++;
+    }
+    while (fraction_count++ < 6U) {
+        fraction_digits *= 10U;
+    }
+    const uint64_t total_minutes_million =
+        (uint64_t)minute_million * 1000000U + fraction_digits;
+    const uint64_t coordinate_e7 = (uint64_t)degrees * 10000000U +
+                                   (total_minutes_million * 10000000U) / 60000000U;
+    if (coordinate_e7 > (uint64_t)(latitude ? 90 : 180) * 10000000U) {
+        return false;
+    }
+    *value = (int32_t)coordinate_e7;
+    return true;
+}
+
 static gps_parse_result_t gps_parse_rmc(const uint8_t *line,
                                         size_t line_len,
                                         bool *fix_valid,
                                         uint32_t *speed_knots_milli,
-                                        gps_datetime_t *utc)
+                                        gps_datetime_t *utc,
+                                        int32_t *latitude_e7,
+                                        int32_t *longitude_e7)
 {
-    if (!line || !fix_valid || !speed_knots_milli || !utc || line_len == 0U) {
+    if (!line || !fix_valid || !speed_knots_milli || !utc || !latitude_e7 ||
+        !longitude_e7 || line_len == 0U) {
         return GPS_PARSE_ERROR;
     }
     if (!esp_bms_gps_stream_line_is_rmc(line, line_len)) {
@@ -217,6 +279,10 @@ static gps_parse_result_t gps_parse_rmc(const uint8_t *line,
     const size_t payload_len = line_len - 4U;
     bool status_seen = false;
     bool speed_seen = false;
+    bool latitude_seen = false;
+    bool longitude_seen = false;
+    char latitude_direction = 0;
+    char longitude_direction = 0;
     bool time_seen = false;
     bool date_seen = false;
     uint8_t status = 'V';
@@ -243,6 +309,32 @@ static gps_parse_result_t gps_parse_rmc(const uint8_t *line,
             }
             status = (uint8_t)field[0];
             status_seen = true;
+            break;
+        case 3:
+            if (field_len != 0U) {
+                latitude_seen = gps_parse_coordinate_e7(field, field_len, true, latitude_e7);
+                if (!latitude_seen) {
+                    return GPS_PARSE_ERROR;
+                }
+            }
+            break;
+        case 4:
+            if (field_len == 1U) {
+                latitude_direction = field[0];
+            }
+            break;
+        case 5:
+            if (field_len != 0U) {
+                longitude_seen = gps_parse_coordinate_e7(field, field_len, false, longitude_e7);
+                if (!longitude_seen) {
+                    return GPS_PARSE_ERROR;
+                }
+            }
+            break;
+        case 6:
+            if (field_len == 1U) {
+                longitude_direction = field[0];
+            }
             break;
         case 7:
             if (!esp_bms_gps_speed_knots_milli_parse(field,
@@ -277,6 +369,26 @@ static gps_parse_result_t gps_parse_rmc(const uint8_t *line,
     }
     *fix_valid = status == 'A';
     *speed_knots_milli = parsed_speed_milli;
+    if (*fix_valid) {
+        if (latitude_seen && longitude_seen &&
+            ((latitude_direction != 'N' && latitude_direction != 'S') ||
+             (longitude_direction != 'E' && longitude_direction != 'W'))) {
+            return GPS_PARSE_ERROR;
+        }
+        if (latitude_seen && longitude_seen && latitude_direction == 'S') {
+            *latitude_e7 = -*latitude_e7;
+        }
+        if (latitude_seen && longitude_seen && longitude_direction == 'W') {
+            *longitude_e7 = -*longitude_e7;
+        }
+        if (!latitude_seen || !longitude_seen) {
+            *latitude_e7 = INT32_MIN;
+            *longitude_e7 = INT32_MIN;
+        }
+    } else {
+        *latitude_e7 = 0;
+        *longitude_e7 = 0;
+    }
     return GPS_PARSE_FIX;
 }
 
@@ -322,6 +434,17 @@ static bool gps_utc_to_local_utc8(const gps_datetime_t *utc, gps_datetime_t *loc
     local->month = 1U;
     local->year++;
     return true;
+}
+
+static uint64_t gps_utc_epoch_s(const gps_datetime_t *utc)
+{
+    if (!utc || utc->year < 1970U || utc->month == 0U || utc->month > 12U || utc->day == 0U) return 0;
+    uint64_t days = 0;
+    for (uint16_t year = 1970U; year < utc->year; ++year)
+        days += gps_is_leap_year(year) ? 366U : 365U;
+    for (uint8_t month = 1U; month < utc->month; ++month) days += gps_days_in_month(utc->year, month);
+    days += utc->day - 1U;
+    return days * 86400ULL + utc->hour * 3600ULL + utc->minute * 60ULL + utc->second;
 }
 
 static bool gps_set_module_state(esp_bms_idf_runtime_t *runtime,
@@ -538,8 +661,16 @@ static bool gps_apply_line(esp_bms_idf_runtime_t *runtime, const uint8_t *line, 
     bool fix_valid = false;
     uint32_t speed_knots_milli = 0U;
     gps_datetime_t utc = { 0 };
+    int32_t latitude_e7 = 0;
+    int32_t longitude_e7 = 0;
     const gps_parse_result_t result =
-        gps_parse_rmc(line, line_len, &fix_valid, &speed_knots_milli, &utc);
+        gps_parse_rmc(line,
+                      line_len,
+                      &fix_valid,
+                      &speed_knots_milli,
+                      &utc,
+                      &latitude_e7,
+                      &longitude_e7);
     if (result == GPS_PARSE_IGNORE) {
         return false;
     }
@@ -563,7 +694,13 @@ static bool gps_apply_line(esp_bms_idf_runtime_t *runtime, const uint8_t *line, 
                                               local.day,
                                               local.hour,
                                               local.minute,
+                                              utc.second,
+                                              gps_utc_epoch_s(&utc),
                                               local_valid);
+    (void)esp_bms_idf_runtime_publish_gps_position(runtime,
+                                                    fix_valid,
+                                                    latitude_e7,
+                                                    longitude_e7);
     return esp_bms_idf_runtime_publish_gps_sample(
         runtime,
         fix_valid,

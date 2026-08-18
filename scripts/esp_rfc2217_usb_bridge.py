@@ -36,7 +36,11 @@ class UsbSerialJtagPortManager(serial.rfc2217.PortManager):
     """Translate remote default-reset requests to native USB Serial/JTAG reset."""
 
     def __init__(self, serial_port, connection, logger=None):
-        self.is_download_mode = False
+        # pySerial asserts DTR while it opens an RFC2217 monitor.  Only an
+        # explicit DTR release followed by assertion is an esptool download
+        # reset request.
+        self._download_reset_armed = False
+        self._ignore_download_release = False
         self._logical_flow_control = SET_CONTROL_USE_NO_FLOW_CONTROL
         # USB Serial/JTAG transports bytes over USB; its RFC2217 client still
         # expects a UART-setting acknowledgement, but changing the Windows
@@ -101,20 +105,25 @@ class UsbSerialJtagPortManager(serial.rfc2217.PortManager):
                 self._acknowledge_control(control)
                 return
             if control == SET_CONTROL_DTR_OFF:
-                self.is_download_mode = False
+                self._download_reset_armed = True
                 self.serial.dtr = False
                 self._acknowledge_control(control)
                 return
-            if control == SET_CONTROL_RTS_OFF and not self.is_download_mode:
-                self._run_reset(HardReset(self.serial, uses_usb=True), "usb_hard_reset")
+            if control == SET_CONTROL_DTR_ON:
+                if self._download_reset_armed:
+                    self._download_reset_armed = False
+                    self._ignore_download_release = True
+                    self._run_reset(USBJTAGSerialReset(self.serial), "usb_download_reset")
                 self._acknowledge_control(control)
                 return
-            if control == SET_CONTROL_DTR_ON and not self.is_download_mode:
-                self.is_download_mode = True
-                self._run_reset(USBJTAGSerialReset(self.serial), "usb_download_reset")
+            if control == SET_CONTROL_RTS_OFF:
+                if self._ignore_download_release:
+                    self._ignore_download_release = False
+                else:
+                    self._run_reset(HardReset(self.serial, uses_usb=True), "usb_hard_reset")
                 self._acknowledge_control(control)
                 return
-            if control in (SET_CONTROL_DTR_ON, SET_CONTROL_RTS_ON, SET_CONTROL_RTS_OFF):
+            if control == SET_CONTROL_RTS_ON:
                 self._acknowledge_control(control)
                 return
         super()._telnet_process_subnegotiation(suboption)

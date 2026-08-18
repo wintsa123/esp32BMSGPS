@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/hardware-build-flash.md","reason":"检查双板分区不重叠、构建/刷写路径和容量验证。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查固件质量门和提交前 GitNexus 变更检测。"}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"检查持久化错误、降级和容量日志不泄露敏感信息。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"历史 API 删除 Web 页面后检查 Android 侧契约迁移边界。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查编码、HTTP JSON、Android 解码和分页数据流一致性。"}
+{"file":".trellis/tasks/08-18-flashdb-timeseries-storage/research/flashdb-2.2.0.md","reason":"检查实现是否遵守 FlashDB 2.2.0 的 TSDB 能力边界。"}

@@ -33,8 +33,6 @@ static const char *TAG = "esp_bms_network";
 static esp_netif_t *s_setup_ap_netif;
 static httpd_handle_t s_http_server;
 
-extern const char web_index_html_start[] asm("_binary_index_html_start");
-extern const char web_index_html_end[] asm("_binary_index_html_end");
 
 static esp_err_t network_stop_setup_services(esp_bms_idf_runtime_t *runtime);
 
@@ -215,18 +213,6 @@ static esp_err_t network_apply_setup_ap_wifi_config(esp_bms_idf_runtime_t *runti
     return esp_wifi_set_config(WIFI_IF_AP, &wifi_config);
 }
 
-static esp_err_t network_root_handler(httpd_req_t *req)
-{
-    const size_t html_size = (size_t)(web_index_html_end - web_index_html_start);
-    const size_t html_len = html_size > 0U && web_index_html_start[html_size - 1U] == '\0'
-                                ? html_size - 1U
-                                : html_size;
-    ESP_LOGI(TAG, "[http] GET / served: %u bytes (remote %s)",
-             (unsigned)html_len, httpd_req_get_url_query_len(req) > 0 ? "with-query" : "no-query");
-    ESP_RETURN_ON_ERROR(httpd_resp_set_type(req, "text/html; charset=utf-8"), TAG, "set HTTP type failed");
-    return httpd_resp_send(req, web_index_html_start, (ssize_t)html_len);
-}
-
 static esp_err_t network_start_setup_ap(esp_bms_idf_runtime_t *runtime)
 {
     if (!runtime) {
@@ -292,7 +278,6 @@ static esp_err_t network_start_http_server(esp_bms_idf_runtime_t *runtime)
     if (ret != ESP_OK) {
         return ret;
     }
-    const httpd_uri_t root = { .uri = "/", .method = HTTP_GET, .handler = network_root_handler, .user_ctx = runtime };
     const httpd_uri_t api = { .uri = "/api/*", .method = HTTP_ANY,
                               .handler = esp_bms_idf_runtime_http_api_handler, .user_ctx = runtime };
 #if ESP_BMS_FEATURE_CAST
@@ -302,10 +287,7 @@ static esp_err_t network_start_http_server(esp_bms_idf_runtime_t *runtime)
                                .ws_pre_handshake_cb = esp_bms_idf_runtime_http_cast_accept,
                                .ws_post_handshake_cb = esp_bms_idf_runtime_http_cast_connected };
 #endif
-    ret = httpd_register_uri_handler(s_http_server, &root);
-    if (ret == ESP_OK) {
-        ret = httpd_register_uri_handler(s_http_server, &api);
-    }
+    ret = httpd_register_uri_handler(s_http_server, &api);
     if (ret == ESP_OK) {
 #if ESP_BMS_FEATURE_CAST
         ret = httpd_register_uri_handler(s_http_server, &cast);

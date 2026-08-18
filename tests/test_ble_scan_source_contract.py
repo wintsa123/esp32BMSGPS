@@ -74,6 +74,27 @@ class BleScanSourceContractTest(unittest.TestCase):
         )
         self.assertNotIn("ESP_BMS_FEATURE_BLE_MEDIA_HID", body)
 
+    def test_http_bms_scan_keeps_wifi_setup_services_running(self):
+        body = function_body(
+            ROOT / "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c",
+            "runtime_apply_pending_http_bms_scan",
+        )
+        self.assertNotIn("esp_bms_idf_runtime_stop_setup_services", body)
+
+    def test_android_bms_and_controller_scans_use_phone_ble(self):
+        activity = ROOT / "android-cast/app/src/main/java/com/fuckingbms/cast/MainActivity.kt"
+        source = activity.read_text(encoding="utf-8")
+        self.assertRegex(
+            source,
+            r"private fun startBmsScan\(\)\s*\{\s*requestBleScan\(BleScanTarget\.BMS\)",
+        )
+        self.assertNotIn("DeviceApi.startBmsScan", source)
+        self.assertRegex(
+            source,
+            r"private fun startPhoneBleScan\([^)]*\)\s*\{[^}]*bluetoothLeScanner",
+        )
+        self.assertIn("requestBleScan(BleScanTarget.CONTROLLER)", source)
+
     def test_candidate_name_updates_are_scoped_to_the_same_mac(self):
         runtime_path = ROOT / "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c"
         bms_store = function_body(runtime_path, "esp_bms_idf_runtime_bms_scan_store_candidate")
