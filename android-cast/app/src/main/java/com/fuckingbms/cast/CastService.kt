@@ -44,6 +44,8 @@ internal data class CaptureInsets(val left: Int, val top: Int, val right: Int, v
     companion object { val ZERO = CaptureInsets(0, 0, 0, 0) }
 }
 
+internal data class CaptureRect(val left: Int, val top: Int, val right: Int, val bottom: Int)
+
 class CastService : Service() {
     private var projection: MediaProjection? = null
     private var reader: ImageReader? = null
@@ -208,7 +210,9 @@ class CastService : Service() {
             }
             targetCanvas!!.drawBitmap(
                 sourceFrame,
-                cropRectFor(image.width, image.height, displayWidth, displayHeight, cropInsets),
+                cropRectFor(image.width, image.height, displayWidth, displayHeight, cropInsets).let {
+                    Rect(it.left, it.top, it.right, it.bottom)
+                },
                 Rect(0, 0, target.width, target.height),
                 scalePaint,
             )
@@ -335,7 +339,7 @@ class CastService : Service() {
         @Volatile var currentState = STATE_STOPPED
             private set
 
-        fun intent(
+        internal fun intent(
             context: Context,
             result: Int,
             grant: Intent,
@@ -367,21 +371,21 @@ internal fun cropRectFor(
     sourceWidth: Int,
     sourceHeight: Int,
     insets: CaptureInsets,
-): Rect {
+): CaptureRect {
     if (imageWidth <= 0 || imageHeight <= 0 || sourceWidth <= 0 || sourceHeight <= 0) {
-        return Rect(0, 0, imageWidth.coerceAtLeast(0), imageHeight.coerceAtLeast(0))
+        return CaptureRect(0, 0, imageWidth.coerceAtLeast(0), imageHeight.coerceAtLeast(0))
     }
     if (insets.left < 0 || insets.top < 0 || insets.right < 0 || insets.bottom < 0 ||
         insets.left + insets.right >= sourceWidth || insets.top + insets.bottom >= sourceHeight
     ) {
-        return Rect(0, 0, imageWidth, imageHeight)
+        return CaptureRect(0, 0, imageWidth, imageHeight)
     }
     val left = floor(insets.left.toDouble() * imageWidth / sourceWidth).toInt()
     val top = floor(insets.top.toDouble() * imageHeight / sourceHeight).toInt()
     val right = (imageWidth - ceil(insets.right.toDouble() * imageWidth / sourceWidth).toInt())
     val bottom = (imageHeight - ceil(insets.bottom.toDouble() * imageHeight / sourceHeight).toInt())
-    if (right <= left || bottom <= top) return Rect(0, 0, imageWidth, imageHeight)
-    return Rect(
+    if (right <= left || bottom <= top) return CaptureRect(0, 0, imageWidth, imageHeight)
+    return CaptureRect(
         left.coerceIn(0, imageWidth - 1),
         top.coerceIn(0, imageHeight - 1),
         right.coerceIn(1, imageWidth),

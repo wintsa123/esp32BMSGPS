@@ -1,6 +1,5 @@
 package com.fuckingbms.cast
 
-import android.graphics.Rect
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Test
@@ -8,11 +7,11 @@ import org.junit.Test
 class CastCapabilitiesTest {
     @Test fun cropRectMapsSystemInsetsAndFallsBackForInvalidValues() {
         assertEquals(
-            Rect(0, 100, 1000, 900),
+            CaptureRect(0, 100, 1000, 900),
             cropRectFor(1000, 1000, 1000, 1000, CaptureInsets(0, 100, 0, 100)),
         )
         assertEquals(
-            Rect(0, 0, 1000, 1000),
+            CaptureRect(0, 0, 1000, 1000),
             cropRectFor(1000, 1000, 1000, 1000, CaptureInsets(600, 0, 500, 0)),
         )
     }
