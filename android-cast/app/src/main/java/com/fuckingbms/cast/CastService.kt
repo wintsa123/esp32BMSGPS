@@ -36,8 +36,13 @@ import java.nio.ByteBuffer
 import java.security.SecureRandom
 import kotlin.concurrent.thread
 import kotlin.math.ceil
+import kotlin.math.floor
 
 private const val CAST_METRICS_LOG_WINDOW_NANOS = 5_000_000_000L
+
+internal data class CaptureInsets(val left: Int, val top: Int, val right: Int, val bottom: Int) {
+    companion object { val ZERO = CaptureInsets(0, 0, 0, 0) }
+}
 
 class CastService : Service() {
     private var projection: MediaProjection? = null
@@ -49,6 +54,9 @@ class CastService : Service() {
     private var castInfo: CastInfo? = null
     private var captureWidth = 0
     private var captureHeight = 0
+    private var displayWidth = 0
+    private var displayHeight = 0
+    private var cropInsets = CaptureInsets.ZERO
     @Volatile private var running = false
     @Volatile private var latest: CapturedFrame? = null
     private var socket: CastSocket? = null
@@ -86,6 +94,12 @@ class CastService : Service() {
         val info = intent.castInfo() ?: return START_NOT_STICKY
         val result = intent.getIntExtra("result", 0); val grant = intent.getParcelableExtra<Intent>("grant") ?: return START_NOT_STICKY
         val host = intent.getStringExtra("host") ?: return START_NOT_STICKY
+        cropInsets = CaptureInsets(
+            intent.getIntExtra("inset_left", 0),
+            intent.getIntExtra("inset_top", 0),
+            intent.getIntExtra("inset_right", 0),
+            intent.getIntExtra("inset_bottom", 0),
+        )
         running = true; failed = false; latest = null; captureSequence = 0L; castInfo = info
         report(STATE_CONNECTING)
         projection = (getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager).getMediaProjection(result, grant)
@@ -109,6 +123,8 @@ class CastService : Service() {
         if (!running) return
         val info = castInfo ?: return
         val (sourceWidth, sourceHeight) = captureSize()
+        displayWidth = sourceWidth
+        displayHeight = sourceHeight
         val target = info.targetFor(sourceWidth, sourceHeight)
         val (width, height) = captureSizeFor(sourceWidth, sourceHeight, target)
         if (width == captureWidth && height == captureHeight && reader != null) return
@@ -192,7 +208,7 @@ class CastService : Service() {
             }
             targetCanvas!!.drawBitmap(
                 sourceFrame,
-                Rect(0, 0, image.width, image.height),
+                cropRectFor(image.width, image.height, displayWidth, displayHeight, cropInsets),
                 Rect(0, 0, target.width, target.height),
                 scalePaint,
             )
@@ -319,7 +335,14 @@ class CastService : Service() {
         @Volatile var currentState = STATE_STOPPED
             private set
 
-        fun intent(context: Context, result: Int, grant: Intent, host: String, info: CastInfo) = Intent(context, CastService::class.java).apply {
+        fun intent(
+            context: Context,
+            result: Int,
+            grant: Intent,
+            host: String,
+            info: CastInfo,
+            insets: CaptureInsets = CaptureInsets.ZERO,
+        ) = Intent(context, CastService::class.java).apply {
             putExtra("result", result)
             putExtra("grant", grant)
             putExtra("host", host)
@@ -330,8 +353,40 @@ class CastService : Service() {
             putExtra("target_fps", info.targetFps)
             putExtra("max_frame_bytes", info.maxFrameBytes)
             putExtra("targets", info.orientations.flatMap { listOf(it.rotation, it.width, it.height) }.toIntArray())
+            putExtra("inset_left", insets.left)
+            putExtra("inset_top", insets.top)
+            putExtra("inset_right", insets.right)
+            putExtra("inset_bottom", insets.bottom)
         }
     }
+}
+
+internal fun cropRectFor(
+    imageWidth: Int,
+    imageHeight: Int,
+    sourceWidth: Int,
+    sourceHeight: Int,
+    insets: CaptureInsets,
+): Rect {
+    if (imageWidth <= 0 || imageHeight <= 0 || sourceWidth <= 0 || sourceHeight <= 0) {
+        return Rect(0, 0, imageWidth.coerceAtLeast(0), imageHeight.coerceAtLeast(0))
+    }
+    if (insets.left < 0 || insets.top < 0 || insets.right < 0 || insets.bottom < 0 ||
+        insets.left + insets.right >= sourceWidth || insets.top + insets.bottom >= sourceHeight
+    ) {
+        return Rect(0, 0, imageWidth, imageHeight)
+    }
+    val left = floor(insets.left.toDouble() * imageWidth / sourceWidth).toInt()
+    val top = floor(insets.top.toDouble() * imageHeight / sourceHeight).toInt()
+    val right = (imageWidth - ceil(insets.right.toDouble() * imageWidth / sourceWidth).toInt())
+    val bottom = (imageHeight - ceil(insets.bottom.toDouble() * imageHeight / sourceHeight).toInt())
+    if (right <= left || bottom <= top) return Rect(0, 0, imageWidth, imageHeight)
+    return Rect(
+        left.coerceIn(0, imageWidth - 1),
+        top.coerceIn(0, imageHeight - 1),
+        right.coerceIn(1, imageWidth),
+        bottom.coerceIn(1, imageHeight),
+    )
 }
 
 internal fun captureSizeFor(sourceWidth: Int, sourceHeight: Int, target: CastTarget): Pair<Int, Int> {

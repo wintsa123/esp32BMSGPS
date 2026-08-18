@@ -13,6 +13,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.graphics.Insets
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.media.projection.MediaProjectionConfig
@@ -33,6 +34,7 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowInsets
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -207,6 +209,7 @@ class MainActivity : Activity() {
     private var brightness = 80
     private var volume = 50
     private var displayRotation = "landscape"
+    private var projectionInsets = CaptureInsets.ZERO
     private var speedUnit = "km/h"
     private var speedSource = "gps"
     private var language = "zh"
@@ -327,11 +330,22 @@ class MainActivity : Activity() {
         val root = FrameLayout(this).apply {
             setBackgroundColor(COLOR_BACKGROUND)
             setOnApplyWindowInsetsListener { view, insets ->
+                val bars = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    insets.getInsets(WindowInsets.Type.systemBars())
+                } else {
+                    Insets.of(
+                        insets.systemWindowInsetLeft,
+                        insets.systemWindowInsetTop,
+                        insets.systemWindowInsetRight,
+                        insets.systemWindowInsetBottom,
+                    )
+                }
+                projectionInsets = CaptureInsets(bars.left, bars.top, bars.right, bars.bottom)
                 view.setPadding(
-                    insets.systemWindowInsetLeft,
-                    insets.systemWindowInsetTop,
-                    insets.systemWindowInsetRight,
-                    insets.systemWindowInsetBottom,
+                    bars.left,
+                    bars.top,
+                    bars.right,
+                    bars.bottom,
                 )
                 insets
             }
@@ -1645,7 +1659,7 @@ class MainActivity : Activity() {
         val castInfo = info
         if (result != RESULT_OK || data == null) return setStage(UiStage.FAILED, "未授予屏幕录制权限，点击重试投屏可再次申请")
         if (castInfo == null) return setStage(UiStage.FAILED, "设备连接已失效，请重新连接")
-        startForegroundService(CastService.intent(this, result, data, host, castInfo))
+        startForegroundService(CastService.intent(this, result, data, host, castInfo, projectionInsets))
         setStage(UiStage.CAST_CONNECTING)
     }
 
