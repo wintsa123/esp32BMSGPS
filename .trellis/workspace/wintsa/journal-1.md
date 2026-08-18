@@ -1000,3 +1000,24 @@ Verified the Android APK compact-frame gear field, mapped N/D/R across all dashb
 ### Next Steps
 
 - None - task complete
+
+
+## Session 31: 修复安卓投屏系统栏黑边
+
+**Date**: 2026-08-19
+**Task**: 修复安卓投屏系统栏黑边
+**Branch**: `main`
+
+### Summary
+
+Android 投屏启动时传递窗口系统栏 inset，CastService 编码前安全裁剪状态栏/导航栏并在异常时回退整屏；新增裁剪边界测试。当前环境缺少 Gradle Wrapper 与 gradle，未能执行 Android 编译测试。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `077e09f8` | (see git log) |
+
+### Status
+
+[OK] **Completed**
