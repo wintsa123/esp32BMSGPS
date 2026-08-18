@@ -28,6 +28,56 @@ Run GitNexus change detection before commit:
 node .gitnexus/run.cjs detect-changes -r esp32BMSGPS
 ```
 
+## Scenario: Cast WebSocket Upgrade Lifecycle
+
+### 1. Scope / Trigger
+
+- Trigger: changing `/cast` WebSocket registration, handshake callbacks, or the
+  frame receive handler.
+
+### 2. Signatures
+
+- Handler: `esp_bms_idf_runtime_http_cast_ws_handler(httpd_req_t *req)`.
+- Route: `GET /cast` with `is_websocket = true`.
+
+### 3. Contracts
+
+- The initial `HTTP_GET` callback completes the HTTP-to-WebSocket upgrade and
+  must return `ESP_OK` without calling `httpd_ws_recv_frame()`.
+- Only subsequent callbacks may read binary heartbeat or JPEG frames.
+- JPEG and ACK payload formats remain owned by `esp_bms_cast_protocol`.
+
+### 4. Validation & Error Matrix
+
+- Initial `HTTP_GET` -> return `ESP_OK`; do not wait for a frame.
+- Subsequent valid binary frame -> parse and process normally.
+- Invalid, oversized, or closed frame -> stop casting through the existing
+  error path.
+
+### 5. Good / Base / Bad Cases
+
+- Good: Android receives HTTP `101`, then sends its first frame or heartbeat.
+- Base: an idle upgraded connection remains alive through heartbeat frames.
+- Bad: calling `httpd_ws_recv_frame()` from the initial GET creates a handshake
+  deadlock because the client waits for `101` before sending frames.
+
+### 6. Tests Required
+
+- `python3 -m unittest tests.test_cast_websocket_contract` must verify that the
+  GET return precedes the first `httpd_ws_recv_frame()` call.
+- Build the selected ESP32-S3 profile and flash through the RFC2217 bridge.
+
+### 7. Wrong vs Correct
+
+```c
+/* Wrong: waits for a frame before the upgrade response is completed. */
+httpd_ws_recv_frame(req, &frame, 0);
+
+/* Correct: complete the upgrade first. */
+if (req->method == HTTP_GET) return ESP_OK;
+httpd_ws_recv_frame(req, &frame, 0);
+```
+
 ## Scenario: Preset And Remaining Range
 
 ### 1. Scope / Trigger
