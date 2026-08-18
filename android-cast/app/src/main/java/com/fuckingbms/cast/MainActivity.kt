@@ -55,11 +55,11 @@ internal enum class UiStage {
 
 internal enum class AppRoute(val label: String) {
     CAST("投屏"),
-    BMS("BMS"),
+    BMS("仪表"),
     RECORDS("记录"),
     MAP("地图"),
     SETTINGS("设置"),
-    DASHBOARD("仪表"),
+    DASHBOARD("总览"),
 }
 
 internal data class PrimaryAction(val label: String, val enabled: Boolean, val stopsCast: Boolean = false)
@@ -97,6 +97,12 @@ class MainActivity : Activity() {
     private lateinit var dashboardSpeedView: TextView
     private lateinit var dashboardVoltageView: TextView
     private lateinit var dashboardSocView: TextView
+    private lateinit var dashboardControllerView: TextView
+    private lateinit var dashboardGearView: TextView
+    private lateinit var dashboardPowerView: TextView
+    private lateinit var dashboardRpmView: TextView
+    private lateinit var dashboardControllerTempView: TextView
+    private lateinit var dashboardMotorTempView: TextView
     private lateinit var dashboardBmsView: TextView
     private lateinit var dashboardRecordView: TextView
 
@@ -115,10 +121,13 @@ class MainActivity : Activity() {
     private lateinit var bmsCandidatesHost: LinearLayout
     private lateinit var bmsBindingCard: View
     private lateinit var controllerScanButton: Button
+    private lateinit var controllerMacInput: EditText
+    private lateinit var controllerBindingCard: View
     private lateinit var controllerCandidatesHost: LinearLayout
     private var pendingBleScanTarget: BleScanTarget? = null
     private var activeBleScanTarget: BleScanTarget? = null
-    private val bleCandidates = linkedMapOf<String, BmsCandidate>()
+    private val bmsBleCandidates = linkedMapOf<String, BmsCandidate>()
+    private val controllerBleCandidates = linkedMapOf<String, BmsCandidate>()
     private val bleScanTimeout = Runnable { stopBleScan() }
     private val bleScanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) = acceptBleResult(result)
@@ -398,6 +407,35 @@ class MainActivity : Activity() {
         metrics.addView(verticalRule())
         metrics.addView(socMetric.first, weightedParams(1f))
         statusCard.addView(metrics)
+        val controllerCard = card()
+        dashboardControllerView = label("控制器离线", 18f, COLOR_TEXT, true)
+        controllerCard.addView(dashboardControllerView)
+        val controllerMetrics = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(12), 0, 0)
+        }
+        val gearMetric = metric("挡位", 28f)
+        val powerMetric = metric("功率", 22f)
+        val rpmMetric = metric("RPM", 22f)
+        dashboardGearView = gearMetric.second
+        dashboardPowerView = powerMetric.second
+        dashboardRpmView = rpmMetric.second
+        controllerMetrics.addView(gearMetric.first, weightedParams(1f))
+        controllerMetrics.addView(verticalRule())
+        controllerMetrics.addView(powerMetric.first, weightedParams(1f))
+        controllerMetrics.addView(verticalRule())
+        controllerMetrics.addView(rpmMetric.first, weightedParams(1f))
+        controllerCard.addView(controllerMetrics)
+        val controllerTemps = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(10), 0, 0)
+        }
+        dashboardControllerTempView = label("控制器温度 --", 14f, COLOR_MUTED)
+        dashboardMotorTempView = label("电机温度 --", 14f, COLOR_MUTED)
+        controllerTemps.addView(dashboardControllerTempView, weightedParams(1f))
+        controllerTemps.addView(dashboardMotorTempView, weightedParams(1f))
+        controllerCard.addView(controllerTemps)
+        column.addView(controllerCard, rowParams(bottom = 12))
         val statusFooter = LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(0, dp(14), 0, 0)
@@ -496,8 +534,17 @@ class MainActivity : Activity() {
 
         val controller = card()
         controller.addView(label("控制器蓝牙", 18f, COLOR_TEXT, true))
+        controller.addView(label("手机扫描控制器，选择后可将 MAC 保存到单片机。", 14f, COLOR_MUTED), rowParams(top = 6))
+        controllerMacInput = input("AA:BB:CC:DD:EE:FF", InputType.TYPE_CLASS_TEXT).apply { setSingleLine(true) }
+        controller.addView(label("蓝牙 MAC", 13f, COLOR_MUTED, true), rowParams(top = 8))
+        controller.addView(controllerMacInput, rowParams(top = 4, bottom = 10, height = dp(48)))
+        controllerBindingCard = controller
         controllerScanButton = actionButton("扫描控制器", false) { requestBleScan(BleScanTarget.CONTROLLER) }
-        controller.addView(controllerScanButton, rowParams(top = 10, height = dp(48)))
+        val controllerControls = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        controllerControls.addView(controllerScanButton, weightedParams(1f, dp(48)))
+        controllerControls.addView(space(dp(10), 1))
+        controllerControls.addView(actionButton("保存并绑定", true) { saveControllerBinding() }, weightedParams(1f, dp(48)))
+        controller.addView(controllerControls)
         controllerCandidatesHost = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(0, dp(8), 0, 0)
@@ -718,7 +765,7 @@ class MainActivity : Activity() {
             setPadding(dp(4), dp(5), dp(4), dp(5))
         }
         routeTabs.clear()
-        listOf(AppRoute.CAST, AppRoute.BMS, AppRoute.RECORDS, AppRoute.SETTINGS).forEach { route ->
+        listOf(AppRoute.CAST, AppRoute.DASHBOARD, AppRoute.BMS, AppRoute.RECORDS, AppRoute.SETTINGS).forEach { route ->
             val tab = label(route.label, 14f, COLOR_MUTED, true).apply {
                 gravity = Gravity.CENTER
                 isClickable = true
@@ -1061,6 +1108,18 @@ class MainActivity : Activity() {
         dashboardSpeedView.text = status?.let { "${it.speed}\n${it.speedUnit}" } ?: "--"
         dashboardVoltageView.text = formatMillivolts(status?.localBatteryMv ?: status?.packVoltageMv)
         dashboardSocView.text = status?.socPercent?.let { "$it%" } ?: "--"
+        dashboardControllerView.text = if (status?.controllerOnline == true) "控制器在线" else "控制器离线"
+        dashboardControllerView.setTextColor(if (status?.controllerOnline == true) COLOR_GREEN else COLOR_MUTED)
+        dashboardGearView.text = when (status?.controllerGear) {
+            0 -> "N"
+            1 -> "D"
+            2 -> "R"
+            else -> "--"
+        }
+        dashboardPowerView.text = status?.controllerPowerW?.let { "$it W" } ?: "--"
+        dashboardRpmView.text = status?.controllerRpm?.toString() ?: "--"
+        dashboardControllerTempView.text = "控制器温度 ${status?.controllerTempC?.let { "$it C" } ?: "--"}"
+        dashboardMotorTempView.text = "电机温度 ${status?.motorTempC?.let { "$it C" } ?: "--"}"
         dashboardBmsView.text = status?.let { formatBmsState(it) } ?: "BMS --"
         dashboardBmsView.setTextColor(if (status?.bms == "online") COLOR_GREEN else COLOR_MUTED)
         dashboardRecordView.text = when {
@@ -1094,6 +1153,7 @@ class MainActivity : Activity() {
                 bmsType = config.bmsType
                 updateBmsTypeLabel()
                 if (bmsMacInput.text.toString() != config.bmsMac) bmsMacInput.setText(config.bmsMac)
+                if (controllerMacInput.text.toString() != config.controllerMac) controllerMacInput.setText(config.controllerMac)
             }
         }
         val bmsSupported = capabilities?.let {
@@ -1101,6 +1161,8 @@ class MainActivity : Activity() {
         } ?: false
         bmsBindingCard.visibility = if (bmsSupported) View.VISIBLE else View.GONE
         setViewEnabled(bmsBindingCard, latestConfig != null && bmsSupported)
+        controllerBindingCard.visibility = if (latestConfig == null) View.GONE else View.VISIBLE
+        setViewEnabled(controllerBindingCard, latestConfig != null)
     }
 
     private fun renderRecords() {
@@ -1305,7 +1367,7 @@ class MainActivity : Activity() {
         }
         stopBleScan()
         activeBleScanTarget = target
-        bleCandidates.clear()
+        candidatesFor(target).clear()
         renderBleCandidates(target)
         setBleScanButtonsEnabled(false)
         val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
@@ -1317,7 +1379,7 @@ class MainActivity : Activity() {
         val target = activeBleScanTarget ?: return
         val mac = result.device.address
         val name = result.scanRecord?.deviceName?.takeIf { it.isNotBlank() } ?: "未命名设备"
-        bleCandidates[mac] = BmsCandidate(name, mac, result.rssi)
+        candidatesFor(target)[mac] = BmsCandidate(name, mac, result.rssi)
         runOnUiThread { if (activeBleScanTarget == target) renderBleCandidates(target) }
     }
 
@@ -1339,14 +1401,18 @@ class MainActivity : Activity() {
     private fun renderBleCandidates(target: BleScanTarget) {
         val host = if (target == BleScanTarget.BMS) bmsCandidatesHost else controllerCandidatesHost
         host.removeAllViews()
-        if (bleCandidates.isEmpty()) return
+        val candidates = candidatesFor(target)
+        if (candidates.isEmpty()) return
         host.addView(label("扫描结果", 13f, COLOR_MUTED, true), rowParams(top = 4, bottom = 4))
-        bleCandidates.values.sortedByDescending { it.rssi ?: Int.MIN_VALUE }.forEach { candidate ->
+        candidates.values.sortedByDescending { it.rssi ?: Int.MIN_VALUE }.forEach { candidate ->
             val strength = candidate.rssi?.let { "  $it dBm" }.orEmpty()
             val item = actionButton("${candidate.name}\n${candidate.mac}$strength", false) {
                 if (target == BleScanTarget.BMS) {
                     bmsMacInput.setText(candidate.mac)
                     bmsMacInput.setSelection(bmsMacInput.length())
+                } else {
+                    controllerMacInput.setText(candidate.mac)
+                    controllerMacInput.setSelection(controllerMacInput.length())
                 }
             }.apply {
                 gravity = Gravity.START or Gravity.CENTER_VERTICAL
@@ -1355,6 +1421,9 @@ class MainActivity : Activity() {
             host.addView(item, rowParams(bottom = 6, height = dp(56)))
         }
     }
+
+    private fun candidatesFor(target: BleScanTarget) =
+        if (target == BleScanTarget.BMS) bmsBleCandidates else controllerBleCandidates
 
     private fun saveBmsBinding() {
         if (!bindDeviceNetwork()) {
@@ -1375,6 +1444,29 @@ class MainActivity : Activity() {
                 }
             } catch (error: Exception) {
                 runOnUiThread { toast("保存失败：${error.message ?: "请检查保护板地址"}") }
+            }
+        }
+    }
+
+    private fun saveControllerBinding() {
+        if (!bindDeviceNetwork()) {
+            toast("请先连接设备热点")
+            return
+        }
+        val mac = controllerMacInput.text.toString().trim()
+        if (mac.isBlank()) {
+            toast("请输入或选择控制器 MAC")
+            return
+        }
+        thread {
+            try {
+                DeviceApi.bindController(host, mac)
+                runOnUiThread {
+                    toast("已提交控制器绑定")
+                    refreshRouteData(AppRoute.BMS)
+                }
+            } catch (error: Exception) {
+                runOnUiThread { toast("控制器保存失败：${error.message ?: "请检查控制器地址"}") }
             }
         }
     }

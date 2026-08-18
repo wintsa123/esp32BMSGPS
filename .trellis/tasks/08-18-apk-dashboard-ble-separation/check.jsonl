@@ -1,0 +1,3 @@
+{"file":".yy-apk-analysis.5U6GAR/sources/sources/com/yybms/app/fragment/MainFragment.java","reason":"导航文案和页面入口回归检查。"}
+{"file":".yy-apk-analysis.5U6GAR/sources/sources/com/yybms/app/fragment/MainFragment_bluetoothdisplay.java","reason":"BMS/Controller候选隔离、扫描停止和绑定命令检查。"}
+{"file":"components/esp_bms_idf_runtime/esp_bms_idf_runtime.c","reason":"仅在需要设备保存MAC时检查独立NVS和回读。"}

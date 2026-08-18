@@ -30,6 +30,13 @@ internal data class DeviceStatus(
     val setupApEnabled: Boolean,
     val capacityMah: Int?,
     val capacityState: String,
+    val controllerOnline: Boolean,
+    val controllerSpeedDeci: Int?,
+    val controllerRpm: Int?,
+    val controllerGear: Int?,
+    val controllerPowerW: Int?,
+    val controllerTempC: Int?,
+    val motorTempC: Int?,
 ) {
     companion object {
         fun parse(json: String): DeviceStatus = JSONObject(json).let { value ->
@@ -58,6 +65,13 @@ internal data class DeviceStatus(
                 setupApEnabled = value.optBoolean("setup_ap_enabled", false),
                 capacityMah = value.optIntOrNull("bms_capacity_estimate_mah"),
                 capacityState = value.optString("bms_capacity_estimate_state", "unsupported"),
+                controllerOnline = value.optBoolean("controller_online", false),
+                controllerSpeedDeci = value.optIntOrNull("controller_speed_deci_units"),
+                controllerRpm = value.optIntOrNull("controller_rpm"),
+                controllerGear = value.optIntOrNull("controller_gear"),
+                controllerPowerW = value.optIntOrNull("controller_power_w"),
+                controllerTempC = value.optIntOrNull("controller_temp_c"),
+                motorTempC = value.optIntOrNull("motor_temp_c"),
             )
         }
     }
@@ -146,6 +160,7 @@ internal data class DeviceConfig(
     val setupApSsid: String,
     val setupApState: String,
     val bmsMac: String,
+    val controllerMac: String,
     val bmsType: String,
 ) {
     companion object {
@@ -162,6 +177,7 @@ internal data class DeviceConfig(
                 setupApSsid = value.optString("setup_ap_ssid", "--"),
                 setupApState = value.optString("setup_ap_state", "disabled"),
                 bmsMac = value.optString("bms_mac", ""),
+                controllerMac = value.optString("controller_mac", ""),
                 bmsType = value.optString("bms_type", "ant"),
             )
         }
@@ -372,6 +388,9 @@ internal object DeviceApi {
     fun startBmsScan(host: String) = post(host, "/api/bms/scan")
 
     fun bindBms(host: String, mac: String) = postJson(host, "/api/bms/bind", JSONObject().put("mac", mac))
+
+    fun bindController(host: String, mac: String) =
+        postJson(host, "/api/controller/bind", JSONObject().put("mac", mac))
 
     fun saveConfig(host: String, values: JSONObject) = saveConfig(httpTransport(host), values)
 

@@ -253,6 +253,8 @@ static void runtime_ble_api_worker(void *param);
 #endif
 static void runtime_copy_snapshot_text(char *out, size_t out_len, const char *text);
 static esp_err_t runtime_save_bms_binding(esp_bms_idf_runtime_t *runtime);
+static bool runtime_set_pending_http_controller_bind(esp_bms_idf_runtime_t *runtime,
+                                                     const char *mac);
 static esp_err_t runtime_save_setup_ap_credentials(const esp_bms_idf_runtime_t *runtime);
 static void runtime_ensure_setup_ap_credentials(esp_bms_idf_runtime_t *runtime);
 static char runtime_hex_char(uint8_t value);
@@ -3522,6 +3524,12 @@ static bool runtime_status_json(esp_bms_idf_runtime_t *runtime, char *json, size
     char remaining_capacity[16] = { 0 };
     char running_time[16] = { 0 };
     char cycle_capacity[16] = { 0 };
+    char controller_speed[16] = { 0 };
+    char controller_rpm[16] = { 0 };
+    char controller_gear[16] = { 0 };
+    char controller_power[16] = { 0 };
+    char controller_temp[16] = { 0 };
+    char motor_temp[16] = { 0 };
     bool capacity_ready = false;
     uint32_t capacity_estimate_mah = 0U;
     if (runtime_bms_supports_capacity_estimate(runtime->bms_type) &&
@@ -3592,7 +3600,25 @@ static bool runtime_status_json(esp_bms_idf_runtime_t *runtime, char *json, size
         !runtime_json_write_u32_or_null(cycle_capacity,
                                         sizeof(cycle_capacity),
                                         runtime->snapshot.bms_cycle_capacity_valid,
-                                        runtime->snapshot.bms_cycle_capacity_mah)) {
+                                        runtime->snapshot.bms_cycle_capacity_mah) ||
+        !runtime_json_write_u32_or_null(controller_speed, sizeof(controller_speed),
+                                        RUNTIME_SNAPSHOT_FLAG(runtime, CONTROLLER_SPEED_VALID),
+                                        runtime->snapshot.controller_speed_deci_units) ||
+        !runtime_json_write_u32_or_null(controller_rpm, sizeof(controller_rpm),
+                                        RUNTIME_SNAPSHOT_FLAG(runtime, CONTROLLER_RPM_VALID),
+                                        runtime->snapshot.controller_rpm) ||
+        !runtime_json_write_u32_or_null(controller_gear, sizeof(controller_gear),
+                                        RUNTIME_SNAPSHOT_FLAG(runtime, CONTROLLER_GEAR_VALID),
+                                        runtime->snapshot.controller_gear) ||
+        !runtime_json_write_i32_or_null(controller_power, sizeof(controller_power),
+                                        RUNTIME_SNAPSHOT_FLAG(runtime, CONTROLLER_POWER_VALID),
+                                        runtime->snapshot.controller_power_w) ||
+        !runtime_json_write_i32_or_null(controller_temp, sizeof(controller_temp),
+                                        RUNTIME_SNAPSHOT_FLAG(runtime, CONTROLLER_TEMP_VALID),
+                                        runtime->snapshot.controller_temp_c) ||
+        !runtime_json_write_i32_or_null(motor_temp, sizeof(motor_temp),
+                                        RUNTIME_SNAPSHOT_FLAG(runtime, MOTOR_TEMP_VALID),
+                                        runtime->snapshot.motor_temp_c)) {
         return false;
     }
 
@@ -3621,7 +3647,11 @@ static bool runtime_status_json(esp_bms_idf_runtime_t *runtime, char *json, size
                                  "\"average_cell_voltage_mv\":%s,\"max_cell_voltage_mv\":%s,"
                                  "\"delta_cell_voltage_mv\":%s,\"total_capacity_mah\":%s,"
                                  "\"capacity_remaining_mah\":%s,\"bms_running_time_seconds\":%s,"
-                                 "\"bms_cycle_capacity_mah\":%s,\"wifi\":\"%s\","
+                                 "\"bms_cycle_capacity_mah\":%s,\"controller_online\":%s,"
+                                 "\"controller_speed_deci_units\":%s,\"controller_rpm\":%s,"
+                                 "\"controller_gear\":%s,\"controller_power_w\":%s,"
+                                 "\"controller_temp_c\":%s,\"motor_temp_c\":%s,"
+                                 "\"wifi\":\"%s\","
                                  "\"setup_ap_enabled\":%s,\"bms_capacity_estimate_mah\":%s,"
                                  "\"bms_capacity_estimate_state\":\"%s\"}",
                                  runtime->snapshot.firmware_version,
@@ -3646,6 +3676,13 @@ static bool runtime_status_json(esp_bms_idf_runtime_t *runtime, char *json, size
                                  remaining_capacity,
                                  running_time,
                                  cycle_capacity,
+                                 RUNTIME_SNAPSHOT_FLAG(runtime, CONTROLLER_ONLINE) ? "true" : "false",
+                                 controller_speed,
+                                 controller_rpm,
+                                 controller_gear,
+                                 controller_power,
+                                 controller_temp,
+                                 motor_temp,
                                  runtime_wifi_config_text(runtime->snapshot.wifi),
                                  RUNTIME_SNAPSHOT_FLAG(runtime, SETUP_AP_ENABLED) ? "true" : "false",
                                  capacity_estimate,
@@ -3840,10 +3877,23 @@ static void runtime_config_bms_mac_json(const esp_bms_idf_runtime_t *runtime, ch
     (void)snprintf(out, out_len, "\"%s\"", mac);
 }
 
+static void runtime_config_controller_mac_json(const esp_bms_idf_runtime_t *runtime,
+                                               char *out,
+                                               size_t out_len)
+{
+    if (runtime->controller_bound_mac[0] == '\0') {
+        runtime_copy_snapshot_text(out, out_len, "null");
+        return;
+    }
+    (void)snprintf(out, out_len, "\"%s\"", runtime->controller_bound_mac);
+}
+
 static bool runtime_config_json(esp_bms_idf_runtime_t *runtime, char *json, size_t json_len)
 {
     char bms_mac[24] = { 0 };
+    char controller_mac[24] = { 0 };
     runtime_config_bms_mac_json(runtime, bms_mac, sizeof(bms_mac));
+    runtime_config_controller_mac_json(runtime, controller_mac, sizeof(controller_mac));
 
     const int written = snprintf(json,
                                  json_len,
@@ -3852,7 +3902,7 @@ static bool runtime_config_json(esp_bms_idf_runtime_t *runtime, char *json, size
                                  "\"active_speed_source\":\"%s\",\"controller_online\":%s,"
                                  "\"language\":\"%s\","
                                  "\"setup_ap_ssid\":\"%s\",\"setup_ap_password_saved\":%s,"
-                                 "\"setup_ap_state\":\"%s\",\"bms_mac\":%s,\"bms_type\":\"%s\"}",
+                                 "\"setup_ap_state\":\"%s\",\"bms_mac\":%s,\"controller_mac\":%s,\"bms_type\":\"%s\"}",
                                  runtime->brightness_percent,
                                  runtime->volume_percent,
                                  runtime_rotation_config_text(runtime->display_rotation),
@@ -3865,6 +3915,7 @@ static bool runtime_config_json(esp_bms_idf_runtime_t *runtime, char *json, size
                                  runtime->setup_ap_password[0] == '\0' ? "false" : "true",
                                  RUNTIME_SNAPSHOT_FLAG(runtime, SETUP_AP_ENABLED) ? "enabled" : "disabled",
                                  bms_mac,
+                                 controller_mac,
                                  runtime_bms_type_config_text((esp_bms_idf_bms_type_t)runtime->bms_type));
     return written >= 0 && (size_t)written < json_len;
 }
@@ -3899,7 +3950,9 @@ static bool runtime_settings_manifest_json(esp_bms_idf_runtime_t *runtime,
                                            size_t json_len)
 {
     char bms_mac[24] = { 0 };
+    char controller_mac[24] = { 0 };
     runtime_config_bms_mac_json(runtime, bms_mac, sizeof(bms_mac));
+    runtime_config_controller_mac_json(runtime, controller_mac, sizeof(controller_mac));
     size_t offset = 0;
     bool first_item = true;
     bool ok = runtime_json_append(json, json_len, &offset,
@@ -3939,6 +3992,11 @@ static bool runtime_settings_manifest_json(esp_bms_idf_runtime_t *runtime,
         ",{\"id\":\"bms\",\"label\":{\"zh\":\"保护板\",\"en\":\"BMS\"},\"items\":["
         "{\"id\":\"bms_scan\",\"kind\":\"action\",\"label\":{\"zh\":\"扫描 BMS\",\"en\":\"Scan BMS\"},\"endpoint\":\"/api/bms/scan\"},"
         "{\"id\":\"bms_mac\",\"kind\":\"choice\",\"label\":{\"zh\":\"蓝牙连接\",\"en\":\"Bluetooth connection\"},\"value\":%s,\"options_endpoint\":\"/api/bms/candidates\",\"submit_endpoint\":\"/api/bms/bind\",\"submit_key\":\"mac\"}]}", bms_mac);
+#endif
+#if ESP_BMS_FEATURE_CONTROLLER
+    ok = ok && runtime_json_append(json, json_len, &offset,
+        ",{\"id\":\"controller\",\"label\":{\"zh\":\"控制器\",\"en\":\"Controller\"},\"items\":["
+        "{\"id\":\"controller_mac\",\"kind\":\"choice\",\"label\":{\"zh\":\"蓝牙连接\",\"en\":\"Bluetooth connection\"},\"value\":%s,\"submit_endpoint\":\"/api/controller/bind\",\"submit_key\":\"mac\"}]}", controller_mac);
 #endif
 #if ESP_BMS_FEATURE_OTA
     ok = ok && runtime_json_append(json, json_len, &offset,
@@ -4379,6 +4437,29 @@ static esp_err_t runtime_http_post_bms_bind_handler(httpd_req_t *req, esp_bms_id
 
     if (!runtime_set_pending_http_bms_bind(runtime, normalized_mac)) {
         return runtime_http_send_text(req, "500 Internal Server Error", "bms bind queue failed");
+    }
+    return runtime_http_send_no_content(req);
+}
+
+static esp_err_t runtime_http_post_controller_bind_handler(httpd_req_t *req,
+                                                            esp_bms_idf_runtime_t *runtime)
+{
+    static char body[HTTP_BODY_MAX_LEN];
+    memset(body, 0, sizeof(body));
+    if (runtime_http_read_body(req, body, sizeof(body)) != ESP_OK) {
+        return runtime_http_send_text(req, "400 Bad Request", "invalid body");
+    }
+    char parsed_mac[18] = { 0 };
+    bool found = false;
+    if (!runtime_json_get_string(body, "mac", parsed_mac, sizeof(parsed_mac), &found) || !found) {
+        return runtime_http_send_text(req, "400 Bad Request", "invalid mac");
+    }
+    char normalized_mac[18] = { 0 };
+    if (!runtime_normalize_mac_text(parsed_mac, normalized_mac, sizeof(normalized_mac))) {
+        return runtime_http_send_text(req, "400 Bad Request", "invalid mac");
+    }
+    if (!runtime_set_pending_http_controller_bind(runtime, normalized_mac)) {
+        return runtime_http_send_text(req, "500 Internal Server Error", "controller bind queue failed");
     }
     return runtime_http_send_no_content(req);
 }
@@ -4847,6 +4928,9 @@ esp_err_t esp_bms_idf_runtime_http_api_handler(httpd_req_t *req)
     if (req->method == HTTP_POST && strcmp(req->uri, "/api/bms/bind") == 0) {
         return runtime_http_post_bms_bind_handler(req, runtime);
     }
+    if (req->method == HTTP_POST && strcmp(req->uri, "/api/controller/bind") == 0) {
+        return runtime_http_post_controller_bind_handler(req, runtime);
+    }
     if (req->method == HTTP_GET && strcmp(req->uri, "/api/ota/progress") == 0) {
 #if ESP_BMS_FEATURE_OTA
         return esp_bms_ota_handle_progress_request(req);
@@ -5241,6 +5325,53 @@ static bool runtime_apply_pending_http_bms_bind(esp_bms_idf_runtime_t *runtime)
     }
     runtime_set_bms_info(runtime, "BMS SAVE");
     ESP_LOGW(TAG, "[bms] bound MAC save failed: %s", esp_err_to_name(ret));
+    return true;
+}
+
+static bool runtime_set_pending_http_controller_bind(esp_bms_idf_runtime_t *runtime,
+                                                     const char *mac)
+{
+    if (!runtime->http_pending_lock ||
+        xSemaphoreTake(runtime->http_pending_lock, pdMS_TO_TICKS(100)) != pdTRUE) {
+        return false;
+    }
+    runtime_copy_snapshot_text(runtime->http_pending_controller_bound_mac,
+                               sizeof(runtime->http_pending_controller_bound_mac), mac);
+    RUNTIME_SET_FLAG(runtime, HTTP_CONTROLLER_BIND_PENDING, true);
+    xSemaphoreGive(runtime->http_pending_lock);
+    return true;
+}
+
+static bool runtime_apply_pending_http_controller_bind(esp_bms_idf_runtime_t *runtime)
+{
+    if (!runtime->http_pending_lock ||
+        xSemaphoreTake(runtime->http_pending_lock, pdMS_TO_TICKS(100)) != pdTRUE) {
+        return false;
+    }
+    if (!RUNTIME_FLAG(runtime, HTTP_CONTROLLER_BIND_PENDING)) {
+        xSemaphoreGive(runtime->http_pending_lock);
+        return false;
+    }
+    char mac[sizeof(runtime->controller_bound_mac)] = { 0 };
+    runtime_copy_snapshot_text(mac, sizeof(mac), runtime->http_pending_controller_bound_mac);
+    char previous[sizeof(runtime->controller_bound_mac)] = { 0 };
+    runtime_copy_snapshot_text(previous, sizeof(previous), runtime->controller_bound_mac);
+    runtime_copy_snapshot_text(runtime->controller_bound_mac,
+                               sizeof(runtime->controller_bound_mac), mac);
+    RUNTIME_SET_FLAG(runtime, HTTP_CONTROLLER_BIND_PENDING, false);
+    xSemaphoreGive(runtime->http_pending_lock);
+
+    const esp_err_t save_ret = esp_bms_idf_runtime_save_display_settings(runtime);
+    if (save_ret != ESP_OK) {
+        runtime_copy_snapshot_text(runtime->controller_bound_mac,
+                                   sizeof(runtime->controller_bound_mac), previous);
+        ESP_LOGW(TAG, "[controller] bound MAC save failed: %s", esp_err_to_name(save_ret));
+        return true;
+    }
+    runtime->controller_connection_enabled = true;
+    runtime_project_controller_snapshot(runtime);
+    (void)esp_bms_idf_runtime_start_controller_ble_if_enabled(runtime);
+    ESP_LOGI(TAG, "[controller] bound MAC saved: mac=%s", mac);
     return true;
 }
 
@@ -6239,6 +6370,7 @@ bool esp_bms_idf_runtime_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_m
     changed = runtime_apply_pending_http_ap_password(runtime) || changed;
     changed = runtime_apply_pending_http_bms_scan(runtime) || changed;
     changed = runtime_apply_pending_http_bms_bind(runtime) || changed;
+    changed = runtime_apply_pending_http_controller_bind(runtime) || changed;
 #if ESP_BMS_FEATURE_BLE
     if (runtime->bluetooth_pair_initiate_at_us != 0 &&
         !RUNTIME_FLAG(runtime, BLUETOOTH_CONNECTED) &&

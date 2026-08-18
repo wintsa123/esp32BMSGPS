@@ -78,6 +78,7 @@ typedef struct {
 #define ESP_BMS_IDF_RUNTIME_FLAG_HTTP_SETUP_AP_PASSWORD_PENDING (UINT64_C(1) << 12)
 #define ESP_BMS_IDF_RUNTIME_FLAG_HTTP_BMS_SCAN_PENDING (UINT64_C(1) << 14)
 #define ESP_BMS_IDF_RUNTIME_FLAG_HTTP_BMS_BIND_PENDING (UINT64_C(1) << 15)
+#define ESP_BMS_IDF_RUNTIME_FLAG_HTTP_CONTROLLER_BIND_PENDING (UINT64_C(1) << 37)
 #define ESP_BMS_IDF_RUNTIME_FLAG_HTTP_SERVER_STARTED (UINT64_C(1) << 16)
 #define ESP_BMS_IDF_RUNTIME_FLAG_BLE_HOST_READY (UINT64_C(1) << 17)
 #define ESP_BMS_IDF_RUNTIME_FLAG_BLE_HOST_SYNCED (UINT64_C(1) << 18)
@@ -273,6 +274,7 @@ struct esp_bms_idf_runtime {
     uint8_t capacity_estimate_bms_type;
     char http_pending_setup_ap_password[9];
     char http_pending_bms_bound_mac[18];
+    char http_pending_controller_bound_mac[18];
     uint64_t flags;
     esp_bms_idf_display_rotation_t display_rotation;
     uint8_t display_rotation_default_version;

@@ -1,0 +1,3 @@
+{"file":".yy-apk-analysis.5U6GAR/sources/sources/com/yybms/app/fragment/MainFragment_bluetoothdisplay.java","reason":"手机扫描、候选列表、MAC选择和现有写入命令入口。"}
+{"file":".yy-apk-analysis.5U6GAR/sources/sources/com/yybms/app/service/BluetoothLeService.java","reason":"APK直接连接BLE控制器的数据生命周期和通知入口。"}
+{"file":"components/esp_bms_controller_ble/esp_bms_controller_ble.c","reason":"固件控制器扫描候选、绑定MAC和遥测数据边界。"}
