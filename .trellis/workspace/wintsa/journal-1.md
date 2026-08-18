@@ -1021,3 +1021,24 @@ Android 投屏启动时传递窗口系统栏 inset，CastService 编码前安全
 ### Status
 
 [OK] **Completed**
+
+
+## Session 32: 修复投屏 WebSocket 握手阻塞
+
+**Date**: 2026-08-19
+**Task**: 修复投屏 WebSocket 握手阻塞
+**Branch**: `main`
+
+### Summary
+
+修复 ESP-IDF WebSocket 初始 GET 阶段提前读取帧导致的握手死锁，新增回归契约测试并完成 ESP32-S3 构建与 RFC2217 烧录验证。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `dbb15c31` | (see git log) |
+
+### Status
+
+[OK] **Completed**
