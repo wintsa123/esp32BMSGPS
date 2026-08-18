@@ -39,4 +39,23 @@ class DeviceApiTest {
         assertTrue(capabilities.hasSection("records"))
         assertFalse(capabilities.hasSection("missing"))
     }
+
+    @Test fun parsesPagedFlashDbHistoryContracts() {
+        val overview = DeviceApi.parseHistoryOverview(
+            """{"ready":true,"backend":"flash","capacity_bytes":4128768,"sessions":[{"id":7,"start_s":1000,"end_s":1002,"samples":3,"capacity_samples":18000,"elapsed_s":2,"calibrated":true,"truncated":false,"capacity_reached":false}]}""",
+        )
+        val samples = DeviceApi.parseHistorySamplesPage(
+            """{"samples":[{"t":1000,"elapsed_s":0,"flags":3,"lat_e7":311234567,"lon_e7":1211234567,"pack_voltage_mv":52000,"current_deci_amps":-125,"soc_percent":80,"temperatures_c":[28,29]}],"next_cursor":1000}""",
+        )
+        val faults = DeviceApi.parseHistoryFaultsPage(
+            """{"faults":[{"t":2,"session":7,"active_mask":1,"supported_mask":3,"bms_type":2}],"next_cursor":null}""",
+        )
+
+        assertTrue(overview.ready)
+        assertEquals(7L, overview.sessions.single().id)
+        assertEquals(-125, samples.values.single().currentDeciAmps)
+        assertEquals(1000L, samples.nextCursor)
+        assertEquals(7L, faults.values.single().sessionId)
+        assertEquals(null, faults.nextCursor)
+    }
 }

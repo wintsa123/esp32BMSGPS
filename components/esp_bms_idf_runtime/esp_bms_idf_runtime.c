@@ -27,6 +27,7 @@
 #if ESP_BMS_FEATURE_BLE
 #include "esp_bt.h"
 #include "host/ble_gap.h"
+#include "host/ble_att.h"
 #include "host/ble_gatt.h"
 #include "host/ble_hs.h"
 #include "host/ble_hs_adv.h"
@@ -88,7 +89,6 @@ static const char *TAG = "bms_idf_runtime";
 #define GPS_TRACK_NVS_KEY "gps_track"
 #define GPS_TRACK_MIGRATION_NVS_KEY "gps_mig"
 #define GPS_TRACK_MIGRATION_SESSION_NVS_KEY "gps_mig_sid"
-#define GPS_TRACK_PERSIST_RETRY_US INT64_C(5000000)
 #define GPS_TRACK_SAMPLE_INTERVAL_US INT64_C(5000000)
 #define CAPACITY_ESTIMATE_NVS_KEY "bms_cap_est"
 #define CAPACITY_ESTIMATE_MAGIC UINT32_C(0x43415031)
@@ -137,6 +137,13 @@ static const char *TAG = "bms_idf_runtime";
 #define BLE_MEDIA_HID_WORKER_PRIORITY 4U
 #define BLE_MEDIA_HID_REPORT_RELEASE_DELAY_MS 30U
 #define BLE_HOST_MIN_INTERNAL_FREE_BYTES (24U * 1024U)
+#define BLE_API_REQUEST_MAX_LEN 512U
+#define BLE_API_RESPONSE_MAX_LEN 4096U
+#define BLE_API_QUEUE_LEN 1U
+#define BLE_API_WORKER_STACK 4096U
+#define BLE_API_WORKER_PRIORITY 4U
+#define BLE_API_NOTIFY_RETRY_COUNT 3U
+#define BLE_API_NOTIFY_RETRY_MS 5U
 
 static bool runtime_cast_rotation_valid(uint8_t rotation)
 {
@@ -213,9 +220,36 @@ static uint8_t s_bms_scan_name_cache_count;
 static uint8_t s_bms_scan_name_cache_next;
 
 #if ESP_BMS_FEATURE_BLE
+typedef struct {
+    uint16_t conn_handle;
+    char json[BLE_API_REQUEST_MAX_LEN + 1U];
+} runtime_ble_api_request_t;
+
+static const ble_uuid128_t BLE_API_SERVICE_UUID = BLE_UUID128_INIT(
+    0x01, 0x0a, 0x3f, 0x09, 0xd1, 0x86, 0x9a, 0x9f,
+    0xe7, 0x4e, 0xb2, 0x23, 0x00, 0xe1, 0x91, 0x4f);
+static const ble_uuid128_t BLE_API_REQUEST_UUID = BLE_UUID128_INIT(
+    0x02, 0x0a, 0x3f, 0x09, 0xd1, 0x86, 0x9a, 0x9f,
+    0xe7, 0x4e, 0xb2, 0x23, 0x00, 0xe1, 0x91, 0x4f);
+static const ble_uuid128_t BLE_API_RESPONSE_UUID = BLE_UUID128_INIT(
+    0x03, 0x0a, 0x3f, 0x09, 0xd1, 0x86, 0x9a, 0x9f,
+    0xe7, 0x4e, 0xb2, 0x23, 0x00, 0xe1, 0x91, 0x4f);
+static QueueHandle_t s_ble_api_request_queue;
+static uint16_t s_ble_api_response_handle;
+static uint16_t s_ble_api_subscribed_conn = 0xFFFFU;
+static uint16_t s_ble_api_fragment_conn = 0xFFFFU;
+static size_t s_ble_api_fragment_len;
+static char s_ble_api_fragment[BLE_API_REQUEST_MAX_LEN + 1U];
+
 static int runtime_bluetooth_gap_event(struct ble_gap_event *event, void *arg);
 static esp_err_t runtime_bluetooth_start_advertising_now(esp_bms_idf_runtime_t *runtime);
 static esp_err_t runtime_init_ble_host(esp_bms_idf_runtime_t *runtime);
+static bool runtime_status_json(esp_bms_idf_runtime_t *runtime, char *json, size_t json_len);
+static bool runtime_config_json(esp_bms_idf_runtime_t *runtime, char *json, size_t json_len);
+static bool runtime_settings_manifest_json(esp_bms_idf_runtime_t *runtime, char *json, size_t json_len);
+static int runtime_apply_config_json(esp_bms_idf_runtime_t *runtime, const char *body, const char **message);
+static esp_err_t runtime_ble_api_register_gatt(void);
+static void runtime_ble_api_worker(void *param);
 #endif
 static void runtime_copy_snapshot_text(char *out, size_t out_len, const char *text);
 static esp_err_t runtime_save_bms_binding(esp_bms_idf_runtime_t *runtime);
@@ -1826,29 +1860,57 @@ static bool runtime_json_write_i32_or_null(char *out, size_t out_len, bool valid
 
 static bool runtime_json_find_field(const char *body, const char *field, const char **out_value)
 {
-    char pattern[32] = { 0 };
-    const int written = snprintf(pattern, sizeof(pattern), "\"%s\"", field);
-    if (written < 0 || (size_t)written >= sizeof(pattern)) {
+    if (!body || !field || !out_value) return false;
+    const char *cursor = body;
+    while (*cursor && isspace((unsigned char)*cursor)) cursor++;
+    if (*cursor++ != '{') return false;
+    for (;;) {
+        while (*cursor && isspace((unsigned char)*cursor)) cursor++;
+        if (*cursor == '}') return false;
+        if (*cursor++ != '"') return false;
+        const char *key = cursor;
+        while (*cursor && *cursor != '"') {
+            if (*cursor == '\\' || (unsigned char)*cursor < 0x20U) return false;
+            cursor++;
+        }
+        const char *key_end = cursor;
+        if (*cursor++ != '"') return false;
+        while (*cursor && isspace((unsigned char)*cursor)) cursor++;
+        if (*cursor++ != ':') return false;
+        while (*cursor && isspace((unsigned char)*cursor)) cursor++;
+        const char *value = cursor;
+        const size_t key_len = (size_t)(key_end - key);
+        if (strlen(field) == key_len && strncmp(key, field, key_len) == 0) {
+            *out_value = value;
+            return true;
+        }
+        if (*cursor == '"') {
+            cursor++;
+            while (*cursor && *cursor != '"') {
+                if (*cursor == '\\') cursor++;
+                if (*cursor) cursor++;
+            }
+            if (*cursor++ != '"') return false;
+        } else if (*cursor == '{' || *cursor == '[') {
+            const char open = *cursor++;
+            const char close = open == '{' ? '}' : ']';
+            unsigned depth = 1U;
+            bool in_string = false;
+            while (*cursor && depth != 0U) {
+                if (*cursor == '\\' && in_string && cursor[1]) { cursor += 2; continue; }
+                if (*cursor == '"') in_string = !in_string;
+                else if (!in_string && *cursor == open) depth++;
+                else if (!in_string && *cursor == close) depth--;
+                cursor++;
+            }
+            if (depth != 0U) return false;
+        } else {
+            while (*cursor && *cursor != ',' && *cursor != '}') cursor++;
+        }
+        while (*cursor && isspace((unsigned char)*cursor)) cursor++;
+        if (*cursor == ',') { cursor++; continue; }
         return false;
     }
-
-    const char *cursor = strstr(body, pattern);
-    if (!cursor) {
-        return false;
-    }
-    cursor += strlen(pattern);
-    while (*cursor && isspace((unsigned char)*cursor)) {
-        cursor++;
-    }
-    if (*cursor != ':') {
-        return false;
-    }
-    cursor++;
-    while (*cursor && isspace((unsigned char)*cursor)) {
-        cursor++;
-    }
-    *out_value = cursor;
-    return true;
 }
 
 static bool runtime_json_get_u8(const char *body, const char *field, uint8_t *out_value, bool *found)
@@ -1870,6 +1932,24 @@ static bool runtime_json_get_u8(const char *body, const char *field, uint8_t *ou
         cursor++;
     }
     return seen_digit ? ((*out_value = (uint8_t)value), true) : false;
+}
+
+static bool runtime_json_get_u32(const char *body, const char *field, uint32_t *out_value, bool *found)
+{
+    const char *cursor = NULL;
+    *found = runtime_json_find_field(body, field, &cursor);
+    if (!*found) return true;
+    uint64_t value = 0U;
+    bool seen_digit = false;
+    while (*cursor >= '0' && *cursor <= '9') {
+        seen_digit = true;
+        value = value * 10U + (uint64_t)(*cursor++ - '0');
+        if (value > UINT32_MAX) return false;
+    }
+    while (*cursor && isspace((unsigned char)*cursor)) cursor++;
+    if (!seen_digit || (*cursor != ',' && *cursor != '}')) return false;
+    *out_value = (uint32_t)value;
+    return true;
 }
 
 static bool runtime_json_get_string(const char *body,
@@ -1904,6 +1984,34 @@ static bool runtime_json_get_string(const char *body,
     if (*cursor != '"') {
         return false;
     }
+    out_value[len] = '\0';
+    return true;
+}
+
+static bool runtime_json_get_object(const char *body,
+                                    const char *field,
+                                    char *out_value,
+                                    size_t out_len,
+                                    bool *found)
+{
+    const char *cursor = NULL;
+    *found = runtime_json_find_field(body, field, &cursor);
+    if (!*found) return true;
+    if (*cursor != '{' || out_len == 0U) return false;
+    const char *start = cursor;
+    unsigned depth = 0U;
+    bool in_string = false;
+    do {
+        if (*cursor == '\0') return false;
+        if (*cursor == '\\' && in_string && cursor[1]) { cursor += 2; continue; }
+        if (*cursor == '"') in_string = !in_string;
+        else if (!in_string && *cursor == '{') depth++;
+        else if (!in_string && *cursor == '}') depth--;
+        cursor++;
+    } while (depth != 0U);
+    const size_t len = (size_t)(cursor - start);
+    if (len >= out_len) return false;
+    memcpy(out_value, start, len);
     out_value[len] = '\0';
     return true;
 }
@@ -2387,63 +2495,6 @@ static esp_err_t runtime_migrate_gps_track(esp_bms_idf_runtime_t *runtime)
     nvs_close(handle);
     if (ret == ESP_OK) ESP_LOGI(TAG, "[history] migrated %u legacy GPS points", (unsigned)imported);
     return ret;
-}
-
-static esp_err_t runtime_save_gps_track(esp_bms_idf_runtime_t *runtime,
-                                        const esp_bms_gps_track_t *track)
-{
-    ESP_RETURN_ON_FALSE(runtime && track && runtime_gps_track_valid(track),
-                        ESP_ERR_INVALID_ARG,
-                        TAG,
-                        "invalid GPS track");
-    ESP_RETURN_ON_ERROR(runtime_init_nvs(runtime), TAG, "NVS init failed");
-
-    nvs_handle_t handle = 0;
-    esp_err_t ret = nvs_open(SETUP_AP_NVS_NAMESPACE, NVS_READWRITE, &handle);
-    if (ret != ESP_OK) {
-        return ret;
-    }
-    ret = nvs_set_blob(handle, GPS_TRACK_NVS_KEY, track, sizeof(*track));
-    if (ret == ESP_OK) {
-        ret = nvs_commit(handle);
-    }
-    nvs_close(handle);
-    return ret;
-}
-
-static void runtime_persist_gps_track(esp_bms_idf_runtime_t *runtime)
-{
-    const int64_t now_us = esp_timer_get_time();
-    esp_bms_gps_track_t track;
-    uint32_t generation = 0U;
-    bool dirty = false;
-    int64_t retry_after_us = 0;
-    if (!runtime_copy_gps_track(runtime,
-                                &track,
-                                &generation,
-                                &dirty,
-                                &retry_after_us) ||
-        !dirty || now_us < retry_after_us) {
-        return;
-    }
-    const esp_err_t ret = runtime_save_gps_track(runtime, &track);
-    const bool locked = runtime->gps_track_lock != NULL;
-    if (locked && xSemaphoreTake(runtime->gps_track_lock, pdMS_TO_TICKS(100)) != pdTRUE) {
-        return;
-    }
-    if (runtime->gps_track_generation == generation) {
-        if (ret == ESP_OK) {
-            runtime->gps_track_dirty = false;
-        } else {
-            runtime->gps_track_retry_after_us = now_us + GPS_TRACK_PERSIST_RETRY_US;
-        }
-    }
-    if (locked) {
-        xSemaphoreGive(runtime->gps_track_lock);
-    }
-    if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "[gps] track save failed: %s", esp_err_to_name(ret));
-    }
 }
 
 typedef struct {
@@ -3453,7 +3504,7 @@ static bool runtime_json_write_bms_temperatures(char *out,
     return written >= 0 && (size_t)written < out_len - offset;
 }
 
-static esp_err_t runtime_http_status_handler(httpd_req_t *req, esp_bms_idf_runtime_t *runtime)
+static bool runtime_status_json(esp_bms_idf_runtime_t *runtime, char *json, size_t json_len)
 {
     char pack_voltage[16] = { 0 };
     char current[16] = { 0 };
@@ -3542,7 +3593,7 @@ static esp_err_t runtime_http_status_handler(httpd_req_t *req, esp_bms_idf_runti
                                         sizeof(cycle_capacity),
                                         runtime->snapshot.bms_cycle_capacity_valid,
                                         runtime->snapshot.bms_cycle_capacity_mah)) {
-        return runtime_http_send_text(req, "500 Internal Server Error", "json format error");
+        return false;
     }
 
     char speed[16] = "--";
@@ -3555,13 +3606,11 @@ static esp_err_t runtime_http_status_handler(httpd_req_t *req, esp_bms_idf_runti
     char firmware_sha256[13] = "unknown";
     (void)esp_app_get_elf_sha256(firmware_sha256, sizeof(firmware_sha256));
 
-    /* HTTPD serializes handlers; static avoids consuming the small task stack. */
-    static char json[HTTP_JSON_MAX_LEN];
     const char *capacity_state = runtime_bms_supports_capacity_estimate(runtime->bms_type)
                                      ? capacity_ready ? "ready" : "estimating"
                                      : "unsupported";
     const int written = snprintf(json,
-                                 sizeof(json),
+                                 json_len,
                                  "{\"version\":\"%s\",\"firmware_sha256\":\"%s\","
                                  "\"speed\":\"%s\",\"speed_unit\":\"%s\","
                                  "\"gps_fix\":%s,\"bms\":\"%s\",\"pack_voltage_mv\":%s,"
@@ -3601,10 +3650,16 @@ static esp_err_t runtime_http_status_handler(httpd_req_t *req, esp_bms_idf_runti
                                  RUNTIME_SNAPSHOT_FLAG(runtime, SETUP_AP_ENABLED) ? "true" : "false",
                                  capacity_estimate,
                                  capacity_state);
-    if (written < 0 || (size_t)written >= sizeof(json)) {
-        return runtime_http_send_text(req, "500 Internal Server Error", "json too large");
-    }
-    return runtime_http_send_json(req, json);
+    return written >= 0 && (size_t)written < json_len;
+}
+
+static esp_err_t runtime_http_status_handler(httpd_req_t *req, esp_bms_idf_runtime_t *runtime)
+{
+    /* HTTPD serializes handlers; static avoids consuming the small task stack. */
+    static char json[HTTP_JSON_MAX_LEN];
+    return runtime_status_json(runtime, json, sizeof(json))
+               ? runtime_http_send_json(req, json)
+               : runtime_http_send_text(req, "500 Internal Server Error", "json format error");
 }
 
 static bool runtime_json_escape(char *out,
@@ -3785,14 +3840,13 @@ static void runtime_config_bms_mac_json(const esp_bms_idf_runtime_t *runtime, ch
     (void)snprintf(out, out_len, "\"%s\"", mac);
 }
 
-static esp_err_t runtime_http_config_handler(httpd_req_t *req, esp_bms_idf_runtime_t *runtime)
+static bool runtime_config_json(esp_bms_idf_runtime_t *runtime, char *json, size_t json_len)
 {
     char bms_mac[24] = { 0 };
     runtime_config_bms_mac_json(runtime, bms_mac, sizeof(bms_mac));
 
-    static char json[HTTP_JSON_MAX_LEN];
     const int written = snprintf(json,
-                                 sizeof(json),
+                                 json_len,
                                  "{\"brightness\":%u,\"volume\":%u,\"display_rotation\":\"%s\","
                                  "\"speed_unit\":\"%s\",\"speed_source\":\"%s\","
                                  "\"active_speed_source\":\"%s\",\"controller_online\":%s,"
@@ -3812,10 +3866,15 @@ static esp_err_t runtime_http_config_handler(httpd_req_t *req, esp_bms_idf_runti
                                  RUNTIME_SNAPSHOT_FLAG(runtime, SETUP_AP_ENABLED) ? "enabled" : "disabled",
                                  bms_mac,
                                  runtime_bms_type_config_text((esp_bms_idf_bms_type_t)runtime->bms_type));
-    if (written < 0 || (size_t)written >= sizeof(json)) {
-        return runtime_http_send_text(req, "500 Internal Server Error", "json too large");
-    }
-    return runtime_http_send_json(req, json);
+    return written >= 0 && (size_t)written < json_len;
+}
+
+static esp_err_t runtime_http_config_handler(httpd_req_t *req, esp_bms_idf_runtime_t *runtime)
+{
+    static char json[HTTP_JSON_MAX_LEN];
+    return runtime_config_json(runtime, json, sizeof(json))
+               ? runtime_http_send_json(req, json)
+               : runtime_http_send_text(req, "500 Internal Server Error", "json too large");
 }
 
 static bool runtime_json_append(char *json, size_t json_len, size_t *offset,
@@ -3835,23 +3894,22 @@ static bool runtime_json_append(char *json, size_t json_len, size_t *offset,
     return true;
 }
 
-static esp_err_t runtime_http_settings_manifest_handler(httpd_req_t *req,
-                                                         esp_bms_idf_runtime_t *runtime)
+static bool runtime_settings_manifest_json(esp_bms_idf_runtime_t *runtime,
+                                           char *json,
+                                           size_t json_len)
 {
-    /* HTTPD serializes this handler; static storage avoids consuming its small task stack. */
-    static char json[HTTP_MANIFEST_JSON_MAX_LEN];
     char bms_mac[24] = { 0 };
     runtime_config_bms_mac_json(runtime, bms_mac, sizeof(bms_mac));
     size_t offset = 0;
     bool first_item = true;
-    bool ok = runtime_json_append(json, sizeof(json), &offset,
+    bool ok = runtime_json_append(json, json_len, &offset,
         "{\"protocol_version\":1,\"sections\":[{\"id\":\"device\","
         "\"label\":{\"zh\":\"设备\",\"en\":\"Device\"},"
         "\"submit\":{\"endpoint\":\"/api/config\",\"method\":\"POST\"},\"items\":[");
 #define MANIFEST_ITEM(...) \
     do { \
-        ok = ok && runtime_json_append(json, sizeof(json), &offset, "%s", first_item ? "" : ","); \
-        ok = ok && runtime_json_append(json, sizeof(json), &offset, __VA_ARGS__); \
+        ok = ok && runtime_json_append(json, json_len, &offset, "%s", first_item ? "" : ","); \
+        ok = ok && runtime_json_append(json, json_len, &offset, __VA_ARGS__); \
         first_item = false; \
     } while (0)
 #if CONFIG_ESP_BMS_LVGL_BRIDGE_BACKLIGHT_DIMMING
@@ -3870,28 +3928,35 @@ static esp_err_t runtime_http_settings_manifest_handler(httpd_req_t *req,
     MANIFEST_ITEM("{\"id\":\"bms_type\",\"kind\":\"select\",\"label\":{\"zh\":\"保护板类型\",\"en\":\"BMS type\"},\"value\":\"%s\",\"options\":[{\"value\":\"ant\",\"label\":{\"zh\":\"蚂蚁 ANT\",\"en\":\"ANT\"}},{\"value\":\"jk\",\"label\":{\"zh\":\"极空 JK\",\"en\":\"JK\"}},{\"value\":\"jbd\",\"label\":{\"zh\":\"嘉佰达 JBD\",\"en\":\"JBD\"}},{\"value\":\"daly\",\"label\":{\"zh\":\"达锂 Daly\",\"en\":\"Daly\"}},{\"value\":\"yanyang\",\"label\":{\"zh\":\"彦阳 BMS\",\"en\":\"Yanyang BMS\"}}]}", runtime_bms_type_config_text((esp_bms_idf_bms_type_t)runtime->bms_type));
 #endif
 #undef MANIFEST_ITEM
-    ok = ok && runtime_json_append(json, sizeof(json), &offset, "]}");
+    ok = ok && runtime_json_append(json, json_len, &offset, "]}");
 #if ESP_BMS_FEATURE_GPS
-    ok = ok && runtime_json_append(json, sizeof(json), &offset,
+    ok = ok && runtime_json_append(json, json_len, &offset,
         ",{\"id\":\"records\",\"label\":{\"zh\":\"记录\",\"en\":\"Records\"},\"items\":["
         "{\"id\":\"gps_track\",\"kind\":\"map\",\"label\":{\"zh\":\"GPS 轨迹\",\"en\":\"GPS track\"},\"endpoint\":\"/api/gps/track\"}]}");
 #endif
 #if ESP_BMS_FEATURE_BMS
-    ok = ok && runtime_json_append(json, sizeof(json), &offset,
+    ok = ok && runtime_json_append(json, json_len, &offset,
         ",{\"id\":\"bms\",\"label\":{\"zh\":\"保护板\",\"en\":\"BMS\"},\"items\":["
         "{\"id\":\"bms_scan\",\"kind\":\"action\",\"label\":{\"zh\":\"扫描 BMS\",\"en\":\"Scan BMS\"},\"endpoint\":\"/api/bms/scan\"},"
         "{\"id\":\"bms_mac\",\"kind\":\"choice\",\"label\":{\"zh\":\"蓝牙连接\",\"en\":\"Bluetooth connection\"},\"value\":%s,\"options_endpoint\":\"/api/bms/candidates\",\"submit_endpoint\":\"/api/bms/bind\",\"submit_key\":\"mac\"}]}", bms_mac);
 #endif
 #if ESP_BMS_FEATURE_OTA
-    ok = ok && runtime_json_append(json, sizeof(json), &offset,
+    ok = ok && runtime_json_append(json, json_len, &offset,
         ",{\"id\":\"update\",\"label\":{\"zh\":\"固件更新\",\"en\":\"Firmware update\"},\"items\":["
         "{\"id\":\"ota\",\"kind\":\"upload\",\"label\":{\"zh\":\"上传并更新\",\"en\":\"Upload and update\"},\"endpoint\":\"/api/ota\",\"code_header\":\"X-Firmware-Code\",\"accept\":\".bin,application/octet-stream\"}]}");
 #endif
-    ok = ok && runtime_json_append(json, sizeof(json), &offset, "]}");
-    if (!ok) {
-        return runtime_http_send_text(req, "500 Internal Server Error", "manifest too large");
-    }
-    return runtime_http_send_json(req, json);
+    ok = ok && runtime_json_append(json, json_len, &offset, "]}");
+    return ok;
+}
+
+static esp_err_t runtime_http_settings_manifest_handler(httpd_req_t *req,
+                                                         esp_bms_idf_runtime_t *runtime)
+{
+    /* HTTPD serializes this handler; static storage avoids consuming its small task stack. */
+    static char json[HTTP_MANIFEST_JSON_MAX_LEN];
+    return runtime_settings_manifest_json(runtime, json, sizeof(json))
+               ? runtime_http_send_json(req, json)
+               : runtime_http_send_text(req, "500 Internal Server Error", "manifest too large");
 }
 
 static esp_err_t runtime_http_read_body(httpd_req_t *req, char *body, size_t body_len)
@@ -3959,14 +4024,11 @@ static bool runtime_set_pending_http_bms_scan(esp_bms_idf_runtime_t *runtime)
     return true;
 }
 
-static esp_err_t runtime_http_post_config_handler(httpd_req_t *req, esp_bms_idf_runtime_t *runtime)
+static int runtime_apply_config_json(esp_bms_idf_runtime_t *runtime,
+                                     const char *body,
+                                     const char **message)
 {
-    static char body[HTTP_BODY_MAX_LEN];
-    memset(body, 0, sizeof(body));
-    esp_err_t ret = runtime_http_read_body(req, body, sizeof(body));
-    if (ret != ESP_OK) {
-        return runtime_http_send_text(req, "400 Bad Request", "invalid body");
-    }
+#define CONFIG_REJECT(text) do { *message = (text); return 400; } while (0)
 
     uint8_t brightness_percent = runtime->brightness_percent;
     uint8_t volume_percent = runtime->volume_percent;
@@ -3979,52 +4041,52 @@ static esp_err_t runtime_http_post_config_handler(httpd_req_t *req, esp_bms_idf_
     bool found = false;
     uint8_t parsed_u8 = 0;
     if (!runtime_json_get_u8(body, "brightness", &parsed_u8, &found)) {
-        return runtime_http_send_text(req, "400 Bad Request", "invalid brightness");
+        CONFIG_REJECT("invalid brightness");
     }
     if (found) {
         if (!runtime_brightness_matches_policy(parsed_u8)) {
-            return runtime_http_send_text(req, "400 Bad Request", "invalid brightness");
+            CONFIG_REJECT("invalid brightness");
         }
         brightness_percent = parsed_u8;
     }
 
     if (!runtime_json_get_u8(body, "volume", &parsed_u8, &found)) {
-        return runtime_http_send_text(req, "400 Bad Request", "invalid volume");
+        CONFIG_REJECT("invalid volume");
     }
     if (found) {
         if (!runtime_volume_matches_policy(parsed_u8)) {
-            return runtime_http_send_text(req, "400 Bad Request", "invalid volume");
+            CONFIG_REJECT("invalid volume");
         }
         volume_percent = parsed_u8;
     }
 
     char parsed_text[32] = { 0 };
     if (!runtime_json_get_string(body, "display_rotation", parsed_text, sizeof(parsed_text), &found)) {
-        return runtime_http_send_text(req, "400 Bad Request", "invalid rotation");
+        CONFIG_REJECT("invalid rotation");
     }
     if (found && !runtime_parse_rotation_config_text(parsed_text, &rotation)) {
-        return runtime_http_send_text(req, "400 Bad Request", "invalid rotation");
+        CONFIG_REJECT("invalid rotation");
     }
 
     memset(parsed_text, 0, sizeof(parsed_text));
     if (!runtime_json_get_string(body, "speed_unit", parsed_text, sizeof(parsed_text), &found)) {
-        return runtime_http_send_text(req, "400 Bad Request", "invalid speed unit");
+        CONFIG_REJECT("invalid speed unit");
     }
     if (found && !runtime_parse_speed_unit_config_text(parsed_text, &speed_unit)) {
-        return runtime_http_send_text(req, "400 Bad Request", "invalid speed unit");
+        CONFIG_REJECT("invalid speed unit");
     }
 
     memset(parsed_text, 0, sizeof(parsed_text));
     if (!runtime_json_get_string(body, "speed_source", parsed_text, sizeof(parsed_text), &found)) {
-        return runtime_http_send_text(req, "400 Bad Request", "invalid speed source");
+        CONFIG_REJECT("invalid speed source");
     }
     if (found && !runtime_parse_speed_source_config_text(parsed_text, &speed_source)) {
-        return runtime_http_send_text(req, "400 Bad Request", "invalid speed source");
+        CONFIG_REJECT("invalid speed source");
     }
 
     memset(parsed_text, 0, sizeof(parsed_text));
     if (!runtime_json_get_string(body, "language", parsed_text, sizeof(parsed_text), &found)) {
-        return runtime_http_send_text(req, "400 Bad Request", "invalid language");
+        CONFIG_REJECT("invalid language");
     }
     if (found) {
         if (strcmp(parsed_text, "zh") == 0) {
@@ -4032,25 +4094,245 @@ static esp_err_t runtime_http_post_config_handler(httpd_req_t *req, esp_bms_idf_
         } else if (strcmp(parsed_text, "en") == 0) {
             language_zh = false;
         } else {
-            return runtime_http_send_text(req, "400 Bad Request", "invalid language");
+            CONFIG_REJECT("invalid language");
         }
     }
 
     memset(parsed_text, 0, sizeof(parsed_text));
     if (!runtime_json_get_string(body, "bms_type", parsed_text, sizeof(parsed_text), &found)) {
-        return runtime_http_send_text(req, "400 Bad Request", "invalid BMS type");
+        CONFIG_REJECT("invalid BMS type");
     }
     if (found && !runtime_parse_bms_type_config_text(parsed_text, &bms_type)) {
-        return runtime_http_send_text(req, "400 Bad Request", "invalid BMS type");
+        CONFIG_REJECT("invalid BMS type");
     }
 
     if (!runtime_set_pending_http_config(runtime, brightness_percent, volume_percent,
                                          rotation, speed_unit, speed_source,
                                          language_zh, bms_type)) {
-        return runtime_http_send_text(req, "500 Internal Server Error", "config queue failed");
+        *message = "config queue failed";
+        return 500;
     }
-    return runtime_http_send_no_content(req);
+    *message = NULL;
+    return 204;
+#undef CONFIG_REJECT
 }
+
+static esp_err_t runtime_http_post_config_handler(httpd_req_t *req, esp_bms_idf_runtime_t *runtime)
+{
+    static char body[HTTP_BODY_MAX_LEN];
+    memset(body, 0, sizeof(body));
+    if (runtime_http_read_body(req, body, sizeof(body)) != ESP_OK) {
+        return runtime_http_send_text(req, "400 Bad Request", "invalid body");
+    }
+    const char *message = NULL;
+    const int status = runtime_apply_config_json(runtime, body, &message);
+    if (status == 204) {
+        return runtime_http_send_no_content(req);
+    }
+    return runtime_http_send_text(req,
+                                  status == 400 ? "400 Bad Request" : "500 Internal Server Error",
+                                  message ? message : "config failed");
+}
+
+#if ESP_BMS_FEATURE_BLE
+static int runtime_ble_api_access(uint16_t conn_handle,
+                                  uint16_t attr_handle,
+                                  struct ble_gatt_access_ctxt *ctxt,
+                                  void *arg)
+{
+    (void)attr_handle;
+    (void)arg;
+    if (ctxt->op != BLE_GATT_ACCESS_OP_WRITE_CHR || !s_ble_api_request_queue) {
+        return BLE_ATT_ERR_UNLIKELY;
+    }
+    uint8_t chunk[CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU] = { 0 };
+    uint16_t chunk_len = 0U;
+    if (ble_hs_mbuf_to_flat(ctxt->om, chunk, sizeof(chunk), &chunk_len) != 0 || chunk_len < 1U) {
+        return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+    }
+    const uint8_t flags = chunk[0];
+    if ((flags & ~0x03U) != 0U) {
+        return BLE_ATT_ERR_VALUE_NOT_ALLOWED;
+    }
+    if ((flags & 0x01U) != 0U) {
+        s_ble_api_fragment_conn = conn_handle;
+        s_ble_api_fragment_len = 0U;
+    } else if (s_ble_api_fragment_conn != conn_handle || s_ble_api_fragment_len == 0U) {
+        return BLE_ATT_ERR_UNLIKELY;
+    }
+    const size_t payload_len = chunk_len - 1U;
+    if (payload_len > BLE_API_REQUEST_MAX_LEN - s_ble_api_fragment_len) {
+        s_ble_api_fragment_len = 0U;
+        s_ble_api_fragment_conn = 0xFFFFU;
+        return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+    }
+    memcpy(s_ble_api_fragment + s_ble_api_fragment_len, chunk + 1U, payload_len);
+    s_ble_api_fragment_len += payload_len;
+    if ((flags & 0x02U) == 0U) {
+        return 0;
+    }
+    runtime_ble_api_request_t request = { .conn_handle = conn_handle };
+    memcpy(request.json, s_ble_api_fragment, s_ble_api_fragment_len);
+    request.json[s_ble_api_fragment_len] = '\0';
+    s_ble_api_fragment_len = 0U;
+    s_ble_api_fragment_conn = 0xFFFFU;
+    return xQueueSend(s_ble_api_request_queue, &request, 0) == pdTRUE
+               ? 0
+               : BLE_ATT_ERR_INSUFFICIENT_RES;
+}
+
+static const struct ble_gatt_svc_def BLE_API_GATT_SERVICES[] = {
+    {
+        .type = BLE_GATT_SVC_TYPE_PRIMARY,
+        .uuid = &BLE_API_SERVICE_UUID.u,
+        .characteristics = (struct ble_gatt_chr_def[]) {
+            {
+                .uuid = &BLE_API_REQUEST_UUID.u,
+                .access_cb = runtime_ble_api_access,
+                .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_ENC,
+            },
+            {
+                .uuid = &BLE_API_RESPONSE_UUID.u,
+                .val_handle = &s_ble_api_response_handle,
+                .flags = BLE_GATT_CHR_F_NOTIFY | BLE_GATT_CHR_F_NOTIFY_INDICATE_ENC,
+            },
+            { 0 },
+        },
+    },
+    { 0 },
+};
+
+static esp_err_t runtime_ble_api_register_gatt(void)
+{
+    int rc = ble_gatts_count_cfg(BLE_API_GATT_SERVICES);
+    if (rc == 0) {
+        rc = ble_gatts_add_svcs(BLE_API_GATT_SERVICES);
+    }
+    return rc == 0 ? ESP_OK : ESP_FAIL;
+}
+
+static bool runtime_ble_api_notify_json(uint16_t conn_handle, const char *json)
+{
+    if (!json || conn_handle != s_ble_api_subscribed_conn) {
+        return false;
+    }
+    const size_t json_len = strlen(json);
+    const size_t payload_max = (size_t)(ble_att_mtu(conn_handle) > 4U
+                                            ? ble_att_mtu(conn_handle) - 4U
+                                            : 1U);
+    uint8_t chunk[CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU] = { 0 };
+    size_t offset = 0U;
+    while (offset < json_len) {
+        const size_t payload_len = json_len - offset < payload_max
+                                       ? json_len - offset
+                                       : payload_max;
+        chunk[0] = (offset == 0U ? 0x01U : 0U) |
+                   (offset + payload_len == json_len ? 0x02U : 0U);
+        memcpy(chunk + 1U, json + offset, payload_len);
+        int rc = BLE_HS_ENOMEM;
+        for (unsigned retry = 0U; retry < BLE_API_NOTIFY_RETRY_COUNT && rc != 0; retry++) {
+            struct os_mbuf *om = ble_hs_mbuf_from_flat(chunk, payload_len + 1U);
+            if (!om) {
+                rc = BLE_HS_ENOMEM;
+            } else {
+                rc = ble_gatts_notify_custom(conn_handle, s_ble_api_response_handle, om);
+            }
+            if (rc != 0) {
+                vTaskDelay(pdMS_TO_TICKS(BLE_API_NOTIFY_RETRY_MS));
+            }
+        }
+        if (rc != 0) {
+            ESP_LOGW(TAG, "[ble-api] response notify failed: conn=%u rc=%d", conn_handle, rc);
+            return false;
+        }
+        offset += payload_len;
+        vTaskDelay(pdMS_TO_TICKS(BLE_API_NOTIFY_RETRY_MS));
+    }
+    return true;
+}
+
+static bool runtime_ble_api_response(esp_bms_idf_runtime_t *runtime,
+                                     const runtime_ble_api_request_t *request,
+                                     char *response,
+                                     size_t response_len)
+{
+    uint32_t id = 0U;
+    uint32_t version = 0U;
+    int status = 400;
+    const char *error = "invalid request";
+    static char body[HTTP_MANIFEST_JSON_MAX_LEN];
+    static char config[HTTP_BODY_MAX_LEN];
+    char method[8] = { 0 };
+    char path[48] = { 0 };
+    bool id_found = false;
+    bool version_found = false;
+    bool method_found = false;
+    bool path_found = false;
+    bool body_found = false;
+    body[0] = '\0';
+    config[0] = '\0';
+    const bool valid = runtime_json_get_u32(request->json, "v", &version, &version_found) &&
+                       runtime_json_get_u32(request->json, "id", &id, &id_found) &&
+                       runtime_json_get_string(request->json, "method", method, sizeof(method), &method_found) &&
+                       runtime_json_get_string(request->json, "path", path, sizeof(path), &path_found);
+    if (valid && version_found && version == 1U && id_found && method_found && path_found) {
+        if (strcmp(method, "GET") == 0 && strcmp(path, "/api/status") == 0) {
+            status = runtime_status_json(runtime, body, sizeof(body)) ? 200 : 500;
+            error = "status unavailable";
+        } else if (strcmp(method, "GET") == 0 && strcmp(path, "/api/config") == 0) {
+            status = runtime_config_json(runtime, body, sizeof(body)) ? 200 : 500;
+            error = "config unavailable";
+        } else if (strcmp(method, "GET") == 0 && strcmp(path, "/api/settings/manifest") == 0) {
+            status = runtime_settings_manifest_json(runtime, body, sizeof(body)) ? 200 : 500;
+            error = "manifest unavailable";
+        } else if (strcmp(method, "POST") == 0 && strcmp(path, "/api/config") == 0) {
+            if (runtime_json_get_object(request->json, "body", config, sizeof(config), &body_found) && body_found) {
+                status = runtime_apply_config_json(runtime, config, &error);
+            } else {
+                status = 400;
+                error = "invalid body";
+            }
+        } else {
+            status = 404;
+            error = "path not allowed";
+        }
+    }
+    int written = -1;
+    if (status == 204) {
+        written = snprintf(response, response_len,
+                           "{\"id\":%lu,\"status\":204,\"body\":null}",
+                           (unsigned long)id);
+    } else if (status == 200 && body[0] != '\0') {
+        written = snprintf(response, response_len,
+                           "{\"id\":%lu,\"status\":200,\"body\":%s}",
+                           (unsigned long)id, body);
+    } else {
+        char escaped[96] = { 0 };
+        const char *message = error ? error : "request failed";
+        if (!runtime_json_escape(escaped, sizeof(escaped), message, strlen(message))) return false;
+        written = snprintf(response, response_len,
+                           "{\"id\":%lu,\"status\":%d,\"body\":\"%s\"}",
+                           (unsigned long)id, status, escaped);
+    }
+    return written >= 0 && (size_t)written < response_len;
+}
+
+static void runtime_ble_api_worker(void *param)
+{
+    esp_bms_idf_runtime_t *runtime = param;
+    runtime_ble_api_request_t request;
+    static char response[BLE_API_RESPONSE_MAX_LEN + 1U];
+    for (;;) {
+        if (xQueueReceive(s_ble_api_request_queue, &request, portMAX_DELAY) != pdTRUE) {
+            continue;
+        }
+        if (!runtime_ble_api_response(runtime, &request, response, sizeof(response)) ||
+            !runtime_ble_api_notify_json(request.conn_handle, response)) {
+            ESP_LOGW(TAG, "[ble-api] request failed or client disconnected");
+        }
+    }
+}
+#endif
 
 static esp_err_t runtime_http_post_ap_password_handler(httpd_req_t *req, esp_bms_idf_runtime_t *runtime)
 {
@@ -4398,8 +4680,10 @@ static esp_err_t runtime_http_history_sessions_handler(httpd_req_t *req, esp_bms
         esp_bms_flashdb_session_t session;
         if (esp_bms_flashdb_get_session(i, &session) != ESP_OK) continue;
         used += (size_t)snprintf(json + used, sizeof(json) - used,
-                                 "%s{\"id\":%llu,\"samples\":%u,\"capacity_samples\":%u,\"elapsed_s\":%u,\"calibrated\":%s,\"truncated\":%s,\"capacity_reached\":%s}",
+                                 "%s{\"id\":%llu,\"start_s\":%llu,\"end_s\":%llu,\"samples\":%u,\"capacity_samples\":%u,\"elapsed_s\":%u,\"calibrated\":%s,\"truncated\":%s,\"capacity_reached\":%s}",
                                  first ? "" : ",", (unsigned long long)session.session_id,
+                                 (unsigned long long)session.start_time_s,
+                                 (unsigned long long)session.end_time_s,
                                  (unsigned)session.sample_count, (unsigned)session.capacity_samples,
                                  (unsigned)session.elapsed_seconds, session.calibrated ? "true" : "false",
                                  session.truncated ? "true" : "false", session.capacity_reached ? "true" : "false");
@@ -4411,7 +4695,7 @@ static esp_err_t runtime_http_history_sessions_handler(httpd_req_t *req, esp_bms
     return runtime_http_send_json(req, json);
 }
 
-typedef struct { httpd_req_t *req; bool first; } history_http_query_t;
+typedef struct { httpd_req_t *req; uint64_t last; bool first; } history_http_query_t;
 static bool runtime_http_sample_json_cb(uint64_t timestamp, const esp_bms_flashdb_sample_t *sample, void *ctx)
 {
     history_http_query_t *query = ctx;
@@ -4427,14 +4711,19 @@ static bool runtime_http_sample_json_cb(uint64_t timestamp, const esp_bms_flashd
                              sample->temperatures_c[3], sample->temperatures_c[4], sample->temperatures_c[5]);
     if (len <= 0 || (size_t)len >= sizeof(json) || httpd_resp_send_chunk(query->req, json, len) != ESP_OK) return false;
     query->first = false;
+    query->last = timestamp;
     return true;
 }
 
 static esp_err_t runtime_http_history_samples_handler(httpd_req_t *req, esp_bms_idf_runtime_t *runtime)
 {
     const uint64_t session = runtime_http_query_u64(req, "session", 0U);
-    const uint64_t from = runtime_http_query_u64(req, "from", 0U);
+    if (session && !esp_bms_flashdb_has_session(session))
+        return runtime_http_send_text(req, "404 Not Found", "session not found");
+    uint64_t from = runtime_http_query_u64(req, "from", 0U);
     const uint64_t to = runtime_http_query_u64(req, "to", UINT64_MAX);
+    const uint64_t cursor = runtime_http_query_u64(req, "cursor", UINT64_MAX);
+    if (cursor < UINT64_MAX && cursor + 1U > from) from = cursor + 1U;
     history_http_query_t query = {.req = req, .first = true};
     ESP_RETURN_ON_ERROR(runtime_http_set_common_headers(req), TAG, "set headers failed");
     ESP_RETURN_ON_ERROR(httpd_resp_set_type(req, "application/json"), TAG, "set type failed");
@@ -4444,8 +4733,13 @@ static esp_err_t runtime_http_history_samples_handler(httpd_req_t *req, esp_bms_
                             : esp_bms_flashdb_query_samples(from, to, runtime_http_query_limit(req), runtime_http_sample_json_cb, &query, &returned);
     if (ret == ESP_ERR_NOT_FOUND) return runtime_http_send_text(req, "404 Not Found", "session not found");
     ESP_RETURN_ON_ERROR(ret, TAG, "sample query failed");
-    char tail[64];
-    snprintf(tail, sizeof(tail), "],\"returned\":%u}", (unsigned)returned);
+    char tail[96];
+    if (returned) {
+        snprintf(tail, sizeof(tail), "],\"returned\":%u,\"next_cursor\":%llu}",
+                 (unsigned)returned, (unsigned long long)query.last);
+    } else {
+        snprintf(tail, sizeof(tail), "],\"returned\":0,\"next_cursor\":null}");
+    }
     ESP_RETURN_ON_ERROR(httpd_resp_send_chunk(req, tail, HTTPD_RESP_USE_STRLEN), TAG, "send failed");
     return httpd_resp_send_chunk(req, NULL, 0);
 }
@@ -4454,26 +4748,41 @@ static bool runtime_http_fault_json_cb(const esp_bms_flashdb_fault_t *fault, voi
 {
     history_http_query_t *query = ctx;
     char json[160];
-    const int len = snprintf(json, sizeof(json), "%s{\"t\":%llu,\"active_mask\":%u,\"supported_mask\":%u,\"bms_type\":%u}",
+    const int len = snprintf(json, sizeof(json), "%s{\"t\":%llu,\"session\":%llu,\"active_mask\":%u,\"supported_mask\":%u,\"bms_type\":%u}",
                              query->first ? "" : ",", (unsigned long long)fault->timestamp,
+                             (unsigned long long)fault->session_id,
                              (unsigned)fault->active_mask, (unsigned)fault->supported_mask, (unsigned)fault->bms_type);
     if (len <= 0 || (size_t)len >= sizeof(json) || httpd_resp_send_chunk(query->req, json, len) != ESP_OK) return false;
     query->first = false;
+    query->last = fault->timestamp;
     return true;
 }
 
 static esp_err_t runtime_http_history_faults_handler(httpd_req_t *req, esp_bms_idf_runtime_t *runtime)
 {
-    const uint64_t from = runtime_http_query_u64(req, "from", 0U);
+    const uint64_t session = runtime_http_query_u64(req, "session", 0U);
+    if (session && !esp_bms_flashdb_has_session(session))
+        return runtime_http_send_text(req, "404 Not Found", "session not found");
+    uint64_t from = runtime_http_query_u64(req, "from", 0U);
     const uint64_t to = runtime_http_query_u64(req, "to", UINT64_MAX);
+    const uint64_t cursor = runtime_http_query_u64(req, "cursor", UINT64_MAX);
+    if (cursor < UINT64_MAX && cursor + 1U > from) from = cursor + 1U;
     history_http_query_t query = {.req = req, .first = true};
     ESP_RETURN_ON_ERROR(runtime_http_set_common_headers(req), TAG, "set headers failed");
     ESP_RETURN_ON_ERROR(httpd_resp_set_type(req, "application/json"), TAG, "set type failed");
     ESP_RETURN_ON_ERROR(httpd_resp_send_chunk(req, "{\"version\":1,\"faults\":[", HTTPD_RESP_USE_STRLEN), TAG, "send failed");
     size_t returned = 0;
-    ESP_RETURN_ON_ERROR(esp_bms_flashdb_query_faults(from, to, runtime_http_query_limit(req), runtime_http_fault_json_cb, &query, &returned), TAG, "fault query failed");
-    char tail[64];
-    snprintf(tail, sizeof(tail), "],\"returned\":%u}", (unsigned)returned);
+    esp_err_t ret = esp_bms_flashdb_query_faults(session, from, to, runtime_http_query_limit(req),
+                                                 runtime_http_fault_json_cb, &query, &returned);
+    if (ret == ESP_ERR_NOT_FOUND) return runtime_http_send_text(req, "404 Not Found", "session not found");
+    ESP_RETURN_ON_ERROR(ret, TAG, "fault query failed");
+    char tail[96];
+    if (returned) {
+        snprintf(tail, sizeof(tail), "],\"returned\":%u,\"next_cursor\":%llu}",
+                 (unsigned)returned, (unsigned long long)query.last);
+    } else {
+        snprintf(tail, sizeof(tail), "],\"returned\":0,\"next_cursor\":null}");
+    }
     ESP_RETURN_ON_ERROR(httpd_resp_send_chunk(req, tail, HTTPD_RESP_USE_STRLEN), TAG, "send failed");
     (void)runtime;
     return httpd_resp_send_chunk(req, NULL, 0);
@@ -5045,6 +5354,11 @@ static int runtime_bluetooth_gap_event(struct ble_gap_event *event, void *arg)
         return 0;
 #endif
     case BLE_GAP_EVENT_DISCONNECT:
+        if (event->disconnect.conn.conn_handle == s_ble_api_subscribed_conn) {
+            s_ble_api_subscribed_conn = 0xFFFFU;
+            s_ble_api_fragment_conn = 0xFFFFU;
+            s_ble_api_fragment_len = 0U;
+        }
         if (event->disconnect.conn.conn_handle == runtime->bluetooth_conn_handle) {
             const bool start_bms_scan = RUNTIME_FLAG(runtime, BMS_SCAN_REQUESTED);
             const bool resume_advertising =
@@ -5132,6 +5446,13 @@ static int runtime_bluetooth_gap_event(struct ble_gap_event *event, void *arg)
         }
         return 0;
     case BLE_GAP_EVENT_SUBSCRIBE:
+        if (event->subscribe.attr_handle == s_ble_api_response_handle) {
+            s_ble_api_subscribed_conn = event->subscribe.cur_notify != 0
+                                            ? event->subscribe.conn_handle
+                                            : 0xFFFFU;
+            ESP_LOGI(TAG, "[ble-api] response notifications %s",
+                     s_ble_api_subscribed_conn != 0xFFFFU ? "enabled" : "disabled");
+        }
 #if ESP_BMS_FEATURE_BLE_MEDIA_HID
         if (event->subscribe.conn_handle == runtime->bluetooth_conn_handle &&
             event->subscribe.attr_handle == s_ble_media_hid_input_report_handle) {
@@ -5222,24 +5543,28 @@ static esp_err_t runtime_bluetooth_start_advertising_now(esp_bms_idf_runtime_t *
     struct ble_hs_adv_fields fields = { 0 };
     const char *name = ble_svc_gap_device_name();
     fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
+    fields.uuids128 = &BLE_API_SERVICE_UUID;
+    fields.num_uuids128 = 1U;
+    fields.uuids128_is_complete = 1U;
 #if ESP_BMS_FEATURE_BLE_MEDIA_HID
     fields.uuids16 = &BLE_MEDIA_HID_SERVICE_UUID;
     fields.num_uuids16 = 1U;
     fields.uuids16_is_complete = 1U;
     fields.appearance = BLE_MEDIA_HID_APPEARANCE;
     fields.appearance_is_present = 1U;
-    fields.name = (uint8_t *)name;
-    fields.name_len = strlen(name);
-    fields.name_is_complete = 1U;
 #else
-    fields.name = (uint8_t *)name;
-    fields.name_len = strlen(name);
-    fields.name_is_complete = 1;
     fields.tx_pwr_lvl = BLE_HS_ADV_TX_PWR_LVL_AUTO;
     fields.tx_pwr_lvl_is_present = 1;
 #endif
     const int fields_rc = ble_gap_adv_set_fields(&fields);
     if (fields_rc != 0) {
+        return ESP_FAIL;
+    }
+    struct ble_hs_adv_fields response_fields = { 0 };
+    response_fields.name = (uint8_t *)name;
+    response_fields.name_len = strlen(name);
+    response_fields.name_is_complete = 1U;
+    if (ble_gap_adv_rsp_set_fields(&response_fields) != 0) {
         return ESP_FAIL;
     }
 
@@ -5378,6 +5703,18 @@ static esp_err_t runtime_init_ble_host(esp_bms_idf_runtime_t *runtime)
         ret = ESP_FAIL;
         goto deinit_nimble;
     }
+    if (!s_ble_api_request_queue) {
+        s_ble_api_request_queue = xQueueCreate(BLE_API_QUEUE_LEN, sizeof(runtime_ble_api_request_t));
+    }
+    if (!s_ble_api_request_queue) {
+        ret = ESP_ERR_NO_MEM;
+        goto deinit_nimble;
+    }
+    ret = runtime_ble_api_register_gatt();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "BLE API GATT service registration failed");
+        goto deinit_nimble;
+    }
 #if ESP_BMS_FEATURE_BLE_MEDIA_HID
     if (!runtime->ble_media_hid_usage_queue) {
         runtime->ble_media_hid_usage_queue =
@@ -5421,6 +5758,16 @@ static esp_err_t runtime_init_ble_host(esp_bms_idf_runtime_t *runtime)
     runtime->ble_media_hid_worker_started = true;
 #endif
 
+    if (xTaskCreate(runtime_ble_api_worker,
+                    "ble-api",
+                    BLE_API_WORKER_STACK,
+                    runtime,
+                    BLE_API_WORKER_PRIORITY,
+                    NULL) != pdPASS) {
+        ret = ESP_ERR_NO_MEM;
+        goto deinit_nimble;
+    }
+
     RUNTIME_SET_FLAG(runtime, BLE_HOST_READY, true);
     RUNTIME_SET_FLAG(runtime, BLE_HOST_STARTED, true);
     ESP_LOGI(TAG, "[ble] NimBLE initialized");
@@ -5437,6 +5784,10 @@ deinit_nimble: {
     RUNTIME_SET_FLAG(runtime, BLE_HOST_READY, false);
     RUNTIME_SET_FLAG(runtime, BLE_HOST_SYNCED, false);
     RUNTIME_SET_FLAG(runtime, BLE_HOST_STARTED, false);
+    if (s_ble_api_request_queue) {
+        vQueueDelete(s_ble_api_request_queue);
+        s_ble_api_request_queue = NULL;
+    }
 #if ESP_BMS_FEATURE_BLE_MEDIA_HID
     if (hid_queue_created) {
         vQueueDelete(runtime->ble_media_hid_usage_queue);

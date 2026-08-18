@@ -15,5 +15,7 @@ class MainActivityStateTest {
         assertTrue(primaryAction(UiStage.CASTING, true).stopsCast)
         assertTrue(primaryAction(UiStage.FAILED, true).enabled)
         assertFalse(primaryAction(UiStage.FAILED, false).enabled)
+        assertFalse(primaryAction(UiStage.READY, true, DeviceConnectionMode.BLE).enabled)
+        assertTrue(primaryAction(UiStage.READY, true, DeviceConnectionMode.WIFI).enabled)
     }
 }

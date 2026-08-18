@@ -70,10 +70,11 @@ esp_err_t esp_bms_flashdb_resume_session(uint64_t session_id, size_t *sample_cou
 esp_err_t esp_bms_flashdb_set_session_anchor(uint64_t session_id, uint32_t elapsed_s,
                                              uint64_t utc_s);
 esp_err_t esp_bms_flashdb_append_fault(const esp_bms_flashdb_fault_t *fault);
-esp_err_t esp_bms_flashdb_query_faults(uint64_t from, uint64_t to, size_t limit,
+esp_err_t esp_bms_flashdb_query_faults(uint64_t session_id, uint64_t from, uint64_t to, size_t limit,
                                        esp_bms_flashdb_fault_cb_t callback, void *ctx,
                                        size_t *returned);
 size_t esp_bms_flashdb_session_count(void);
+bool esp_bms_flashdb_has_session(uint64_t session_id);
 esp_err_t esp_bms_flashdb_get_session(size_t index, esp_bms_flashdb_session_t *session);
 bool esp_bms_flashdb_session_full(void);
 esp_err_t esp_bms_flashdb_query_samples(uint64_t from, uint64_t to, size_t limit,

@@ -66,13 +66,13 @@ internal data class PrimaryAction(val label: String, val enabled: Boolean, val s
 
 private enum class BleScanTarget { BMS, CONTROLLER }
 
-internal fun primaryAction(stage: UiStage, deviceReady: Boolean) = when (stage) {
+internal fun primaryAction(stage: UiStage, deviceReady: Boolean, mode: DeviceConnectionMode = DeviceConnectionMode.WIFI) = when (stage) {
     UiStage.CASTING -> PrimaryAction("停止投屏", true, true)
     UiStage.CAST_CONNECTING -> PrimaryAction("停止投屏", true, true)
     UiStage.REQUESTING_PERMISSION -> PrimaryAction("正在申请投屏权限", false)
-    UiStage.STOPPED -> PrimaryAction("重新开始投屏", deviceReady)
-    UiStage.FAILED -> PrimaryAction("重试投屏", deviceReady)
-    else -> PrimaryAction("开始投屏", stage == UiStage.READY && deviceReady)
+    UiStage.STOPPED -> PrimaryAction("重新开始投屏", deviceReady && mode == DeviceConnectionMode.WIFI)
+    UiStage.FAILED -> PrimaryAction("重试投屏", deviceReady && mode == DeviceConnectionMode.WIFI)
+    else -> PrimaryAction("开始投屏", stage == UiStage.READY && deviceReady && mode == DeviceConnectionMode.WIFI)
 }
 
 class MainActivity : Activity() {
@@ -167,12 +167,24 @@ class MainActivity : Activity() {
     private var info: CastInfo? = null
     private var infoRequestInFlight = false
     private var infoRequestId = 0
+    private lateinit var deviceBle: DeviceBleSession
+    private var connectionMode = DeviceConnectionMode.NONE
+    private var pendingDeviceBleStart = false
 
     private var latestStatus: DeviceStatus? = null
     private var latestConfig: DeviceConfig? = null
     private var latestRecords: List<RideRecord> = emptyList()
     private var latestTrack: List<GpsPoint> = emptyList()
-    private var latestHistorySessions: List<HistorySession> = emptyList()
+    private var latestHistoryOverview: HistoryOverview? = null
+    private var selectedHistorySessionId: Long? = null
+    private var latestHistorySamples: List<HistorySample> = emptyList()
+    private var latestHistoryFaults: List<HistoryFault> = emptyList()
+    private var historySampleCursor: Long? = null
+    private var historyFaultCursor: Long? = null
+    private var historySamplesHaveMore = false
+    private var historyFaultsHaveMore = false
+    private var historyLoading = false
+    private var historyError = ""
     private var capabilities: DeviceCapabilities? = null
     private var profileRequestId = 0
     private var profileLoading = false
@@ -218,6 +230,8 @@ class MainActivity : Activity() {
         super.onCreate(state)
         registerReceiverCompat(castStatusReceiver, CastService.ACTION_STATUS)
         content()
+        deviceBle = DeviceBleSession(this, ::onDeviceBleStateChanged)
+        startDeviceBle()
         if (readDeepLink(intent)) {
             selectRoute(AppRoute.CAST, refresh = false)
         } else {
@@ -244,6 +258,7 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        startDeviceBle()
         when (CastService.currentState) {
             CastService.STATE_CONNECTING, CastService.STATE_RETRYING -> setStage(UiStage.CAST_CONNECTING)
             CastService.STATE_STREAMING -> setStage(UiStage.CASTING)
@@ -253,6 +268,7 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         stopBleScan()
+        if (::deviceBle.isInitialized) deviceBle.close()
         uiHandler.removeCallbacksAndMessages(null)
         releaseNetworkRequest()
         invalidateInfoRequest()
@@ -265,9 +281,12 @@ class MainActivity : Activity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode != BLE_PERMISSION_REQUEST) return
         val target = pendingBleScanTarget
+        val startDevice = pendingDeviceBleStart
         pendingBleScanTarget = null
-        if (target != null && grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
-            startPhoneBleScan(target)
+        pendingDeviceBleStart = false
+        if (grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
+            if (target != null) startPhoneBleScan(target)
+            if (startDevice) deviceBle.start()
         } else {
             toast("需要蓝牙扫描权限")
         }
@@ -755,9 +774,57 @@ class MainActivity : Activity() {
         return true
     }
 
+    private fun deviceTransport(): DeviceTransport? {
+        if (bindDeviceNetwork()) {
+            connectionMode = DeviceConnectionMode.WIFI
+            return DeviceApi.httpTransport(host)
+        }
+        if (::deviceBle.isInitialized && deviceBle.connected) {
+            connectionMode = DeviceConnectionMode.BLE
+            return deviceBle
+        }
+        connectionMode = DeviceConnectionMode.NONE
+        return null
+    }
+
+    private fun startDeviceBle() {
+        if (!::deviceBle.isInitialized || deviceBle.connected) return
+        val missing = DeviceBleSession.permissions().filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+        if (missing.isNotEmpty()) {
+            if (!pendingDeviceBleStart) {
+                pendingDeviceBleStart = true
+                requestPermissions(missing.toTypedArray(), BLE_PERMISSION_REQUEST)
+            }
+            return
+        }
+        deviceBle.start()
+    }
+
+    private fun onDeviceBleStateChanged(state: DeviceBleState, message: String?) {
+        if (state == DeviceBleState.CONNECTED) {
+            if (!bindDeviceNetwork()) connectionMode = DeviceConnectionMode.BLE
+            capabilities = null
+            refreshDeviceProfile(force = true, refreshRoute = true)
+            return
+        }
+        if (connectionMode == DeviceConnectionMode.BLE && !bindDeviceNetwork() &&
+            state in setOf(DeviceBleState.DISCONNECTED, DeviceBleState.ERROR)) {
+            connectionMode = DeviceConnectionMode.NONE
+            latestStatus = null
+            latestConfig = null
+            latestRecords = emptyList()
+            latestTrack = emptyList()
+            capabilities = null
+            deviceError = message ?: "设备蓝牙已断开，可点击重试"
+            setStage(UiStage.FAILED, deviceError)
+            renderNativePages()
+        }
+    }
+
     private fun refreshDeviceProfile(force: Boolean = false, refreshRoute: Boolean = false) {
         if (refreshRoute) refreshRouteWhenProfileLoaded = true
-        if (!bindDeviceNetwork()) {
+        val transport = deviceTransport()
+        if (transport == null) {
             profileLoading = false
             deviceLoading = false
             latestStatus = null
@@ -765,7 +832,11 @@ class MainActivity : Activity() {
             latestRecords = emptyList()
             latestTrack = emptyList()
             capabilities = null
-            deviceError = "请先在系统 Wi-Fi 设置中连接设备热点"
+            deviceError = when (deviceBle.state) {
+                DeviceBleState.SCANNING, DeviceBleState.CONNECTING -> "正在连接设备蓝牙"
+                DeviceBleState.ERROR -> "${deviceBle.state}: 请点击重试设备蓝牙"
+                else -> "未发现设备连接，请连接设备 Wi-Fi 或蓝牙"
+            }
             renderNativePages()
             return
         }
@@ -781,7 +852,7 @@ class MainActivity : Activity() {
         profileLoading = true
         renderNativePages()
         thread {
-            val profile = runCatching { DeviceApi.capabilities(host) }.getOrNull()
+            val profile = runCatching { DeviceApi.capabilities(transport) }.getOrNull()
             runOnUiThread {
                 if (requestId != profileRequestId || isFinishing) return@runOnUiThread
                 profileLoading = false
@@ -791,7 +862,7 @@ class MainActivity : Activity() {
                     latestRecords = emptyList()
                     latestTrack = emptyList()
                     capabilities = null
-                    deviceError = "无法读取设备功能配置，请确认已连接两轮智控热点"
+                    deviceError = "无法读取设备功能配置，请重试当前连接"
                     if (stage !in setOf(UiStage.REQUESTING_PERMISSION, UiStage.CAST_CONNECTING, UiStage.CASTING)) {
                         setStage(UiStage.FAILED, deviceError)
                     }
@@ -839,13 +910,26 @@ class MainActivity : Activity() {
         loadRecords: Boolean = false,
         loadTrack: Boolean = false,
     ) {
-        if (!bindDeviceNetwork()) {
+        val transport = deviceTransport()
+        if (transport == null) {
             deviceLoading = false
             latestStatus = null
             latestConfig = null
             if (loadRecords) latestRecords = emptyList()
+            if (loadTrack) {
+                latestTrack = emptyList()
+                latestHistoryOverview = null
+                latestHistorySamples = emptyList()
+                latestHistoryFaults = emptyList()
+            }
+            deviceError = "设备连接已断开，请点击重试"
+            renderNativePages()
+            return
+        }
+        if (connectionMode != DeviceConnectionMode.WIFI && (loadRecords || loadTrack)) {
+            if (loadRecords) latestRecords = emptyList()
             if (loadTrack) latestTrack = emptyList()
-            deviceError = "请先在系统 Wi-Fi 设置中连接设备热点"
+            deviceError = "记录和地图需要连接设备 Wi-Fi"
             renderNativePages()
             return
         }
@@ -853,18 +937,22 @@ class MainActivity : Activity() {
         deviceLoading = true
         renderNativePages()
         thread {
-            val status = if (loadStatus) runCatching { DeviceApi.status(host) } else null
-            val config = if (loadConfig) runCatching { DeviceApi.config(host) } else null
+            val status = if (loadStatus) runCatching { DeviceApi.status(transport) } else null
+            val config = if (loadConfig) runCatching { DeviceApi.config(transport) } else null
             val records = if (loadRecords) runCatching { DeviceApi.rideRecords(host) } else null
             val track = if (loadTrack) runCatching { DeviceApi.gpsTrack(host) } else null
-            val history = if (loadTrack) runCatching { DeviceApi.historySessions(host) } else null
-            val historyTrack = if (loadTrack) runCatching {
-                history?.getOrNull()?.maxByOrNull { it.id }?.let { session ->
-                    DeviceApi.historySamples(host, session.id).filter { it.flags and 1 != 0 }.map {
-                        GpsPoint(it.latitudeE7 / 10_000_000.0, it.longitudeE7 / 10_000_000.0, it.timestamp)
-                    }
-                }.orEmpty()
-            } else null
+            val history = if (loadTrack) runCatching { DeviceApi.historyOverview(host) } else null
+            val selectedSession = history?.getOrNull()?.sessions?.let { sessions ->
+                sessions.firstOrNull { it.id == selectedHistorySessionId } ?: sessions.maxByOrNull { it.id }
+            }
+            val historySamples = selectedSession?.let { session ->
+                runCatching { DeviceApi.historySamplesPage(host, session.id, limit = HISTORY_SAMPLE_PAGE_SIZE) }
+            }
+            val historyFaults = selectedSession?.let { session ->
+                val from = if (session.calibrated) session.startSeconds else 0L
+                val to = if (session.calibrated) session.endSeconds else Long.MAX_VALUE
+                runCatching { DeviceApi.historyFaultsPage(host, from, to, HISTORY_FAULT_PAGE_SIZE, session.id) }
+            }
             val allRequestedCallsFailed =
                 (!loadStatus || status?.isFailure == true) &&
                 (!loadConfig || config?.isFailure == true) &&
@@ -877,8 +965,16 @@ class MainActivity : Activity() {
                 if (loadRecords) latestRecords = records?.getOrDefault(emptyList()).orEmpty()
                 if (loadTrack) latestTrack = track?.getOrDefault(emptyList()).orEmpty()
                 if (loadTrack) {
-                    latestHistorySessions = history?.getOrDefault(emptyList()).orEmpty()
-                    historyTrack?.getOrNull()?.takeIf { it.isNotEmpty() }?.let { latestTrack = it }
+                    latestHistoryOverview = history?.getOrNull()
+                    selectedHistorySessionId = selectedSession?.id
+                    latestHistorySamples = historySamples?.getOrNull()?.values.orEmpty()
+                    latestHistoryFaults = historyFaults?.getOrNull()?.values.orEmpty()
+                    historySampleCursor = historySamples?.getOrNull()?.nextCursor
+                    historyFaultCursor = historyFaults?.getOrNull()?.nextCursor
+                    historySamplesHaveMore = latestHistorySamples.size == HISTORY_SAMPLE_PAGE_SIZE && historySampleCursor != null
+                    historyFaultsHaveMore = latestHistoryFaults.size == HISTORY_FAULT_PAGE_SIZE && historyFaultCursor != null
+                    historyError = if (history?.isFailure == true) "历史存储接口不可用，已显示兼容 GPS 轨迹" else ""
+                    historySamples?.getOrNull()?.let { latestTrack = historyGpsPoints(it.values) }
                 }
                 deviceLoading = false
                 deviceError = if (allRequestedCallsFailed) "设备数据读取失败，请点击刷新重试" else ""
@@ -886,6 +982,63 @@ class MainActivity : Activity() {
             }
         }
     }
+
+    private fun loadHistorySession(sessionId: Long, loadMoreSamples: Boolean = false, loadMoreFaults: Boolean = false) {
+        val session = latestHistoryOverview?.sessions?.firstOrNull { it.id == sessionId } ?: return
+        if (!bindDeviceNetwork() || historyLoading) return
+        val requestId = ++deviceRequestId
+        val reset = !loadMoreSamples && !loadMoreFaults
+        historyLoading = true
+        historyError = ""
+        renderNativePages()
+        thread {
+            val samples = if (reset || loadMoreSamples) runCatching {
+                DeviceApi.historySamplesPage(
+                    host,
+                    session.id,
+                    limit = HISTORY_SAMPLE_PAGE_SIZE,
+                    cursor = if (loadMoreSamples) historySampleCursor else null,
+                )
+            } else null
+            val faults = if (reset || loadMoreFaults) runCatching {
+                DeviceApi.historyFaultsPage(
+                    host,
+                    from = if (session.calibrated) session.startSeconds else 0L,
+                    to = if (session.calibrated) session.endSeconds else Long.MAX_VALUE,
+                    limit = HISTORY_FAULT_PAGE_SIZE,
+                    session = session.id,
+                    cursor = if (loadMoreFaults) historyFaultCursor else null,
+                )
+            } else null
+            runOnUiThread {
+                if (requestId != deviceRequestId || isFinishing) return@runOnUiThread
+                selectedHistorySessionId = session.id
+                samples?.getOrNull()?.let { page ->
+                    latestHistorySamples = ((if (loadMoreSamples) latestHistorySamples else emptyList()) + page.values)
+                        .takeLast(HISTORY_SAMPLE_WINDOW_SIZE)
+                    historySampleCursor = page.nextCursor
+                    historySamplesHaveMore = page.values.size == HISTORY_SAMPLE_PAGE_SIZE && page.nextCursor != null
+                    latestTrack = historyGpsPoints(latestHistorySamples)
+                }
+                faults?.getOrNull()?.let { page ->
+                    latestHistoryFaults = ((if (loadMoreFaults) latestHistoryFaults else emptyList()) + page.values)
+                        .takeLast(HISTORY_FAULT_WINDOW_SIZE)
+                    historyFaultCursor = page.nextCursor
+                    historyFaultsHaveMore = page.values.size == HISTORY_FAULT_PAGE_SIZE && page.nextCursor != null
+                }
+                historyError = listOfNotNull(samples?.exceptionOrNull(), faults?.exceptionOrNull())
+                    .firstOrNull()?.message?.let { "历史读取失败：$it" }.orEmpty()
+                historyLoading = false
+                renderNativePages()
+            }
+        }
+    }
+
+    private fun historyGpsPoints(samples: List<HistorySample>) = samples.asSequence()
+        .filter { it.flags and 1 != 0 }
+        .filter { it.latitudeE7 in -900_000_000..900_000_000 && it.longitudeE7 in -1_800_000_000..1_800_000_000 }
+        .map { GpsPoint(it.latitudeE7 / 10_000_000.0, it.longitudeE7 / 10_000_000.0, it.timestamp) }
+        .toList()
 
     private fun renderNativePages() {
         if (!::dashboardConnectionView.isInitialized) return
@@ -952,9 +1105,10 @@ class MainActivity : Activity() {
 
     private fun renderRecords() {
         recordMapButton.visibility = if (capabilities?.supports("gps_track") == false) View.GONE else View.VISIBLE
-        recordMapButton.isEnabled = capabilities?.supports("gps_track") == true
+        recordMapButton.isEnabled = capabilities?.supports("gps_track") == true && connectionMode == DeviceConnectionMode.WIFI
         recordMapButton.alpha = if (recordMapButton.isEnabled) 1f else 0.45f
         trackSummaryView.text = when {
+            connectionMode == DeviceConnectionMode.BLE -> "GPS 轨迹需要连接设备 Wi-Fi"
             capabilities == null && !deviceLoading -> "连接设备后同步轨迹"
             latestTrack.isEmpty() -> "暂无已记录的 GPS 坐标"
             else -> "已记录 ${latestTrack.size} 个坐标点"
@@ -965,6 +1119,84 @@ class MainActivity : Activity() {
             recordsHost.addView(emptyState("连接设备后可查看骑行峰值记录"))
             return
         }
+
+        val overview = latestHistoryOverview
+        val historyCard = card()
+        historyCard.addView(label("FlashDB 行驶历史", 18f, COLOR_TEXT, true))
+        historyCard.addView(label(when {
+            deviceLoading -> "正在同步历史会话"
+            overview == null -> historyError.ifBlank { "设备暂未提供历史存储接口" }
+            !overview.ready -> "存储降级  |  ${overview.backend}  |  ${(overview.capacityBytes / 1024)} KiB"
+            else -> "板载 Flash  |  ${(overview.capacityBytes / 1024)} KiB  |  ${overview.sessions.size} 份记录"
+        }, 14f, if (overview?.ready == false) COLOR_WARN else COLOR_MUTED), rowParams(top = 6))
+        overview?.sessions?.sortedByDescending { it.id }?.take(3)?.forEach { session ->
+            val selected = session.id == selectedHistorySessionId
+            val state = buildList {
+                if (!session.calibrated) add("未校准")
+                if (session.truncated) add("已截断")
+                if (session.capacityReached) add("容量已满")
+            }.joinToString(" · ").ifBlank { "完整" }
+            val button = actionButton(
+                "记录 ${session.id}  |  ${session.samples} 条  |  ${formatDuration(session.elapsedSeconds)}\n$state",
+                selected,
+            ) { loadHistorySession(session.id) }
+            button.isEnabled = !historyLoading
+            historyCard.addView(button, rowParams(top = 8, height = dp(58)))
+        }
+        if (overview?.sessions?.isEmpty() == true) {
+            historyCard.addView(label("暂无 FlashDB 行驶会话", 14f, COLOR_MUTED), rowParams(top = 10))
+        }
+        historyError.takeIf { it.isNotBlank() }?.let {
+            historyCard.addView(label(it, 13f, COLOR_WARN), rowParams(top = 8))
+        }
+        recordsHost.addView(historyCard, rowParams(bottom = 10))
+
+        val selectedSession = overview?.sessions?.firstOrNull { it.id == selectedHistorySessionId }
+        if (selectedSession != null) {
+            val bmsSamples = latestHistorySamples.filter { it.flags and 2 != 0 }
+            val chartCard = card()
+            chartCard.addView(label("BMS 曲线", 17f, COLOR_TEXT, true))
+            chartCard.addView(label(
+                "当前窗口 ${latestHistorySamples.size} 条  |  GPS ${latestTrack.size} 点  |  BMS ${bmsSamples.size} 点",
+                13f,
+                COLOR_MUTED,
+            ), rowParams(top = 5))
+            if (bmsSamples.size >= 2) {
+                chartCard.addView(HistoryChartView(this).apply { setSamples(bmsSamples) }, rowParams(top = 10, height = dp(190)))
+                chartCard.addView(label("电压  /  电流  /  SOC", 12f, COLOR_MUTED), rowParams(top = 5))
+            } else {
+                chartCard.addView(label("当前分页没有足够的有效 BMS 样本", 14f, COLOR_MUTED), rowParams(top = 10))
+            }
+            if (historySamplesHaveMore) {
+                chartCard.addView(actionButton("加载后续样本", false) {
+                    loadHistorySession(selectedSession.id, loadMoreSamples = true)
+                }.apply { isEnabled = !historyLoading }, rowParams(top = 10, height = dp(44)))
+            }
+            recordsHost.addView(chartCard, rowParams(bottom = 10))
+
+            val faultCard = card()
+            faultCard.addView(label("故障日志", 17f, COLOR_TEXT, true))
+            if (latestHistoryFaults.isEmpty()) {
+                faultCard.addView(label("当前范围没有故障变化", 14f, COLOR_MUTED), rowParams(top = 8))
+            } else {
+                latestHistoryFaults.forEach { fault ->
+                    val state = if (fault.activeMask == 0) "故障已清除" else "活动 0x%04X".format(fault.activeMask)
+                    val time = if (selectedSession.calibrated) fault.timestamp.toString() else "相对时间未校准"
+                    faultCard.addView(label(
+                        "$time  |  $state  |  支持 0x%04X  |  BMS %d".format(fault.supportedMask, fault.bmsType),
+                        13f,
+                        if (fault.activeMask == 0) COLOR_MUTED else COLOR_WARN,
+                    ), rowParams(top = 7))
+                }
+            }
+            if (historyFaultsHaveMore) {
+                faultCard.addView(actionButton("加载后续故障", false) {
+                    loadHistorySession(selectedSession.id, loadMoreFaults = true)
+                }.apply { isEnabled = !historyLoading }, rowParams(top = 10, height = dp(44)))
+            }
+            recordsHost.addView(faultCard, rowParams(bottom = 10))
+        }
+
         if (latestRecords.isEmpty()) {
             recordsHost.addView(emptyState(if (deviceLoading) "正在同步骑行记录" else "暂时没有骑行峰值记录"))
             return
@@ -1010,7 +1242,9 @@ class MainActivity : Activity() {
         }
         settingsSaveButton.alpha = if (settingsSaveButton.isEnabled) 1f else 0.45f
         otaCard.visibility = if (capabilities?.supports("ota") == false) View.GONE else View.VISIBLE
-        setViewEnabled(otaCard, online && capabilities?.supports("ota") != false)
+        val otaReady = online && connectionMode == DeviceConnectionMode.WIFI && capabilities?.supports("ota") != false
+        setViewEnabled(otaCard, otaReady)
+        if (online && !otaReady && capabilities?.supports("ota") != false) otaProgressText.text = "OTA 需要连接设备 Wi-Fi"
     }
 
     private fun renderMap() {
@@ -1147,7 +1381,8 @@ class MainActivity : Activity() {
 
     private fun saveDeviceSettings() {
         val profile = capabilities
-        if (latestConfig == null || profile == null || !bindDeviceNetwork()) {
+        val transport = deviceTransport()
+        if (latestConfig == null || profile == null || transport == null) {
             toast("请先连接设备并等待配置加载")
             return
         }
@@ -1166,7 +1401,7 @@ class MainActivity : Activity() {
         settingsSaveButton.alpha = 0.45f
         thread {
             try {
-                DeviceApi.saveConfig(host, values)
+                DeviceApi.saveConfig(transport, values)
                 runOnUiThread {
                     toast("设备设置已保存")
                     refreshRouteData(AppRoute.SETTINGS)
@@ -1323,7 +1558,11 @@ class MainActivity : Activity() {
     }
 
     private fun requestProjection() {
-        if (info == null) return
+        if (deviceTransport() == null || connectionMode != DeviceConnectionMode.WIFI || info == null) {
+            setStage(UiStage.READY, "投屏需要先连接设备 Wi-Fi")
+            toast("投屏需要先连接设备 Wi-Fi")
+            return
+        }
         setStage(UiStage.REQUESTING_PERMISSION)
         val manager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         val request = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
@@ -1363,12 +1602,16 @@ class MainActivity : Activity() {
         } ?: ssid?.let {
             "热点：$it\n目标：$host"
         } ?: "尚未连接设备"
-        val online = info != null || stage in setOf(UiStage.READY, UiStage.CAST_CONNECTING, UiStage.CASTING)
-        statusChipView.text = if (online) "设备在线" else "等待设备连接"
+        val online = connectionMode != DeviceConnectionMode.NONE || info != null || stage in setOf(UiStage.CAST_CONNECTING, UiStage.CASTING)
+        statusChipView.text = when (connectionMode) {
+            DeviceConnectionMode.WIFI -> "设备 Wi-Fi 在线"
+            DeviceConnectionMode.BLE -> "设备蓝牙在线"
+            DeviceConnectionMode.NONE -> if (online) "设备在线" else "等待设备连接"
+        }
         statusChipView.setTextColor(if (online) COLOR_GREEN else COLOR_MUTED)
         statusChipView.background = roundedBackground(if (online) COLOR_GREEN_SOFT else COLOR_SURFACE, 18, if (online) COLOR_GREEN else COLOR_BORDER)
 
-        val action = primaryAction(stage, info != null)
+        val action = primaryAction(stage, info != null, connectionMode)
         castButton.text = action.label
         castButton.isEnabled = action.enabled
         castButton.alpha = if (action.enabled) 1f else 0.45f
@@ -1394,7 +1637,14 @@ class MainActivity : Activity() {
             cm.bindProcessToNetwork(wifi)
             loadInfo()
         } else {
-            setStage(UiStage.WAITING_SCAN, "请先在系统 Wi-Fi 设置中连接设备热点")
+            info = null
+            if (::deviceBle.isInitialized && deviceBle.connected) {
+                connectionMode = DeviceConnectionMode.BLE
+                setStage(UiStage.READY, "投屏需要先连接设备 Wi-Fi")
+            } else {
+                startDeviceBle()
+                setStage(UiStage.WAITING_SCAN, "正在搜索设备蓝牙；投屏需要连接设备 Wi-Fi")
+            }
         }
     }
 
@@ -1409,6 +1659,12 @@ class MainActivity : Activity() {
 
     private fun loadInfo() {
         if (infoRequestInFlight) return
+        if (!bindDeviceNetwork()) {
+            connectionMode = if (::deviceBle.isInitialized && deviceBle.connected) DeviceConnectionMode.BLE else DeviceConnectionMode.NONE
+            setStage(UiStage.READY, "投屏需要先连接设备 Wi-Fi")
+            return
+        }
+        connectionMode = DeviceConnectionMode.WIFI
         infoRequestInFlight = true
         val requestId = ++infoRequestId
         setStage(UiStage.QUERYING_DEVICE)
@@ -1602,6 +1858,10 @@ class MainActivity : Activity() {
         const val OTA_FILE_REQUEST = 11
         const val BLE_PERMISSION_REQUEST = 12
         const val BLE_SCAN_DURATION_MS = 12_000L
+        const val HISTORY_SAMPLE_PAGE_SIZE = 500
+        const val HISTORY_SAMPLE_WINDOW_SIZE = 1_500
+        const val HISTORY_FAULT_PAGE_SIZE = 100
+        const val HISTORY_FAULT_WINDOW_SIZE = 300
 
         val COLOR_BACKGROUND = Color.rgb(10, 15, 20)
         val COLOR_SURFACE = Color.rgb(23, 31, 40)

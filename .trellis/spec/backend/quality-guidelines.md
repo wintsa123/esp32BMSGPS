@@ -1150,6 +1150,16 @@ typedef struct {
 
 ## Web API Contract
 
+### Device BLE API Contract
+
+The APK device BLE service is a transport for the existing device settings
+contract, not a second business API. It may expose only `GET /api/status`,
+`GET /api/config`, `GET /api/settings/manifest`, and `POST /api/config`.
+Requests are bounded, serialized through the BLE worker, and must reuse the
+same JSON serializers and config validation as HTTP. Cast, history, OTA, Wi-Fi,
+BMS scan/bind, and controller operations stay Wi-Fi-only. Never log raw BLE
+request bodies or credentials.
+
 The embedded Web UI currently calls these routes:
 
 - `GET /api/status`

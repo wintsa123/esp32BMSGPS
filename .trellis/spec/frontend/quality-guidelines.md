@@ -25,6 +25,15 @@ ESP-IDF app image.
 - Do not add a separate language prompt, login page, or modal for language
   selection; language stays in device settings.
 
+## Android Device Transport
+
+- The Android client may use the native device BLE GATT service for status,
+  manifest, and editable config only.
+- Casting requires a validated device Wi-Fi network even when BLE is online;
+  show the Chinese Wi-Fi requirement instead of attempting a cast connection.
+- Wi-Fi-only records, map, OTA, BMS scan/bind, and controller actions remain
+  disabled with an actionable connection message in BLE mode.
+
 ## Validation Matrix
 
 - Missing optional battery values -> display `--`.

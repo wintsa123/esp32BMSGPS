@@ -95,12 +95,21 @@ internal data class GpsPoint(
 
 internal data class HistorySession(
     val id: Long,
+    val startSeconds: Long,
+    val endSeconds: Long,
     val samples: Int,
     val capacitySamples: Int,
     val elapsedSeconds: Int,
     val calibrated: Boolean,
     val truncated: Boolean,
     val capacityReached: Boolean,
+)
+
+internal data class HistoryOverview(
+    val ready: Boolean,
+    val backend: String,
+    val capacityBytes: Long,
+    val sessions: List<HistorySession>,
 )
 
 internal data class HistorySample(
@@ -117,10 +126,13 @@ internal data class HistorySample(
 
 internal data class HistoryFault(
     val timestamp: Long,
+    val sessionId: Long,
     val activeMask: Int,
     val supportedMask: Int,
     val bmsType: Int,
 )
+
+internal data class HistoryPage<T>(val values: List<T>, val nextCursor: Long?)
 
 internal data class DeviceConfig(
     val brightness: Int,
@@ -155,6 +167,12 @@ internal data class DeviceConfig(
         }
     }
 }
+
+internal fun interface DeviceTransport {
+    fun request(method: String, path: String, body: JSONObject?): String
+}
+
+internal enum class DeviceConnectionMode { NONE, WIFI, BLE }
 
 internal data class BmsCandidate(val name: String, val mac: String, val rssi: Int?)
 
@@ -212,7 +230,18 @@ internal data class OtaProgress(
 internal object DeviceApi {
     const val MAX_FIRMWARE_BYTES = 1_500 * 1024
 
-    fun status(host: String) = DeviceStatus.parse(get(host, "/api/status"))
+    fun httpTransport(host: String) = DeviceTransport { method, path, body ->
+        when (method) {
+            "GET" -> get(host, path)
+            "POST" -> if (body == null) post(host, path) else postJson(host, path, body)
+            else -> error("Unsupported HTTP method: $method")
+        }
+    }
+
+    fun status(host: String) = status(httpTransport(host))
+
+    fun status(transport: DeviceTransport) =
+        DeviceStatus.parse(transport.request("GET", "/api/status", null))
 
     fun rideRecords(host: String): List<RideRecord> {
         val records = JSONObject(get(host, "/api/bms/ride-records")).optJSONArray("records") ?: JSONArray()
@@ -249,39 +278,80 @@ internal object DeviceApi {
         }
     }
 
-    fun historySessions(host: String): List<HistorySession> {
-        val values = JSONObject(get(host, "/api/history/sessions")).optJSONArray("sessions") ?: JSONArray()
-        return List(values.length()) { index ->
+    fun historyOverview(host: String) = parseHistoryOverview(get(host, "/api/history/sessions"))
+
+    fun historySessions(host: String): List<HistorySession> = historyOverview(host).sessions
+
+    fun parseHistoryOverview(json: String): HistoryOverview {
+        val root = JSONObject(json)
+        val values = root.optJSONArray("sessions") ?: JSONArray()
+        return HistoryOverview(
+            ready = root.optBoolean("ready", false),
+            backend = root.optString("backend", "--"),
+            capacityBytes = root.optLong("capacity_bytes", 0L),
+            sessions = List(values.length()) { index ->
             val value = values.optJSONObject(index) ?: JSONObject()
-            HistorySession(value.optLong("id"), value.optInt("samples"), value.optInt("capacity_samples"),
+            HistorySession(value.optLong("id"), value.optLong("start_s"), value.optLong("end_s"),
+                value.optInt("samples"), value.optInt("capacity_samples"),
                 value.optInt("elapsed_s"), value.optBoolean("calibrated"), value.optBoolean("truncated"),
                 value.optBoolean("capacity_reached"))
-        }
+            },
+        )
     }
 
     fun historySamples(host: String, session: Long, from: Long = 0, to: Long = Long.MAX_VALUE, limit: Int = 200): List<HistorySample> {
-        val path = "/api/history/samples?session=$session&from=$from&to=$to&limit=${limit.coerceIn(1, 500)}"
-        val values = JSONObject(get(host, path)).optJSONArray("samples") ?: JSONArray()
-        return List(values.length()) { index ->
+        return historySamplesPage(host, session, from, to, limit).values
+    }
+
+    fun historySamplesPage(host: String, session: Long, from: Long = 0, to: Long = Long.MAX_VALUE,
+                           limit: Int = 200, cursor: Long? = null): HistoryPage<HistorySample> {
+        val path = "/api/history/samples?session=$session&from=$from&to=$to&limit=${limit.coerceIn(1, 500)}" +
+            (cursor?.let { "&cursor=$it" } ?: "")
+        return parseHistorySamplesPage(get(host, path))
+    }
+
+    fun parseHistorySamplesPage(json: String): HistoryPage<HistorySample> {
+        val root = JSONObject(json)
+        val values = root.optJSONArray("samples") ?: JSONArray()
+        return HistoryPage(List(values.length()) { index ->
             val value = values.optJSONObject(index) ?: JSONObject()
             HistorySample(value.optLong("t"), value.optInt("elapsed_s"), value.optInt("flags"),
                 value.optInt("lat_e7"), value.optInt("lon_e7"), value.optInt("pack_voltage_mv"),
                 value.optInt("current_deci_amps"), value.optInt("soc_percent"), value.optIntList("temperatures_c"))
-        }
+        }, root.optLongOrNull("next_cursor"))
     }
 
     fun historyFaults(host: String, from: Long = 0, to: Long = Long.MAX_VALUE, limit: Int = 200): List<HistoryFault> {
-        val path = "/api/history/faults?from=$from&to=$to&limit=${limit.coerceIn(1, 500)}"
-        val values = JSONObject(get(host, path)).optJSONArray("faults") ?: JSONArray()
-        return List(values.length()) { index ->
-            val value = values.optJSONObject(index) ?: JSONObject()
-            HistoryFault(value.optLong("t"), value.optInt("active_mask"), value.optInt("supported_mask"), value.optInt("bms_type"))
-        }
+        return historyFaultsPage(host, from, to, limit).values
     }
 
-    fun config(host: String) = DeviceConfig.parse(get(host, "/api/config"))
+    fun historyFaultsPage(host: String, from: Long = 0, to: Long = Long.MAX_VALUE,
+                          limit: Int = 200, session: Long? = null, cursor: Long? = null): HistoryPage<HistoryFault> {
+        val path = "/api/history/faults?from=$from&to=$to&limit=${limit.coerceIn(1, 500)}" +
+            (session?.let { "&session=$it" } ?: "") +
+            (cursor?.let { "&cursor=$it" } ?: "")
+        return parseHistoryFaultsPage(get(host, path))
+    }
 
-    fun capabilities(host: String) = DeviceCapabilities.parse(get(host, "/api/settings/manifest"))
+    fun parseHistoryFaultsPage(json: String): HistoryPage<HistoryFault> {
+        val root = JSONObject(json)
+        val values = root.optJSONArray("faults") ?: JSONArray()
+        return HistoryPage(List(values.length()) { index ->
+            val value = values.optJSONObject(index) ?: JSONObject()
+            HistoryFault(value.optLong("t"), value.optLong("session"), value.optInt("active_mask"),
+                value.optInt("supported_mask"), value.optInt("bms_type"))
+        }, root.optLongOrNull("next_cursor"))
+    }
+
+    fun config(host: String) = config(httpTransport(host))
+
+    fun config(transport: DeviceTransport) =
+        DeviceConfig.parse(transport.request("GET", "/api/config", null))
+
+    fun capabilities(host: String) = capabilities(httpTransport(host))
+
+    fun capabilities(transport: DeviceTransport) =
+        DeviceCapabilities.parse(transport.request("GET", "/api/settings/manifest", null))
 
     fun bmsCandidates(host: String): BmsCandidates {
         val value = JSONObject(get(host, "/api/bms/candidates"))
@@ -303,7 +373,10 @@ internal object DeviceApi {
 
     fun bindBms(host: String, mac: String) = postJson(host, "/api/bms/bind", JSONObject().put("mac", mac))
 
-    fun saveConfig(host: String, values: JSONObject) = postJson(host, "/api/config", values)
+    fun saveConfig(host: String, values: JSONObject) = saveConfig(httpTransport(host), values)
+
+    fun saveConfig(transport: DeviceTransport, values: JSONObject) =
+        transport.request("POST", "/api/config", values)
 
     fun otaProgress(host: String) = OtaProgress.parse(get(host, "/api/ota/progress"))
 

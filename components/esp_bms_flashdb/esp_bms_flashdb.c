@@ -28,10 +28,9 @@ static bool s_full;
 
 static fdb_time_t flashdb_now(void) { return 0; }
 
-static void slot_key(char *key, size_t key_size, size_t slot, const char *suffix)
-{
-    snprintf(key, key_size, "h%u_%s", (unsigned)slot, suffix);
-}
+static const char *const s_id_keys[] = {"h0_id", "h1_id", "h2_id"};
+static const char *const s_utc_keys[] = {"h0_utc", "h1_utc", "h2_utc"};
+static const char *const s_rel_keys[] = {"h0_rel", "h1_rel", "h2_rel"};
 
 static esp_err_t load_metadata(void)
 {
@@ -40,13 +39,9 @@ static esp_err_t load_metadata(void)
     if (ret == ESP_ERR_NVS_NOT_FOUND) return ESP_OK;
     if (ret != ESP_OK) return ret;
     for (size_t i = 0; i < ESP_BMS_FLASHDB_MAX_SESSIONS; ++i) {
-        char key[12];
-        slot_key(key, sizeof(key), i, "id");
-        (void)nvs_get_u64(handle, key, &s_ids[i]);
-        slot_key(key, sizeof(key), i, "utc");
-        (void)nvs_get_u64(handle, key, &s_anchor_utc[i]);
-        slot_key(key, sizeof(key), i, "rel");
-        (void)nvs_get_u32(handle, key, &s_anchor_elapsed[i]);
+        (void)nvs_get_u64(handle, s_id_keys[i], &s_ids[i]);
+        (void)nvs_get_u64(handle, s_utc_keys[i], &s_anchor_utc[i]);
+        (void)nvs_get_u32(handle, s_rel_keys[i], &s_anchor_elapsed[i]);
     }
     nvs_close(handle);
     return ESP_OK;
@@ -57,17 +52,9 @@ static esp_err_t save_slot_metadata(size_t slot)
     nvs_handle_t handle;
     esp_err_t ret = nvs_open("esp_bms", NVS_READWRITE, &handle);
     if (ret != ESP_OK) return ret;
-    char key[12];
-    slot_key(key, sizeof(key), slot, "id");
-    ret = nvs_set_u64(handle, key, s_ids[slot]);
-    if (ret == ESP_OK) {
-        slot_key(key, sizeof(key), slot, "utc");
-        ret = nvs_set_u64(handle, key, s_anchor_utc[slot]);
-    }
-    if (ret == ESP_OK) {
-        slot_key(key, sizeof(key), slot, "rel");
-        ret = nvs_set_u32(handle, key, s_anchor_elapsed[slot]);
-    }
+    ret = nvs_set_u64(handle, s_id_keys[slot], s_ids[slot]);
+    if (ret == ESP_OK) ret = nvs_set_u64(handle, s_utc_keys[slot], s_anchor_utc[slot]);
+    if (ret == ESP_OK) ret = nvs_set_u32(handle, s_rel_keys[slot], s_anchor_elapsed[slot]);
     if (ret == ESP_OK) ret = nvs_commit(handle);
     nvs_close(handle);
     return ret;
@@ -307,7 +294,7 @@ esp_err_t esp_bms_flashdb_append_fault(const esp_bms_flashdb_fault_t *fault)
 }
 
 typedef struct {
-    uint64_t from, to;
+    uint64_t session_id, from, to;
     size_t limit, count;
     esp_bms_flashdb_fault_cb_t callback;
     void *ctx;
@@ -323,19 +310,21 @@ static bool fault_cb(fdb_tsl_t tsl, void *arg)
     fdb_tsl_to_blob(tsl, &blob);
     if (fault.flags != FLASHDB_FAULT_VERSION) return true;
     const size_t slot = find_session(fault.session_id);
-    if (slot == SIZE_MAX || !session_start_utc(slot)) return true;
+    if (slot == SIZE_MAX || (q->session_id && fault.session_id != q->session_id)) return true;
     fault.timestamp = session_time(slot, fault.elapsed_s);
     if (fault.timestamp < q->from || fault.timestamp > q->to) return true;
     ++q->count;
     return q->callback(&fault, q->ctx);
 }
 
-esp_err_t esp_bms_flashdb_query_faults(uint64_t from, uint64_t to, size_t limit,
+esp_err_t esp_bms_flashdb_query_faults(uint64_t session_id, uint64_t from, uint64_t to, size_t limit,
                                        esp_bms_flashdb_fault_cb_t callback, void *ctx,
                                        size_t *returned)
 {
     if (!s_ready || !callback || !limit || from > to) return ESP_ERR_INVALID_ARG;
-    fault_query_t query = {.from = from, .to = to, .limit = limit, .callback = callback, .ctx = ctx};
+    if (session_id && find_session(session_id) == SIZE_MAX) return ESP_ERR_NOT_FOUND;
+    fault_query_t query = {.session_id = session_id, .from = from, .to = to, .limit = limit,
+                           .callback = callback, .ctx = ctx};
     fdb_tsl_iter(&s_faults, fault_cb, &query);
     if (returned) *returned = query.count;
     return ESP_OK;
@@ -350,6 +339,11 @@ size_t esp_bms_flashdb_session_count(void)
     for (size_t i = 0; i < ESP_BMS_FLASHDB_MAX_SESSIONS; ++i)
         if (s_present[i] && s_counts[i] && s_ids[i]) ++count;
     return count;
+}
+
+bool esp_bms_flashdb_has_session(uint64_t session_id)
+{
+    return s_ready && find_session(session_id) != SIZE_MAX;
 }
 
 esp_err_t esp_bms_flashdb_get_session(size_t index, esp_bms_flashdb_session_t *session)
