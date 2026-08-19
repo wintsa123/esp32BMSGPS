@@ -490,7 +490,13 @@ private class CastSocket(host: String) {
         val response = generateSequence { readLine() }.takeWhile { it.isNotEmpty() }.toList()
         val status = response.firstOrNull().orEmpty()
         Log.i("CastService", "[cast] handshake response=${status.ifEmpty { "<empty>" }} headers=${response.size}")
-        check(status.contains(" 101 ")) { "WebSocket 握手失败：${status.ifEmpty { "无响应" }}" }
+        check(status.contains(" 101 ")) {
+            if (status.contains(" 404 ")) {
+                "设备固件未启用投屏模块（缺少 /cast），请刷入包含 cast 模块的固件"
+            } else {
+                "WebSocket 握手失败：${status.ifEmpty { "无响应" }}"
+            }
+        }
     }
     fun send(payload: ByteArray) { val mask = ByteArray(4).also { random.nextBytes(it) }; output.write(0x82); output.write(CastProtocol.maskedPayloadLength(payload.size)); output.write(mask); for (index in payload.indices) payload[index] = (payload[index].toInt() xor mask[index % 4].toInt()).toByte(); output.write(payload); output.flush() }
     fun readAck(): Int? {

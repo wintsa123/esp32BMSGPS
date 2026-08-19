@@ -65,4 +65,24 @@ class DeviceApiTest {
         assertEquals(7L, faults.values.single().sessionId)
         assertEquals(null, faults.nextCursor)
     }
+
+    @Test fun flashDbHistoryUsesTheSelectedDeviceTransport() {
+        val paths = mutableListOf<String>()
+        val transport = DeviceTransport { _, path, _ ->
+            paths += path
+            when {
+                path.endsWith("/sessions") -> """{"ready":true,"sessions":[]}"""
+                "/samples?" in path -> """{"samples":[],"next_cursor":null}"""
+                else -> """{"faults":[],"next_cursor":null}"""
+            }
+        }
+
+        DeviceApi.historyOverview(transport)
+        DeviceApi.historySamplesPage(transport, session = 7, limit = 8)
+        DeviceApi.historyFaultsPage(transport, session = 7, limit = 20)
+
+        assertEquals("/api/history/sessions", paths[0])
+        assertTrue(paths[1].startsWith("/api/history/samples?session=7"))
+        assertTrue(paths[2].startsWith("/api/history/faults?"))
+    }
 }

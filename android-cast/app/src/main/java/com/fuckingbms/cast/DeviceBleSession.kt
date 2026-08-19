@@ -67,6 +67,7 @@ internal class DeviceBleSession(
     @Volatile var state = DeviceBleState.DISCONNECTED
         private set
     val connected: Boolean get() = state == DeviceBleState.CONNECTED
+    val connectedAddress: String? get() = address
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val requestIds = AtomicInteger(1)
@@ -202,6 +203,19 @@ internal class DeviceBleSession(
         scannerCallbackActive = true
         updateState(DeviceBleState.SCANNING, "正在搜索设备蓝牙")
         mainHandler.postDelayed(scanTimeout, SCAN_TIMEOUT_MS)
+    }
+
+    @SuppressLint("MissingPermission")
+    fun connect(mac: String) {
+        if (state == DeviceBleState.CONNECTING || state == DeviceBleState.CONNECTED) return
+        val adapter = (context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
+        val device = runCatching { adapter?.getRemoteDevice(mac) }.getOrNull()
+        if (device == null) return updateState(DeviceBleState.ERROR, "蓝牙设备地址无效")
+        stopScan()
+        clearGatt()
+        address = mac
+        updateState(DeviceBleState.CONNECTING, "正在连接设备蓝牙")
+        gatt = device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
     }
 
     override fun request(method: String, path: String, body: JSONObject?): String = synchronized(requestLock) {

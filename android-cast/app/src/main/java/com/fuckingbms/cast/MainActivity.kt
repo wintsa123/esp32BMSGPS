@@ -4,6 +4,8 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.Manifest
 import android.bluetooth.BluetoothManager
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothProfile
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
@@ -61,7 +63,16 @@ internal enum class AppRoute(val label: String) {
     RECORDS("记录"),
     MAP("地图"),
     SETTINGS("设置"),
+    BLE_LIST("蓝牙设备"),
 }
+
+internal const val BLUETOOTH_HID_HOST_PROFILE = 4
+internal val SYSTEM_BLUETOOTH_PROFILES = listOf(
+    BluetoothProfile.A2DP,
+    BluetoothProfile.HEADSET,
+    BluetoothProfile.GATT,
+    BLUETOOTH_HID_HOST_PROFILE,
+)
 
 internal data class PrimaryAction(val label: String, val enabled: Boolean, val stopsCast: Boolean = false)
 
@@ -77,7 +88,8 @@ internal fun primaryAction(stage: UiStage, deviceReady: Boolean, mode: DeviceCon
 }
 
 class MainActivity : Activity() {
-    private lateinit var statusChipView: TextView
+    private lateinit var wifiHeaderStatusView: TextView
+    private lateinit var bleHeaderStatusView: TextView
     private lateinit var statusView: TextView
     private lateinit var deviceView: TextView
     private lateinit var castButton: Button
@@ -88,6 +100,10 @@ class MainActivity : Activity() {
     private lateinit var settingsPage: ScrollView
     private lateinit var castPage: ScrollView
     private lateinit var mapPage: ScrollView
+    private lateinit var bleListPage: ScrollView
+    private lateinit var bleListHost: LinearLayout
+    private lateinit var bleListAction: Button
+    private lateinit var headerView: View
     private lateinit var routeBar: View
     private val routePages = mutableMapOf<AppRoute, View>()
     private val routeTabs = mutableMapOf<AppRoute, TextView>()
@@ -129,6 +145,9 @@ class MainActivity : Activity() {
     private var bleDialog: AlertDialog? = null
     private var bleDialogTarget: BleScanTarget? = null
     private var bleDialogHost: LinearLayout? = null
+    private var bleListTarget = BleScanTarget.BMS
+    private var selectedBleMac: String? = null
+    private val blePrefs by lazy { getSharedPreferences("ble", Context.MODE_PRIVATE) }
     private val bmsBleCandidates = linkedMapOf<String, BmsCandidate>()
     private val controllerBleCandidates = linkedMapOf<String, BmsCandidate>()
     private val bleScanTimeout = Runnable { stopBleScan() }
@@ -181,6 +200,7 @@ class MainActivity : Activity() {
     private var infoRequestId = 0
     private lateinit var deviceBle: DeviceBleSession
     private var connectionMode = DeviceConnectionMode.NONE
+    private var wifiConfigOnline = false
     private var pendingDeviceBleStart = false
 
     private var latestStatus: DeviceStatus? = null
@@ -238,13 +258,19 @@ class MainActivity : Activity() {
             }
         }
     }
+    private val bluetoothStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            renderNativePages()
+        }
+    }
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
         registerReceiverCompat(castStatusReceiver, CastService.ACTION_STATUS)
+        registerReceiverCompat(bluetoothStateReceiver, BluetoothAdapter.ACTION_CONNECTION_STATE_CHANGED)
         content()
         deviceBle = DeviceBleSession(this, ::onDeviceBleStateChanged)
-        startDeviceBle()
+        blePrefs.getString("last_mac", null)?.let(deviceBle::connect) ?: startDeviceBle()
         if (readDeepLink(intent)) {
             selectRoute(AppRoute.CAST, refresh = false)
         } else {
@@ -286,6 +312,7 @@ class MainActivity : Activity() {
         releaseNetworkRequest()
         invalidateInfoRequest()
         unregisterReceiver(castStatusReceiver)
+        unregisterReceiver(bluetoothStateReceiver)
         connectivityManager().bindProcessToNetwork(null)
         super.onDestroy()
     }
@@ -309,6 +336,10 @@ class MainActivity : Activity() {
     override fun onBackPressed() {
         if (selectedRoute == AppRoute.MAP) {
             selectRoute(AppRoute.RECORDS, refresh = false)
+            return
+        }
+        if (selectedRoute == AppRoute.BLE_LIST) {
+            selectRoute(AppRoute.BMS, refresh = false)
             return
         }
         if (selectedRoute != AppRoute.CAST) {
@@ -355,7 +386,8 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(12), dp(16), dp(12))
         }
-        shell.addView(buildHeader(), rowParams(bottom = 8))
+        headerView = buildHeader()
+        shell.addView(headerView, rowParams(bottom = 8))
 
         val pages = FrameLayout(this)
         bmsPage = buildBmsPage()
@@ -363,12 +395,14 @@ class MainActivity : Activity() {
         mapPage = buildMapPage()
         settingsPage = buildSettingsPage()
         castPage = buildCastPage()
+        bleListPage = buildBleListPage()
         routePages.clear()
         routePages[AppRoute.BMS] = bmsPage
         routePages[AppRoute.RECORDS] = recordsPage
         routePages[AppRoute.MAP] = mapPage
         routePages[AppRoute.SETTINGS] = settingsPage
         routePages[AppRoute.CAST] = castPage
+        routePages[AppRoute.BLE_LIST] = bleListPage
         routePages.values.forEach { page ->
             pages.addView(page, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -387,7 +421,7 @@ class MainActivity : Activity() {
             ViewGroup.LayoutParams.MATCH_PARENT,
         ))
         setContentView(root)
-        selectRoute(AppRoute.CAST, refresh = false)
+        selectRoute(AppRoute.BMS, refresh = false)
         renderNativePages()
     }
 
@@ -397,6 +431,16 @@ class MainActivity : Activity() {
         brand.addView(label("两轮智控", 25f, COLOR_TEXT, true))
         brand.addView(label("原生仪表、BMS 管理与无线投屏", 13f, COLOR_MUTED), rowParams(top = 2))
         row.addView(brand, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val states = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.END
+            setPadding(0, 0, dp(8), 0)
+        }
+        wifiHeaderStatusView = label("Wi-Fi 未连接", 12f, COLOR_MUTED, true)
+        bleHeaderStatusView = label("蓝牙未连接", 12f, COLOR_MUTED, true)
+        states.addView(wifiHeaderStatusView)
+        states.addView(bleHeaderStatusView, rowParams(top = 3))
+        row.addView(states, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         row.addView(actionButton("刷新", false) { refreshAll() }, LinearLayout.LayoutParams(dp(76), dp(44)))
         return row
     }
@@ -405,12 +449,14 @@ class MainActivity : Activity() {
         val page = page()
         val column = pageColumn()
         val statusCard = card()
-        statusCard.addView(label("BMS 仪表", 18f, COLOR_TEXT, true), rowParams(bottom = 8))
+        val bmsHeader = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        bmsHeader.addView(label("BMS 仪表", 18f, COLOR_TEXT, true), weightedParams(1f))
+        bmsHeader.addView(settingsIconButton { openBleList(BleScanTarget.BMS) }, LinearLayout.LayoutParams(dp(40), dp(40)))
+        statusCard.addView(bmsHeader, rowParams(bottom = 8))
         dashboardConnectionView = label("正在等待设备", 14f, COLOR_MUTED, true)
         statusCard.addView(dashboardConnectionView, rowParams(bottom = 12))
-        statusCard.addView(actionButton("连接", true) { showBleConnectionDialog(BleScanTarget.BMS) }, rowParams(bottom = 12, height = dp(46)))
         val metrics = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        val speedMetric = metric("当前速度", 38f)
+        val speedMetric = metric("电流", 32f)
         val voltageMetric = metric("电池电压", 32f)
         val socMetric = metric("SOC", 32f)
         dashboardSpeedView = speedMetric.second
@@ -423,9 +469,11 @@ class MainActivity : Activity() {
         metrics.addView(socMetric.first, weightedParams(1f))
         statusCard.addView(metrics)
         val controllerCard = card()
+        val controllerHeader = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
         dashboardControllerView = label("控制器离线", 18f, COLOR_TEXT, true)
-        controllerCard.addView(dashboardControllerView)
-        controllerCard.addView(actionButton("连接", true) { showBleConnectionDialog(BleScanTarget.CONTROLLER) }, rowParams(top = 10, bottom = 2, height = dp(46)))
+        controllerHeader.addView(dashboardControllerView, weightedParams(1f))
+        controllerHeader.addView(settingsIconButton { openBleList(BleScanTarget.CONTROLLER) }, LinearLayout.LayoutParams(dp(40), dp(40)))
+        controllerCard.addView(controllerHeader)
         val controllerMetrics = LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(0, dp(12), 0, 0)
@@ -452,121 +500,25 @@ class MainActivity : Activity() {
         controllerTemps.addView(dashboardMotorTempView, weightedParams(1f))
         controllerCard.addView(controllerTemps)
         column.addView(controllerCard, rowParams(bottom = 12))
-        val statusFooter = LinearLayout(this).apply {
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(14), 0, 0)
-        }
-        dashboardBmsView = label("BMS --", 14f, COLOR_GREEN, true)
-        dashboardRecordView = label("暂无骑行记录", 14f, COLOR_MUTED)
-        statusFooter.addView(dashboardBmsView, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        statusFooter.addView(dashboardRecordView, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        statusCard.addView(statusFooter)
         column.addView(statusCard, rowParams(bottom = 12))
-
-        column.addView(actionButton("进入投屏", true) { selectRoute(AppRoute.CAST) }, rowParams(bottom = 10, height = dp(54)))
-        val shortcuts = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        shortcuts.addView(actionButton("BMS 详情", false) { selectRoute(AppRoute.BMS) }, weightedParams(1f, dp(48)))
-        shortcuts.addView(space(dp(10), 1))
-        shortcuts.addView(actionButton("骑行记录", false) { selectRoute(AppRoute.RECORDS) }, weightedParams(1f, dp(48)))
-        column.addView(shortcuts, rowParams(bottom = 12))
-
-        val note = card()
-        note.addView(label("设备控制", 18f, COLOR_TEXT, true))
-        note.addView(label("BMS 连接、保护信息、骑行峰值、显示设置、热点与固件更新均使用原生页面管理。", 14f, COLOR_MUTED), rowParams(top = 6))
-        column.addView(note)
         page.addView(column, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         return page
     }
 
-    private fun buildBmsPage(): ScrollView {
-        val page = buildDashboardPage()
-        val column = page.getChildAt(0) as LinearLayout
-        val summary = card()
-        bmsStateView = label("BMS 未连接", 20f, COLOR_TEXT, true)
-        bmsInfoView = label("连接设备后显示保护板状态", 14f, COLOR_MUTED)
-        summary.addView(bmsStateView)
-        summary.addView(bmsInfoView, rowParams(top = 6))
-        val metrics = LinearLayout(this).apply {
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(14), 0, 0)
-        }
-        val voltage = metric("包电压", 20f)
-        val current = metric("电流", 20f)
-        val temperature = metric("温度", 20f)
-        bmsVoltageView = voltage.second
-        bmsCurrentView = current.second
-        bmsTemperatureView = temperature.second
-        metrics.addView(voltage.first, weightedParams(1f))
-        metrics.addView(verticalRule())
-        metrics.addView(current.first, weightedParams(1f))
-        metrics.addView(verticalRule())
-        metrics.addView(temperature.first, weightedParams(1f))
-        summary.addView(metrics)
-        bmsCapacityView = label("真实容量 --", 14f, COLOR_MUTED)
-        summary.addView(bmsCapacityView, rowParams(top = 12))
-        bmsDetailsView = label("单体电压 --\n剩余容量 --\n运行时间 --", 14f, COLOR_MUTED)
-        summary.addView(bmsDetailsView, rowParams(top = 8))
-        column.addView(summary, rowParams(bottom = 12))
+    private fun buildBmsPage() = buildDashboardPage()
 
-        val safety = card()
-        safety.addView(label("保护与告警", 18f, COLOR_TEXT, true))
-        safety.addView(label("保护", 13f, COLOR_MUTED, true), rowParams(top = 10))
-        bmsProtectionView = label("无", 15f, COLOR_GREEN)
-        safety.addView(bmsProtectionView, rowParams(top = 3))
-        safety.addView(label("告警", 13f, COLOR_MUTED, true), rowParams(top = 10))
-        bmsWarningView = label("无", 15f, COLOR_GREEN)
-        safety.addView(bmsWarningView, rowParams(top = 3))
-        column.addView(safety, rowParams(bottom = 12))
-
-        bmsBindingCard = card().also { binding ->
-            binding.addView(label("连接保护板", 18f, COLOR_TEXT, true))
-            binding.addView(label("选择类型后扫描附近设备，或输入 MAC 地址绑定。", 14f, COLOR_MUTED), rowParams(top = 6, bottom = 6))
-            val type = selectorRow("保护板类型") {
-                chooseOption("保护板类型", bmsTypeOptions, bmsType) { value ->
-                    bmsType = value
-                    updateBmsTypeLabel()
-                }
-            }
-            bmsTypeValue = type.second
-            binding.addView(type.first, rowParams(bottom = 4))
-            bmsMacInput = input("AA:BB:CC:DD:EE:FF", InputType.TYPE_CLASS_TEXT).apply {
-                setSingleLine(true)
-            }
-            binding.addView(label("蓝牙 MAC", 13f, COLOR_MUTED, true), rowParams(top = 8))
-            binding.addView(bmsMacInput, rowParams(top = 4, bottom = 10, height = dp(48)))
-            val controls = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-            bmsScanButton = actionButton("扫描 BMS", false) { startBmsScan() }
-            controls.addView(bmsScanButton, weightedParams(1f, dp(48)))
-            controls.addView(space(dp(10), 1))
-            controls.addView(actionButton("保存并绑定", true) { saveBmsBinding() }, weightedParams(1f, dp(48)))
-            binding.addView(controls)
-            bmsCandidatesHost = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(0, dp(8), 0, 0)
-            }
-            binding.addView(bmsCandidatesHost)
-        }
-        column.addView(bmsBindingCard)
-
-        val controller = card()
-        controller.addView(label("控制器蓝牙", 18f, COLOR_TEXT, true))
-        controller.addView(label("手机扫描控制器，选择后可将 MAC 保存到单片机。", 14f, COLOR_MUTED), rowParams(top = 6))
-        controllerMacInput = input("AA:BB:CC:DD:EE:FF", InputType.TYPE_CLASS_TEXT).apply { setSingleLine(true) }
-        controller.addView(label("蓝牙 MAC", 13f, COLOR_MUTED, true), rowParams(top = 8))
-        controller.addView(controllerMacInput, rowParams(top = 4, bottom = 10, height = dp(48)))
-        controllerBindingCard = controller
-        controllerScanButton = actionButton("扫描控制器", false) { requestBleScan(BleScanTarget.CONTROLLER) }
-        val controllerControls = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        controllerControls.addView(controllerScanButton, weightedParams(1f, dp(48)))
-        controllerControls.addView(space(dp(10), 1))
-        controllerControls.addView(actionButton("保存并绑定", true) { saveControllerBinding() }, weightedParams(1f, dp(48)))
-        controller.addView(controllerControls)
-        controllerCandidatesHost = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(0, dp(8), 0, 0)
-        }
-        controller.addView(controllerCandidatesHost)
-        column.addView(controller, rowParams(top = 12))
+    private fun buildBleListPage(): ScrollView {
+        val page = page()
+        val column = pageColumn()
+        val header = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        header.addView(actionButton("返回", false) { selectRoute(AppRoute.BMS, refresh = false) }, weightedParams(1f, dp(44)))
+        header.addView(label("蓝牙设备", 20f, COLOR_TEXT, true).apply { gravity = Gravity.CENTER }, weightedParams(2f, dp(44)))
+        bleListAction = actionButton("扫描", true) { onBleListAction() }
+        header.addView(bleListAction, weightedParams(1f, dp(44)))
+        column.addView(header, rowParams(bottom = 12))
+        bleListHost = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        column.addView(bleListHost)
+        page.addView(column, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         return page
     }
 
@@ -737,16 +689,6 @@ class MainActivity : Activity() {
     private fun buildCastPage(): ScrollView {
         val page = page()
         val column = pageColumn()
-        statusChipView = label("等待设备连接", 13f, COLOR_MUTED, true).apply {
-            background = roundedBackground(COLOR_SURFACE, 18, COLOR_BORDER)
-            gravity = Gravity.CENTER
-            setPadding(dp(12), dp(6), dp(12), dp(6))
-        }
-        column.addView(statusChipView, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-        ).apply { bottomMargin = dp(10) })
-
         val statusCard = card()
         statusCard.addView(label("投屏状态", 14f, COLOR_MUTED, true))
         statusView = label("等待连接设备热点", 24f, COLOR_TEXT, true).apply {
@@ -798,6 +740,7 @@ class MainActivity : Activity() {
         return when (route) {
             AppRoute.BMS -> true
             AppRoute.CAST -> true
+            AppRoute.BLE_LIST -> true
             AppRoute.RECORDS -> profile.hasSection("records") || profile.hasSection("bms")
             AppRoute.MAP -> profile.supports("gps_track")
             AppRoute.SETTINGS -> profile.hasSection("device")
@@ -817,7 +760,9 @@ class MainActivity : Activity() {
         selectedRoute = route
         routePages.forEach { (key, page) -> page.visibility = if (key == route) View.VISIBLE else View.GONE }
         routeTabs.forEach { (key, tab) -> styleTab(tab, key == route) }
-        routeBar.visibility = View.VISIBLE
+        val secondary = route == AppRoute.BLE_LIST || route == AppRoute.MAP
+        headerView.visibility = if (secondary) View.GONE else View.VISIBLE
+        routeBar.visibility = if (secondary) View.GONE else View.VISIBLE
         if (refresh) refreshRouteData(route)
     }
 
@@ -837,14 +782,19 @@ class MainActivity : Activity() {
     }
 
     private fun deviceTransport(): DeviceTransport? {
+        if (::deviceBle.isInitialized && deviceBle.connected && connectionMode == DeviceConnectionMode.BLE) {
+            return deviceBle
+        }
         if (bindDeviceNetwork()) {
             connectionMode = DeviceConnectionMode.WIFI
             return DeviceApi.httpTransport(host)
         }
         if (::deviceBle.isInitialized && deviceBle.connected) {
+            wifiConfigOnline = false
             connectionMode = DeviceConnectionMode.BLE
             return deviceBle
         }
+        wifiConfigOnline = false
         connectionMode = DeviceConnectionMode.NONE
         return null
     }
@@ -859,12 +809,29 @@ class MainActivity : Activity() {
             }
             return
         }
+        val bondedDeviceMac = blePrefs.getString("last_mac", null) ?: runCatching {
+            val adapter = (getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
+            adapter?.bondedDevices
+                ?.firstOrNull { it.name?.contains("ESP32 BMS GPS", ignoreCase = true) == true }
+                ?.address
+        }.getOrNull()
+        if (bondedDeviceMac != null) {
+            deviceBle.connect(bondedDeviceMac)
+            return
+        }
         deviceBle.start()
     }
 
     private fun onDeviceBleStateChanged(state: DeviceBleState, message: String?) {
+        if (state == DeviceBleState.ERROR && connectionMode == DeviceConnectionMode.NONE) {
+            startDeviceBle()
+        }
         if (state == DeviceBleState.CONNECTED) {
-            if (!bindDeviceNetwork()) connectionMode = DeviceConnectionMode.BLE
+            deviceBle.connectedAddress?.let { blePrefs.edit().putString("last_mac", it).apply() }
+            wifiConfigOnline = false
+            connectionMode = DeviceConnectionMode.BLE
+            deviceError = "蓝牙在线"
+            renderNativePages()
             capabilities = null
             refreshDeviceProfile(force = true, refreshRoute = true)
             return
@@ -956,6 +923,7 @@ class MainActivity : Activity() {
             AppRoute.RECORDS -> refreshDeviceData(loadRecords = true, loadTrack = true)
             AppRoute.MAP -> Unit
             AppRoute.SETTINGS -> refreshDeviceData(loadConfig = true)
+            AppRoute.BLE_LIST -> Unit
         }
     }
 
@@ -973,6 +941,7 @@ class MainActivity : Activity() {
     ) {
         val transport = deviceTransport()
         if (transport == null) {
+            wifiConfigOnline = false
             deviceLoading = false
             latestStatus = null
             latestConfig = null
@@ -987,32 +956,28 @@ class MainActivity : Activity() {
             renderNativePages()
             return
         }
-        if (connectionMode != DeviceConnectionMode.WIFI && (loadRecords || loadTrack)) {
-            if (loadRecords) latestRecords = emptyList()
-            if (loadTrack) latestTrack = emptyList()
-            deviceError = "记录和地图需要连接设备 Wi-Fi"
-            renderNativePages()
-            return
-        }
+        if (connectionMode != DeviceConnectionMode.WIFI && loadTrack) latestTrack = emptyList()
+        val samplePageSize = if (connectionMode == DeviceConnectionMode.BLE) BLE_HISTORY_SAMPLE_PAGE_SIZE else HISTORY_SAMPLE_PAGE_SIZE
+        val faultPageSize = if (connectionMode == DeviceConnectionMode.BLE) BLE_HISTORY_FAULT_PAGE_SIZE else HISTORY_FAULT_PAGE_SIZE
         val requestId = ++deviceRequestId
         deviceLoading = true
         renderNativePages()
         thread {
             val status = if (loadStatus) runCatching { DeviceApi.status(transport) } else null
             val config = if (loadConfig) runCatching { DeviceApi.config(transport) } else null
-            val records = if (loadRecords) runCatching { DeviceApi.rideRecords(host) } else null
-            val track = if (loadTrack) runCatching { DeviceApi.gpsTrack(host) } else null
-            val history = if (loadTrack) runCatching { DeviceApi.historyOverview(host) } else null
+            val records = if (loadRecords) runCatching { DeviceApi.rideRecords(transport) } else null
+            val track = if (loadTrack && connectionMode == DeviceConnectionMode.WIFI) runCatching { DeviceApi.gpsTrack(host) } else null
+            val history = if (loadTrack) runCatching { DeviceApi.historyOverview(transport) } else null
             val selectedSession = history?.getOrNull()?.sessions?.let { sessions ->
                 sessions.firstOrNull { it.id == selectedHistorySessionId } ?: sessions.maxByOrNull { it.id }
             }
             val historySamples = selectedSession?.let { session ->
-                runCatching { DeviceApi.historySamplesPage(host, session.id, limit = HISTORY_SAMPLE_PAGE_SIZE) }
+                runCatching { DeviceApi.historySamplesPage(transport, session.id, limit = samplePageSize) }
             }
             val historyFaults = selectedSession?.let { session ->
                 val from = if (session.calibrated) session.startSeconds else 0L
                 val to = if (session.calibrated) session.endSeconds else Long.MAX_VALUE
-                runCatching { DeviceApi.historyFaultsPage(host, from, to, HISTORY_FAULT_PAGE_SIZE, session.id) }
+                runCatching { DeviceApi.historyFaultsPage(transport, from, to, faultPageSize, session.id) }
             }
             val allRequestedCallsFailed =
                 (!loadStatus || status?.isFailure == true) &&
@@ -1023,6 +988,9 @@ class MainActivity : Activity() {
                 if (requestId != deviceRequestId || isFinishing) return@runOnUiThread
                 if (loadStatus) latestStatus = status?.getOrNull()
                 if (loadConfig) latestConfig = config?.getOrNull()
+                if (loadConfig && connectionMode == DeviceConnectionMode.WIFI) {
+                    wifiConfigOnline = config?.isSuccess == true
+                }
                 if (loadRecords) latestRecords = records?.getOrDefault(emptyList()).orEmpty()
                 if (loadTrack) latestTrack = track?.getOrDefault(emptyList()).orEmpty()
                 if (loadTrack) {
@@ -1032,8 +1000,8 @@ class MainActivity : Activity() {
                     latestHistoryFaults = historyFaults?.getOrNull()?.values.orEmpty()
                     historySampleCursor = historySamples?.getOrNull()?.nextCursor
                     historyFaultCursor = historyFaults?.getOrNull()?.nextCursor
-                    historySamplesHaveMore = latestHistorySamples.size == HISTORY_SAMPLE_PAGE_SIZE && historySampleCursor != null
-                    historyFaultsHaveMore = latestHistoryFaults.size == HISTORY_FAULT_PAGE_SIZE && historyFaultCursor != null
+                    historySamplesHaveMore = latestHistorySamples.size == samplePageSize && historySampleCursor != null
+                    historyFaultsHaveMore = latestHistoryFaults.size == faultPageSize && historyFaultCursor != null
                     historyError = if (history?.isFailure == true) "历史存储接口不可用，已显示兼容 GPS 轨迹" else ""
                     historySamples?.getOrNull()?.let { latestTrack = historyGpsPoints(it.values) }
                 }
@@ -1046,7 +1014,10 @@ class MainActivity : Activity() {
 
     private fun loadHistorySession(sessionId: Long, loadMoreSamples: Boolean = false, loadMoreFaults: Boolean = false) {
         val session = latestHistoryOverview?.sessions?.firstOrNull { it.id == sessionId } ?: return
-        if (!bindDeviceNetwork() || historyLoading) return
+        val transport = deviceTransport() ?: return
+        if (historyLoading) return
+        val samplePageSize = if (connectionMode == DeviceConnectionMode.BLE) BLE_HISTORY_SAMPLE_PAGE_SIZE else HISTORY_SAMPLE_PAGE_SIZE
+        val faultPageSize = if (connectionMode == DeviceConnectionMode.BLE) BLE_HISTORY_FAULT_PAGE_SIZE else HISTORY_FAULT_PAGE_SIZE
         val requestId = ++deviceRequestId
         val reset = !loadMoreSamples && !loadMoreFaults
         historyLoading = true
@@ -1055,18 +1026,18 @@ class MainActivity : Activity() {
         thread {
             val samples = if (reset || loadMoreSamples) runCatching {
                 DeviceApi.historySamplesPage(
-                    host,
+                    transport,
                     session.id,
-                    limit = HISTORY_SAMPLE_PAGE_SIZE,
+                    limit = samplePageSize,
                     cursor = if (loadMoreSamples) historySampleCursor else null,
                 )
             } else null
             val faults = if (reset || loadMoreFaults) runCatching {
                 DeviceApi.historyFaultsPage(
-                    host,
+                    transport,
                     from = if (session.calibrated) session.startSeconds else 0L,
                     to = if (session.calibrated) session.endSeconds else Long.MAX_VALUE,
-                    limit = HISTORY_FAULT_PAGE_SIZE,
+                    limit = faultPageSize,
                     session = session.id,
                     cursor = if (loadMoreFaults) historyFaultCursor else null,
                 )
@@ -1078,14 +1049,14 @@ class MainActivity : Activity() {
                     latestHistorySamples = ((if (loadMoreSamples) latestHistorySamples else emptyList()) + page.values)
                         .takeLast(HISTORY_SAMPLE_WINDOW_SIZE)
                     historySampleCursor = page.nextCursor
-                    historySamplesHaveMore = page.values.size == HISTORY_SAMPLE_PAGE_SIZE && page.nextCursor != null
+                    historySamplesHaveMore = page.values.size == samplePageSize && page.nextCursor != null
                     latestTrack = historyGpsPoints(latestHistorySamples)
                 }
                 faults?.getOrNull()?.let { page ->
                     latestHistoryFaults = ((if (loadMoreFaults) latestHistoryFaults else emptyList()) + page.values)
                         .takeLast(HISTORY_FAULT_WINDOW_SIZE)
                     historyFaultCursor = page.nextCursor
-                    historyFaultsHaveMore = page.values.size == HISTORY_FAULT_PAGE_SIZE && page.nextCursor != null
+                    historyFaultsHaveMore = page.values.size == faultPageSize && page.nextCursor != null
                 }
                 historyError = listOfNotNull(samples?.exceptionOrNull(), faults?.exceptionOrNull())
                     .firstOrNull()?.message?.let { "历史读取失败：$it" }.orEmpty()
@@ -1103,9 +1074,10 @@ class MainActivity : Activity() {
 
     private fun renderNativePages() {
         if (!::dashboardConnectionView.isInitialized) return
+        if (::statusView.isInitialized) render()
         renderRouteBar()
         renderDashboard()
-        renderBms()
+        if (::bmsStateView.isInitialized) renderBms()
         renderRecords()
         renderSettings()
         renderMap()
@@ -1115,11 +1087,11 @@ class MainActivity : Activity() {
         val status = latestStatus
         dashboardConnectionView.text = when {
             deviceLoading -> "正在同步设备数据"
-            status != null -> "设备在线  |  固件 ${status.version}"
+            status != null -> formatBmsState(status)
             else -> deviceError
         }
-        dashboardConnectionView.setTextColor(if (status != null) COLOR_GREEN else COLOR_MUTED)
-        dashboardSpeedView.text = status?.let { "${it.speed}\n${it.speedUnit}" } ?: "--"
+        dashboardConnectionView.setTextColor(if (status?.bms == "online") COLOR_GREEN else COLOR_MUTED)
+        dashboardSpeedView.text = formatDeciAmps(status?.currentDeciAmps)
         dashboardVoltageView.text = formatMillivolts(status?.localBatteryMv ?: status?.packVoltageMv)
         dashboardSocView.text = status?.socPercent?.let { "$it%" } ?: "--"
         dashboardControllerView.text = if (status?.controllerOnline == true) "控制器在线" else "控制器离线"
@@ -1134,13 +1106,6 @@ class MainActivity : Activity() {
         dashboardRpmView.text = status?.controllerRpm?.toString() ?: "--"
         dashboardControllerTempView.text = "控制器温度 ${status?.controllerTempC?.let { "$it C" } ?: "--"}"
         dashboardMotorTempView.text = "电机温度 ${status?.motorTempC?.let { "$it C" } ?: "--"}"
-        dashboardBmsView.text = status?.let { formatBmsState(it) } ?: "BMS --"
-        dashboardBmsView.setTextColor(if (status?.bms == "online") COLOR_GREEN else COLOR_MUTED)
-        dashboardRecordView.text = when {
-            latestRecords.isEmpty() -> "暂无峰值记录"
-            latestRecords.any { it.current } -> "当前骑行正在记录"
-            else -> "${latestRecords.size} 条峰值记录"
-        }
     }
 
     private fun renderBms() {
@@ -1318,9 +1283,8 @@ class MainActivity : Activity() {
         }
         settingsSaveButton.alpha = if (settingsSaveButton.isEnabled) 1f else 0.45f
         otaCard.visibility = if (capabilities?.supports("ota") == false) View.GONE else View.VISIBLE
-        val otaReady = online && connectionMode == DeviceConnectionMode.WIFI && capabilities?.supports("ota") != false
+        val otaReady = online && capabilities?.supports("ota") != false
         setViewEnabled(otaCard, otaReady)
-        if (online && !otaReady && capabilities?.supports("ota") != false) otaProgressText.text = "OTA 需要连接设备 Wi-Fi"
     }
 
     private fun renderMap() {
@@ -1355,6 +1319,13 @@ class MainActivity : Activity() {
 
     private fun startBmsScan() {
         requestBleScan(BleScanTarget.BMS)
+    }
+
+    private fun openBleList(target: BleScanTarget) {
+        bleListTarget = target
+        selectedBleMac = null
+        selectRoute(AppRoute.BLE_LIST, refresh = false)
+        requestBleScan(target)
     }
 
     private fun showBleConnectionDialog(target: BleScanTarget) {
@@ -1407,6 +1378,7 @@ class MainActivity : Activity() {
         }
         stopBleScan()
         activeBleScanTarget = target
+        selectedBleMac = null
         candidatesFor(target).clear()
         renderBleCandidates(target)
         setBleScanButtonsEnabled(false)
@@ -1436,18 +1408,13 @@ class MainActivity : Activity() {
     }
 
     private fun setBleScanButtonsEnabled(enabled: Boolean) {
-        bmsScanButton.isEnabled = enabled
-        controllerScanButton.isEnabled = enabled
+        if (::bmsScanButton.isInitialized) bmsScanButton.isEnabled = enabled
+        if (::controllerScanButton.isInitialized) controllerScanButton.isEnabled = enabled
     }
 
     private fun renderBleCandidates(target: BleScanTarget) {
-        val host = if (bleDialogTarget == target) {
-            bleDialogHost ?: return
-        } else if (target == BleScanTarget.BMS) {
-            bmsCandidatesHost
-        } else {
-            controllerCandidatesHost
-        }
+        if (!::bleListHost.isInitialized || bleListTarget != target) return
+        val host = bleListHost
         host.removeAllViews()
         val candidates = candidatesFor(target)
         if (candidates.isEmpty()) {
@@ -1455,44 +1422,44 @@ class MainActivity : Activity() {
             return
         }
         host.addView(label("扫描结果", 13f, COLOR_MUTED, true), rowParams(top = 4, bottom = 4))
-        candidates.values.forEach { candidate ->
+        candidates.values.sortedWith(compareByDescending<BmsCandidate> { it.name != "未命名设备" }).forEach { candidate ->
             val strength = candidate.rssi?.let { "  $it dBm" }.orEmpty()
+            val selected = selectedBleMac == candidate.mac
             val item = actionButton("${candidate.name}\n${candidate.mac}$strength", false) {
-                if (target == BleScanTarget.BMS) {
-                    bmsMacInput.setText(candidate.mac)
-                    bmsMacInput.setSelection(bmsMacInput.length())
-                    bleDialog?.dismiss()
-                    saveBmsBinding()
-                } else {
-                    controllerMacInput.setText(candidate.mac)
-                    controllerMacInput.setSelection(controllerMacInput.length())
-                    bleDialog?.dismiss()
-                    saveControllerBinding()
-                }
+                selectedBleMac = if (selectedBleMac == candidate.mac) null else candidate.mac
+                renderBleCandidates(target)
             }.apply {
                 gravity = Gravity.START or Gravity.CENTER_VERTICAL
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                background = roundedBackground(if (selected) COLOR_SURFACE_LIGHT else COLOR_SURFACE, 8, if (selected) COLOR_CYAN else COLOR_BORDER)
             }
             host.addView(item, rowParams(bottom = 6, height = dp(56)))
         }
+        bleListAction.text = if (selectedBleMac == null) "扫描" else "连接"
+        bleListAction.isEnabled = activeBleScanTarget == null || selectedBleMac != null
     }
 
     private fun candidatesFor(target: BleScanTarget) =
         if (target == BleScanTarget.BMS) bmsBleCandidates else controllerBleCandidates
 
-    private fun saveBmsBinding() {
-        if (!bindDeviceNetwork()) {
-            toast("请先连接设备热点")
-            return
-        }
-        val mac = bmsMacInput.text.toString().trim()
+    private fun onBleListAction() {
+        val mac = selectedBleMac
+        if (mac == null) return requestBleScan(bleListTarget)
+        stopBleScan()
+        blePrefs.edit().putString("last_mac", mac).apply()
+        deviceBle.connect(mac)
+    }
+
+    private fun saveBmsBinding(macOverride: String? = null) {
+        val transport = deviceTransport() ?: return toast("请先连接设备")
+        val mac = macOverride ?: if (::bmsMacInput.isInitialized) bmsMacInput.text.toString().trim() else ""
         val profile = capabilities
         thread {
             try {
                 if (profile?.supports("bms_type") == true) {
-                    DeviceApi.saveConfig(host, JSONObject().put("bms_type", bmsType))
+                    DeviceApi.saveConfig(transport, JSONObject().put("bms_type", bmsType))
                 }
-                if (mac.isNotBlank() && profile?.supports("bms_mac") == true) DeviceApi.bindBms(host, mac)
+                if (mac.isNotBlank() && profile?.supports("bms_mac") == true) DeviceApi.bindBms(transport, mac)
                 runOnUiThread {
                     toast(if (mac.isBlank()) "已保存保护板类型" else "已提交 BMS 绑定")
                     refreshRouteData(AppRoute.BMS)
@@ -1503,19 +1470,16 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun saveControllerBinding() {
-        if (!bindDeviceNetwork()) {
-            toast("请先连接设备热点")
-            return
-        }
-        val mac = controllerMacInput.text.toString().trim()
+    private fun saveControllerBinding(macOverride: String? = null) {
+        val transport = deviceTransport() ?: return toast("请先连接设备")
+        val mac = macOverride ?: if (::controllerMacInput.isInitialized) controllerMacInput.text.toString().trim() else ""
         if (mac.isBlank()) {
             toast("请输入或选择控制器 MAC")
             return
         }
         thread {
             try {
-                DeviceApi.bindController(host, mac)
+                DeviceApi.bindController(transport, mac)
                 runOnUiThread {
                     toast("已提交控制器绑定")
                     refreshRouteData(AppRoute.BMS)
@@ -1705,6 +1669,11 @@ class MainActivity : Activity() {
     }
 
     private fun requestProjection() {
+        if (capabilities?.hasSection("cast") == false) {
+            setStage(UiStage.READY, "该固件缺少投屏功能，请更新固件")
+            toast("该固件缺少投屏功能，请更新固件")
+            return
+        }
         if (deviceTransport() == null || connectionMode != DeviceConnectionMode.WIFI || info == null) {
             setStage(UiStage.READY, "投屏需要先连接设备 Wi-Fi")
             toast("投屏需要先连接设备 Wi-Fi")
@@ -1749,19 +1718,23 @@ class MainActivity : Activity() {
         } ?: ssid?.let {
             "热点：$it\n目标：$host"
         } ?: "尚未连接设备"
-        val online = connectionMode != DeviceConnectionMode.NONE || info != null || stage in setOf(UiStage.CAST_CONNECTING, UiStage.CASTING)
-        statusChipView.text = when (connectionMode) {
-            DeviceConnectionMode.WIFI -> "设备 Wi-Fi 在线"
-            DeviceConnectionMode.BLE -> "设备蓝牙在线"
-            DeviceConnectionMode.NONE -> if (online) "设备在线" else "等待设备连接"
-        }
-        statusChipView.setTextColor(if (online) COLOR_GREEN else COLOR_MUTED)
-        statusChipView.background = roundedBackground(if (online) COLOR_GREEN_SOFT else COLOR_SURFACE, 18, if (online) COLOR_GREEN else COLOR_BORDER)
-
+        val wifiOnline = wifiConfigOnline
+        val bleOnline = systemBluetoothConnected()
+        wifiHeaderStatusView.text = if (wifiOnline) "Wi-Fi 在线" else "Wi-Fi 未连接"
+        wifiHeaderStatusView.setTextColor(if (wifiOnline) COLOR_GREEN else COLOR_MUTED)
+        bleHeaderStatusView.text = if (bleOnline) "蓝牙在线" else "蓝牙未连接"
+        bleHeaderStatusView.setTextColor(if (bleOnline) COLOR_GREEN else COLOR_MUTED)
         val action = primaryAction(stage, info != null, connectionMode)
         castButton.text = action.label
-        castButton.isEnabled = action.enabled
-        castButton.alpha = if (action.enabled) 1f else 0.45f
+        val castSupported = capabilities?.hasSection("cast") != false
+        castButton.isEnabled = action.enabled && wifiOnline && castSupported
+        castButton.alpha = if (castButton.isEnabled) 1f else 0.45f
+        if (!castSupported && capabilities != null) {
+            statusView.text = "该固件缺少投屏功能，请更新固件"
+        }
+        if (!wifiOnline && stage !in setOf(UiStage.CASTING, UiStage.CAST_CONNECTING)) {
+            statusView.text = "连接设备 Wi-Fi 后才能投屏"
+        }
         connectionButton.text = when {
             stage == UiStage.FAILED && info == null -> "重试连接"
             else -> "连接 / 刷新设备"
@@ -1821,13 +1794,20 @@ class MainActivity : Activity() {
                     connectTimeout = 4_000
                     readTimeout = 4_000
                 }
-                if (connection.responseCode != 200) error("HTTP ${connection.responseCode}")
+                if (connection.responseCode != 200) {
+                    if (connection.responseCode == HttpURLConnection.HTTP_NOT_FOUND) {
+                        error("当前固件未启用投屏模块（缺少 /api/cast/info），请刷入包含 cast 模块的固件")
+                    }
+                    error("HTTP ${connection.responseCode}")
+                }
                 val json = connection.inputStream.bufferedReader().use { it.readText() }
                 val loaded = CastInfo.parse(json)
+                val configResult = runCatching { DeviceApi.config(DeviceApi.httpTransport(host)) }
                 runOnUiThread {
                     if (requestId != infoRequestId) return@runOnUiThread
                     infoRequestInFlight = false
                     info = loaded
+                    wifiConfigOnline = configResult.isSuccess
                     setStage(UiStage.READY)
                 }
             } catch (error: Exception) {
@@ -1835,6 +1815,7 @@ class MainActivity : Activity() {
                     if (requestId != infoRequestId) return@runOnUiThread
                     infoRequestInFlight = false
                     info = null
+                    wifiConfigOnline = false
                     setStage(UiStage.FAILED, "无法获取设备投屏能力：${error.message ?: error.javaClass.simpleName}")
                 }
             }
@@ -1925,6 +1906,11 @@ class MainActivity : Activity() {
         setOnClickListener { action() }
     }
 
+    private fun settingsIconButton(action: () -> Unit) = actionButton("⚙", false, action).apply {
+        contentDescription = "蓝牙设置"
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
+    }
+
     private fun input(hint: String, type: Int) = EditText(this).apply {
         this.hint = hint
         inputType = type
@@ -2000,6 +1986,17 @@ class MainActivity : Activity() {
 
     private fun connectivityManager() = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
 
+    private fun systemBluetoothConnected(): Boolean {
+        if (::deviceBle.isInitialized && deviceBle.connected) return true
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) return false
+        val manager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+        val adapter = manager.adapter ?: return false
+        return SYSTEM_BLUETOOTH_PROFILES.any { profile ->
+            runCatching { adapter.getProfileConnectionState(profile) == BluetoothProfile.STATE_CONNECTED }.getOrDefault(false)
+        }
+    }
+
     private companion object {
         const val PROJECTION_REQUEST = 10
         const val OTA_FILE_REQUEST = 11
@@ -2009,6 +2006,8 @@ class MainActivity : Activity() {
         const val HISTORY_SAMPLE_WINDOW_SIZE = 1_500
         const val HISTORY_FAULT_PAGE_SIZE = 100
         const val HISTORY_FAULT_WINDOW_SIZE = 300
+        const val BLE_HISTORY_SAMPLE_PAGE_SIZE = 8
+        const val BLE_HISTORY_FAULT_PAGE_SIZE = 20
 
         val COLOR_BACKGROUND = Color.rgb(10, 15, 20)
         val COLOR_SURFACE = Color.rgb(23, 31, 40)

@@ -248,6 +248,7 @@ static bool runtime_status_json(esp_bms_idf_runtime_t *runtime, char *json, size
 static bool runtime_config_json(esp_bms_idf_runtime_t *runtime, char *json, size_t json_len);
 static bool runtime_settings_manifest_json(esp_bms_idf_runtime_t *runtime, char *json, size_t json_len);
 static int runtime_apply_config_json(esp_bms_idf_runtime_t *runtime, const char *body, const char **message);
+static bool runtime_http_uri_is(const char *uri, const char *path);
 static esp_err_t runtime_ble_api_register_gatt(void);
 static void runtime_ble_api_worker(void *param);
 #endif
@@ -3968,7 +3969,9 @@ static bool runtime_settings_manifest_json(esp_bms_idf_runtime_t *runtime,
 #if CONFIG_ESP_BMS_LVGL_BRIDGE_BACKLIGHT_DIMMING
     MANIFEST_ITEM("{\"id\":\"brightness\",\"kind\":\"range\",\"label\":{\"zh\":\"亮度\",\"en\":\"Brightness\"},\"value\":%u,\"min\":10,\"max\":100,\"step\":1}", runtime->brightness_percent);
 #endif
+#if ESP_BMS_FEATURE_AUDIO
     MANIFEST_ITEM("{\"id\":\"volume\",\"kind\":\"range\",\"label\":{\"zh\":\"音量\",\"en\":\"Volume\"},\"value\":%u,\"min\":0,\"max\":100,\"step\":1}", runtime->volume_percent);
+#endif
     MANIFEST_ITEM("{\"id\":\"display_rotation\",\"kind\":\"select\",\"label\":{\"zh\":\"屏幕方向\",\"en\":\"Screen rotation\"},\"value\":\"%s\",\"options\":[{\"value\":\"portrait\",\"label\":{\"zh\":\"竖屏\",\"en\":\"Portrait\"}},{\"value\":\"landscape\",\"label\":{\"zh\":\"横屏\",\"en\":\"Landscape\"}},{\"value\":\"inverted_portrait\",\"label\":{\"zh\":\"反向竖屏\",\"en\":\"Inverted portrait\"}},{\"value\":\"inverted_landscape\",\"label\":{\"zh\":\"反向横屏\",\"en\":\"Inverted landscape\"}}]}", runtime_rotation_config_text(runtime->display_rotation));
 #if ESP_BMS_FEATURE_GPS || ESP_BMS_FEATURE_CONTROLLER
     MANIFEST_ITEM("{\"id\":\"speed_unit\",\"kind\":\"select\",\"label\":{\"zh\":\"速度单位\",\"en\":\"Speed unit\"},\"value\":\"%s\",\"options\":[{\"value\":\"km/h\",\"label\":{\"zh\":\"公里/小时\",\"en\":\"km/h\"}},{\"value\":\"mph\",\"label\":{\"zh\":\"英里/小时\",\"en\":\"mph\"}}]}", runtime_speed_unit_config_text(runtime->snapshot.speed_unit));
@@ -4002,6 +4005,10 @@ static bool runtime_settings_manifest_json(esp_bms_idf_runtime_t *runtime,
     ok = ok && runtime_json_append(json, json_len, &offset,
         ",{\"id\":\"update\",\"label\":{\"zh\":\"固件更新\",\"en\":\"Firmware update\"},\"items\":["
         "{\"id\":\"ota\",\"kind\":\"upload\",\"label\":{\"zh\":\"上传并更新\",\"en\":\"Upload and update\"},\"endpoint\":\"/api/ota\",\"code_header\":\"X-Firmware-Code\",\"accept\":\".bin,application/octet-stream\"}]}");
+#endif
+#if ESP_BMS_FEATURE_CAST
+    ok = ok && runtime_json_append(json, json_len, &offset,
+        ",{\"id\":\"cast\",\"label\":{\"zh\":\"投屏\",\"en\":\"Casting\"},\"items\":[]}");
 #endif
     ok = ok && runtime_json_append(json, json_len, &offset, "]}");
     return ok;
@@ -4321,6 +4328,142 @@ static bool runtime_ble_api_notify_json(uint16_t conn_handle, const char *json)
     return true;
 }
 
+typedef struct {
+    char *json;
+    size_t json_len;
+    size_t used;
+    uint64_t last;
+    bool first;
+} runtime_ble_history_query_t;
+
+static uint64_t runtime_ble_query_u64(const char *uri, const char *key, uint64_t fallback)
+{
+    const char *item = strchr(uri, '?');
+    const size_t key_len = strlen(key);
+    while (item && *++item != '\0') {
+        const char *equals = strchr(item, '=');
+        if (!equals) return fallback;
+        const char *next = strchr(equals + 1, '&');
+        if ((size_t)(equals - item) == key_len && strncmp(item, key, key_len) == 0) {
+            char *end = NULL;
+            const unsigned long long value = strtoull(equals + 1, &end, 10);
+            return end != equals + 1 && (!next || end == next) ? (uint64_t)value : fallback;
+        }
+        item = next;
+    }
+    return fallback;
+}
+
+static bool runtime_ble_history_sample_json_cb(uint64_t timestamp,
+                                               const esp_bms_flashdb_sample_t *sample,
+                                               void *context)
+{
+    runtime_ble_history_query_t *query = context;
+    const bool ok = runtime_json_append(query->json, query->json_len, &query->used,
+        "%s{\"t\":%llu,\"elapsed_s\":%u,\"flags\":%u,\"lat_e7\":%ld,\"lon_e7\":%ld,"
+        "\"pack_voltage_mv\":%u,\"current_deci_amps\":%d,\"soc_percent\":%u,"
+        "\"cell_min_mv\":%u,\"cell_avg_mv\":%u,\"cell_max_mv\":%u,\"cell_delta_mv\":%u,"
+        "\"temperatures_c\":[%d,%d,%d,%d,%d,%d]}",
+        query->first ? "" : ",", (unsigned long long)timestamp, (unsigned)sample->elapsed_s,
+        (unsigned)sample->flags, (long)sample->latitude_e7, (long)sample->longitude_e7,
+        (unsigned)sample->pack_voltage_mv, (int)sample->current_deci_amps,
+        (unsigned)sample->soc_percent, (unsigned)sample->cell_min_mv, (unsigned)sample->cell_avg_mv,
+        (unsigned)sample->cell_max_mv, (unsigned)sample->cell_delta_mv,
+        sample->temperatures_c[0], sample->temperatures_c[1], sample->temperatures_c[2],
+        sample->temperatures_c[3], sample->temperatures_c[4], sample->temperatures_c[5]);
+    if (ok) {
+        query->first = false;
+        query->last = timestamp;
+    }
+    return ok;
+}
+
+static bool runtime_ble_history_fault_json_cb(const esp_bms_flashdb_fault_t *fault, void *context)
+{
+    runtime_ble_history_query_t *query = context;
+    const bool ok = runtime_json_append(query->json, query->json_len, &query->used,
+        "%s{\"t\":%llu,\"session\":%llu,\"active_mask\":%u,\"supported_mask\":%u,\"bms_type\":%u}",
+        query->first ? "" : ",", (unsigned long long)fault->timestamp,
+        (unsigned long long)fault->session_id, (unsigned)fault->active_mask,
+        (unsigned)fault->supported_mask, (unsigned)fault->bms_type);
+    if (ok) {
+        query->first = false;
+        query->last = fault->timestamp;
+    }
+    return ok;
+}
+
+static int runtime_ble_history_json(const char *path, char *json, size_t json_len,
+                                    const char **error)
+{
+    if (runtime_http_uri_is(path, "/api/history/sessions")) {
+        size_t used = 0U;
+        bool ok = runtime_json_append(json, json_len, &used,
+            "{\"version\":1,\"ready\":%s,\"backend\":\"flash\",\"capacity_bytes\":%u,\"sessions\":[",
+            esp_bms_flashdb_ready() ? "true" : "false", (unsigned)esp_bms_flashdb_capacity_bytes());
+        bool first = true;
+        for (size_t i = 0; ok && i < ESP_BMS_FLASHDB_MAX_SESSIONS; ++i) {
+            esp_bms_flashdb_session_t session;
+            if (esp_bms_flashdb_get_session(i, &session) != ESP_OK) continue;
+            ok = runtime_json_append(json, json_len, &used,
+                "%s{\"id\":%llu,\"start_s\":%llu,\"end_s\":%llu,\"samples\":%u,"
+                "\"capacity_samples\":%u,\"elapsed_s\":%u,\"calibrated\":%s,\"truncated\":%s,"
+                "\"capacity_reached\":%s}", first ? "" : ",",
+                (unsigned long long)session.session_id, (unsigned long long)session.start_time_s,
+                (unsigned long long)session.end_time_s, (unsigned)session.sample_count,
+                (unsigned)session.capacity_samples, (unsigned)session.elapsed_seconds,
+                session.calibrated ? "true" : "false", session.truncated ? "true" : "false",
+                session.capacity_reached ? "true" : "false");
+            first = false;
+        }
+        if (ok) ok = runtime_json_append(json, json_len, &used, "]}");
+        if (!ok) *error = "history response too large";
+        return ok ? 200 : 500;
+    }
+
+    const bool samples = runtime_http_uri_is(path, "/api/history/samples");
+    const bool faults = runtime_http_uri_is(path, "/api/history/faults");
+    if (!samples && !faults) return 404;
+    const uint64_t session = runtime_ble_query_u64(path, "session", 0U);
+    if (session && !esp_bms_flashdb_has_session(session)) {
+        *error = "session not found";
+        return 404;
+    }
+    uint64_t from = runtime_ble_query_u64(path, "from", 0U);
+    const uint64_t to = runtime_ble_query_u64(path, "to", UINT64_MAX);
+    const uint64_t cursor = runtime_ble_query_u64(path, "cursor", UINT64_MAX);
+    if (cursor < UINT64_MAX && cursor + 1U > from) from = cursor + 1U;
+    size_t limit = (size_t)runtime_ble_query_u64(path, "limit", samples ? 8U : 20U);
+    const size_t max_limit = samples ? 8U : 20U;
+    if (limit == 0U || limit > max_limit) limit = max_limit;
+    runtime_ble_history_query_t query = {
+        .json = json, .json_len = json_len, .used = 0U, .last = 0U, .first = true,
+    };
+    bool ok = runtime_json_append(json, json_len, &query.used,
+                                  samples ? "{\"version\":1,\"samples\":[" : "{\"version\":1,\"faults\":[");
+    size_t returned = 0U;
+    esp_err_t ret = ESP_FAIL;
+    if (ok && samples) {
+        ret = session
+                  ? esp_bms_flashdb_query_session_samples(session, from, to, limit,
+                                                          runtime_ble_history_sample_json_cb, &query, &returned)
+                  : esp_bms_flashdb_query_samples(from, to, limit,
+                                                  runtime_ble_history_sample_json_cb, &query, &returned);
+    } else if (ok) {
+        ret = esp_bms_flashdb_query_faults(session, from, to, limit,
+                                           runtime_ble_history_fault_json_cb, &query, &returned);
+    }
+    if (ret != ESP_OK) {
+        *error = ret == ESP_ERR_NOT_FOUND ? "session not found" : "history query failed";
+        return ret == ESP_ERR_NOT_FOUND ? 404 : 500;
+    }
+    ok = runtime_json_append(json, json_len, &query.used,
+        returned ? "],\"returned\":%u,\"next_cursor\":%llu}" : "],\"returned\":0,\"next_cursor\":null}",
+        (unsigned)returned, (unsigned long long)query.last);
+    if (!ok) *error = "history response too large";
+    return ok ? 200 : 500;
+}
+
 static bool runtime_ble_api_response(esp_bms_idf_runtime_t *runtime,
                                      const runtime_ble_api_request_t *request,
                                      char *response,
@@ -4333,7 +4476,7 @@ static bool runtime_ble_api_response(esp_bms_idf_runtime_t *runtime,
     static char body[HTTP_MANIFEST_JSON_MAX_LEN];
     static char config[HTTP_BODY_MAX_LEN];
     char method[8] = { 0 };
-    char path[48] = { 0 };
+    char path[192] = { 0 };
     bool id_found = false;
     bool version_found = false;
     bool method_found = false;
@@ -4362,6 +4505,12 @@ static bool runtime_ble_api_response(esp_bms_idf_runtime_t *runtime,
                 status = 400;
                 error = "invalid body";
             }
+        } else if (strcmp(method, "GET") == 0 && runtime_http_uri_is(path, "/api/history/sessions")) {
+            status = runtime_ble_history_json(path, body, sizeof(body), &error);
+        } else if (strcmp(method, "GET") == 0 && runtime_http_uri_is(path, "/api/history/samples")) {
+            status = runtime_ble_history_json(path, body, sizeof(body), &error);
+        } else if (strcmp(method, "GET") == 0 && runtime_http_uri_is(path, "/api/history/faults")) {
+            status = runtime_ble_history_json(path, body, sizeof(body), &error);
         } else {
             status = 404;
             error = "path not allowed";

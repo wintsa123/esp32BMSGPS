@@ -1,0 +1,6 @@
+"-specs=/vol1/1000/project/esp32BmsGps/build-codex-s3/specs/picolibc.specs"
+-mlongcalls
+-fno-builtin-memcpy
+-fno-builtin-memset
+-fno-builtin-bzero
+-fno-rtti
