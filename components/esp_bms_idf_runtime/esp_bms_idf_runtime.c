@@ -4239,6 +4239,17 @@ static int runtime_ble_api_access(uint16_t conn_handle,
                : BLE_ATT_ERR_INSUFFICIENT_RES;
 }
 
+static int runtime_ble_api_response_access(uint16_t conn_handle,
+                                           uint16_t attr_handle,
+                                           struct ble_gatt_access_ctxt *ctxt,
+                                           void *arg)
+{
+    (void)conn_handle;
+    (void)attr_handle;
+    (void)arg;
+    return ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR ? 0 : BLE_ATT_ERR_UNLIKELY;
+}
+
 static const struct ble_gatt_svc_def BLE_API_GATT_SERVICES[] = {
     {
         .type = BLE_GATT_SVC_TYPE_PRIMARY,
@@ -4251,6 +4262,7 @@ static const struct ble_gatt_svc_def BLE_API_GATT_SERVICES[] = {
             },
             {
                 .uuid = &BLE_API_RESPONSE_UUID.u,
+                .access_cb = runtime_ble_api_response_access,
                 .val_handle = &s_ble_api_response_handle,
                 .flags = BLE_GATT_CHR_F_NOTIFY | BLE_GATT_CHR_F_NOTIFY_INDICATE_ENC,
             },
@@ -6169,7 +6181,8 @@ esp_err_t esp_bms_idf_runtime_start_bluetooth_advertising(esp_bms_idf_runtime_t 
 
     ret = runtime_bluetooth_start_advertising_now(runtime);
     if (ret == ESP_ERR_INVALID_STATE) {
-        RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, false);
+        /* Scanning owns NimBLE discovery for now; keep the user's request and
+         * let the runtime tick start advertising after scan completion. */
         runtime_project_bluetooth_snapshot(runtime);
         runtime_set_error(runtime, "BT BUSY");
     } else if (ret != ESP_OK) {

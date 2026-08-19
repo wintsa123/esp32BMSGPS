@@ -61,7 +61,6 @@ internal enum class AppRoute(val label: String) {
     RECORDS("记录"),
     MAP("地图"),
     SETTINGS("设置"),
-    DASHBOARD("总览"),
 }
 
 internal data class PrimaryAction(val label: String, val enabled: Boolean, val stopsCast: Boolean = false)
@@ -84,7 +83,6 @@ class MainActivity : Activity() {
     private lateinit var castButton: Button
     private lateinit var connectionButton: Button
 
-    private lateinit var dashboardPage: ScrollView
     private lateinit var bmsPage: ScrollView
     private lateinit var recordsPage: ScrollView
     private lateinit var settingsPage: ScrollView
@@ -128,6 +126,9 @@ class MainActivity : Activity() {
     private lateinit var controllerCandidatesHost: LinearLayout
     private var pendingBleScanTarget: BleScanTarget? = null
     private var activeBleScanTarget: BleScanTarget? = null
+    private var bleDialog: AlertDialog? = null
+    private var bleDialogTarget: BleScanTarget? = null
+    private var bleDialogHost: LinearLayout? = null
     private val bmsBleCandidates = linkedMapOf<String, BmsCandidate>()
     private val controllerBleCandidates = linkedMapOf<String, BmsCandidate>()
     private val bleScanTimeout = Runnable { stopBleScan() }
@@ -357,14 +358,12 @@ class MainActivity : Activity() {
         shell.addView(buildHeader(), rowParams(bottom = 8))
 
         val pages = FrameLayout(this)
-        dashboardPage = buildDashboardPage()
         bmsPage = buildBmsPage()
         recordsPage = buildRecordsPage()
         mapPage = buildMapPage()
         settingsPage = buildSettingsPage()
         castPage = buildCastPage()
         routePages.clear()
-        routePages[AppRoute.DASHBOARD] = dashboardPage
         routePages[AppRoute.BMS] = bmsPage
         routePages[AppRoute.RECORDS] = recordsPage
         routePages[AppRoute.MAP] = mapPage
@@ -406,8 +405,10 @@ class MainActivity : Activity() {
         val page = page()
         val column = pageColumn()
         val statusCard = card()
+        statusCard.addView(label("BMS 仪表", 18f, COLOR_TEXT, true), rowParams(bottom = 8))
         dashboardConnectionView = label("正在等待设备", 14f, COLOR_MUTED, true)
         statusCard.addView(dashboardConnectionView, rowParams(bottom = 12))
+        statusCard.addView(actionButton("连接", true) { showBleConnectionDialog(BleScanTarget.BMS) }, rowParams(bottom = 12, height = dp(46)))
         val metrics = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
         val speedMetric = metric("当前速度", 38f)
         val voltageMetric = metric("电池电压", 32f)
@@ -424,6 +425,7 @@ class MainActivity : Activity() {
         val controllerCard = card()
         dashboardControllerView = label("控制器离线", 18f, COLOR_TEXT, true)
         controllerCard.addView(dashboardControllerView)
+        controllerCard.addView(actionButton("连接", true) { showBleConnectionDialog(BleScanTarget.CONTROLLER) }, rowParams(top = 10, bottom = 2, height = dp(46)))
         val controllerMetrics = LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(0, dp(12), 0, 0)
@@ -477,8 +479,8 @@ class MainActivity : Activity() {
     }
 
     private fun buildBmsPage(): ScrollView {
-        val page = page()
-        val column = pageColumn()
+        val page = buildDashboardPage()
+        val column = page.getChildAt(0) as LinearLayout
         val summary = card()
         bmsStateView = label("BMS 未连接", 20f, COLOR_TEXT, true)
         bmsInfoView = label("连接设备后显示保护板状态", 14f, COLOR_MUTED)
@@ -565,7 +567,6 @@ class MainActivity : Activity() {
         }
         controller.addView(controllerCandidatesHost)
         column.addView(controller, rowParams(top = 12))
-        page.addView(column, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         return page
     }
 
@@ -779,7 +780,7 @@ class MainActivity : Activity() {
             setPadding(dp(4), dp(5), dp(4), dp(5))
         }
         routeTabs.clear()
-        listOf(AppRoute.CAST, AppRoute.DASHBOARD, AppRoute.BMS, AppRoute.RECORDS, AppRoute.SETTINGS).forEach { route ->
+        listOf(AppRoute.CAST, AppRoute.BMS, AppRoute.RECORDS, AppRoute.SETTINGS).forEach { route ->
             val tab = label(route.label, 14f, COLOR_MUTED, true).apply {
                 gravity = Gravity.CENTER
                 isClickable = true
@@ -795,8 +796,8 @@ class MainActivity : Activity() {
     private fun routeVisible(route: AppRoute): Boolean {
         val profile = capabilities ?: return route != AppRoute.MAP
         return when (route) {
-            AppRoute.CAST, AppRoute.DASHBOARD -> true
-            AppRoute.BMS -> profile.hasSection("bms")
+            AppRoute.BMS -> true
+            AppRoute.CAST -> true
             AppRoute.RECORDS -> profile.hasSection("records") || profile.hasSection("bms")
             AppRoute.MAP -> profile.supports("gps_track")
             AppRoute.SETTINGS -> profile.hasSection("device")
@@ -955,7 +956,6 @@ class MainActivity : Activity() {
             AppRoute.RECORDS -> refreshDeviceData(loadRecords = true, loadTrack = true)
             AppRoute.MAP -> Unit
             AppRoute.SETTINGS -> refreshDeviceData(loadConfig = true)
-            AppRoute.DASHBOARD -> refreshDeviceData(loadStatus = true)
         }
     }
 
@@ -1357,6 +1357,32 @@ class MainActivity : Activity() {
         requestBleScan(BleScanTarget.BMS)
     }
 
+    private fun showBleConnectionDialog(target: BleScanTarget) {
+        bleDialog?.dismiss()
+        val host = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(4), 0, 0)
+        }
+        bleDialogTarget = target
+        bleDialogHost = host
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(if (target == BleScanTarget.BMS) "连接 BMS" else "连接控制器")
+            .setView(host)
+            .setNegativeButton("取消") { _, _ -> stopBleScan() }
+            .create()
+        bleDialog = dialog
+        dialog.setOnDismissListener {
+            if (bleDialog === dialog) {
+                stopBleScan()
+                bleDialog = null
+                bleDialogHost = null
+                bleDialogTarget = null
+            }
+        }
+        dialog.show()
+        requestBleScan(target)
+    }
+
     private fun requestBleScan(target: BleScanTarget) {
         val permissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
@@ -1393,7 +1419,9 @@ class MainActivity : Activity() {
         val target = activeBleScanTarget ?: return
         val mac = result.device.address
         val name = result.scanRecord?.deviceName?.takeIf { it.isNotBlank() } ?: "未命名设备"
-        candidatesFor(target)[mac] = BmsCandidate(name, mac, result.rssi)
+        val candidates = candidatesFor(target)
+        if (candidates.containsKey(mac)) return
+        candidates[mac] = BmsCandidate(name, mac, result.rssi)
         runOnUiThread { if (activeBleScanTarget == target) renderBleCandidates(target) }
     }
 
@@ -1413,20 +1441,33 @@ class MainActivity : Activity() {
     }
 
     private fun renderBleCandidates(target: BleScanTarget) {
-        val host = if (target == BleScanTarget.BMS) bmsCandidatesHost else controllerCandidatesHost
+        val host = if (bleDialogTarget == target) {
+            bleDialogHost ?: return
+        } else if (target == BleScanTarget.BMS) {
+            bmsCandidatesHost
+        } else {
+            controllerCandidatesHost
+        }
         host.removeAllViews()
         val candidates = candidatesFor(target)
-        if (candidates.isEmpty()) return
+        if (candidates.isEmpty()) {
+            host.addView(label("正在搜索附近蓝牙设备…", 14f, COLOR_MUTED), rowParams(top = 4, bottom = 4))
+            return
+        }
         host.addView(label("扫描结果", 13f, COLOR_MUTED, true), rowParams(top = 4, bottom = 4))
-        candidates.values.sortedByDescending { it.rssi ?: Int.MIN_VALUE }.forEach { candidate ->
+        candidates.values.forEach { candidate ->
             val strength = candidate.rssi?.let { "  $it dBm" }.orEmpty()
             val item = actionButton("${candidate.name}\n${candidate.mac}$strength", false) {
                 if (target == BleScanTarget.BMS) {
                     bmsMacInput.setText(candidate.mac)
                     bmsMacInput.setSelection(bmsMacInput.length())
+                    bleDialog?.dismiss()
+                    saveBmsBinding()
                 } else {
                     controllerMacInput.setText(candidate.mac)
                     controllerMacInput.setSelection(controllerMacInput.length())
+                    bleDialog?.dismiss()
+                    saveControllerBinding()
                 }
             }.apply {
                 gravity = Gravity.START or Gravity.CENTER_VERTICAL
