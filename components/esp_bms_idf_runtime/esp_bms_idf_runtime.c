@@ -4662,11 +4662,13 @@ esp_err_t esp_bms_idf_runtime_http_cast_ws_handler(httpd_req_t *req)
     httpd_ws_frame_t frame = { 0 };
     esp_err_t ret = httpd_ws_recv_frame(req, &frame, 0);
     if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "[cast] receive header failed: %s", esp_err_to_name(ret));
         esp_bms_idf_runtime_stop_cast(runtime, "socket closed");
         return ret;
     }
     if (frame.type != HTTPD_WS_TYPE_BINARY || frame.len == 0U ||
         frame.len > ESP_BMS_CAST_MESSAGE_MAX_BYTES) {
+        ESP_LOGW(TAG, "[cast] reject frame type=%d len=%u", (int)frame.type, (unsigned)frame.len);
         esp_bms_idf_runtime_stop_cast(runtime, "invalid frame");
         return ESP_ERR_INVALID_SIZE;
     }
@@ -4678,6 +4680,7 @@ esp_err_t esp_bms_idf_runtime_http_cast_ws_handler(httpd_req_t *req)
     frame.payload = runtime->cast_receive_buffer;
     ret = httpd_ws_recv_frame(req, &frame, frame.len);
     if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "[cast] receive payload failed: %s", esp_err_to_name(ret));
         esp_bms_idf_runtime_stop_cast(runtime, "socket read failed");
         return ret;
     }
@@ -4690,8 +4693,19 @@ esp_err_t esp_bms_idf_runtime_http_cast_ws_handler(httpd_req_t *req)
     if (!esp_bms_cast_protocol_parse_jpeg_frame(runtime->cast_receive_buffer,
                                                 frame.len,
                                                 &jpeg_frame)) {
+        ESP_LOGW(TAG, "[cast] reject protocol frame len=%u type=%u version=%u rotation=%u",
+                 (unsigned)frame.len,
+                 (unsigned)runtime->cast_receive_buffer[0],
+                 (unsigned)(frame.len > 1U ? runtime->cast_receive_buffer[1] : 0U),
+                 (unsigned)(frame.len > 6U ? runtime->cast_receive_buffer[6] : 0U));
         esp_bms_idf_runtime_stop_cast(runtime, "invalid JPEG frame");
         return ESP_ERR_INVALID_SIZE;
+    }
+    if (!runtime->cast_frame_active) {
+        runtime->cast_frame_active = true;
+        ESP_LOGI(TAG, "[cast] first JPEG frame received seq=%u bytes=%u",
+                 (unsigned)jpeg_frame.sequence,
+                 (unsigned)jpeg_frame.jpeg_bytes);
     }
     esp_bms_lvgl_bridge_cast_metrics_t metrics = { 0 };
     const esp_bms_display_service_command_t command = {

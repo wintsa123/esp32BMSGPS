@@ -228,6 +228,9 @@ class CastService : Service() {
         } catch (_: IllegalStateException) {
             // A rotation can close the old ImageReader while its callback is in flight.
             return
+        } catch (error: RuntimeException) {
+            Log.e("CastService", "[cast] capture failed", error)
+            return
         } finally { image.close() }
     }
 
@@ -248,12 +251,13 @@ class CastService : Service() {
     }
 
     private fun transmit(host: String) {
-        var failure: Exception? = null
+        var firstFailure: Exception? = null
         for (attempt in 1..3) {
             if (!running) break
             try {
                 report(if (attempt == 1) STATE_CONNECTING else STATE_RETRYING)
                 socket = CastSocket(host)
+                Log.i("CastService", "[cast] connected attempt=$attempt host=$host")
                 report(STATE_STREAMING)
                 var sequence = 1
                 var sentFrameId = 0L
@@ -264,6 +268,9 @@ class CastService : Service() {
                     if (frame != null && frame.id != sentFrameId) {
                         val sentAtNanos = SystemClock.elapsedRealtimeNanos()
                         socket!!.send(CastProtocol.jpegFrame(sequence, frame.target.rotation, frame.jpeg))
+                        if (sentFrameId == 0L) {
+                            Log.i("CastService", "[cast] first frame sent id=${frame.id} seq=$sequence bytes=${frame.jpeg.size}")
+                        }
                         if (socket!!.readAck() != sequence) {
                             throw IOException("设备未确认画面 $sequence")
                         }
@@ -278,6 +285,7 @@ class CastService : Service() {
                     } else {
                         if (System.currentTimeMillis() >= heartbeatAt) {
                             socket!!.send(byteArrayOf(CastProtocol.HEARTBEAT))
+                            Log.i("CastService", "[cast] heartbeat sent")
                             heartbeatAt = System.currentTimeMillis() + 2_000
                         }
                         Thread.sleep(10)
@@ -285,7 +293,8 @@ class CastService : Service() {
                 }
                 return
             } catch (e: Exception) {
-                failure = e
+                if (firstFailure == null) firstFailure = e
+                Log.e("CastService", "[cast] attempt=$attempt failed", e)
                 socket?.close()
                 socket = null
                 if (attempt < 3 && running) {
@@ -294,9 +303,9 @@ class CastService : Service() {
                 }
             }
         }
-        if (running && failure != null) {
+        if (running && firstFailure != null) {
             failed = true
-            report(STATE_FAILED, "投屏连接失败（已重试 3 次）：${failure.message ?: failure.javaClass.simpleName}")
+            report(STATE_FAILED, "投屏连接失败（已重试 3 次）：${firstFailure.message ?: firstFailure.javaClass.simpleName}")
         }
         stopSelf()
     }
@@ -479,18 +488,26 @@ private class CastSocket(host: String) {
         output.write("GET /cast HTTP/1.1\r\nHost: $host\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: $key\r\n\r\n".toByteArray())
         output.flush()
         val response = generateSequence { readLine() }.takeWhile { it.isNotEmpty() }.toList()
-        check(response.firstOrNull()?.contains(" 101 ") == true) { "WebSocket 握手失败" }
+        val status = response.firstOrNull().orEmpty()
+        Log.i("CastService", "[cast] handshake response=${status.ifEmpty { "<empty>" }} headers=${response.size}")
+        check(status.contains(" 101 ")) { "WebSocket 握手失败：${status.ifEmpty { "无响应" }}" }
     }
     fun send(payload: ByteArray) { val mask = ByteArray(4).also { random.nextBytes(it) }; output.write(0x82); output.write(CastProtocol.maskedPayloadLength(payload.size)); output.write(mask); for (index in payload.indices) payload[index] = (payload[index].toInt() xor mask[index % 4].toInt()).toByte(); output.write(payload); output.flush() }
     fun readAck(): Int? {
         val first = input.read()
         val second = input.read()
-        if (first != 0x82 || second !in 0..127 || second != 5) return null
+        if (first != 0x82 || second !in 0..127 || second != 5) {
+            Log.e("CastService", "[cast] invalid ACK header first=$first second=$second")
+            return null
+        }
         val data = ByteArray(5)
         var offset = 0
         while (offset < data.size) {
             val read = input.read(data, offset, data.size - offset)
-            if (read < 0) return null
+            if (read < 0) {
+                Log.e("CastService", "[cast] ACK socket closed offset=$offset")
+                return null
+            }
             offset += read
         }
         return CastProtocol.ackSequence(data)
