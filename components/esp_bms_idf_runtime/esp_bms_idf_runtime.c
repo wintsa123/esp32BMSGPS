@@ -4654,11 +4654,6 @@ esp_err_t esp_bms_idf_runtime_http_cast_ws_handler(httpd_req_t *req)
         return ESP_ERR_INVALID_STATE;
     }
 
-    /* The initial GET only completes the HTTP -> WebSocket upgrade. */
-    if (req->method == HTTP_GET) {
-        return ESP_OK;
-    }
-
     httpd_ws_frame_t frame = { 0 };
     esp_err_t ret = httpd_ws_recv_frame(req, &frame, 0);
     if (ret != ESP_OK) {

@@ -28,7 +28,7 @@ Run GitNexus change detection before commit:
 node .gitnexus/run.cjs detect-changes -r esp32BMSGPS
 ```
 
-## Scenario: Cast WebSocket Upgrade Lifecycle
+## Scenario: Cast WebSocket Frame Handler Lifecycle
 
 ### 1. Scope / Trigger
 
@@ -42,39 +42,39 @@ node .gitnexus/run.cjs detect-changes -r esp32BMSGPS
 
 ### 3. Contracts
 
-- The initial `HTTP_GET` callback completes the HTTP-to-WebSocket upgrade and
-  must return `ESP_OK` without calling `httpd_ws_recv_frame()`.
-- Only subsequent callbacks may read binary heartbeat or JPEG frames.
+- ESP-IDF completes the HTTP-to-WebSocket upgrade before invoking the registered
+  handler; the handler must process the subsequent binary frames.
+- Do not gate frame handling on `req->method == HTTP_GET`: the route method stays
+  GET for WebSocket callbacks.
 - JPEG and ACK payload formats remain owned by `esp_bms_cast_protocol`.
 
 ### 4. Validation & Error Matrix
 
-- Initial `HTTP_GET` -> return `ESP_OK`; do not wait for a frame.
-- Subsequent valid binary frame -> parse and process normally.
+- WebSocket frame callback -> read and validate the binary frame.
+- Valid binary frame -> parse and process normally.
 - Invalid, oversized, or closed frame -> stop casting through the existing
   error path.
 
 ### 5. Good / Base / Bad Cases
 
-- Good: Android receives HTTP `101`, then sends its first frame or heartbeat.
+- Good: Android receives HTTP `101`, then the handler receives its first frame or heartbeat.
 - Base: an idle upgraded connection remains alive through heartbeat frames.
-- Bad: calling `httpd_ws_recv_frame()` from the initial GET creates a handshake
-  deadlock because the client waits for `101` before sending frames.
+- Bad: returning early whenever `req->method == HTTP_GET` drops every WebSocket
+  frame and causes heartbeat timeout.
 
 ### 6. Tests Required
 
 - `python3 -m unittest tests.test_cast_websocket_contract` must verify that the
-  GET return precedes the first `httpd_ws_recv_frame()` call.
+  frame handler is not gated on the HTTP method.
 - Build the selected ESP32-S3 profile and flash through the RFC2217 bridge.
 
 ### 7. Wrong vs Correct
 
 ```c
-/* Wrong: waits for a frame before the upgrade response is completed. */
-httpd_ws_recv_frame(req, &frame, 0);
-
-/* Correct: complete the upgrade first. */
+/* Wrong: the route method remains GET for frame callbacks. */
 if (req->method == HTTP_GET) return ESP_OK;
+
+/* Correct: process the callback as a WebSocket frame. */
 httpd_ws_recv_frame(req, &frame, 0);
 ```
 

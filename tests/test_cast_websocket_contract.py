@@ -10,7 +10,7 @@ RUNTIME = (
 
 
 class CastWebSocketContractTest(unittest.TestCase):
-    def test_upgrade_get_returns_before_receiving_frames(self):
+    def test_frame_handler_does_not_gate_on_http_method(self):
         source = RUNTIME.read_text(encoding="utf-8")
         body = re.search(
             r"esp_bms_idf_runtime_http_cast_ws_handler\([^;]*?\)\s*\{(.*?)\n\}",
@@ -19,13 +19,8 @@ class CastWebSocketContractTest(unittest.TestCase):
         )
         self.assertIsNotNone(body)
         handler = body.group(1)
-        upgrade = handler.index("if (req->method == HTTP_GET)")
-        receive = handler.index("httpd_ws_recv_frame(req, &frame, 0)")
-        self.assertLess(upgrade, receive)
-        self.assertRegex(
-            handler[upgrade:receive],
-            r"if \(req->method == HTTP_GET\)\s*\{\s*return ESP_OK;\s*\}",
-        )
+        self.assertNotIn("if (req->method == HTTP_GET)", handler)
+        self.assertIn("httpd_ws_recv_frame(req, &frame, 0)", handler)
 
 
 if __name__ == "__main__":
