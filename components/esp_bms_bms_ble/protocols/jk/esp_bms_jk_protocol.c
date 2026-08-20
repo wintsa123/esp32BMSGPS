@@ -1,7 +1,10 @@
 #include "esp_bms_jk_protocol.h"
 
 #include <limits.h>
+#include <math.h>
 #include <string.h>
+
+static esp_bms_jk_protocol_t s_protocol = ESP_BMS_JK_PROTOCOL_UNKNOWN;
 
 static uint16_t read_u16_le(const uint8_t *data, size_t offset)
 {
@@ -45,6 +48,47 @@ bool esp_bms_jk_poll_request(uint8_t poll_index, uint8_t out[20])
     return true;
 }
 
+void esp_bms_jk_reset(void)
+{
+    s_protocol = ESP_BMS_JK_PROTOCOL_UNKNOWN;
+}
+
+esp_bms_jk_protocol_t esp_bms_jk_protocol(void)
+{
+    return s_protocol;
+}
+
+static void copy_fixed_text(char *out, size_t out_len, const uint8_t *data, size_t len)
+{
+    size_t copied = 0U;
+    if (!out || out_len == 0U || !data) {
+        return;
+    }
+    while (copied + 1U < out_len && copied < len && data[copied] != 0U) {
+        const uint8_t value = data[copied];
+        out[copied] = value >= 0x20U && value <= 0x7EU ? (char)value : '?';
+        copied++;
+    }
+    out[copied] = '\0';
+}
+
+bool esp_bms_jk_decode_device_info(const uint8_t *frame,
+                                   size_t frame_len,
+                                   esp_bms_jk_device_info_t *info)
+{
+    if (!frame || frame_len < ESP_BMS_JK_FRAME_LEN || !info ||
+        frame[0] != 0x55U || frame[1] != 0xAAU || frame[2] != 0xEBU || frame[3] != 0x90U ||
+        frame[4] != 0x03U || sum8(frame, ESP_BMS_JK_FRAME_LEN - 1U) != frame[299]) {
+        return false;
+    }
+    memset(info, 0, sizeof(*info));
+    copy_fixed_text(info->vendor, sizeof(info->vendor), frame + 6U, 16U);
+    copy_fixed_text(info->hardware_version, sizeof(info->hardware_version), frame + 22U, 8U);
+    copy_fixed_text(info->software_version, sizeof(info->software_version), frame + 30U, 8U);
+    copy_fixed_text(info->device_name, sizeof(info->device_name), frame + 46U, 16U);
+    return true;
+}
+
 static bool decode_jk04_cell_info(const uint8_t frame[ESP_BMS_JK_FRAME_LEN],
                                   esp_bms_bms_telemetry_t *telemetry)
 {
@@ -58,7 +102,7 @@ static bool decode_jk04_cell_info(const uint8_t frame[ESP_BMS_JK_FRAME_LEN],
         if (volts == 0.0f) {
             continue;
         }
-        if (!(volts >= 1.0f && volts <= 6.0f)) {
+        if (!isfinite(volts) || !(volts >= 1.0f && volts <= 6.0f)) {
             return false;
         }
         const uint16_t millivolts = (uint16_t)(volts * 1000.0f + 0.5f);
@@ -152,18 +196,35 @@ static bool decode_cell_info(const uint8_t frame[ESP_BMS_JK_FRAME_LEN],
     if (!telemetry || frame[4] != 0x02U || sum8(frame, ESP_BMS_JK_FRAME_LEN - 1U) != frame[299]) {
         return false;
     }
-    esp_bms_bms_telemetry_t candidate = { 0 };
-    if (decode_jk04_cell_info(frame, &candidate)) {
-        *telemetry = candidate;
-        return true;
+    if (s_protocol == ESP_BMS_JK_PROTOCOL_JK04) {
+        return decode_jk04_cell_info(frame, telemetry);
     }
+    if (s_protocol == ESP_BMS_JK_PROTOCOL_JK02_24S) {
+        return decode_jk02_cell_info(frame, 24U, telemetry);
+    }
+    if (s_protocol == ESP_BMS_JK_PROTOCOL_JK02_32S) {
+        return decode_jk02_cell_info(frame, 32U, telemetry);
+    }
+    esp_bms_bms_telemetry_t candidate = { 0 };
+    const bool decoded_jk04 = decode_jk04_cell_info(frame, &candidate);
     const bool decoded_24s = decode_jk02_cell_info(frame, 24U, &candidate);
     esp_bms_bms_telemetry_t candidate_32s = { 0 };
     const bool decoded_32s = decode_jk02_cell_info(frame, 32U, &candidate_32s);
-    if (decoded_24s == decoded_32s) {
+    const unsigned matches = (unsigned)decoded_jk04 + (unsigned)decoded_24s + (unsigned)decoded_32s;
+    if (matches != 1U) {
         return false;
     }
-    *telemetry = decoded_24s ? candidate : candidate_32s;
+    if (decoded_jk04) {
+        s_protocol = ESP_BMS_JK_PROTOCOL_JK04;
+    } else if (decoded_32s) {
+        s_protocol = ESP_BMS_JK_PROTOCOL_JK02_32S;
+        *telemetry = candidate_32s;
+    } else {
+        s_protocol = ESP_BMS_JK_PROTOCOL_JK02_24S;
+    }
+    if (decoded_jk04 || decoded_24s) {
+        *telemetry = candidate;
+    }
     return true;
 }
 
@@ -197,7 +258,7 @@ bool esp_bms_jk_feed(uint8_t *stream,
         if (*stream_len < ESP_BMS_JK_FRAME_LEN) {
             return false;
         }
-        const bool decoded = decode_cell_info(stream, telemetry);
+        const bool decoded = stream[4] == 0x02U && decode_cell_info(stream, telemetry);
         memmove(stream, stream + ESP_BMS_JK_FRAME_LEN, *stream_len - ESP_BMS_JK_FRAME_LEN);
         *stream_len -= ESP_BMS_JK_FRAME_LEN;
         if (decoded) {

@@ -1,0 +1,2 @@
+{"id":"jk-selftest","kind":"validation","command":"tests/build_jk_bms_protocol_selftest.sh or project-equivalent JK selftest command","summary":"Run focused JK parser tests for all protocol families, fragmentation, CRC rejection, device info, and trailing notification bytes."}
+{"id":"idf-build","kind":"validation","command":"idf.py build (configured project target)","summary":"Compile the changed ESP-IDF BLE and JK protocol paths."}

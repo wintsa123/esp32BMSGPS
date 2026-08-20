@@ -38,6 +38,17 @@ static void init_frame(uint8_t frame[ESP_BMS_JK_FRAME_LEN])
     frame[4] = 0x02U;
 }
 
+static void build_device_info_frame(uint8_t frame[ESP_BMS_JK_FRAME_LEN])
+{
+    init_frame(frame);
+    frame[4] = 0x03U;
+    memcpy(frame + 6U, "JK-B2A16S", 9U);
+    memcpy(frame + 22U, "11.XA", 5U);
+    memcpy(frame + 30U, "11.54", 5U);
+    memcpy(frame + 46U, "BMS", 3U);
+    set_checksum(frame);
+}
+
 static void build_jk02_frame(uint8_t frame[ESP_BMS_JK_FRAME_LEN], uint8_t cells, size_t dynamic)
 {
     init_frame(frame);
@@ -70,6 +81,13 @@ int main(void)
     assert(esp_bms_jk_poll_request(0U, request));
     assert(request[0] == 0xAAU && request[4] == 0x96U);
 
+    uint8_t info_frame[ESP_BMS_JK_FRAME_LEN] = { 0 };
+    esp_bms_jk_device_info_t info = { 0 };
+    build_device_info_frame(info_frame);
+    assert(esp_bms_jk_decode_device_info(info_frame, sizeof(info_frame), &info));
+    assert(strcmp(info.vendor, "JK-B2A16S") == 0 && strcmp(info.hardware_version, "11.XA") == 0 &&
+           strcmp(info.software_version, "11.54") == 0 && strcmp(info.device_name, "BMS") == 0);
+
     uint8_t stream[320] = { 0 };
     size_t stream_len = 0U;
     esp_bms_bms_telemetry_t telemetry = { 0 };
@@ -85,6 +103,7 @@ int main(void)
            telemetry.balancing_supported && telemetry.balancing_active);
 
     stream_len = 0U;
+    esp_bms_jk_reset();
     build_jk02_frame(frame, 16U, 0U);
     assert(esp_bms_jk_feed(stream, &stream_len, sizeof(stream), frame, sizeof(frame), &telemetry));
     assert(telemetry.pack_voltage_mv == 52800U && telemetry.current_deci_amps == -12 &&
@@ -93,11 +112,22 @@ int main(void)
            telemetry.balancing_supported && !telemetry.balancing_active);
 
     stream_len = 0U;
+    esp_bms_jk_reset();
+    build_jk02_frame(frame, 16U, 0U);
+    uint8_t frame_with_tail[ESP_BMS_JK_FRAME_LEN + 20U] = { 0 };
+    memcpy(frame_with_tail, frame, sizeof(frame));
+    assert(esp_bms_jk_feed(stream, &stream_len, sizeof(stream), frame_with_tail,
+                           sizeof(frame_with_tail), &telemetry));
+    assert(stream_len == 20U);
+
+    stream_len = 0U;
+    esp_bms_jk_reset();
     put_u32_le(frame, 154U, UINT32_MAX);
     set_checksum(frame);
     assert(!esp_bms_jk_feed(stream, &stream_len, sizeof(stream), frame, sizeof(frame), &telemetry));
 
     stream_len = 0U;
+    esp_bms_jk_reset();
     init_frame(frame);
     for (uint8_t index = 0U; index < 16U; ++index) {
         put_f32_le(frame, 6U + (size_t)index * 4U, 3.3f);
