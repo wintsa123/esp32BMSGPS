@@ -28,6 +28,58 @@ Run GitNexus change detection before commit:
 node .gitnexus/run.cjs detect-changes -r esp32BMSGPS
 ```
 
+## Scenario: JPEG Cast Aspect Ratio And Quality
+
+### 1. Scope / Trigger
+
+- Trigger: changing Android cast capture geometry, JPEG quality, or the device
+  cast capability response.
+
+### 2. Signatures
+
+- Android geometry helper: `cropRectFor(..., targetWidth, targetHeight)`.
+- Capability field: `GET /api/cast/info` returns `jpeg_quality: 80`.
+
+### 3. Contracts
+
+- Map system insets into the captured image first, then center-crop the
+  remaining source rectangle to the target aspect ratio.
+- Draw the aspect-matched source rectangle into the full target rectangle;
+  never scale width and height independently from mismatched aspect ratios.
+- Keep JPEG v3, latest-frame replacement, ACK backpressure, target resolution,
+  and the maximum frame size unchanged. RGB565 is not the fallback path.
+
+### 4. Validation & Error Matrix
+
+- Invalid insets -> use the full captured image.
+- Explicit positive target dimensions -> center-crop to that aspect ratio.
+- No target dimensions -> preserve inset-only helper behavior.
+- JPEG larger than the protocol maximum -> retain the existing frame rejection
+  behavior; do not queue or split the frame.
+
+### 5. Good / Base / Bad Cases
+
+- Good: a square source sent to a 3:5 target crops equal left/right margins.
+- Base: matching source and target ratios require no additional crop.
+- Bad: drawing an arbitrary source rectangle directly into the full target
+  rectangle stretches circles and text.
+
+### 6. Tests Required
+
+- `RUN_TESTS=1 ./scripts/build-android-cast.sh` must cover portrait and landscape
+  center-crop geometry plus the quality-80 capability fixture.
+- `./scripts/run-host-selftests.sh` must preserve the JPEG v3 protocol contract.
+
+### 7. Wrong vs Correct
+
+```kotlin
+// Wrong: source and target ratios can differ.
+canvas.drawBitmap(source, insetRect, fullTargetRect, paint)
+
+// Correct: crop after inset mapping so both rectangles share one ratio.
+canvas.drawBitmap(source, aspectMatchedCrop, fullTargetRect, paint)
+```
+
 ## Scenario: Cast WebSocket Frame Handler Lifecycle
 
 ### 1. Scope / Trigger

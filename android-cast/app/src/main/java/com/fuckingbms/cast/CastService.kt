@@ -210,7 +210,15 @@ class CastService : Service() {
             }
             targetCanvas!!.drawBitmap(
                 sourceFrame,
-                cropRectFor(image.width, image.height, displayWidth, displayHeight, cropInsets).let {
+                cropRectFor(
+                    image.width,
+                    image.height,
+                    displayWidth,
+                    displayHeight,
+                    cropInsets,
+                    target.width,
+                    target.height,
+                ).let {
                     Rect(it.left, it.top, it.right, it.bottom)
                 },
                 Rect(0, 0, target.width, target.height),
@@ -380,8 +388,12 @@ internal fun cropRectFor(
     sourceWidth: Int,
     sourceHeight: Int,
     insets: CaptureInsets,
+    targetWidth: Int = 0,
+    targetHeight: Int = 0,
 ): CaptureRect {
-    if (imageWidth <= 0 || imageHeight <= 0 || sourceWidth <= 0 || sourceHeight <= 0) {
+    if (imageWidth <= 0 || imageHeight <= 0 || sourceWidth <= 0 || sourceHeight <= 0 ||
+        (targetWidth < 0 || targetHeight < 0 || (targetWidth == 0) != (targetHeight == 0))
+    ) {
         return CaptureRect(0, 0, imageWidth.coerceAtLeast(0), imageHeight.coerceAtLeast(0))
     }
     if (insets.left < 0 || insets.top < 0 || insets.right < 0 || insets.bottom < 0 ||
@@ -394,11 +406,28 @@ internal fun cropRectFor(
     val right = (imageWidth - ceil(insets.right.toDouble() * imageWidth / sourceWidth).toInt())
     val bottom = (imageHeight - ceil(insets.bottom.toDouble() * imageHeight / sourceHeight).toInt())
     if (right <= left || bottom <= top) return CaptureRect(0, 0, imageWidth, imageHeight)
+    var cropLeft = left
+    var cropTop = top
+    var cropRight = right
+    var cropBottom = bottom
+    val width = cropRight - cropLeft
+    val height = cropBottom - cropTop
+    if (targetWidth > 0 && width.toLong() * targetHeight > height.toLong() * targetWidth) {
+        val croppedWidth = (height.toLong() * targetWidth / targetHeight).toInt().coerceAtLeast(1)
+        val trim = width - croppedWidth
+        cropLeft += trim / 2
+        cropRight = cropLeft + croppedWidth
+    } else if (targetWidth > 0 && height.toLong() * targetWidth > width.toLong() * targetHeight) {
+        val croppedHeight = (width.toLong() * targetHeight / targetWidth).toInt().coerceAtLeast(1)
+        val trim = height - croppedHeight
+        cropTop += trim / 2
+        cropBottom = cropTop + croppedHeight
+    }
     return CaptureRect(
-        left.coerceIn(0, imageWidth - 1),
-        top.coerceIn(0, imageHeight - 1),
-        right.coerceIn(1, imageWidth),
-        bottom.coerceIn(1, imageHeight),
+        cropLeft.coerceIn(0, imageWidth - 1),
+        cropTop.coerceIn(0, imageHeight - 1),
+        cropRight.coerceIn(1, imageWidth),
+        cropBottom.coerceIn(1, imageHeight),
     )
 }
 

@@ -4661,7 +4661,7 @@ static esp_err_t runtime_http_cast_info_handler(httpd_req_t *req, esp_bms_idf_ru
     const int written = snprintf(json,
                                  sizeof(json),
                                  "{\"protocol_version\":%u,\"physical_width\":%u,"
-                                 "\"physical_height\":%u,\"codec\":\"jpeg\",\"jpeg_quality\":60,"
+                                 "\"physical_height\":%u,\"codec\":\"jpeg\",\"jpeg_quality\":80,"
                                  "\"target_fps\":20,\"max_frame_bytes\":%u,\"orientations\":["
                                  "{\"rotation\":%u,\"width\":%u,\"height\":%u},"
                                  "{\"rotation\":%u,\"width\":%u,\"height\":%u}],\"active\":%s}",

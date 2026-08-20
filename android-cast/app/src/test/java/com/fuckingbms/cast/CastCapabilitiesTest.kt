@@ -16,6 +16,17 @@ class CastCapabilitiesTest {
         )
     }
 
+    @Test fun cropRectCenterCropsToTargetAspectRatio() {
+        assertEquals(
+            CaptureRect(200, 0, 800, 1000),
+            cropRectFor(1000, 1000, 1000, 1000, CaptureInsets.ZERO, 3, 5),
+        )
+        assertEquals(
+            CaptureRect(0, 200, 1000, 800),
+            cropRectFor(1000, 1000, 1000, 1000, CaptureInsets.ZERO, 5, 3),
+        )
+    }
+
     @Test fun parsesDeviceCapabilitiesAndChoosesLogicalDirection() {
         val info = CastInfo.parse(
             """
@@ -24,7 +35,7 @@ class CastCapabilitiesTest {
                   "physical_width": 320,
                   "physical_height": 480,
                   "codec": "jpeg",
-                  "jpeg_quality": 60,
+                  "jpeg_quality": 80,
                   "target_fps": 20,
                   "max_frame_bytes": 262144,
                   "orientations": [
@@ -38,7 +49,7 @@ class CastCapabilitiesTest {
 
         assertEquals(CastTarget(1, 480, 320), info.targetFor(2400, 1080))
         assertEquals(CastTarget(0, 320, 480), info.targetFor(1080, 2400))
-        assertEquals(60, info.jpegQuality)
+        assertEquals(80, info.jpegQuality)
         assertEquals(CastProtocol.DEFAULT_JPEG_QUALITY, info.jpegQuality)
         assertEquals(262_144, info.maxFrameBytes)
     }
@@ -67,7 +78,7 @@ class CastCapabilitiesTest {
           "physical_width": 320,
           "physical_height": 480,
           "codec": "jpeg",
-          "jpeg_quality": 60,
+          "jpeg_quality": 80,
           "target_fps": 20,
           "max_frame_bytes": 262144,
           "orientations": [
