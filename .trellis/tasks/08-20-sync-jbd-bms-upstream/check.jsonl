@@ -1,0 +1,1 @@
+{"id":"jbd-tests","kind":"validation","command":"./scripts/run-host-selftests.sh","summary":"Validate JBD fragmentation, checksums, auth-frame consumption and existing telemetry."}

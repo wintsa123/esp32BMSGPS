@@ -1,0 +1,2 @@
+{"id":"jbd-upstream","kind":"research","source":"/tmp/jbd-upstream-check/components/jbd_bms_ble/jbd_bms_ble.cpp","summary":"Upstream 99cf7c1 uses FF00/FF01/FF02, DD variable-length frames and FF AA variable-length authentication frames."}
+{"id":"jbd-local","kind":"spec","source":"components/esp_bms_bms_ble/protocols/jbd/esp_bms_jbd_protocol.c","summary":"Keep changes inside the read-only JBD parser; authentication and register writes remain out of scope."}
