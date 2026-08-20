@@ -2,6 +2,8 @@
 
 #include <string.h>
 
+#define JBD_FRAME_MAX_LEN 41U
+
 static uint16_t read_u16_be(const uint8_t *data, size_t offset)
 {
     return ((uint16_t)data[offset] << 8U) | data[offset + 1U];
@@ -12,6 +14,15 @@ static uint16_t checksum(const uint8_t *data, size_t len)
     uint16_t value = 0U;
     for (size_t index = 0U; index < len; ++index) {
         value = (uint16_t)(value - data[index]);
+    }
+    return value;
+}
+
+static uint8_t auth_checksum(const uint8_t *data, size_t len)
+{
+    uint8_t value = 0U;
+    for (size_t index = 0U; index < len; ++index) {
+        value = (uint8_t)(value + data[index]);
     }
     return value;
 }
@@ -71,7 +82,11 @@ bool esp_bms_jbd_feed(uint8_t *stream,
     if (!stream || !stream_len || !chunk || !telemetry || chunk_len == 0U) {
         return false;
     }
-    if (*stream_len + chunk_len > stream_capacity) {
+    if (*stream_len > stream_capacity || chunk_len > stream_capacity) {
+        *stream_len = 0U;
+        return false;
+    }
+    if (chunk_len > stream_capacity - *stream_len) {
         *stream_len = 0U;
     }
     memcpy(stream + *stream_len, chunk, chunk_len);
@@ -89,22 +104,47 @@ bool esp_bms_jbd_feed(uint8_t *stream,
             break;
         }
         if (stream[0] == 0xFFU) { /* FF AA authentication response */
-            const size_t frame_len = *stream_len >= 4U && stream[1] == 0xAAU ? 5U + stream[3] : 1U;
+            if (stream[1] != 0xAAU) {
+                memmove(stream, stream + 1U, *stream_len - 1U);
+                --*stream_len;
+                continue;
+            }
+            const size_t frame_len = 5U + stream[3];
+            if (frame_len > JBD_FRAME_MAX_LEN || frame_len > stream_capacity) {
+                memmove(stream, stream + 1U, *stream_len - 1U);
+                --*stream_len;
+                continue;
+            }
             if (*stream_len < frame_len) {
                 break;
+            }
+            if (auth_checksum(stream + 2U, (size_t)stream[3] + 2U) != stream[frame_len - 1U]) {
+                memmove(stream, stream + 1U, *stream_len - 1U);
+                --*stream_len;
+                continue;
             }
             memmove(stream, stream + frame_len, *stream_len - frame_len);
             *stream_len -= frame_len;
             continue;
         }
         const size_t frame_len = 7U + stream[3];
-        if (frame_len > stream_capacity || *stream_len < frame_len) {
+        if (frame_len > JBD_FRAME_MAX_LEN || frame_len > stream_capacity) {
+            memmove(stream, stream + 1U, *stream_len - 1U);
+            --*stream_len;
+            continue;
+        }
+        if (*stream_len < frame_len) {
             break;
         }
         const uint16_t remote_crc = read_u16_be(stream, frame_len - 3U);
-        const bool valid = stream[frame_len - 1U] == 0x77U &&
+        const bool valid = stream[2] == 0U && stream[frame_len - 1U] == 0x77U &&
                            checksum(stream + 2U, (size_t)stream[3] + 2U) == remote_crc;
-        const bool decoded = valid && stream[1] == 0x03U && stream[2] == 0x03U &&
+        if (!valid) {
+            memmove(stream, stream + 1U, *stream_len - 1U);
+            --*stream_len;
+            continue;
+        }
+        const bool decoded = stream[1] == 0x03U &&
                              decode_basic(stream + 4U, stream[3], telemetry);
         memmove(stream, stream + frame_len, *stream_len - frame_len);
         *stream_len -= frame_len;

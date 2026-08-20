@@ -2,25 +2,6 @@
 
 ## Goal
 
-TBD.
-
-## Requirements
-
-- TBD
-
-## Acceptance Criteria
-
-- [ ] TBD
-
-## Notes
-
-- Keep `prd.md` focused on requirements, constraints, and acceptance criteria.
-- Lightweight tasks can remain PRD-only.
-- For complex tasks, add `design.md` for technical design and `implement.md` for execution planning before `task.py start`.
-# 检查并同步 JBD BMS 上游协议
-
-## Goal
-
 以 `syssi/esphome-jbd-bms` 当前 `main`（调研基线 `99cf7c15dbc2056295c88abc3fae7c1d83e6fb7f`）为依据，确认本项目 JBD BLE 基础遥测协议是否过时，并明确最小必要同步范围。
 
 ## Confirmed Findings

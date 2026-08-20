@@ -5,7 +5,6 @@ import android.app.AlertDialog
 import android.Manifest
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothAdapter
-import android.bluetooth.BluetoothProfile
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
@@ -65,14 +64,6 @@ internal enum class AppRoute(val label: String) {
     SETTINGS("设置"),
     BLE_LIST("蓝牙设备"),
 }
-
-internal const val BLUETOOTH_HID_HOST_PROFILE = 4
-internal val SYSTEM_BLUETOOTH_PROFILES = listOf(
-    BluetoothProfile.A2DP,
-    BluetoothProfile.HEADSET,
-    BluetoothProfile.GATT,
-    BLUETOOTH_HID_HOST_PROFILE,
-)
 
 internal data class PrimaryAction(val label: String, val enabled: Boolean, val stopsCast: Boolean = false)
 
@@ -1092,7 +1083,7 @@ class MainActivity : Activity() {
         }
         dashboardConnectionView.setTextColor(if (status?.bms == "online") COLOR_GREEN else COLOR_MUTED)
         dashboardSpeedView.text = formatDeciAmps(status?.currentDeciAmps)
-        dashboardVoltageView.text = formatMillivolts(status?.localBatteryMv ?: status?.packVoltageMv)
+        dashboardVoltageView.text = formatMillivolts(status?.packVoltageMv)
         dashboardSocView.text = status?.socPercent?.let { "$it%" } ?: "--"
         dashboardControllerView.text = if (status?.controllerOnline == true) "控制器在线" else "控制器离线"
         dashboardControllerView.setTextColor(if (status?.controllerOnline == true) COLOR_GREEN else COLOR_MUTED)
@@ -1986,16 +1977,7 @@ class MainActivity : Activity() {
 
     private fun connectivityManager() = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
 
-    private fun systemBluetoothConnected(): Boolean {
-        if (::deviceBle.isInitialized && deviceBle.connected) return true
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-            checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) return false
-        val manager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
-        val adapter = manager.adapter ?: return false
-        return SYSTEM_BLUETOOTH_PROFILES.any { profile ->
-            runCatching { adapter.getProfileConnectionState(profile) == BluetoothProfile.STATE_CONNECTED }.getOrDefault(false)
-        }
-    }
+    private fun systemBluetoothConnected() = ::deviceBle.isInitialized && deviceBle.connected
 
     private companion object {
         const val PROJECTION_REQUEST = 10

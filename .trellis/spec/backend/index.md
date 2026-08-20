@@ -25,6 +25,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [GPS Diagnostic Telemetry](./gps-diagnostic-telemetry.md) | GSA/GSV parsing, snapshot projection, and settings-page status contract | Active |
 | [FlashDB History Storage](./flashdb-history.md) | Board-flash session, sample, fault, and Android API contract | Active |
 | [JK BMS BLE Protocol](./jk-bms-protocol.md) | GATT matching and three-layout JK frame contract | Active |
+| [JBD BMS BLE Protocol](./jbd-bms-protocol.md) | Read-only frame assembly, checksums, and resynchronization contract | Active |
 
 ---
 

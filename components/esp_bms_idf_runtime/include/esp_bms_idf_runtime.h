@@ -199,6 +199,7 @@ struct esp_bms_idf_runtime {
     uint16_t bms_char_val_handle;
     uint16_t bms_write_char_val_handle;
     uint16_t bms_cccd_handle;
+    uint16_t bms_cccd_value;
     uint16_t controller_service_start_handle;
     uint16_t controller_service_end_handle;
     uint16_t controller_char_val_handle;

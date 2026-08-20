@@ -200,6 +200,7 @@ static void settings_navigation_track_drag(const lv_point_t *point)
 
 void settings_show_root(void)
 {
+    settings_root_build();
     settings_bms_popup_close();
     if (s_ui.settings_swipe_drag_dx == 0) {
         settings_swipe_indicator_hide();

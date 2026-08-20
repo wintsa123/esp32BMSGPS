@@ -534,6 +534,7 @@ static void bms_reset_connection_state(esp_bms_idf_runtime_t *runtime, bms_ble_p
     runtime->bms_char_val_handle = 0U;
     runtime->bms_write_char_val_handle = 0U;
     runtime->bms_cccd_handle = 0U;
+    runtime->bms_cccd_value = 1U;
     runtime->bms_frame_len = 0U;
     runtime->bms_poll_index = 0U;
     runtime->bms_status_poll_elapsed_ms = 0U;
@@ -689,7 +690,8 @@ static esp_err_t bms_subscribe(esp_bms_idf_runtime_t *runtime)
     if (!runtime || runtime->bms_conn_handle == 0xFFFFU || runtime->bms_cccd_handle == 0U) {
         return ESP_ERR_INVALID_STATE;
     }
-    const uint8_t value[2] = { 1U, 0U };
+    const uint16_t cccd_value = runtime->bms_cccd_value == 2U ? 2U : 1U;
+    const uint8_t value[2] = { (uint8_t)cccd_value, (uint8_t)(cccd_value >> 8U) };
     runtime->bms_ble_phase = (uint8_t)BMS_BLE_PHASE_SUBSCRIBING;
     RUNTIME_SET_FLAG(runtime, BMS_WRITE_IN_FLIGHT, true);
     const int rc = ble_gattc_write_flat(runtime->bms_conn_handle,
@@ -767,9 +769,12 @@ static int bms_chr_cb(uint16_t conn_handle,
     if (error && error->status == 0 && chr) {
         if (bms_is_jk(runtime) && bms_is_jk_characteristic(chr)) {
             const uint8_t properties = chr->properties;
-            if ((properties & BLE_GATT_CHR_F_NOTIFY) != 0U ||
-                (properties & BLE_GATT_CHR_F_INDICATE) != 0U) {
+            if ((properties & BLE_GATT_CHR_F_NOTIFY) != 0U) {
                 runtime->bms_char_val_handle = chr->val_handle;
+                runtime->bms_cccd_value = 1U;
+            } else if ((properties & BLE_GATT_CHR_F_INDICATE) != 0U) {
+                runtime->bms_char_val_handle = chr->val_handle;
+                runtime->bms_cccd_value = 2U;
             }
             if ((properties & (BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP)) != 0U) {
                 runtime->bms_write_char_val_handle = chr->val_handle;

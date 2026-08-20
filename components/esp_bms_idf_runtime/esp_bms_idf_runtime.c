@@ -136,7 +136,8 @@ static const char *TAG = "bms_idf_runtime";
 #define BLE_MEDIA_HID_WORKER_STACK 2048U
 #define BLE_MEDIA_HID_WORKER_PRIORITY 4U
 #define BLE_MEDIA_HID_REPORT_RELEASE_DELAY_MS 30U
-#define BLE_HOST_MIN_INTERNAL_FREE_BYTES (24U * 1024U)
+#define BLE_HOST_MIN_INTERNAL_FREE_BYTES (40U * 1024U)
+#define BLE_HOST_SETUP_RELEASE_THRESHOLD_BYTES (48U * 1024U)
 #define BLE_API_REQUEST_MAX_LEN 512U
 #define BLE_API_RESPONSE_MAX_LEN 4096U
 #define BLE_API_QUEUE_LEN 1U
@@ -6315,6 +6316,22 @@ esp_err_t esp_bms_idf_runtime_start_bluetooth_advertising(esp_bms_idf_runtime_t 
     }
     RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, true);
     runtime_project_bluetooth_snapshot(runtime);
+
+    const uint32_t internal_caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+    const size_t internal_free = heap_caps_get_free_size(internal_caps);
+    const bool setup_services_active = RUNTIME_FLAG(runtime, SETUP_AP_STARTED) ||
+                                       RUNTIME_FLAG(runtime, HTTP_SERVER_STARTED);
+    if (setup_services_active && internal_free < BLE_HOST_SETUP_RELEASE_THRESHOLD_BYTES) {
+        ESP_LOGW(TAG,
+                 "[ble] releasing setup services before init: internal8_free=%u threshold=%u",
+                 (unsigned)internal_free,
+                 (unsigned)BLE_HOST_SETUP_RELEASE_THRESHOLD_BYTES);
+        const esp_err_t stop_ret = esp_bms_idf_runtime_stop_setup_services(runtime);
+        if (stop_ret != ESP_OK) {
+            ESP_LOGW(TAG, "[ble] setup service release failed: %s", esp_err_to_name(stop_ret));
+        }
+        runtime_log_heap_state("ble_after_setup_release");
+    }
 
     esp_err_t ret = esp_bms_idf_runtime_ensure_ble_host(runtime);
     if (ret != ESP_OK) {

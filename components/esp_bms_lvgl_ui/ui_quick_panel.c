@@ -937,8 +937,14 @@ static settings_detail_id_t quick_panel_item_detail_id(const quick_panel_item_t 
         return SETTINGS_DETAIL_BLUETOOTH;
     case QUICK_ITEM_HOTSPOT:
         return SETTINGS_DETAIL_HOTSPOT;
-    case QUICK_ITEM_ROTATE:
+#if ESP_BMS_FEATURE_GPS
     case QUICK_ITEM_SPEED:
+        return SETTINGS_DETAIL_GPS;
+#endif
+    case QUICK_ITEM_ROTATE:
+#if !ESP_BMS_FEATURE_GPS
+    case QUICK_ITEM_SPEED:
+#endif
     case QUICK_ITEM_SETTINGS:
     case QUICK_ITEM_LOCK:
     default:

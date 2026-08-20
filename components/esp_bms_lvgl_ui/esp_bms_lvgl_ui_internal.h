@@ -1010,6 +1010,7 @@ const lv_font_t *settings_disclosure_font(void);
 void settings_navigation_set_hidden(bool hidden, bool animated);
 void settings_navigation_scroll_event_cb(lv_event_t *event);
 void settings_show_root(void);
+void settings_root_build(void);
 bool settings_detail_is_enabled(settings_detail_id_t detail_id);
 void settings_detail_chrome_show(settings_detail_id_t detail_id);
 void settings_navigate_back(void);

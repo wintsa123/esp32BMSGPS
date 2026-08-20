@@ -401,7 +401,19 @@ bool esp_bms_lvgl_ui_simulator_gps_settings_smoke(void)
 #if !ESP_BMS_FEATURE_GPS
     return false;
 #else
-    if (esp_bms_lvgl_ui_simulator_open_gps_settings() != ESP_OK) {
+    uint32_t gps_index = QUICK_PANEL_BUTTON_COUNT;
+    for (uint32_t index = 0; index < QUICK_PANEL_BUTTON_COUNT; ++index) {
+        if (QUICK_PANEL_ITEMS[index].kind == QUICK_ITEM_SPEED) {
+            gps_index = index;
+            break;
+        }
+    }
+    if (gps_index >= QUICK_PANEL_BUTTON_COUNT || !s_ui.quick_panel_items[gps_index]) {
+        return false;
+    }
+    set_quick_panel_open(true);
+    if (lv_obj_send_event(s_ui.quick_panel_items[gps_index], LV_EVENT_CLICKED, NULL) != LV_RESULT_OK ||
+        !esp_bms_lvgl_ui_simulator_gps_settings_visible()) {
         return false;
     }
     settings_show_detail(SETTINGS_DETAIL_DASHBOARD);

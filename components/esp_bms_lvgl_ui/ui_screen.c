@@ -445,6 +445,32 @@ void finish_page_scroll_state(bool flush_snapshot)
     }
 }
 
+void settings_root_build(void)
+{
+    if (!s_ui.settings_carousel || lv_obj_get_child_count(s_ui.settings_carousel) != 0U) {
+        return;
+    }
+
+    const bool portrait = s_ui.width < s_ui.height;
+    const int32_t row_h = portrait ? SETTINGS_LIST_ROW_H_PORTRAIT : SETTINGS_LIST_ROW_H_LANDSCAPE;
+    const int32_t list_x = SETTINGS_LIST_MARGIN_X;
+    const int32_t list_w = s_ui.width - (SETTINGS_LIST_MARGIN_X * 2);
+    lv_obj_t *list_card = settings_list_card(s_ui.settings_carousel,
+                                             list_x,
+                                             SETTINGS_LIST_PAD_Y,
+                                             list_w,
+                                             row_h,
+                                             ARRAY_SIZE(SETTINGS_OPTIONS));
+    for (uint32_t index = 0; index < ARRAY_SIZE(SETTINGS_OPTIONS); ++index) {
+        settings_option_card(list_card,
+                             0,
+                             (int32_t)index * row_h,
+                             list_w,
+                             row_h,
+                             &SETTINGS_OPTIONS[index]);
+    }
+}
+
 void move_to_page(esp_bms_lvgl_page_t page, bool animated)
 {
     if (page == ESP_BMS_LVGL_PAGE_CONTROLLER) {
@@ -1693,23 +1719,6 @@ void create_screen(lv_display_t *display)
                         LV_EVENT_SCROLL_END,
                         NULL);
 
-    const int32_t row_h = portrait ? SETTINGS_LIST_ROW_H_PORTRAIT : SETTINGS_LIST_ROW_H_LANDSCAPE;
-    const int32_t list_x = SETTINGS_LIST_MARGIN_X;
-    const int32_t list_w = s_ui.width - (SETTINGS_LIST_MARGIN_X * 2);
-    lv_obj_t *list_card = settings_list_card(s_ui.settings_carousel,
-                                             list_x,
-                                             SETTINGS_LIST_PAD_Y,
-                                             list_w,
-                                             row_h,
-                                             ARRAY_SIZE(SETTINGS_OPTIONS));
-    for (uint32_t index = 0; index < ARRAY_SIZE(SETTINGS_OPTIONS); ++index) {
-        settings_option_card(list_card,
-                             0,
-                             (int32_t)index * row_h,
-                             list_w,
-                             row_h,
-                             &SETTINGS_OPTIONS[index]);
-    }
     s_ui.settings_detail = lv_obj_create(s_ui.settings_page);
     clear_style(s_ui.settings_detail);
     lv_obj_set_pos(s_ui.settings_detail, 0, 0);
@@ -1884,8 +1893,6 @@ void create_screen(lv_display_t *display)
     s_ui.setup_ap_qr = NULL;
     s_ui.setup_ap_qr_ready = false;
     s_ui.setup_ap_qr_encode_attempted = false;
-    settings_show_root();
-
     quick_panel_layout_t *quick_layout = quick_layout_ensure_current();
 
     s_ui.quick_panel = lv_obj_create(screen);

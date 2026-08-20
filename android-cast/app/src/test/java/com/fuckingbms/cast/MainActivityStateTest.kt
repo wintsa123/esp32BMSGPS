@@ -6,10 +6,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MainActivityStateTest {
-    @Test fun systemBluetoothProfilesIncludeBleHidHost() {
-        assertTrue(SYSTEM_BLUETOOTH_PROFILES.contains(BLUETOOTH_HID_HOST_PROFILE))
-    }
-
     @Test fun primaryActionFollowsDeviceAndCastState() {
         assertFalse(primaryAction(UiStage.WAITING_SCAN, false).enabled)
         assertFalse(primaryAction(UiStage.READY, false).enabled)

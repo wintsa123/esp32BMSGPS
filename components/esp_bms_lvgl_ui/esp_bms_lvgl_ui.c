@@ -430,6 +430,9 @@ static bool return_home_start_allowed(const lv_point_t *point)
 void show_dashboard_view(void)
 {
     settings_bms_popup_close();
+    if (s_ui.settings_carousel) {
+        lv_obj_clean(s_ui.settings_carousel);
+    }
     if (s_ui.settings_swipe_drag_dx == 0) {
         settings_swipe_indicator_hide();
     }
