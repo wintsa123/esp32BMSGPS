@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 32
-- **Last Active**: 2026-08-19
+- **Total Sessions**: 33
+- **Last Active**: 2026-08-20
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1044 | Active |
+| `journal-1.md` | ~1065 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 33 | 2026-08-20 | 修复 JPEG 投屏比例与清晰度 | `1a9dfd3a` | `main` |
 | 32 | 2026-08-19 | 修复投屏 WebSocket 握手阻塞 | `dbb15c31` | `main` |
 | 31 | 2026-08-19 | 修复安卓投屏系统栏黑边 | `077e09f8` | `main` |
 | 30 | 2026-07-29 | FarDriver controller gear displays | `516f2994` | `main` |

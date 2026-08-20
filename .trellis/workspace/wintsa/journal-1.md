@@ -1042,3 +1042,24 @@ Android 投屏启动时传递窗口系统栏 inset，CastService 编码前安全
 ### Status
 
 [OK] **Completed**
+
+
+## Session 33: 修复 JPEG 投屏比例与清晰度
+
+**Date**: 2026-08-20
+**Task**: 修复 JPEG 投屏比例与清晰度
+**Branch**: `main`
+
+### Summary
+
+Android 投屏改为等比例居中裁剪，JPEG quality 恢复为 80；Android 单测、主机自测和 S3 profile 构建通过，并经 RFC2217 成功刷写。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1a9dfd3a` | (see git log) |
+
+### Status
+
+[OK] **Completed**
