@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"质量门禁要求 GitNexus detect-changes、投屏协议回归和 WebSocket 行为不回退。"}
+{"file":".trellis/spec/backend/hardware-build-flash.md","reason":"最终 Android/ESP-IDF 构建与实机验证路径。"}
