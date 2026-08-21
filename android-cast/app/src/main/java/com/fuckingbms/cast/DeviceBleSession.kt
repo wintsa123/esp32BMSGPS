@@ -77,6 +77,7 @@ internal class DeviceBleSession(
     private var gatt: BluetoothGatt? = null
     private var requestCharacteristic: BluetoothGattCharacteristic? = null
     private var responseCharacteristic: BluetoothGattCharacteristic? = null
+    private var notificationRetryCount = 0
     private var mtu = 23
     private var address: String? = null
     @Volatile private var writeLatch: CountDownLatch? = null
@@ -106,7 +107,7 @@ internal class DeviceBleSession(
             } ?: return
             if (device.address != address) return
             when (intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.BOND_NONE)) {
-                BluetoothDevice.BOND_BONDED -> gatt?.discoverServices()
+                BluetoothDevice.BOND_BONDED -> discoverServicesWhenEncrypted()
                 BluetoothDevice.BOND_NONE -> fail("设备蓝牙配对失败")
             }
         }
@@ -117,10 +118,12 @@ internal class DeviceBleSession(
             if (status == BluetoothGatt.GATT_SUCCESS && newState == BluetoothProfile.STATE_CONNECTED) {
                 this@DeviceBleSession.gatt = gatt
                 gatt.requestMtu(MAX_MTU)
-                if (gatt.device.bondState == BluetoothDevice.BOND_BONDED) {
-                    gatt.discoverServices()
-                } else if (!gatt.device.createBond()) {
-                    fail("无法建立设备蓝牙配对")
+                when (gatt.device.bondState) {
+                    BluetoothDevice.BOND_BONDED -> discoverServicesWhenEncrypted()
+                    BluetoothDevice.BOND_BONDING -> Unit
+                    else -> if (!gatt.device.createBond()) {
+                        fail("无法建立设备蓝牙配对")
+                    }
                 }
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 clearGatt()
@@ -152,6 +155,24 @@ internal class DeviceBleSession(
                 fail("设备 BLE 响应描述符缺失")
                 return
             }
+            notificationRetryCount = 0
+            writeNotificationDescriptor(gatt, descriptor)
+        }
+
+        override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
+            if (descriptor.uuid != CCCD_UUID) return
+            if (status != BluetoothGatt.GATT_SUCCESS && notificationRetryCount < MAX_NOTIFICATION_RETRIES) {
+                notificationRetryCount++
+                mainHandler.postDelayed({
+                    if (this@DeviceBleSession.gatt === gatt) writeNotificationDescriptor(gatt, descriptor)
+                }, NOTIFICATION_RETRY_DELAY_MS)
+                return
+            }
+            if (status == BluetoothGatt.GATT_SUCCESS) updateState(DeviceBleState.CONNECTED, null)
+            else fail("启用设备 BLE 响应失败：$status")
+        }
+
+        private fun writeNotificationDescriptor(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor) {
             val started = if (Build.VERSION.SDK_INT >= 33) {
                 gatt.writeDescriptor(descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE) == BluetoothGatt.GATT_SUCCESS
             } else {
@@ -160,12 +181,6 @@ internal class DeviceBleSession(
                 @Suppress("DEPRECATION") gatt.writeDescriptor(descriptor)
             }
             if (!started) fail("无法启用设备 BLE 响应")
-        }
-
-        override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
-            if (descriptor.uuid != CCCD_UUID) return
-            if (status == BluetoothGatt.GATT_SUCCESS) updateState(DeviceBleState.CONNECTED, null)
-            else fail("启用设备 BLE 响应失败：$status")
         }
 
         override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
@@ -316,6 +331,7 @@ internal class DeviceBleSession(
     private fun clearGatt() {
         requestCharacteristic = null
         responseCharacteristic = null
+        notificationRetryCount = 0
         assembler.reset()
         val current = gatt
         gatt = null
@@ -328,6 +344,15 @@ internal class DeviceBleSession(
         mainHandler.post { onStateChanged(value, detail) }
     }
 
+    private fun discoverServicesWhenEncrypted() {
+        val currentGatt = gatt ?: return
+        mainHandler.postDelayed({
+            if (this@DeviceBleSession.gatt === currentGatt && state == DeviceBleState.CONNECTING) {
+                currentGatt.discoverServices()
+            }
+        }, SERVICE_DISCOVERY_DELAY_MS)
+    }
+
     companion object {
         internal const val PROTOCOL_VERSION = 1
         internal const val MAX_REQUEST_BYTES = 512
@@ -336,6 +361,9 @@ internal class DeviceBleSession(
         private const val SCAN_TIMEOUT_MS = 10_000L
         private const val WRITE_TIMEOUT_SECONDS = 4L
         private const val REQUEST_TIMEOUT_SECONDS = 10L
+        private const val SERVICE_DISCOVERY_DELAY_MS = 300L
+        private const val NOTIFICATION_RETRY_DELAY_MS = 300L
+        private const val MAX_NOTIFICATION_RETRIES = 2
         val SERVICE_UUID: UUID = UUID.fromString("4f91e100-23b2-4ee7-9f9a-86d1093f0a01")
         val REQUEST_UUID: UUID = UUID.fromString("4f91e100-23b2-4ee7-9f9a-86d1093f0a02")
         val RESPONSE_UUID: UUID = UUID.fromString("4f91e100-23b2-4ee7-9f9a-86d1093f0a03")

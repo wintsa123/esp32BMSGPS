@@ -1,5 +1,6 @@
 /target/
 /build/
+/build*/
 /build_dragdiag/
 /build_dragdiag_db/
 /build-simulator/

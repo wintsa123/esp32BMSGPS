@@ -20,7 +20,7 @@
 #include "widgets/canvas/lv_canvas.h"
 #include "widgets/line/lv_line.h"
 
-static const char *TAG = "bms_lvgl_ui";
+static const char *TAG __attribute__((unused)) = "bms_lvgl_ui";
 
 LV_FONT_DECLARE(bluetoothon);
 LV_FONT_DECLARE(wlanJZ);
@@ -37,8 +37,7 @@ LV_FONT_DECLARE(fireblade_scale_digits_14);
 LV_FONT_DECLARE(settings_zh_10);
 LV_FONT_DECLARE(settings_zh_13);
 LV_FONT_DECLARE(settings_zh_16);
-#if ESP_BMS_FEATURE_BLE_MEDIA_HID || \
-    ESP_BMS_FEATURE_CLASSIC_MEDIA_HID
+#if ESP_BMS_FEATURE_BLE_MEDIA_HID
 LV_FONT_DECLARE(media_zh_13);
 #endif
 #if defined(CONFIG_IDF_TARGET_ESP32S3) || ESP_BMS_LVGL_UI_SIMULATOR
@@ -70,7 +69,7 @@ LV_FONT_DECLARE(settings_zh_18);
 #define QUICK_EDIT_BUTTON_SIZE_S3 36
 #define ARRAY_SIZE(array) (sizeof(array) / sizeof((array)[0]))
 #define MEDIA_HID_PAGE_ENABLED \
-    (ESP_BMS_FEATURE_BLE_MEDIA_HID || ESP_BMS_FEATURE_CLASSIC_MEDIA_HID)
+    ESP_BMS_FEATURE_BLE_MEDIA_HID
 #define MUSIC_PAGE_ENABLED MEDIA_HID_PAGE_ENABLED
 #if MEDIA_HID_PAGE_ENABLED
 #define MUSIC_CONTROL_COUNT 5U

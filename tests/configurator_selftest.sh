@@ -149,19 +149,6 @@ rg -qx 'DASHBOARDS=fireblade,s1000rr' "${work_dir}/s3-gps-build/s3-gps/firmware.
 FIRMWARE_BUILD_ROOT="${work_dir}/no-cast-build" "${repo_root}/start.sh" configure --lang en --profile no-cast --mcu esp32 --board esp32-wroom-32e-legacy --display st7789-spi --input xpt2046-spi --modules audio,bms,controller,gps,network,ota --dashboards fireblade >/dev/null
 rg -qx 'MODULES=audio,bms,controller,gps,network,ota' "${work_dir}/no-cast-build/no-cast/firmware.env"
 "${repo_root}/start.sh" validate --lang en --mcu esp32 --board esp32-wroom-32e-legacy --display st7789-spi --input xpt2046-spi --modules ble-media-hid >/dev/null
-FIRMWARE_BUILD_ROOT="${work_dir}/classic-media-hid-build" "${repo_root}/start.sh" configure --lang en --profile classic-media-hid-check --mcu esp32 --board esp32-wroom-32e-legacy --display st7789-spi --input xpt2046-spi --modules classic-media-hid >/dev/null
-rg -qx 'MODULES=classic-media-hid' "${work_dir}/classic-media-hid-build/classic-media-hid-check/firmware.env"
-rg -Fx 'set(ESP_BMS_FEATURE_BLE 0 CACHE BOOL "Firmware profile BLE capability" FORCE)' "${work_dir}/classic-media-hid-build/classic-media-hid-check/generated/profile.cmake"
-rg -Fx 'set(ESP_BMS_FEATURE_CLASSIC_MEDIA_HID 1 CACHE BOOL "Firmware profile Classic HID media feature" FORCE)' "${work_dir}/classic-media-hid-build/classic-media-hid-check/generated/profile.cmake"
-rg -Fq 'esp_bms_classic_media_hid;esp_bms_idf_runtime' "${work_dir}/classic-media-hid-build/classic-media-hid-check/generated/profile.cmake"
-rg -qx '# CONFIG_BT_NIMBLE_ENABLED is not set' "${work_dir}/classic-media-hid-build/classic-media-hid-check/sdkconfig.defaults"
-rg -qx 'CONFIG_BT_BLUEDROID_ENABLED=y' "${work_dir}/classic-media-hid-build/classic-media-hid-check/sdkconfig.defaults"
-rg -qx 'CONFIG_BTDM_CTRL_MODE_BR_EDR_ONLY=y' "${work_dir}/classic-media-hid-build/classic-media-hid-check/sdkconfig.defaults"
-! rg -q '^CONFIG_BT_NIMBLE_ENABLED=y' "${work_dir}/classic-media-hid-build/classic-media-hid-check/sdkconfig.defaults"
-expect_fail 'classic-media-hid requires capability BT_CLASSIC' "${repo_root}/start.sh" validate --lang en --mcu esp32s3 --modules classic-media-hid
-expect_fail 'classic-media-hid requires capability BT_CLASSIC' "${repo_root}/start.sh" validate --lang en --config "${work_dir}/c3-spi.env" --modules classic-media-hid
-expect_fail 'classic-media-hid conflicts with ble-media-hid' "${repo_root}/start.sh" validate --lang en --mcu esp32 --board esp32-wroom-32e-legacy --display st7789-spi --input xpt2046-spi --modules ble-media-hid,classic-media-hid
-expect_fail 'bms conflicts with classic-media-hid' "${repo_root}/start.sh" validate --lang en --mcu esp32 --board esp32-wroom-32e-legacy --display st7789-spi --input xpt2046-spi --modules classic-media-hid,bms
 
 FIRMWARE_BUILD_ROOT="${work_dir}/version-build" "${repo_root}/start.sh" configure --lang en --profile version-test --firmware-version v1.2.3 >/dev/null
 rg -qx 'FIRMWARE_VERSION=v1.2.3' "${work_dir}/version-build/version-test/firmware.env"
@@ -538,7 +525,6 @@ rg -q '^config: .*/interactive-retry-build/esp32s3-n16r8-st7796u-gt1151/firmware
 
 printf '1\n2\n\n\n\n\nn\n' | FIRMWARE_BUILD_ROOT="${work_dir}/interactive-cancel-build" "${repo_root}/start.sh" >"${work_dir}/interactive-cancel.out"
 rg -q '^[[:space:]]+[0-9]+\) ble-media-hid ' "${work_dir}/interactive-cancel.out"
-! rg -q 'classic-media-hid' "${work_dir}/interactive-cancel.out"
 rg -Fq '  1) gt1151-i2c ' "${work_dir}/interactive-cancel.out"
 rg -Fq '  2) none ' "${work_dir}/interactive-cancel.out"
 rg -q '^已取消生成配置。$' "${work_dir}/interactive-cancel.out"

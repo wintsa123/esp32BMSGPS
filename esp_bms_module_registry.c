@@ -5,7 +5,6 @@
 #define ESP_BMS_FEATURE_CONTROLLER 1
 #define ESP_BMS_FEATURE_GPS 1
 #define ESP_BMS_FEATURE_NETWORK 1
-#define ESP_BMS_FEATURE_CLASSIC_MEDIA_HID 0
 
 #include "esp_bms_idf_runtime.h"
 
@@ -29,9 +28,6 @@
 #include "esp_bms_network.h"
 #endif
 
-#if ESP_BMS_FEATURE_CLASSIC_MEDIA_HID
-#include "esp_bms_classic_media_hid.h"
-#endif
 
 esp_err_t esp_bms_module_registry_init(esp_bms_idf_runtime_t *runtime)
 {
@@ -86,12 +82,6 @@ esp_err_t esp_bms_module_registry_start(esp_bms_idf_runtime_t *runtime)
         first_error = bms_ret;
     }
 #endif
-#if ESP_BMS_FEATURE_CLASSIC_MEDIA_HID
-    const esp_err_t classic_media_ret = esp_bms_classic_media_hid_start();
-    if (first_error == ESP_OK) {
-        first_error = classic_media_ret;
-    }
-#endif
     (void)runtime;
     return first_error;
 }
@@ -107,37 +97,7 @@ bool esp_bms_module_registry_tick(esp_bms_idf_runtime_t *runtime, uint32_t elaps
 #else
     (void)elapsed_ms;
 #endif
-#if ESP_BMS_FEATURE_CLASSIC_MEDIA_HID
-    bool connected = false;
-    bool suspended = false;
-    bool discoverable = false;
-    if (esp_bms_classic_media_hid_tick(&connected, &suspended, &discoverable)) {
-        esp_bms_idf_runtime_flag_set(runtime,
-                                     ESP_BMS_IDF_RUNTIME_FLAG_BLUETOOTH_CONNECTED,
-                                     connected);
-        esp_bms_idf_runtime_flag_set(runtime,
-                                     ESP_BMS_IDF_RUNTIME_FLAG_BLUETOOTH_ADVERTISING,
-                                     discoverable);
-        if (connected) {
-            esp_bms_idf_runtime_flag_set(runtime,
-                                         ESP_BMS_IDF_RUNTIME_FLAG_BLUETOOTH_ADVERTISE_REQUESTED,
-                                         false);
-        }
-        esp_bms_dashboard_snapshot_flag_set(&runtime->snapshot,
-                                            ESP_BMS_DASHBOARD_FLAG_BLUETOOTH_ENABLED,
-                                            true);
-        esp_bms_dashboard_snapshot_flag_set(&runtime->snapshot,
-                                            ESP_BMS_DASHBOARD_FLAG_BLUETOOTH_ADVERTISING,
-                                            discoverable);
-        esp_bms_dashboard_snapshot_flag_set(&runtime->snapshot,
-                                            ESP_BMS_DASHBOARD_FLAG_BLUETOOTH_CONNECTED,
-                                            connected);
-        runtime->snapshot.ble_media_hid_connected = connected;
-        runtime->snapshot.ble_media_hid_suspended = suspended;
-        changed = true;
-    }
-#endif
-#if !ESP_BMS_FEATURE_GPS && !ESP_BMS_FEATURE_CLASSIC_MEDIA_HID
+#if !ESP_BMS_FEATURE_GPS
     (void)runtime;
 #endif
     return changed;

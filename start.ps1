@@ -894,12 +894,6 @@ function Write-Profile([System.Collections.IDictionary]$Config) {
     }
     if ((Split-Csv $Config.MODULES) -contains 'cast') { $CastFeature = 1 }
     if ((Split-Csv $Config.MODULES) -contains 'ble-media-hid') { $BleMediaHidFeature = 1 }
-    if ((Split-Csv $Config.MODULES) -contains 'classic-media-hid') {
-        $MainRequires = @('esp_bms_classic_media_hid') + $MainRequires
-        $ClassicMediaHidFeature = 1
-        $BleFeature = 0
-        $Trimming = 'classic-media-hid-spike;legacy-runtime-partially-untrimmed'
-    }
     if ((Split-Csv $Config.DASHBOARDS) -contains 's1000rr') { $DashboardS1000rrFeature = 1 }
     if ((Split-Csv $Config.DASHBOARDS) -contains 'controller') { $DashboardControllerFeature = 1 }
     if ((Split-Csv $Config.DASHBOARDS) -contains 'fireblade') { $DashboardFirebladeFeature = 1 }
@@ -918,7 +912,6 @@ function Write-Profile([System.Collections.IDictionary]$Config) {
         "set(ESP_BMS_FEATURE_OTA $OtaFeature CACHE BOOL `"Firmware profile OTA feature`" FORCE)"
         "set(ESP_BMS_FEATURE_CAST $CastFeature CACHE BOOL `"Firmware profile cast feature`" FORCE)"
         "set(ESP_BMS_FEATURE_BLE_MEDIA_HID $BleMediaHidFeature CACHE BOOL `"Firmware profile BLE HID media feature`" FORCE)"
-        "set(ESP_BMS_FEATURE_CLASSIC_MEDIA_HID $ClassicMediaHidFeature CACHE BOOL `"Firmware profile Classic HID media feature`" FORCE)"
         "set(ESP_BMS_FEATURE_DASHBOARD_S1000RR $DashboardS1000rrFeature CACHE BOOL `"Firmware profile S1000RR dashboard`" FORCE)"
         "set(ESP_BMS_FEATURE_DASHBOARD_CONTROLLER $DashboardControllerFeature CACHE BOOL `"Firmware profile controller dashboard`" FORCE)"
         "set(ESP_BMS_FEATURE_DASHBOARD_FIREBLADE $DashboardFirebladeFeature CACHE BOOL `"Firmware profile Fireblade dashboard`" FORCE)"
@@ -941,12 +934,9 @@ function Write-Profile([System.Collections.IDictionary]$Config) {
         Get-Content -LiteralPath $SdkconfigDefaults |
             Where-Object {
                 $_ -notmatch '^CONFIG_PARTITION_TABLE_CUSTOM_FILENAME=' -and
-                ($ClassicMediaHidFeature -eq 0 -or $_ -notmatch '^(# )?CONFIG_BT')
+                $true
             }
     )
-    if ($ClassicMediaHidFeature -eq 1) {
-        $SdkconfigLines += Get-Content -LiteralPath (Join-Path $Root 'config/sdkconfig/sdkconfig.defaults.esp32-classic-media-hid')
-    }
     $SdkconfigLines += "CONFIG_PARTITION_TABLE_CUSTOM_FILENAME=`"$ProfilePartitionTable`""
     Write-Utf8NoBom (Join-Path $Temp 'sdkconfig.defaults') (($SdkconfigLines -join "`n") + "`n")
     Copy-Item -LiteralPath (Join-Path $Root $script:BoardPartitions) -Destination (Join-Path $Temp 'partitions.csv')
@@ -1285,7 +1275,6 @@ function Get-CatalogOptionDescription([string]$Kind, [string]$Id) {
         'module/ota' = @('本地 Web OTA 更新（自动需要 network）', 'Local web OTA update (automatically requires network)')
         'module/cast' = @('手机投屏', 'Phone casting')
         'module/ble-media-hid' = @('BLE HID 媒体按键（免 App，系统蓝牙直接配对）', 'BLE HID media keys (no app needed, pair via system Bluetooth)')
-        'module/classic-media-hid' = @('Classic Bluetooth 媒体控制验证（ESP32 专用）', 'Classic Bluetooth media control validation (ESP32 only)')
         'dashboard/s1000rr' = @('宝马 S1000RR 速度仪表', 'BMW S1000RR speed dashboard')
         'dashboard/controller' = @('控制器监控仪表', 'Controller monitoring dashboard')
         'dashboard/fireblade' = @('本田火刃仪表', 'Honda Fireblade dashboard')

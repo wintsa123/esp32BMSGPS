@@ -47,10 +47,6 @@
 #define ESP_BMS_FEATURE_BLE_MEDIA_HID 0
 #endif
 
-#ifndef ESP_BMS_FEATURE_CLASSIC_MEDIA_HID
-#define ESP_BMS_FEATURE_CLASSIC_MEDIA_HID 0
-#endif
-
 #ifdef __cplusplus
 extern "C" {
 #endif

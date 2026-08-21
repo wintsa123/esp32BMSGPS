@@ -2,9 +2,6 @@
 #include "esp_bms_flashdb.h"
 #include "esp_bms_ble_media_hid.h"
 #include "esp_bms_cast_protocol.h"
-#if ESP_BMS_FEATURE_CLASSIC_MEDIA_HID
-#include "esp_bms_classic_media_hid.h"
-#endif
 
 #include "esp_bms_display_service.h"
 #include "esp_bms_profile_hardware.h"
@@ -6407,7 +6404,6 @@ void esp_bms_idf_runtime_stop_controller_ble(esp_bms_idf_runtime_t *runtime)
     }
 }
 
-#if !ESP_BMS_FEATURE_CLASSIC_MEDIA_HID
 static esp_err_t runtime_bluetooth_stop_advertising(esp_bms_idf_runtime_t *runtime)
 {
     if (!runtime) {
@@ -6430,7 +6426,6 @@ static esp_err_t runtime_bluetooth_stop_advertising(esp_bms_idf_runtime_t *runti
             return ESP_FAIL;
         }
     }
-#endif
     RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISING, false);
     runtime_project_bluetooth_snapshot(runtime);
     runtime_set_error(runtime, "BT HIDE");
@@ -6677,15 +6672,14 @@ static bool runtime_action_feature_enabled(esp_bms_lvgl_action_t action)
     case ESP_BMS_LVGL_ACTION_SET_CONTROLLER_RATIO:
         return ESP_BMS_FEATURE_CONTROLLER;
     case ESP_BMS_LVGL_ACTION_ENABLE_BLUETOOTH_ADVERTISING:
-        return ESP_BMS_FEATURE_BMS || ESP_BMS_FEATURE_CONTROLLER || ESP_BMS_FEATURE_BLE_MEDIA_HID ||
-               ESP_BMS_FEATURE_CLASSIC_MEDIA_HID;
+        return ESP_BMS_FEATURE_BMS || ESP_BMS_FEATURE_CONTROLLER || ESP_BMS_FEATURE_BLE_MEDIA_HID;
     case ESP_BMS_LVGL_ACTION_PHONE_MEDIA_PREVIOUS:
     case ESP_BMS_LVGL_ACTION_PHONE_MEDIA_NEXT:
     case ESP_BMS_LVGL_ACTION_PHONE_MEDIA_VOLUME_DOWN:
     case ESP_BMS_LVGL_ACTION_PHONE_MEDIA_VOLUME_UP:
-        return ESP_BMS_FEATURE_BLE_MEDIA_HID || ESP_BMS_FEATURE_CLASSIC_MEDIA_HID;
+        return ESP_BMS_FEATURE_BLE_MEDIA_HID;
     case ESP_BMS_LVGL_ACTION_MEDIA_PLAY_PAUSE:
-        return ESP_BMS_FEATURE_BLE_MEDIA_HID || ESP_BMS_FEATURE_CLASSIC_MEDIA_HID;
+        return ESP_BMS_FEATURE_BLE_MEDIA_HID;
     case ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_UNIT:
     case ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_SOURCE:
     case ESP_BMS_LVGL_ACTION_SET_SPEED_SOURCE:
@@ -7014,76 +7008,34 @@ bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,
     case ESP_BMS_LVGL_ACTION_PHONE_MEDIA_PREVIOUS:
 #if ESP_BMS_FEATURE_BLE_MEDIA_HID && ESP_BMS_FEATURE_BLE
         return runtime_ble_media_hid_enqueue(runtime, ESP_BMS_BLE_MEDIA_HID_USAGE_PREVIOUS_TRACK);
-#elif ESP_BMS_FEATURE_CLASSIC_MEDIA_HID
-        return esp_bms_classic_media_hid_send_usage(
-                   ESP_BMS_BLE_MEDIA_HID_USAGE_PREVIOUS_TRACK) == ESP_OK;
 #else
         return false;
 #endif
     case ESP_BMS_LVGL_ACTION_PHONE_MEDIA_NEXT:
 #if ESP_BMS_FEATURE_BLE_MEDIA_HID && ESP_BMS_FEATURE_BLE
         return runtime_ble_media_hid_enqueue(runtime, ESP_BMS_BLE_MEDIA_HID_USAGE_NEXT_TRACK);
-#elif ESP_BMS_FEATURE_CLASSIC_MEDIA_HID
-        return esp_bms_classic_media_hid_send_usage(
-                   ESP_BMS_BLE_MEDIA_HID_USAGE_NEXT_TRACK) == ESP_OK;
 #else
         return false;
 #endif
     case ESP_BMS_LVGL_ACTION_PHONE_MEDIA_VOLUME_DOWN:
 #if ESP_BMS_FEATURE_BLE_MEDIA_HID && ESP_BMS_FEATURE_BLE
         return runtime_ble_media_hid_enqueue(runtime, ESP_BMS_BLE_MEDIA_HID_USAGE_VOLUME_DECREMENT);
-#elif ESP_BMS_FEATURE_CLASSIC_MEDIA_HID
-        return esp_bms_classic_media_hid_send_usage(
-                   ESP_BMS_BLE_MEDIA_HID_USAGE_VOLUME_DECREMENT) == ESP_OK;
 #else
         return false;
 #endif
     case ESP_BMS_LVGL_ACTION_PHONE_MEDIA_VOLUME_UP:
 #if ESP_BMS_FEATURE_BLE_MEDIA_HID && ESP_BMS_FEATURE_BLE
         return runtime_ble_media_hid_enqueue(runtime, ESP_BMS_BLE_MEDIA_HID_USAGE_VOLUME_INCREMENT);
-#elif ESP_BMS_FEATURE_CLASSIC_MEDIA_HID
-        return esp_bms_classic_media_hid_send_usage(
-                   ESP_BMS_BLE_MEDIA_HID_USAGE_VOLUME_INCREMENT) == ESP_OK;
 #else
         return false;
 #endif
     case ESP_BMS_LVGL_ACTION_MEDIA_PLAY_PAUSE:
 #if ESP_BMS_FEATURE_BLE_MEDIA_HID && ESP_BMS_FEATURE_BLE
         return runtime_ble_media_hid_enqueue(runtime, ESP_BMS_BLE_MEDIA_HID_USAGE_PLAY_PAUSE);
-#elif ESP_BMS_FEATURE_CLASSIC_MEDIA_HID
-        return esp_bms_classic_media_hid_send_usage(
-                   ESP_BMS_BLE_MEDIA_HID_USAGE_PLAY_PAUSE) == ESP_OK;
 #else
         return false;
 #endif
     case ESP_BMS_LVGL_ACTION_ENABLE_BLUETOOTH_ADVERTISING:
-#if ESP_BMS_FEATURE_CLASSIC_MEDIA_HID
-        if (RUNTIME_FLAG(runtime, BLUETOOTH_CONNECTED)) {
-            (void)esp_bms_classic_media_hid_set_discoverable(false);
-            RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, false);
-            RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISING, false);
-            runtime_project_bluetooth_snapshot(runtime);
-            runtime_set_error(runtime, "BT CONN");
-            return true;
-        }
-        if (RUNTIME_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED) ||
-            RUNTIME_FLAG(runtime, BLUETOOTH_ADVERTISING)) {
-            const esp_err_t ret = esp_bms_classic_media_hid_set_discoverable(false);
-            RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, false);
-            RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISING, false);
-            runtime_project_bluetooth_snapshot(runtime);
-            runtime_set_error(runtime, "BT HIDE");
-            return ret == ESP_OK || ret == ESP_ERR_INVALID_STATE;
-        }
-        RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED, true);
-        const esp_err_t ret = esp_bms_classic_media_hid_set_discoverable(true);
-        RUNTIME_SET_FLAG(runtime, BLUETOOTH_ADVERTISING,
-                         ret == ESP_OK && !RUNTIME_FLAG(runtime, BLUETOOTH_CONNECTED));
-        runtime_project_bluetooth_snapshot(runtime);
-        runtime_set_error(runtime,
-                          ret == ESP_OK || ret == ESP_ERR_INVALID_STATE ? "BT ON" : "BT FAIL");
-        return ret == ESP_OK || ret == ESP_ERR_INVALID_STATE;
-#else
         if (RUNTIME_FLAG(runtime, BLUETOOTH_ADVERTISE_REQUESTED) ||
             RUNTIME_FLAG(runtime, BLUETOOTH_ADVERTISING)) {
             return runtime_bluetooth_stop_advertising(runtime) == ESP_OK;
@@ -7092,7 +7044,6 @@ bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,
         runtime_project_bluetooth_snapshot(runtime);
         runtime_set_error(runtime, "BT ON");
         return true;
-#endif
     case ESP_BMS_LVGL_ACTION_SELECT_BMS_ANT:
         return runtime_select_bms_type(runtime, ESP_BMS_IDF_BMS_TYPE_ANT);
     case ESP_BMS_LVGL_ACTION_SELECT_BMS_JK:

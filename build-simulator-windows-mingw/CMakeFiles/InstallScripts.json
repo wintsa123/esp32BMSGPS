@@ -1,8 +1,0 @@
-{
-	"InstallScripts" : 
-	[
-		"C:/Users/77077/Desktop/esp/build-simulator-windows-mingw/cmake_install.cmake",
-		"C:/Users/77077/Desktop/esp/build-simulator-windows-mingw/lvgl/cmake_install.cmake"
-	],
-	"Parallel" : false
-}
