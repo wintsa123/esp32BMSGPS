@@ -371,12 +371,12 @@ const char *quick_level_position_text(void)
     const bool portrait = s_ui.width < s_ui.height;
     switch (quick_level_position()) {
     case QUICK_LEVEL_POSITION_START:
-        return portrait ? "左边" : "上面";
+        return portrait ? ui_t("左边", "Left") : ui_t("上面", "Top");
     case QUICK_LEVEL_POSITION_END:
-        return portrait ? "右边" : "下面";
+        return portrait ? ui_t("右边", "Right") : ui_t("下面", "Bottom");
     case QUICK_LEVEL_POSITION_MIDDLE:
     default:
-        return "中间";
+        return ui_t("中间", "Middle");
     }
 }
 
@@ -689,7 +689,7 @@ void quick_toast_show_connecting(void)
     lv_obj_set_style_text_color(s_ui.quick_toast_text, COLOR_ACCENT, LV_PART_MAIN);
     lv_obj_set_style_text_font(s_ui.quick_toast_text, &settings_zh_16, LV_PART_MAIN);
     lv_obj_set_style_text_align(s_ui.quick_toast_text, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    label_set_text_if_changed(s_ui.quick_toast_text, "连接...");
+    label_set_text_if_changed(s_ui.quick_toast_text, ui_t("连接...", "Connecting..."));
 
     set_obj_hidden(s_ui.quick_toast_rotate_title, true);
     set_obj_hidden(s_ui.quick_toast_rotate_countdown, true);
@@ -752,7 +752,8 @@ void quick_rotate_toast_show(void)
     lv_obj_set_style_text_color(s_ui.quick_toast_rotate_title, COLOR_TEXT, LV_PART_MAIN);
     lv_obj_set_style_text_font(s_ui.quick_toast_rotate_title, &settings_zh_13, LV_PART_MAIN);
     lv_obj_set_style_text_align(s_ui.quick_toast_rotate_title, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    label_set_text_if_changed(s_ui.quick_toast_rotate_title, QUICK_ROTATE_TOAST_TITLE);
+    label_set_text_if_changed(s_ui.quick_toast_rotate_title,
+                              ui_t(QUICK_ROTATE_TOAST_TITLE, "Auto-saved"));
 
     y += title_h + gap;
     lv_obj_set_pos(s_ui.quick_toast_rotate_icon, 0, y);
@@ -838,7 +839,7 @@ void set_quick_edit_mode(bool edit_mode)
         lv_obj_set_style_border_opa(s_ui.quick_edit_button, LV_OPA_COVER, LV_PART_MAIN);
     }
     if (changed && edit_mode) {
-        quick_toast_show_text(QUICK_TOAST_SORT_HINT);
+        quick_toast_show_text(ui_t(QUICK_TOAST_SORT_HINT, "Drag to reorder"));
     }
 }
 
@@ -849,7 +850,7 @@ void quick_edit_event_cb(lv_event_t *event)
         UI_SET_FLAG(QUICK_LONG_TRIGGERED, false);
         quick_edit_set_pressed(true);
     } else if (code == LV_EVENT_LONG_PRESSED) {
-        quick_toast_show_text(QUICK_TOAST_SORT_HINT);
+        quick_toast_show_text(ui_t(QUICK_TOAST_SORT_HINT, "Drag to reorder"));
         UI_SET_FLAG(QUICK_LONG_TRIGGERED, true);
         lv_indev_wait_release(lv_indev_active());
     } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
@@ -1216,7 +1217,7 @@ void quick_panel_item_event_cb(lv_event_t *event)
             quick_tile_set_scale(tile, QUICK_TILE_SCALE_LONG);
             quick_drag_begin(tile, QUICK_DRAG_TARGET_ITEM, (uint8_t)index);
         } else {
-            quick_toast_show_text(item->toast_text);
+            quick_toast_show_text(ui_t(item->toast_text, item->toast_text_en));
             UI_SET_FLAG(QUICK_LONG_TRIGGERED, true);
             lv_indev_wait_release(lv_indev_active());
         }
@@ -1780,8 +1781,9 @@ void quick_level_event_cb(lv_event_t *event)
         quick_level_set_pressed(kind, true);
     } else if (code == LV_EVENT_LONG_PRESSED) {
         UI_SET_FLAG(QUICK_LEVEL_LONG_TRIGGERED, true);
-        quick_toast_show_text(kind == QUICK_LEVEL_VOLUME ? QUICK_VOLUME_TOAST_HINT :
-                                                               QUICK_BRIGHTNESS_TOAST_HINT);
+        quick_toast_show_text(kind == QUICK_LEVEL_VOLUME
+                                  ? ui_t(QUICK_VOLUME_TOAST_HINT, "Volume")
+                                  : ui_t(QUICK_BRIGHTNESS_TOAST_HINT, "Brightness"));
         lv_indev_wait_release(lv_indev_active());
     } else if (code == LV_EVENT_PRESS_LOST) {
         quick_level_set_pressed(kind, false);

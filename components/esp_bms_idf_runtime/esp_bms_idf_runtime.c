@@ -2112,6 +2112,7 @@ static void runtime_reset_state(esp_bms_idf_runtime_t *runtime)
     (void)runtime_set_volume_percent(runtime, 65U);
     runtime->display_rotation = ESP_BMS_IDF_DISPLAY_ROTATION_LANDSCAPE;
     RUNTIME_SET_FLAG(runtime, LANGUAGE_ZH, true);
+    runtime->snapshot.language_zh = true;
     RUNTIME_SET_FLAG(runtime, BMS_BIND_ACTIVE, false);
     RUNTIME_SET_FLAG(runtime, HTTP_BMS_SCAN_PENDING, false);
     RUNTIME_SET_FLAG(runtime, BMS_SCAN_REQUESTED, false);
@@ -3005,6 +3006,7 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
     runtime->snapshot.boot_animation_style = boot_animation_style;
     runtime->snapshot.preset_range_km = preset_range_km;
     RUNTIME_SET_FLAG(runtime, LANGUAGE_ZH, language != 0U);
+    runtime->snapshot.language_zh = language != 0U;
     runtime->bms_type = bms_type;
     runtime->snapshot.bms_type = runtime->bms_type;
     runtime->controller_page_enabled =
@@ -3234,6 +3236,7 @@ bool esp_bms_idf_runtime_apply_pending_http_config(esp_bms_idf_runtime_t *runtim
     runtime->snapshot.speed_unit = speed_unit;
     runtime->snapshot.speed_source = speed_source;
     RUNTIME_SET_FLAG(runtime, LANGUAGE_ZH, language_zh);
+    runtime->snapshot.language_zh = language_zh;
     if (bms_type_changed) {
         (void)runtime_select_bms_type(runtime, (esp_bms_idf_bms_type_t)bms_type);
     }
@@ -6749,10 +6752,13 @@ bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,
         runtime_update_snapshot_speed(runtime);
         runtime_set_error(runtime, runtime->snapshot.speed_unit == ESP_BMS_SPEED_UNIT_MPH ? "SPEED MPH" : "SPEED KMH");
         return true;
-    case ESP_BMS_LVGL_ACTION_TOGGLE_LANGUAGE:
-        RUNTIME_SET_FLAG(runtime, LANGUAGE_ZH, !RUNTIME_FLAG(runtime, LANGUAGE_ZH));
-        runtime_set_error(runtime, RUNTIME_FLAG(runtime, LANGUAGE_ZH) ? "LANG ZH" : "LANG EN");
+    case ESP_BMS_LVGL_ACTION_TOGGLE_LANGUAGE: {
+        const bool language_zh = !RUNTIME_FLAG(runtime, LANGUAGE_ZH);
+        RUNTIME_SET_FLAG(runtime, LANGUAGE_ZH, language_zh);
+        runtime->snapshot.language_zh = language_zh;
+        runtime_set_error(runtime, language_zh ? "LANG ZH" : "LANG EN");
         return true;
+    }
     case ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_CONNECTION:
         runtime->controller_connection_enabled = !runtime->controller_connection_enabled;
         if (!runtime->controller_connection_enabled) {

@@ -6,8 +6,10 @@
 
 const char *settings_bms_type_label(uint8_t type)
 {
-    return type < ARRAY_SIZE(SETTINGS_BMS_TYPE_LABELS) ? SETTINGS_BMS_TYPE_LABELS[type] :
-                                                          SETTINGS_BMS_TYPE_LABELS[0];
+    if (type < ARRAY_SIZE(SETTINGS_BMS_TYPE_LABELS)) {
+        return ui_t(SETTINGS_BMS_TYPE_LABELS[type], SETTINGS_BMS_TYPE_LABELS_EN[type]);
+    }
+    return ui_t(SETTINGS_BMS_TYPE_LABELS[0], SETTINGS_BMS_TYPE_LABELS_EN[0]);
 }
 
 uint8_t settings_bms_ble_candidate_index(uint8_t count,
@@ -71,9 +73,10 @@ void settings_bms_ble_refresh_rows(const esp_bms_dashboard_snapshot_t *snapshot,
         (void)snprintf(s_ui.settings_bms_ble_empty_text,
                        sizeof(s_ui.settings_bms_ble_empty_text),
                        "%s",
-                       scan_requested ? "扫描..."
-                                      : source == SETTINGS_BLE_SOURCE_BMS ? "未发现保护板"
-                                                                          : "未发现控制器");
+                       scan_requested ? ui_t("扫描...", "Scanning...")
+                                      : source == SETTINGS_BLE_SOURCE_BMS
+                                            ? ui_t("未发现保护板", "No BMS found")
+                                            : ui_t("未发现控制器", "No controller found"));
         lv_label_set_text_static(s_ui.settings_bms_ble_empty, s_ui.settings_bms_ble_empty_text);
     }
     set_obj_hidden(s_ui.settings_bms_ble_empty, count != 0U);
@@ -109,7 +112,7 @@ void settings_bms_ble_refresh_rows(const esp_bms_dashboard_snapshot_t *snapshot,
         }
         const esp_bms_bms_scan_candidate_t *candidate = &candidates[index];
         const bool has_name = candidate->has_name && candidate->name[0] != '\0';
-        const char *name = has_name ? candidate->name : "设备";
+        const char *name = has_name ? candidate->name : ui_t("设备", "Device");
         const size_t mac_len = strnlen(candidate->mac, sizeof(candidate->mac));
         const size_t mac_suffix_len = mac_len > 5U ? 5U : mac_len;
         char mac_suffix[6] = { 0 };
@@ -272,12 +275,14 @@ static void settings_restore_confirm_show(void)
     lv_obj_set_style_pad_all(dialog, 0, LV_PART_MAIN);
 
     lv_obj_t *title = label(dialog, 12, 12, dialog_w - 24, 22, &settings_zh_16);
-    lv_label_set_text(title, "恢复默认");
+    lv_label_set_text(title, ui_t("恢复默认", "Restore defaults"));
     lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(title, COLOR_SETTINGS_TEXT, LV_PART_MAIN);
     lv_obj_t *message = label(dialog, 12, 42, dialog_w - 24, 34, &settings_zh_13);
     lv_label_set_text(message,
-                      s_touch_calibration_supported ? "清除设置与屏幕校准？" : "清除设置？");
+                      s_touch_calibration_supported
+                          ? ui_t("清除设置与屏幕校准？", "Clear settings and calibration?")
+                          : ui_t("清除设置？", "Clear settings?"));
     lv_label_set_long_mode(message, LV_LABEL_LONG_MODE_WRAP);
     lv_obj_set_style_text_align(message, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(message, COLOR_SETTINGS_MUTED, LV_PART_MAIN);
@@ -495,7 +500,7 @@ void settings_bms_ble_refresh_event_cb(lv_event_t *event)
     }
     const settings_ble_source_t source = (settings_ble_source_t)s_ui.settings_ble_source;
     if (settings_bms_ble_connection_in_progress(settings_current_snapshot(), source)) {
-        label_set_text_if_changed(s_ui.settings_bms_ble_status, "已取消");
+        label_set_text_if_changed(s_ui.settings_bms_ble_status, ui_t("已取消", "Cancelled"));
         quick_toast_cancel();
         queue_action(ESP_BMS_LVGL_ACTION_CANCEL_BMS_CONNECTION);
         ESP_LOGI(TAG, "[ble-ui] cancel BMS connection from list page");
@@ -569,7 +574,7 @@ static void settings_calibration_target_place(void)
     s_ui.settings_calibration_expected.y = (coordinates.y1 + coordinates.y2) / 2;
     if (s_ui.settings_calibration_status) {
         lv_label_set_text_fmt(s_ui.settings_calibration_status,
-                              "点击十字中心 %u/4",
+                              ui_t("点击十字中心 %u/4", "Tap cross center %u/4"),
                               (unsigned)index + 1U);
     }
 }
@@ -612,7 +617,7 @@ static void settings_calibration_event_cb(lv_event_t *event)
         settings_calibration_target_place();
     } else {
         set_obj_hidden(s_ui.settings_calibration_target, true);
-        label_set_text_if_changed(s_ui.settings_calibration_status, "正在保存校准...");
+        label_set_text_if_changed(s_ui.settings_calibration_status, ui_t("正在保存校准...", "Saving calibration..."));
     }
 }
 
@@ -644,7 +649,7 @@ static void settings_show_touch_calibration(void)
     lv_obj_add_event_cb(layer, settings_calibration_event_cb, LV_EVENT_RELEASED, NULL);
 
     s_ui.settings_calibration_status = label(layer, 42, 4, s_ui.width - 84, 24, &settings_zh_13);
-    lv_label_set_text(s_ui.settings_calibration_status, "准备校准...");
+    lv_label_set_text(s_ui.settings_calibration_status, ui_t("准备校准...", "Ready to calibrate..."));
     lv_label_set_long_mode(s_ui.settings_calibration_status, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
     lv_obj_set_style_text_align(s_ui.settings_calibration_status, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_ui.settings_calibration_status, COLOR_SETTINGS_TEXT, LV_PART_MAIN);
@@ -670,7 +675,7 @@ static void settings_show_touch_calibration(void)
     lv_obj_add_flag(cancel, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(cancel, settings_calibration_cancel_event_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *cancel_label = label(cancel, 2, 5, 46, 18, &settings_zh_13);
-    lv_label_set_text(cancel_label, "取消");
+    lv_label_set_text(cancel_label, ui_t("取消", "Cancel"));
     lv_obj_set_style_text_align(cancel_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(cancel_label, COLOR_SETTINGS_TEXT, LV_PART_MAIN);
 
@@ -684,10 +689,10 @@ static void settings_show_touch_calibration(void)
 
 
 static const settings_boot_animation_option_t SETTINGS_BOOT_ANIMATION_OPTIONS[] = {
-    { ESP_BMS_BOOT_ANIMATION_CHARGE, "电量充能" },
-    { ESP_BMS_BOOT_ANIMATION_GAUGE_S1000RR, "BMW S1000RR" },
+    { ESP_BMS_BOOT_ANIMATION_CHARGE, "电量充能", "Charge pulse" },
+    { ESP_BMS_BOOT_ANIMATION_GAUGE_S1000RR, "BMW S1000RR", "BMW S1000RR" },
 #if ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
-    { ESP_BMS_BOOT_ANIMATION_GAUGE_HONDA_FIREBLADE, "HONDA Fireblade" },
+    { ESP_BMS_BOOT_ANIMATION_GAUGE_HONDA_FIREBLADE, "HONDA Fireblade", "HONDA Fireblade" },
 #endif
 };
 
@@ -861,7 +866,7 @@ static void settings_show_boot_animation_picker(void)
                                card_w - 52,
                                text_h,
                                text_font);
-        lv_label_set_text(text, option->label);
+        lv_label_set_text(text, ui_t(option->label, option->label_en));
         lv_obj_set_style_text_color(text,
                                     active ? COLOR_SWITCH_ACTIVE : COLOR_SETTINGS_TEXT,
                                     LV_PART_MAIN);
@@ -907,26 +912,26 @@ void settings_show_system_view(settings_system_view_t view)
     switch (view) {
 #if CONFIG_ESP_BMS_LVGL_BRIDGE_BACKLIGHT_DIMMING
     case SETTINGS_SYSTEM_VIEW_BRIGHTNESS:
-        label_set_text_if_changed(s_ui.settings_detail_title, "亮度");
+        label_set_text_if_changed(s_ui.settings_detail_title, ui_t("亮度", "Brightness"));
         settings_show_system_slider(QUICK_LEVEL_BRIGHTNESS);
         break;
 #endif
 #if ESP_BMS_FEATURE_AUDIO
     case SETTINGS_SYSTEM_VIEW_VOLUME:
-        label_set_text_if_changed(s_ui.settings_detail_title, "音量");
+        label_set_text_if_changed(s_ui.settings_detail_title, ui_t("音量", "Volume"));
         settings_show_system_slider(QUICK_LEVEL_VOLUME);
         break;
 #endif
     case SETTINGS_SYSTEM_VIEW_LEVEL_POSITION:
-        label_set_text_if_changed(s_ui.settings_detail_title, "调节条位置");
+        label_set_text_if_changed(s_ui.settings_detail_title, ui_t("调节条位置", "Slider position"));
         settings_show_system_position();
         break;
     case SETTINGS_SYSTEM_VIEW_BOOT_ANIMATION:
-        label_set_text_if_changed(s_ui.settings_detail_title, "启动动画");
+        label_set_text_if_changed(s_ui.settings_detail_title, ui_t("启动动画", "Boot animation"));
         settings_show_boot_animation_picker();
         break;
     case SETTINGS_SYSTEM_VIEW_TOUCH_CALIBRATION:
-        label_set_text_if_changed(s_ui.settings_detail_title, "屏幕校准");
+        label_set_text_if_changed(s_ui.settings_detail_title, ui_t("屏幕校准", "Touch calibration"));
         settings_show_touch_calibration();
         break;
     case SETTINGS_SYSTEM_VIEW_ROOT:
@@ -1035,9 +1040,11 @@ void settings_show_detail(settings_detail_id_t detail_id)
             continue;
         }
         if (detail_id == SETTINGS_DETAIL_ABOUT && index == 1U) {
-            row.subtitle = settings_current_snapshot()->firmware_version[0] != '\0'
-                               ? settings_current_snapshot()->firmware_version
-                               : "--";
+            const char *firmware_version = settings_current_snapshot()->firmware_version[0] != '\0'
+                                               ? settings_current_snapshot()->firmware_version
+                                               : "--";
+            row.subtitle = firmware_version;
+            row.subtitle_en = firmware_version;
         }
         settings_detail_row(list_card,
                             0,

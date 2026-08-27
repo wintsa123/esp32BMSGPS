@@ -459,10 +459,10 @@ static void fireblade_create_native_landscape(lv_obj_t *page)
                           bridge_radius * 2,
                           COLOR_WHITE,
                           LV_RADIUS_CIRCLE);
-    fireblade_native_title(static_layer, 0, metric_y[0], metric_title_w[0], "电耗");
-    fireblade_native_title(static_layer, 0, metric_y[1], metric_title_w[1], "剩余");
-    fireblade_native_title(static_layer, 0, metric_y[2], metric_title_w[2], "均速");
-    fireblade_native_title(static_layer, 0, metric_y[3], metric_title_w[3], "日期");
+    fireblade_native_title(static_layer, 0, metric_y[0], metric_title_w[0], ui_t("电耗", "Consumption"));
+    fireblade_native_title(static_layer, 0, metric_y[1], metric_title_w[1], ui_t("剩余", "Range"));
+    fireblade_native_title(static_layer, 0, metric_y[2], metric_title_w[2], ui_t("均速", "Avg"));
+    fireblade_native_title(static_layer, 0, metric_y[3], metric_title_w[3], ui_t("日期", "Date"));
     fireblade_add_title_extension(static_layer,
                                   metric_title_w[0] - 1,
                                   metric_y[0],
@@ -483,9 +483,9 @@ static void fireblade_create_native_landscape(lv_obj_t *page)
                                   false);
     fireblade_add_scale(static_layer, center, speed_radius);
 
-    (void)fireblade_label(static_layer, "控", 10, controller_temp_y + 1, 22, 18,
+    (void)fireblade_label(static_layer, ui_t("控", "CTRL"), 10, controller_temp_y + 1, 22, 18,
                           &settings_zh_13, COLOR_WHITE, LV_TEXT_ALIGN_LEFT);
-    (void)fireblade_label(static_layer, "电机", 10, motor_temp_y + 1, 32, 18,
+    (void)fireblade_label(static_layer, ui_t("电机", "MOTOR"), 10, motor_temp_y + 1, 32, 18,
                           &settings_zh_13, COLOR_WHITE, LV_TEXT_ALIGN_LEFT);
     (void)fireblade_label(static_layer, "MODE 1", width - 82, mode_y + 13, 74, 12,
                           &settings_zh_10, COLOR_WHITE, LV_TEXT_ALIGN_CENTER);
@@ -638,10 +638,10 @@ static void fireblade_create_native_portrait(lv_obj_t *page)
     s_ui.native_fireblade_dashboard = true;
     (void)fireblade_panel(page, 0, 0, width, header_h, COLOR_FIREBLADE_BLACK, 0);
     fireblade_add_scale(page, center, scale_radius);
-    fireblade_native_title(page, metric_left_x, metric_top_y, metric_w, "电耗");
-    fireblade_native_title(page, metric_right_x, metric_top_y, metric_w, "剩余");
-    fireblade_native_title(page, metric_left_x, metric_bottom_y, metric_w, "均速");
-    fireblade_native_title(page, metric_right_x, metric_bottom_y, metric_w, "控 / 电机");
+    fireblade_native_title(page, metric_left_x, metric_top_y, metric_w, ui_t("电耗", "Consumption"));
+    fireblade_native_title(page, metric_right_x, metric_top_y, metric_w, ui_t("剩余", "Range"));
+    fireblade_native_title(page, metric_left_x, metric_bottom_y, metric_w, ui_t("均速", "Avg"));
+    fireblade_native_title(page, metric_right_x, metric_bottom_y, metric_w, ui_t("控 / 电机", "CTRL / MOTOR"));
 
     (void)fireblade_label(page,
                           "km",
@@ -774,16 +774,16 @@ static void fireblade_create_landscape(lv_obj_t *parent)
                           244,
                           COLOR_WHITE,
                           LV_RADIUS_CIRCLE);
-    fireblade_add_title(parent, 0, 66, 65, "电耗");
-    fireblade_add_title(parent, 0, 113, 60, "剩余");
-    fireblade_add_title(parent, 0, 161, 68, "均速");
-    fireblade_add_title(parent, 0, 202, 100, "日期");
+    fireblade_add_title(parent, 0, 66, 65, ui_t("电耗", "Consumption"));
+    fireblade_add_title(parent, 0, 113, 60, ui_t("剩余", "Range"));
+    fireblade_add_title(parent, 0, 161, 68, ui_t("均速", "Avg"));
+    fireblade_add_title(parent, 0, 202, 100, ui_t("日期", "Date"));
     fireblade_add_title_extensions(parent);
     fireblade_add_scale(parent, center, 102);
 
-    (void)fireblade_label(parent, "控", 6, 27, 12, 12,
+    (void)fireblade_label(parent, ui_t("控", "CTRL"), 6, 27, 12, 12,
                           &settings_zh_10, COLOR_WHITE, LV_TEXT_ALIGN_LEFT);
-    (void)fireblade_label(parent, "电机", 6, 43, 22, 12,
+    (void)fireblade_label(parent, ui_t("电机", "MOTOR"), 6, 43, 22, 12,
                           &settings_zh_10, COLOR_WHITE, LV_TEXT_ALIGN_LEFT);
     (void)fireblade_label(parent, "MODE", 284, 68, 32, 12,
                           &settings_zh_10, COLOR_WHITE, LV_TEXT_ALIGN_LEFT);
@@ -979,10 +979,10 @@ static void fireblade_create_portrait(lv_obj_t *parent)
                         COLOR_FIREBLADE_BLACK,
                         LV_TEXT_ALIGN_RIGHT);
 
-    fireblade_add_title(parent, 10, 233, 107, "电耗");
-    fireblade_add_title(parent, 123, 233, 107, "剩余");
-    fireblade_add_title(parent, 10, 273, 107, "均速");
-    fireblade_add_title(parent, 123, 273, 107, "控 / 电机");
+    fireblade_add_title(parent, 10, 233, 107, ui_t("电耗", "Consumption"));
+    fireblade_add_title(parent, 123, 233, 107, ui_t("剩余", "Range"));
+    fireblade_add_title(parent, 10, 273, 107, ui_t("均速", "Avg"));
+    fireblade_add_title(parent, 123, 273, 107, ui_t("控 / 电机", "CTRL / MOTOR"));
     s_ui.fireblade_consumption =
         fireblade_label(parent,
                         s_ui.fireblade_consumption_buf,

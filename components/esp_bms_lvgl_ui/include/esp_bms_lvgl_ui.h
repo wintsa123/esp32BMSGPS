@@ -372,6 +372,7 @@ typedef struct {
     bool cast_active;
     bool ble_media_hid_connected;
     bool ble_media_hid_suspended;
+    bool language_zh;
     char firmware_version[32];
 } esp_bms_dashboard_snapshot_t;
 

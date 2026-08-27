@@ -139,7 +139,7 @@ void set_setup_ap_control(bool enabled)
     if (s_ui.setup_ap_control_row) {
         if (lv_obj_get_child_count(s_ui.setup_ap_control_row) > 1U) {
             label_set_text_if_changed(lv_obj_get_child(s_ui.setup_ap_control_row, 1),
-                                      enabled ? "热点已打开" : "未打开");
+                                      enabled ? ui_t("热点已打开", "Hotspot on") : ui_t("未打开", "Off"));
         }
         if (lv_obj_get_child_count(s_ui.setup_ap_control_row) > 2U) {
             lv_obj_t *track = lv_obj_get_child(s_ui.setup_ap_control_row, 2);
@@ -258,8 +258,8 @@ void set_music_page(const esp_bms_dashboard_snapshot_t *snapshot)
 
     const bool ready = snapshot->ble_media_hid_connected && !snapshot->ble_media_hid_suspended;
     const char *status = snapshot->ble_media_hid_suspended
-                             ? "挂起"
-                             : snapshot->ble_media_hid_connected ? "已连接" : "未连接";
+                             ? ui_t("挂起", "Suspended")
+                             : snapshot->ble_media_hid_connected ? ui_t("已连接", "Connected") : ui_t("未连接", "Not connected");
     label_set_text_if_changed(s_ui.music_status, status);
     label_set_text_color_if_changed(s_ui.music_status,
                                     ready ? COLOR_SWITCH_ACTIVE : COLOR_SETTINGS_MUTED);
@@ -331,7 +331,7 @@ void set_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
         const uint32_t seconds = snapshot->bms_running_time_seconds;
         (void)snprintf(running_time,
                        sizeof(running_time),
-                       "%lu天%02lu时%02lu分",
+                       ui_t("%lu天%02lu时%02lu分", "%lud %02luh %02lum"),
                        (unsigned long)(seconds / 86400U),
                        (unsigned long)((seconds / 3600U) % 24U),
                        (unsigned long)((seconds / 60U) % 60U));
@@ -420,20 +420,20 @@ void set_dashboard(const esp_bms_dashboard_snapshot_t *snapshot)
         const int32_t status_width = portrait ? 100 : 68;
         const int32_t title_height = (int32_t)settings_zh_10.line_height + 1;
         const char *status_title = "BLE STATUS";
-        const char *status_value = "未连接";
+        const char *status_value = ui_t("未连接", "Not connected");
         lv_color_t status_color = COLOR_MUTED;
         const lv_font_t *status_value_font = &settings_zh_16;
         if (SNAPSHOT_FLAG(snapshot, BMS_ONLINE)) {
-            status_value = "已连接";
+            status_value = ui_t("已连接", "Connected");
             status_color = COLOR_ACCENT;
         } else if (strstr(snapshot->bms_info_text, "FAIL") != NULL ||
                    strstr(snapshot->bms_info_text, "ERR") != NULL ||
                    strstr(snapshot->bms_info_text, "NO ") != NULL) {
-            status_value = "未连接";
+            status_value = ui_t("未连接", "Not connected");
             status_color = COLOR_BAD;
         } else if (snapshot->bms_info_text[0] != '\0' &&
                    strcmp(snapshot->bms_info_text, "BMS OFF") != 0) {
-            status_value = "连接中";
+            status_value = ui_t("连接中", "Connecting");
             status_color = COLOR_WARN;
         }
         const int32_t status_value_height = (int32_t)status_value_font->line_height + 1;

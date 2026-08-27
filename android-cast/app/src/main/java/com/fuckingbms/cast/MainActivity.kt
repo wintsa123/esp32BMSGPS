@@ -47,6 +47,7 @@ import android.widget.TextView
 import android.widget.Toast
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import kotlin.concurrent.thread
@@ -180,6 +181,12 @@ class MainActivity : Activity() {
     private lateinit var otaProgressText: TextView
     private lateinit var otaUploadButton: Button
     private lateinit var otaCard: View
+    private lateinit var onlineFirmwareButton: Button
+    private lateinit var appVersionValue: TextView
+    private lateinit var appUpdateButton: Button
+    private var onlineFirmware: FirmwareRelease? = null
+    private var downloadedFirmware: ByteArray? = null
+    private var appUpdateBusy = false
 
     private var stage = UiStage.WAITING_SCAN
     private var detail: String? = null
@@ -653,9 +660,11 @@ class MainActivity : Activity() {
 
         otaCard = card().also { ota ->
             ota.addView(label("固件更新", 18f, COLOR_TEXT, true))
-            ota.addView(label("选择 .bin 固件并输入四位验证码。升级过程中不要断电或离开设备热点。", 14f, COLOR_MUTED), rowParams(top = 6, bottom = 8))
+            ota.addView(label("可从服务器在线选择固件，或选择本地 .bin 文件并输入四位验证码。升级过程中不要断电或离开设备热点。", 14f, COLOR_MUTED), rowParams(top = 6, bottom = 8))
             otaFileValue = label("尚未选择固件", 14f, COLOR_MUTED)
             ota.addView(otaFileValue, rowParams(bottom = 8))
+            onlineFirmwareButton = actionButton("在线查询固件", false) { queryOnlineFirmware() }
+            ota.addView(onlineFirmwareButton, rowParams(bottom = 8, height = dp(46)))
             ota.addView(actionButton("选择 .bin 文件", false) { chooseFirmware() }, rowParams(bottom = 8, height = dp(46)))
             otaCodeInput = input("四位固件验证码", InputType.TYPE_CLASS_NUMBER).apply {
                 setSingleLine(true)
@@ -673,6 +682,15 @@ class MainActivity : Activity() {
             ota.addView(otaUploadButton, rowParams(height = dp(48)))
         }
         column.addView(otaCard)
+
+        val appCard = card().also { app ->
+            app.addView(label("应用更新", 18f, COLOR_TEXT, true))
+            appVersionValue = label("当前版本 v${currentAppVersion().second}", 14f, COLOR_MUTED)
+            app.addView(appVersionValue, rowParams(top = 6, bottom = 8))
+            appUpdateButton = actionButton("检查更新", true) { checkAppUpdate() }
+            app.addView(appUpdateButton, rowParams(height = dp(48)))
+        }
+        column.addView(appCard, rowParams(top = 12))
         page.addView(column, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         return page
     }
@@ -1526,12 +1544,162 @@ class MainActivity : Activity() {
         startActivityForResult(intent, OTA_FILE_REQUEST)
     }
 
+    private fun queryOnlineFirmware() {
+        if (onlineFirmwareButton.isEnabled == false) return
+        onlineFirmwareButton.isEnabled = false
+        val original = onlineFirmwareButton.text.toString()
+        onlineFirmwareButton.text = "正在查询"
+        thread {
+            val result = runCatching { UpdateApi.fetchFirmwareList() }
+            runOnUiThread {
+                onlineFirmwareButton.isEnabled = true
+                onlineFirmwareButton.text = original
+                result.onFailure { error ->
+                    toast("查询固件失败：${error.message ?: "网络错误"}")
+                }.onSuccess { firmwares ->
+                    if (firmwares.isEmpty()) {
+                        toast("未查询到可用固件")
+                        return@onSuccess
+                    }
+                    val labels = firmwares.map { it.description }.toTypedArray()
+                    AlertDialog.Builder(this)
+                        .setTitle("选择在线固件")
+                        .setItems(labels) { _, which ->
+                            downloadOnlineFirmware(firmwares[which])
+                        }
+                        .setNegativeButton("取消", null)
+                        .show()
+                }
+            }
+        }
+    }
+
+    private fun downloadOnlineFirmware(release: FirmwareRelease) {
+        otaProgressBar.progress = 0
+        otaProgressText.text = "正在下载固件"
+        onlineFirmwareButton.isEnabled = false
+        thread {
+            try {
+                val bytes = ByteArrayOutputStream()
+                val buffer = ByteArray(64 * 1024)
+                val temp = File(cacheDir, "firmware-download.bin")
+                UpdateApi.downloadFile(release.url, temp) { percent ->
+                    runOnUiThread { otaProgressText.text = "正在下载固件 $percent%" }
+                }
+                temp.inputStream().use { input ->
+                    while (true) {
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        if (bytes.size() + count > DeviceApi.MAX_FIRMWARE_BYTES) {
+                            throw IllegalStateException("固件文件超过 1.5 MB，请选择适配此设备的固件")
+                        }
+                        bytes.write(buffer, 0, count)
+                    }
+                }
+                temp.delete()
+                val firmware = bytes.toByteArray()
+                runOnUiThread {
+                    onlineFirmwareButton.isEnabled = true
+                    onlineFirmware = release
+                    downloadedFirmware = firmware
+                    otaFile = null
+                    otaFileValue.text = "在线固件：${release.description}"
+                    otaCodeInput.setText(release.code)
+                    otaProgressBar.progress = 0
+                    otaProgressText.text = "固件已下载，验证码已自动填写，点击上传并更新"
+                    toast("固件已下载，验证码已自动填写")
+                }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    onlineFirmwareButton.isEnabled = true
+                    otaProgressText.text = "固件下载失败：${error.message ?: "请重试"}"
+                }
+            }
+        }
+    }
+
+    private fun currentAppVersion(): Pair<Int, String> {
+        val info = packageManager.getPackageInfo(packageName, 0)
+        return info.versionCode to (info.versionName ?: "")
+    }
+
+    private fun checkAppUpdate() {
+        if (appUpdateBusy) return
+        appUpdateBusy = true
+        val original = appUpdateButton.text.toString()
+        appUpdateButton.text = "正在检查"
+        thread {
+            val result = runCatching { UpdateApi.checkApkUpdate() }
+            runOnUiThread {
+                appUpdateBusy = false
+                appUpdateButton.text = original
+                result.onFailure { error ->
+                    toast("检查更新失败：${error.message ?: "网络错误"}")
+                }.onSuccess { release ->
+                    val (currentCode, currentName) = currentAppVersion()
+                    if (release == null || release.versionCode <= currentCode) {
+                        toast("已是最新版本 v$currentName")
+                        return@onSuccess
+                    }
+                    val note = release.note.ifBlank { "修复已知问题，提升稳定性" }
+                    AlertDialog.Builder(this)
+                        .setTitle("发现新版本 v${release.versionName}")
+                        .setMessage("$note\n\n版本大小：${release.size / 1024} KB\n是否现在下载并安装？")
+                        .setPositiveButton("下载并安装") { _, _ -> downloadAndInstallApp(release) }
+                        .setNegativeButton("以后再说", null)
+                        .show()
+                }
+            }
+        }
+    }
+
+    private fun downloadAndInstallApp(release: ApkRelease) {
+        if (appUpdateBusy) return
+        appUpdateBusy = true
+        appUpdateButton.text = "正在下载 0%"
+        thread {
+            try {
+                val dir = File(cacheDir, "update").apply { mkdirs() }
+                val apk = File(dir, "两轮智控-$release.versionName.apk")
+                UpdateApi.downloadFile(release.url, apk) { percent ->
+                    runOnUiThread { appUpdateButton.text = "正在下载 $percent%" }
+                }
+                runOnUiThread {
+                    appUpdateBusy = false
+                    appUpdateButton.text = "检查更新"
+                    installApk(apk)
+                }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    appUpdateBusy = false
+                    appUpdateButton.text = "检查更新"
+                    toast("下载更新失败：${error.message ?: "请重试"}")
+                }
+            }
+        }
+    }
+
+    private fun installApk(apk: File) {
+        val uri = UpdateFileProvider.getUriForFile(this, "$packageName.fileprovider", apk)
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        try {
+            startActivity(intent)
+        } catch (_: Exception) {
+            toast("无法启动安装器，请在系统设置中允许安装未知应用")
+        }
+    }
+
     private fun uploadFirmware() {
-        val uri = otaFile ?: run {
-            toast("请先选择 .bin 固件")
+        val uri = otaFile
+        val code = otaCodeInput.text.toString()
+        if (uri == null && downloadedFirmware == null) {
+            toast("请先选择或在线下载固件")
             return
         }
-        val code = otaCodeInput.text.toString()
         if (!code.matches(Regex("\\d{4}"))) {
             toast("请输入四位固件验证码")
             return
@@ -1545,7 +1713,7 @@ class MainActivity : Activity() {
         otaProgressText.text = "正在读取固件"
         thread {
             try {
-                val firmware = readFirmware(uri)
+                val firmware = uri?.let { readFirmware(it) } ?: downloadedFirmware ?: error("固件数据为空")
                 DeviceApi.uploadFirmware(host, firmware, code) { percent ->
                     runOnUiThread {
                         otaProgressBar.progress = percent

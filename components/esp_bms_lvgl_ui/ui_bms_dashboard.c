@@ -339,7 +339,7 @@ void create_native_bms_dashboard(void)
                                              COLOR_DASHBOARD_BORDER);
 
     bms_native_static_label(soc_panel,
-                            "电池SOC",
+                            ui_t("电池SOC", "SOC"),
                             10,
                             8,
                             layout.left_w - 20,
@@ -349,7 +349,7 @@ void create_native_bms_dashboard(void)
                             LV_TEXT_ALIGN_LEFT);
     dashboard_separator(soc_panel, 10, left_h - 144, layout.left_w - 20);
     bms_native_static_label(soc_panel,
-                            "电池容量",
+                            ui_t("电池容量", "Capacity"),
                             10,
                             left_h - 140,
                             layout.left_w - 20,
@@ -359,7 +359,7 @@ void create_native_bms_dashboard(void)
                             LV_TEXT_ALIGN_LEFT);
     dashboard_separator(soc_panel, 10, left_h - 108, layout.left_w - 20);
     bms_native_static_label(soc_panel,
-                            "剩余里程",
+                            ui_t("剩余里程", "Range"),
                             10,
                             left_h - 104,
                             layout.left_w - 20,
@@ -369,7 +369,7 @@ void create_native_bms_dashboard(void)
                             LV_TEXT_ALIGN_LEFT);
     dashboard_separator(soc_panel, 10, left_h - 72, layout.left_w - 20);
     bms_native_static_label(soc_panel,
-                            "使用天数",
+                            ui_t("使用天数", "Days"),
                             10,
                             left_h - 68,
                             layout.left_w - 20,
@@ -379,7 +379,7 @@ void create_native_bms_dashboard(void)
                             LV_TEXT_ALIGN_LEFT);
     dashboard_separator(soc_panel, 10, left_h - 36, layout.left_w - 20);
     bms_native_static_label(soc_panel,
-                            "循环容量",
+                            ui_t("循环容量", "Cycle cap."),
                             10,
                             left_h - 32,
                             layout.left_w - 20,
@@ -388,7 +388,7 @@ void create_native_bms_dashboard(void)
                             COLOR_DASHBOARD_TITLE,
                             LV_TEXT_ALIGN_LEFT);
     bms_native_static_label(electrical_panel,
-                            "实时电气状态",
+                            ui_t("实时电气状态", "Live electrical"),
                             12,
                             7,
                             layout.right_w - 24,
@@ -405,11 +405,14 @@ void create_native_bms_dashboard(void)
     static const char *const temp_keys[] = {
         "温度1", "温度2", "温度3", "温度4", "MOS温度", "均衡温度",
     };
+    static const char *const temp_keys_en[] = {
+        "T1", "T2", "T3", "T4", "MOS", "BAL",
+    };
     const int32_t temp_col_w = layout.right_w / (int32_t)ESP_BMS_BMS_TEMP_MAX_COUNT;
     for (uint8_t index = 0U; index < ESP_BMS_BMS_TEMP_MAX_COUNT; ++index) {
         const int32_t col_x = (int32_t)index * temp_col_w;
         bms_native_static_label(temp_panel,
-                                temp_keys[index],
+                                ui_t(temp_keys[index], temp_keys_en[index]),
                                 col_x,
                                 8,
                                 temp_col_w,
@@ -420,11 +423,12 @@ void create_native_bms_dashboard(void)
     }
 
     static const char *const cell_keys[] = { "高", "低", "压差", "平均" };
+    static const char *const cell_keys_en[] = { "Hi", "Lo", "Delta", "Avg" };
     const int32_t cell_col_w = layout.right_w / (int32_t)DASHBOARD_CELL_STAT_COUNT;
     for (uint8_t index = 0U; index < DASHBOARD_CELL_STAT_COUNT; ++index) {
         const int32_t col_x = (int32_t)index * cell_col_w;
         bms_native_static_label(cell_panel,
-                                cell_keys[index],
+                                ui_t(cell_keys[index], cell_keys_en[index]),
                                 col_x,
                                 8,
                                 cell_col_w,
@@ -442,7 +446,7 @@ void create_native_bms_dashboard(void)
     }
 
     bms_native_static_label(safety_panel,
-                            "告警与保护",
+                            ui_t("告警与保护", "Alarms"),
                             12,
                             7,
                             layout.right_w - 24,
@@ -697,6 +701,7 @@ void create_native_bms_dashboard(void)
 void create_native_bms_portrait_dashboard(void)
 {
     static const char *const cell_keys[] = { "高", "低", "压差", "均" };
+    static const char *const cell_keys_en[] = { "Hi", "Lo", "Delta", "Avg" };
     static const char *const temp_keys[] = { "T1", "T2", "T3", "T4", "BAL", "MOS" };
     const int32_t margin = 8;
     const int32_t content_w = s_ui.width - (margin * 2);
@@ -778,7 +783,7 @@ void create_native_bms_portrait_dashboard(void)
                             LV_TEXT_ALIGN_LEFT);
     dashboard_separator(soc_panel, 8, electrical_y - soc_y, content_w - 16);
     bms_native_static_label(soc_panel,
-                            "电压",
+                            ui_t("电压", "Voltage"),
                             0,
                             electrical_y - soc_y + 7,
                             content_w / 2,
@@ -787,7 +792,7 @@ void create_native_bms_portrait_dashboard(void)
                             COLOR_MUTED,
                             LV_TEXT_ALIGN_CENTER);
     bms_native_static_label(soc_panel,
-                            "电流",
+                            ui_t("电流", "Current"),
                             content_w / 2,
                             electrical_y - soc_y + 7,
                             content_w / 2,
@@ -803,7 +808,7 @@ void create_native_bms_portrait_dashboard(void)
     for (uint8_t index = 0U; index < DASHBOARD_CELL_STAT_COUNT; ++index) {
         const int32_t col_x = (int32_t)index * cell_col_w;
         bms_native_static_label(cell_panel,
-                                cell_keys[index],
+                                ui_t(cell_keys[index], cell_keys_en[index]),
                                 col_x,
                                 7,
                                 cell_col_w,
@@ -839,11 +844,12 @@ void create_native_bms_portrait_dashboard(void)
     }
 
     static const char *const metric_keys[] = { "容量", "剩余里程", "使用时长" };
+    static const char *const metric_keys_en[] = { "Cap", "Range", "Runtime" };
     const int32_t metric_col_w = content_w / 3;
     for (uint8_t index = 0U; index < ARRAY_SIZE(metric_keys); ++index) {
         const int32_t col_x = (int32_t)index * metric_col_w;
         bms_native_static_label(metric_panel,
-                                metric_keys[index],
+                                ui_t(metric_keys[index], metric_keys_en[index]),
                                 col_x,
                                 6,
                                 metric_col_w,
@@ -858,7 +864,7 @@ void create_native_bms_portrait_dashboard(void)
     }
 
     bms_native_static_label(safety_panel,
-                            "告警与保护",
+                            ui_t("告警与保护", "Alarms"),
                             12,
                             7,
                             content_w - 24,

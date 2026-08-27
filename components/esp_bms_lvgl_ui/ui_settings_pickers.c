@@ -51,16 +51,17 @@ esp_bms_speed_dashboard_style_t speed_dashboard_style_from_snapshot(
 
 
 static const settings_dashboard_style_option_t SETTINGS_DASHBOARD_STYLE_OPTIONS[] = {
-    { ESP_BMS_SPEED_DASHBOARD_STYLE_S1000RR, "宝马 S1000RR" },
-    { ESP_BMS_SPEED_DASHBOARD_STYLE_CONTROLLER, "控制器监控" },
-    { ESP_BMS_SPEED_DASHBOARD_STYLE_HONDA_FIREBLADE, "本田火刃" },
+    { ESP_BMS_SPEED_DASHBOARD_STYLE_S1000RR, "宝马 S1000RR", "BMW S1000RR" },
+    { ESP_BMS_SPEED_DASHBOARD_STYLE_CONTROLLER, "控制器监控", "Controller monitor" },
+    { ESP_BMS_SPEED_DASHBOARD_STYLE_HONDA_FIREBLADE, "本田火刃", "HONDA Fireblade" },
 };
 
 const char *settings_dashboard_style_label(esp_bms_speed_dashboard_style_t style)
 {
     for (size_t index = 0U; index < ARRAY_SIZE(SETTINGS_DASHBOARD_STYLE_OPTIONS); ++index) {
         if (SETTINGS_DASHBOARD_STYLE_OPTIONS[index].style == style) {
-            return SETTINGS_DASHBOARD_STYLE_OPTIONS[index].label;
+            return ui_t(SETTINGS_DASHBOARD_STYLE_OPTIONS[index].label,
+                        SETTINGS_DASHBOARD_STYLE_OPTIONS[index].label_en);
         }
     }
     return "--";
@@ -116,7 +117,7 @@ void settings_show_controller_style_picker(void)
     s_ui.settings_dashboard_view = (uint8_t)SETTINGS_DASHBOARD_VIEW_STYLE_LIST;
     s_ui.settings_bms_ble_status = NULL;
     lv_obj_clean(s_ui.settings_detail);
-    label_set_text_if_changed(s_ui.settings_detail_title, "选择仪表 UI");
+    label_set_text_if_changed(s_ui.settings_detail_title, ui_t("选择仪表 UI", "Choose dashboard UI"));
     lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
 
     size_t visible_index = 0U;
@@ -154,7 +155,7 @@ void settings_show_controller_style_picker(void)
                                card_w - 52,
                                text_h,
                                text_font);
-        lv_label_set_text(text, option->label);
+        lv_label_set_text(text, ui_t(option->label, option->label_en));
         lv_obj_set_style_text_color(text,
                                     active ? COLOR_SWITCH_ACTIVE : COLOR_SETTINGS_TEXT,
                                     LV_PART_MAIN);
@@ -180,8 +181,8 @@ static const char *const SETTINGS_SPEED_UNIT_LABELS[] = {
 
 #if ESP_BMS_FEATURE_GPS && ESP_BMS_FEATURE_CONTROLLER
 static const settings_speed_source_option_t SETTINGS_SPEED_SOURCE_OPTIONS[] = {
-    { ESP_BMS_SPEED_SOURCE_GPS, "GPS" },
-    { ESP_BMS_SPEED_SOURCE_CONTROLLER, "控制器" },
+    { ESP_BMS_SPEED_SOURCE_GPS, "GPS", "GPS" },
+    { ESP_BMS_SPEED_SOURCE_CONTROLLER, "控制器", "Controller" },
 };
 #endif
 
@@ -226,7 +227,7 @@ void settings_show_speed_unit_picker(void)
     s_ui.settings_dashboard_view = (uint8_t)SETTINGS_DASHBOARD_VIEW_SPEED_UNIT_LIST;
     s_ui.settings_bms_ble_status = NULL;
     lv_obj_clean(s_ui.settings_detail);
-    label_set_text_if_changed(s_ui.settings_detail_title, "速度单位");
+    label_set_text_if_changed(s_ui.settings_detail_title, ui_t("速度单位", "Speed unit"));
     settings_navigation_set_hidden(false, false);
     lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
 
@@ -318,7 +319,7 @@ void settings_show_speed_source_picker(void)
     s_ui.settings_dashboard_view = (uint8_t)SETTINGS_DASHBOARD_VIEW_SPEED_SOURCE_LIST;
     s_ui.settings_bms_ble_status = NULL;
     lv_obj_clean(s_ui.settings_detail);
-    label_set_text_if_changed(s_ui.settings_detail_title, "速度来源");
+    label_set_text_if_changed(s_ui.settings_detail_title, ui_t("速度来源", "Speed source"));
     settings_navigation_set_hidden(false, false);
     lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
 
@@ -353,7 +354,7 @@ void settings_show_speed_source_picker(void)
         const lv_font_t *text_font = settings_title_font();
         const int32_t text_h = (int32_t)text_font->line_height + 4;
         lv_obj_t *text = label(row, 12, (row_h - text_h) / 2, card_w - 52, text_h, text_font);
-        lv_label_set_text(text, option->label);
+        lv_label_set_text(text, ui_t(option->label, option->label_en));
         lv_obj_set_style_text_color(text,
                                     active ? COLOR_SWITCH_ACTIVE : COLOR_SETTINGS_TEXT,
                                     LV_PART_MAIN);
@@ -376,6 +377,8 @@ lv_obj_t *settings_speed_unit_row(lv_obj_t *parent,
 {
     const settings_detail_row_t descriptor = {
         "速度单位",
+        "Speed unit",
+        value,
         value,
         ESP_BMS_LVGL_ACTION_NONE,
         SETTINGS_SYSTEM_VIEW_ROOT,
@@ -401,7 +404,7 @@ lv_obj_t *settings_speed_source_row(lv_obj_t *parent,
                                            const char *value)
 {
     const settings_detail_row_t descriptor = {
-        "速度来源", value, ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT,
+        "速度来源", "Speed source", value, value, ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT,
     };
     lv_obj_t *box = settings_detail_row(parent, 0, y, w, h, &descriptor);
     lv_obj_add_event_cb(box, settings_speed_source_button_event_cb, LV_EVENT_CLICKED, NULL);
@@ -422,6 +425,8 @@ void settings_controller_style_row(lv_obj_t *parent,
 {
     const settings_detail_row_t descriptor = {
         "仪表 UI",
+        "Dashboard UI",
+        value,
         value,
         ESP_BMS_LVGL_ACTION_NONE,
         SETTINGS_SYSTEM_VIEW_ROOT,

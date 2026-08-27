@@ -1037,7 +1037,7 @@
         lastStatus = data;
         $("fw").textContent = `${t("firmware")} ${data.version ?? "0.1.0"}`;
         $("speed").textContent = data.speed ?? "--";
-        $("battery").textContent = formatMillivolts(data.local_battery_mv ?? data.pack_voltage_mv);
+        $("battery").textContent = formatMillivolts(data.pack_voltage_mv ?? data.local_battery_mv);
         $("bms").textContent = formatBmsState(data);
         $("bms-protections").textContent = formatCodes(data.bms_protections);
         $("bms-warnings").textContent = formatCodes(data.bms_warnings);

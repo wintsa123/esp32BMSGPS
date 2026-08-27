@@ -567,7 +567,7 @@ static void speed_dashboard_draw_event_cb(lv_event_t *event)
     prefix.opa = LV_OPA_COVER;
     prefix.text_static = 1;
     if (!compact && controller_temp_visible) {
-        prefix.text = "控";
+        prefix.text = ui_t("控", "CTRL");
         const lv_area_t area = {
             .x1 = speed_dashboard_scaled_x(&coords, portrait, portrait ? 96 : 188),
             .y1 = speed_dashboard_scaled_y(&coords, portrait, portrait ? 32 : 11),
@@ -577,7 +577,7 @@ static void speed_dashboard_draw_event_cb(lv_event_t *event)
         lv_draw_label(layer, &prefix, &area);
     }
     if (!compact && motor_temp_visible) {
-        prefix.text = "电机";
+        prefix.text = ui_t("电机", "MOTOR");
         const lv_area_t area = {
             .x1 = speed_dashboard_scaled_x(&coords, portrait, portrait ? 170 : 250),
             .y1 = speed_dashboard_scaled_y(&coords, portrait, portrait ? 32 : 11),

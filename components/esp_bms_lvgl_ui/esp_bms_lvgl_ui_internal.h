@@ -764,6 +764,7 @@ typedef struct {
     const char *icon;
     esp_bms_lvgl_action_t click_action;
     const char *toast_text;
+    const char *toast_text_en;
     bool hotspot_icon;
 } quick_panel_item_t;
 typedef enum {
@@ -794,29 +795,36 @@ typedef enum {
 typedef struct {
     settings_detail_id_t detail_id;
     const char *title;
+    const char *title_en;
     const char *subtitle;
+    const char *subtitle_en;
     const char *icon;
     const lv_font_t *icon_font;
 } settings_option_t;
 typedef struct {
     const char *title;
+    const char *title_en;
     const char *subtitle;
+    const char *subtitle_en;
     esp_bms_lvgl_action_t action;
     settings_system_view_t system_view;
 } settings_detail_row_t;
 typedef struct {
     esp_bms_speed_dashboard_style_t style;
     const char *label;
+    const char *label_en;
 } settings_dashboard_style_option_t;
 #if ESP_BMS_FEATURE_GPS && ESP_BMS_FEATURE_CONTROLLER
 typedef struct {
     esp_bms_speed_source_t source;
     const char *label;
+    const char *label_en;
 } settings_speed_source_option_t;
 #endif
 typedef struct {
     esp_bms_boot_animation_style_t style;
     const char *label;
+    const char *label_en;
 } settings_boot_animation_option_t;
 #define NATIVE_FOCUS_CAPACITY 32U
 typedef struct {
@@ -826,6 +834,13 @@ typedef struct {
 
 /* ---- 跨模块共享状态（定义见 esp_bms_lvgl_ui.c / ui_bms_dashboard.c） ---- */
 extern esp_bms_lvgl_ui_t s_ui;
+
+/* ---- i18n ----
+ * TFT 端内联中英二元组翻译：ui_t(中文, English) 按当前语言返回其一。
+ * 语言状态由 esp_bms_lvgl_ui_update() 从 snapshot.language_zh 同步。 */
+void ui_language_set_zh(bool zh);
+bool ui_language_zh(void);
+const char *ui_t(const char *zh, const char *en);
 extern bool s_touch_calibration_supported;
 extern bool s_native_gestures_supported;
 
@@ -877,6 +892,7 @@ extern const lv_color_t COLOR_SWITCH_ACTIVE;
 extern const char *const DASHBOARD_TEMP_KEYS[ESP_BMS_BMS_TEMP_MAX_COUNT];
 extern const uint16_t BMS_SAFETY_BITS[ESP_BMS_BMS_SAFETY_COUNT];
 extern const char *const BMS_SAFETY_KEYS[ESP_BMS_BMS_SAFETY_COUNT];
+extern const char *const BMS_SAFETY_KEYS_EN[ESP_BMS_BMS_SAFETY_COUNT];
 extern const char *const FIREBLADE_SCALE_LABELS[FIREBLADE_SCALE_LABEL_COUNT];
 extern const quick_panel_item_t QUICK_PANEL_ITEMS[QUICK_PANEL_BUTTON_COUNT];
 /* 数组大小必须与 esp_bms_lvgl_ui.c 中的定义完全一致，否则 ARRAY_SIZE()
@@ -901,6 +917,7 @@ extern const settings_detail_row_t SETTINGS_HOTSPOT_ROWS[SETTINGS_HOTSPOT_ROWS_C
 extern const settings_detail_row_t SETTINGS_BLUETOOTH_ROWS[SETTINGS_BLUETOOTH_ROWS_COUNT];
 extern const settings_detail_row_t SETTINGS_BMS_ROWS[SETTINGS_BMS_ROWS_COUNT];
 extern const char *const SETTINGS_BMS_TYPE_LABELS[SETTINGS_BMS_TYPE_COUNT];
+extern const char *const SETTINGS_BMS_TYPE_LABELS_EN[SETTINGS_BMS_TYPE_COUNT];
 extern const esp_bms_lvgl_action_t SETTINGS_BMS_TYPE_ACTIONS[SETTINGS_BMS_TYPE_COUNT];
 extern const settings_detail_row_t SETTINGS_SYSTEM_ROWS[SETTINGS_SYSTEM_ROWS_COUNT];
 extern const settings_detail_row_t SETTINGS_ABOUT_ROWS[SETTINGS_ABOUT_ROWS_COUNT];
@@ -947,6 +964,7 @@ void quick_pull_event_cb(lv_event_t *event);
 void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapshot);
 void flush_deferred_dashboard_snapshot(void);
 esp_err_t rebuild_screen_if_needed(const esp_bms_dashboard_snapshot_t *snapshot);
+esp_err_t ui_rebuild_screen(const esp_bms_dashboard_snapshot_t *snapshot, bool language_changed);
 native_focus_list_t native_focus_list(void);
 void native_gesture_back(void);
 esp_err_t esp_bms_lvgl_ui_handle_native_gesture(esp_bms_lvgl_native_gesture_t gesture);

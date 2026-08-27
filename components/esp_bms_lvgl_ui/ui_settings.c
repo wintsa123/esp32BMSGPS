@@ -233,10 +233,10 @@ static const char *settings_detail_title_text(settings_detail_id_t detail_id)
 {
     for (size_t index = 0; index < ARRAY_SIZE(SETTINGS_OPTIONS); ++index) {
         if (SETTINGS_OPTIONS[index].detail_id == detail_id) {
-            return SETTINGS_OPTIONS[index].title;
+            return ui_t(SETTINGS_OPTIONS[index].title, SETTINGS_OPTIONS[index].title_en);
         }
     }
-    return "设置";
+    return ui_t("设置", "Settings");
 }
 
 void settings_detail_chrome_show(settings_detail_id_t detail_id)
@@ -542,7 +542,7 @@ void settings_show_bms_type_picker(void)
     s_ui.settings_bms_view = (uint8_t)SETTINGS_BMS_VIEW_TYPE_LIST;
     s_ui.settings_bms_ble_status = NULL;
     lv_obj_clean(s_ui.settings_detail);
-    label_set_text_if_changed(s_ui.settings_detail_title, "保护板类型");
+    label_set_text_if_changed(s_ui.settings_detail_title, ui_t("保护板类型", "BMS type"));
     lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
 
     for (size_t index = 0; index < ARRAY_SIZE(SETTINGS_BMS_TYPE_LABELS); ++index) {
@@ -598,7 +598,7 @@ void settings_bms_ble_format_status(char *out,
         (source == SETTINGS_BLE_SOURCE_CONTROLLER && snapshot->controller_scan_active != 0U) ||
         (source == SETTINGS_BLE_SOURCE_BMS &&
          strcmp(snapshot->bms_info_text, "BMS SCAN") == 0)) {
-        (void)snprintf(out, out_len, "扫描...");
+        (void)snprintf(out, out_len, "%s", ui_t("扫描...", "Scanning..."));
     } else if (source == SETTINGS_BLE_SOURCE_CONTROLLER &&
                SNAPSHOT_FLAG(snapshot, CONTROLLER_ONLINE)) {
         (void)snprintf(out,
@@ -606,18 +606,18 @@ void settings_bms_ble_format_status(char *out,
                        "%s",
                        snapshot->controller_bound_name[0] != '\0'
                            ? snapshot->controller_bound_name
-                           : "已连接");
+                           : ui_t("已连接", "Connected"));
     } else if (source == SETTINGS_BLE_SOURCE_BMS && SNAPSHOT_FLAG(snapshot, BMS_ONLINE)) {
         (void)snprintf(out,
                        out_len,
                        "%s",
-                       snapshot->bms_bound_name[0] != '\0' ? snapshot->bms_bound_name : "已连接");
+                       snapshot->bms_bound_name[0] != '\0' ? snapshot->bms_bound_name : ui_t("已连接", "Connected"));
     } else if ((source == SETTINGS_BLE_SOURCE_BMS ? snapshot->bms_scan_candidate_count
                                                   : snapshot->controller_scan_candidate_count) > 0U) {
         const uint8_t count = source == SETTINGS_BLE_SOURCE_BMS
                                   ? snapshot->bms_scan_candidate_count
                                   : snapshot->controller_scan_candidate_count;
-        (void)snprintf(out, out_len, "发现 %u", (unsigned)count);
+        (void)snprintf(out, out_len, ui_t("发现 %u", "Found %u"), (unsigned)count);
     } else if (source == SETTINGS_BLE_SOURCE_CONTROLLER &&
                snapshot->controller_bound_name[0] != '\0') {
         (void)snprintf(out, out_len, "%s", snapshot->controller_bound_name);
@@ -627,14 +627,15 @@ void settings_bms_ble_format_status(char *out,
         (void)snprintf(out,
                        out_len,
                        "%s",
-                       source == SETTINGS_BLE_SOURCE_BMS ? "未发现保护板" : "未发现控制器");
+                       source == SETTINGS_BLE_SOURCE_BMS ? ui_t("未发现保护板", "No BMS found")
+                                                         : ui_t("未发现控制器", "No controller found"));
     }
 }
 
 void settings_bms_ble_start_scan(void)
 {
     if (s_ui.settings_bms_ble_status) {
-        label_set_text_if_changed(s_ui.settings_bms_ble_status, "扫描...");
+        label_set_text_if_changed(s_ui.settings_bms_ble_status, ui_t("扫描...", "Scanning..."));
     }
     const settings_ble_source_t source = (settings_ble_source_t)s_ui.settings_ble_source;
     ESP_LOGI(TAG, "[ble-ui] queue %s scan from list page",
@@ -712,7 +713,7 @@ void settings_show_bms_ble_popup(settings_ble_source_t source, bool start_scan)
     s_ui.settings_bms_ble_empty = NULL;
     s_ui.settings_bms_ble_list = NULL;
     lv_obj_clean(s_ui.settings_detail);
-    label_set_text_if_changed(s_ui.settings_detail_title, "蓝牙连接");
+    label_set_text_if_changed(s_ui.settings_detail_title, ui_t("蓝牙连接", "Bluetooth"));
     lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
 
     lv_obj_t *status = panel(s_ui.settings_detail,
@@ -808,7 +809,10 @@ void settings_show_hotspot_detail(void)
     const int32_t info_h = portrait ? 70 : 96;
     const settings_detail_row_t control_row = {
         "热点共享",
-        SNAPSHOT_FLAG(snapshot, SETUP_AP_ENABLED) ? "热点已打开" : "未打开",
+        "Hotspot share",
+        SNAPSHOT_FLAG(snapshot, SETUP_AP_ENABLED) ? ui_t("热点已打开", "Hotspot on")
+                                                 : ui_t("未打开", "Off"),
+        SNAPSHOT_FLAG(snapshot, SETUP_AP_ENABLED) ? "Hotspot on" : "Off",
         ESP_BMS_LVGL_ACTION_ENABLE_WIFI_REPROVISIONING,
         SETTINGS_SYSTEM_VIEW_ROOT,
     };
@@ -871,7 +875,8 @@ void settings_show_hotspot_detail(void)
                               qr_hint_h - 10,
                               qr_hint_small ? &settings_zh_10 : &settings_zh_13);
     lv_label_set_long_mode(qr_hint, LV_LABEL_LONG_WRAP);
-    lv_label_set_text(qr_hint, "扫描二维码自动连接wifi；\n连接后访问192.168.4.1");
+    lv_label_set_text(qr_hint, ui_t("扫描二维码自动连接wifi；\n连接后访问192.168.4.1",
+                                    "Scan the QR code to join the WiFi;\nthen open 192.168.4.1"));
     lv_obj_set_style_text_align(qr_hint, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(qr_hint, COLOR_SETTINGS_BG, LV_PART_MAIN);
     s_ui.setup_ap_qr = lv_qrcode_create(s_ui.setup_ap_qr_panel);
@@ -891,15 +896,15 @@ void settings_show_hotspot_detail(void)
 static const char *bluetooth_status_text(const esp_bms_dashboard_snapshot_t *snapshot)
 {
     if (!snapshot) {
-        return "附近不可见";
+        return ui_t("附近不可见", "Hidden");
     }
     if (SNAPSHOT_FLAG(snapshot, BLUETOOTH_CONNECTED)) {
-        return "已连接";
+        return ui_t("已连接", "Connected");
     }
     if (SNAPSHOT_FLAG(snapshot, BLUETOOTH_ADVERTISING)) {
-        return "可被发现";
+        return ui_t("可被发现", "Discoverable");
     }
-    return "附近不可见";
+    return ui_t("附近不可见", "Hidden");
 }
 
 void settings_show_bluetooth_detail(void)
@@ -914,10 +919,14 @@ void settings_show_bluetooth_detail(void)
     const bool pin_visible = snapshot && strcmp(snapshot->bms_error_text, "PIN 123456") == 0;
 
     const settings_detail_row_t rows[] = {
-        { "状态", bluetooth_status_text(snapshot), ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
-        { "名称", snapshot->bluetooth_name[0] != '\0' ? snapshot->bluetooth_name : "ESP32 BMS GPS",
+        { "状态", "Status", bluetooth_status_text(snapshot), bluetooth_status_text(snapshot),
           ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
-        { "可被发现", pin_visible ? "PIN 123456" : "附近可见", ESP_BMS_LVGL_ACTION_ENABLE_BLUETOOTH_ADVERTISING,
+        { "名称", "Name",
+          snapshot->bluetooth_name[0] != '\0' ? snapshot->bluetooth_name : "ESP32 BMS GPS",
+          snapshot->bluetooth_name[0] != '\0' ? snapshot->bluetooth_name : "ESP32 BMS GPS",
+          ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
+        { "可被发现", "Discoverable", pin_visible ? "PIN 123456" : ui_t("附近可见", "Visible nearby"),
+          pin_visible ? "PIN 123456" : "Visible nearby", ESP_BMS_LVGL_ACTION_ENABLE_BLUETOOTH_ADVERTISING,
           SETTINGS_SYSTEM_VIEW_ROOT },
     };
 
@@ -968,7 +977,7 @@ void settings_show_bms_detail(void)
            sizeof(s_ui.settings_preset_range_rollers));
     s_ui.settings_bms_ble_status = NULL;
     lv_obj_clean(s_ui.settings_detail);
-    label_set_text_if_changed(s_ui.settings_detail_title, "BMS设置");
+    label_set_text_if_changed(s_ui.settings_detail_title, ui_t("BMS设置", "BMS settings"));
     lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
 
     settings_bms_ble_format_status(ble_status,
@@ -978,12 +987,16 @@ void settings_show_bms_detail(void)
                                    false);
     const settings_detail_row_t ble_row = {
         "蓝牙连接",
+        "Bluetooth",
+        ble_status,
         ble_status,
         ESP_BMS_LVGL_ACTION_START_BMS_BIND,
         SETTINGS_SYSTEM_VIEW_ROOT,
     };
     const settings_detail_row_t type_row = {
         "保护板类型",
+        "BMS type",
+        settings_bms_type_label(snapshot->bms_type),
         settings_bms_type_label(snapshot->bms_type),
         ESP_BMS_LVGL_ACTION_NONE,
         SETTINGS_SYSTEM_VIEW_ROOT,
@@ -994,13 +1007,16 @@ void settings_show_bms_detail(void)
                    snapshot->preset_range_km);
     const settings_detail_row_t preset_range_row = {
         "预设里程",
+        "Preset range",
+        preset_range,
         preset_range,
         ESP_BMS_LVGL_ACTION_NONE,
         SETTINGS_SYSTEM_VIEW_ROOT,
     };
     const bool capacity_supported = snapshot->bms_type == 0U || snapshot->bms_type == 1U ||
                                     snapshot->bms_type == 3U || snapshot->bms_type == 4U;
-    const char *capacity_subtitle = capacity_supported ? "估算中" : "ANT / JK / DALY / YY";
+    const char *capacity_subtitle = capacity_supported ? ui_t("估算中", "Estimating")
+                                                       : "ANT / JK / DALY / YY";
     if (capacity_supported && snapshot->bms_capacity_estimate_mah > 0U) {
         (void)snprintf(capacity_estimate,
                        sizeof(capacity_estimate),
@@ -1011,6 +1027,8 @@ void settings_show_bms_detail(void)
     }
     const settings_detail_row_t capacity_estimate_row = {
         "容量估算",
+        "Capacity estimate",
+        capacity_subtitle,
         capacity_subtitle,
         ESP_BMS_LVGL_ACTION_NONE,
         SETTINGS_SYSTEM_VIEW_ROOT,
@@ -1152,7 +1170,7 @@ static void settings_show_preset_range_edit(void)
     memset(s_ui.settings_preset_range_rollers,
            0,
            sizeof(s_ui.settings_preset_range_rollers));
-    label_set_text_if_changed(s_ui.settings_detail_title, "预设里程");
+    label_set_text_if_changed(s_ui.settings_detail_title, ui_t("预设里程", "Preset range"));
     settings_navigation_set_hidden(false, false);
     lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
 
@@ -1201,7 +1219,7 @@ static void settings_show_preset_range_edit(void)
                            button_w,
                            settings_scaled_px(20),
                            settings_title_font());
-    lv_label_set_text(text, "确认");
+    lv_label_set_text(text, ui_t("确认", "Confirm"));
     lv_obj_set_style_text_align(text, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(text, COLOR_WHITE, LV_PART_MAIN);
 }
@@ -1294,7 +1312,7 @@ static void settings_controller_confirm_button(lv_obj_t *parent, int32_t y)
                            button_w,
                            settings_scaled_px(20),
                            settings_title_font());
-    lv_label_set_text(text, "确认");
+    lv_label_set_text(text, ui_t("确认", "Confirm"));
     lv_obj_set_style_text_align(text, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(text, COLOR_WHITE, LV_PART_MAIN);
 }
@@ -1324,7 +1342,7 @@ static void settings_show_controller_tire_edit(void)
 
     lv_obj_clean(s_ui.settings_detail);
     s_ui.settings_controller_view = (uint8_t)SETTINGS_CONTROLLER_VIEW_TIRE_EDIT;
-    label_set_text_if_changed(s_ui.settings_detail_title, "轮胎规格");
+    label_set_text_if_changed(s_ui.settings_detail_title, ui_t("轮胎规格", "Tire size"));
     lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
     const int32_t card_x = settings_scaled_px(12);
     const int32_t card_w = s_ui.width - (card_x * 2);
@@ -1339,7 +1357,7 @@ static void settings_show_controller_tire_edit(void)
     lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
     lv_obj_set_style_border_color(card, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
     lv_obj_set_style_pad_all(card, 0, LV_PART_MAIN);
-    const char *const titles[] = { "轮辋", "扁平比", "胎宽" };
+    const char *const titles[] = { ui_t("轮辋", "Rim"), ui_t("扁平比", "Aspect"), ui_t("胎宽", "Width") };
     const char *const options[] = {
         CONTROLLER_RIM_OPTIONS,
         CONTROLLER_ASPECT_OPTIONS,
@@ -1393,7 +1411,7 @@ static void settings_show_controller_ratio_edit(void)
     }
     lv_obj_clean(s_ui.settings_detail);
     s_ui.settings_controller_view = (uint8_t)SETTINGS_CONTROLLER_VIEW_RATIO_EDIT;
-    label_set_text_if_changed(s_ui.settings_detail_title, "传动比");
+    label_set_text_if_changed(s_ui.settings_detail_title, ui_t("传动比", "Gear ratio"));
     lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
     const int32_t roller_w = clamp_i32(s_ui.width - settings_scaled_px(96),
                                        settings_scaled_px(128),
@@ -1439,6 +1457,8 @@ static void settings_controller_value_row(lv_obj_t *parent,
 {
     const settings_detail_row_t descriptor = {
         title,
+        title,
+        value,
         value,
         ESP_BMS_LVGL_ACTION_NONE,
         SETTINGS_SYSTEM_VIEW_ROOT,
@@ -1469,60 +1489,63 @@ void settings_show_gps_detail(void)
                                                      SETTINGS_DETAIL_ROW_H_LANDSCAPE;
     const esp_bms_dashboard_snapshot_t *snapshot = settings_current_snapshot();
     char fix_mode[32] = { 0 };
-    char satellite_system[32] = "等待搜星";
+    char satellite_system[32] = { 0 };
+    strncpy(satellite_system, ui_t("等待搜星", "Waiting for fix"), sizeof(satellite_system) - 1U);
     char satellites[48] = { 0 };
     char average_snr[64] = { 0 };
     char hdop[32] = { 0 };
     const settings_detail_row_t rows[] = {
-        { "定位模式", fix_mode, ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
-        { "卫星系统", satellite_system, ESP_BMS_LVGL_ACTION_NONE,
+        { "定位模式", "Fix mode", fix_mode, fix_mode, ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
+        { "卫星系统", "Satellites", satellite_system, satellite_system, ESP_BMS_LVGL_ACTION_NONE,
           SETTINGS_SYSTEM_VIEW_ROOT },
-        { "卫星", satellites, ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
-        { "平均 SNR 信噪比", average_snr, ESP_BMS_LVGL_ACTION_NONE,
+        { "卫星", "Satellites in view", satellites, satellites, ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
+        { "平均 SNR 信噪比", "Avg SNR", average_snr, average_snr, ESP_BMS_LVGL_ACTION_NONE,
           SETTINGS_SYSTEM_VIEW_ROOT },
-        { "HDOP", hdop, ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
+        { "HDOP", "HDOP", hdop, hdop, ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
     };
 
     if (snapshot->gps_satellite_info_valid) {
         const char *const fix_text = snapshot->gps_fix_dimension == 3U ?
-                                         "3D 定位，测速精准" :
+                                         ui_t("3D 定位，测速精准", "3D fix, accurate speed") :
                                      snapshot->gps_fix_dimension == 2U ?
-                                         "2D 定位，测速偏差大" : "无效定位";
+                                         ui_t("2D 定位，测速偏差大", "2D fix, speed less accurate")
+                                         : ui_t("无效定位", "No fix");
         const char *const satellite_hint = snapshot->gps_satellites_used < 5U ?
-                                             "，少于5颗不稳" : "，测速稳定";
+                                             ui_t("，少于5颗不稳", "; <5 sats, unstable")
+                                             : ui_t("，测速稳定", "; speed stable");
         const char *const snr_hint = snapshot->gps_average_cn0 < 10U ?
-                                       "，信号差易漂移" : "";
+                                       ui_t("，信号差易漂移", "; poor signal, drifts") : "";
         switch (snapshot->gps_constellation_mask) {
         case 0x07U:
-            (void)snprintf(satellite_system, sizeof(satellite_system), "GPS+BDS+GLONASS 三模");
+            (void)snprintf(satellite_system, sizeof(satellite_system), ui_t("GPS+BDS+GLONASS 三模", "GPS+BDS+GLONASS"));
             break;
         case 0x03U:
-            (void)snprintf(satellite_system, sizeof(satellite_system), "GPS+北斗 双模");
+            (void)snprintf(satellite_system, sizeof(satellite_system), ui_t("GPS+北斗 双模", "GPS+BDS"));
             break;
         case 0x01U:
-            (void)snprintf(satellite_system, sizeof(satellite_system), "单 GPS");
+            (void)snprintf(satellite_system, sizeof(satellite_system), ui_t("单 GPS", "GPS only"));
             break;
         case 0x02U:
-            (void)snprintf(satellite_system, sizeof(satellite_system), "北斗 单模");
+            (void)snprintf(satellite_system, sizeof(satellite_system), ui_t("北斗 单模", "BDS only"));
             break;
         case 0x04U:
-            (void)snprintf(satellite_system, sizeof(satellite_system), "GLONASS 单模");
+            (void)snprintf(satellite_system, sizeof(satellite_system), ui_t("GLONASS 单模", "GLONASS only"));
             break;
         default:
             break;
         }
         (void)snprintf(fix_mode, sizeof(fix_mode), "%s", fix_text);
-        (void)snprintf(satellites, sizeof(satellites), "%u 可见 / %u 有效%s",
+        (void)snprintf(satellites, sizeof(satellites), ui_t("%u 可见 / %u 有效%s", "%u vis / %u used%s"),
                        snapshot->gps_satellites_visible,
                        snapshot->gps_satellites_used,
                        satellite_hint);
-        (void)snprintf(average_snr, sizeof(average_snr), "%u dBHz，越大越好%s",
+        (void)snprintf(average_snr, sizeof(average_snr), ui_t("%u dBHz，越大越好%s", "%u dBHz, higher is better%s"),
                        snapshot->gps_average_cn0, snr_hint);
         if (snapshot->gps_hdop_valid) {
             const char *const hdop_hint = snapshot->gps_hdop_centi < 150U ?
-                                            "，优秀" :
+                                            ui_t("，优秀", "; excellent") :
                                         snapshot->gps_hdop_centi > 400U ?
-                                            "，不建议测加速" : "";
+                                            ui_t("，不建议测加速", "; not for acceleration") : "";
             (void)snprintf(hdop, sizeof(hdop), "%u.%02u%s",
                            snapshot->gps_hdop_centi / 100U,
                            snapshot->gps_hdop_centi % 100U,
@@ -1531,7 +1554,7 @@ void settings_show_gps_detail(void)
             (void)snprintf(hdop, sizeof(hdop), "--");
         }
     } else {
-        (void)snprintf(fix_mode, sizeof(fix_mode), "无效定位");
+        (void)snprintf(fix_mode, sizeof(fix_mode), "%s", ui_t("无效定位", "No fix"));
         (void)snprintf(satellites, sizeof(satellites), "--");
         (void)snprintf(average_snr, sizeof(average_snr), "--");
         (void)snprintf(hdop, sizeof(hdop), "--");
@@ -1574,7 +1597,7 @@ void settings_show_dashboard_detail(void)
     s_ui.settings_detail_id = (uint8_t)SETTINGS_DETAIL_DASHBOARD;
     s_ui.settings_dashboard_view = (uint8_t)SETTINGS_DASHBOARD_VIEW_ROOT;
     s_ui.settings_bms_ble_status = NULL;
-    label_set_text_if_changed(s_ui.settings_detail_title, "仪表");
+    label_set_text_if_changed(s_ui.settings_detail_title, ui_t("仪表", "Dashboard"));
     lv_obj_t *card = settings_list_card(s_ui.settings_detail, card_x, 12, card_w, row_h,
                                         row_count);
     size_t row_index = 0U;
@@ -1595,7 +1618,7 @@ void settings_show_dashboard_detail(void)
                               card_w,
                               row_h,
                               snapshot->speed_source == ESP_BMS_SPEED_SOURCE_CONTROLLER ?
-                                  "控制器" : "GPS");
+                                  ui_t("控制器", "Controller") : "GPS");
 #endif
     lv_obj_update_layout(s_ui.settings_detail);
     lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
@@ -1622,7 +1645,7 @@ void settings_show_controller_detail(void)
     s_ui.settings_detail_id = (uint8_t)SETTINGS_DETAIL_CONTROLLER;
     s_ui.settings_controller_view = (uint8_t)SETTINGS_CONTROLLER_VIEW_ROOT;
     s_ui.settings_bms_ble_status = NULL;
-    label_set_text_if_changed(s_ui.settings_detail_title, "控制器");
+    label_set_text_if_changed(s_ui.settings_detail_title, ui_t("控制器", "Controller"));
     lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
 
     settings_bms_ble_format_status(ble_status,
@@ -1631,11 +1654,11 @@ void settings_show_controller_detail(void)
                                    SETTINGS_BLE_SOURCE_CONTROLLER,
                                    false);
     const settings_detail_row_t rows[] = {
-        { "控制器连接", ble_status,
+        { "控制器连接", "Controller link", ble_status, ble_status,
           ESP_BMS_LVGL_ACTION_START_CONTROLLER_BIND, SETTINGS_SYSTEM_VIEW_ROOT },
     };
     const settings_detail_row_t type_row = {
-        "控制器类型", "远驱", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT,
+        "控制器类型", "Controller type", "远驱", "FarDriver", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT,
     };
 
     lv_obj_t *card = settings_list_card(s_ui.settings_detail,
@@ -1661,7 +1684,7 @@ void settings_show_controller_detail(void)
                 (uint8_t)ESP_BMS_CONTROLLER_PARAM_SOURCE_LOCAL) {
             (void)snprintf(tire,
                            sizeof(tire),
-                           controller_synced ? "%u-%u-%u 控制器同步" : "%u-%u-%u",
+                           controller_synced ? ui_t("%u-%u-%u 控制器同步", "%u-%u-%u synced") : "%u-%u-%u",
                            snapshot->controller_tire_rim_inch,
                            snapshot->controller_tire_aspect_percent,
                            snapshot->controller_tire_width_mm);
@@ -1669,21 +1692,21 @@ void settings_show_controller_detail(void)
                    (uint8_t)ESP_BMS_CONTROLLER_PARAM_SOURCE_LEGACY_WHEEL) {
             (void)snprintf(tire,
                            sizeof(tire),
-                           "旧周长 %u mm",
+                           ui_t("旧周长 %u mm", "Old circ. %u mm"),
                            snapshot->controller_wheel_circumference_mm);
         } else {
-            (void)snprintf(tire, sizeof(tire), "未设置");
+            (void)snprintf(tire, sizeof(tire), "%s", ui_t("未设置", "Unset"));
         }
         (void)snprintf(ratio,
                        sizeof(ratio),
-                       controller_synced ? "%u.%02u 控制器同步" : "%u.%02u",
+                       controller_synced ? ui_t("%u.%02u 控制器同步", "%u.%02u synced") : "%u.%02u",
                        snapshot->controller_gear_ratio_centi / 100U,
                        snapshot->controller_gear_ratio_centi % 100U);
         settings_controller_value_row(card,
                                       (int32_t)visible_index++ * row_h,
                                       card_w,
                                       row_h,
-                                      "轮胎规格",
+                                      ui_t("轮胎规格", "Tire size"),
                                       tire,
                                       SETTINGS_CONTROLLER_VIEW_TIRE_EDIT,
                                       values_editable);
@@ -1691,7 +1714,7 @@ void settings_show_controller_detail(void)
                                       (int32_t)visible_index * row_h,
                                       card_w,
                                       row_h,
-                                      "传动比",
+                                      ui_t("传动比", "Gear ratio"),
                                       ratio,
                                       SETTINGS_CONTROLLER_VIEW_RATIO_EDIT,
                                       values_editable);
@@ -1721,7 +1744,8 @@ void settings_show_bms_bind_confirm(const esp_bms_bms_scan_candidate_t *candidat
     (void)snprintf(s_ui.settings_bms_confirm_name,
                    sizeof(s_ui.settings_bms_confirm_name),
                    "%s",
-                   candidate->has_name && candidate->name[0] != '\0' ? candidate->name : "设备");
+                   candidate->has_name && candidate->name[0] != '\0' ? candidate->name
+                                                                        : ui_t("设备", "Device"));
 
     UI_SET_FLAG(SETTINGS_SWIPE_TRACKING, false);
     UI_SET_FLAG(SETTINGS_SWIPE_CONSUMED, false);
@@ -1749,12 +1773,12 @@ void settings_show_bms_bind_confirm(const esp_bms_bms_scan_candidate_t *candidat
     lv_obj_set_style_pad_all(dialog, 0, LV_PART_MAIN);
 
     lv_obj_t *title = label(dialog, 12, 10, dialog_w - 24, 20, &settings_zh_16);
-    lv_label_set_text(title, "蓝牙连接");
+    lv_label_set_text(title, ui_t("蓝牙连接", "Bluetooth"));
     lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(title, COLOR_SETTINGS_TEXT, LV_PART_MAIN);
 
     lv_obj_t *name = label(dialog, 12, 40, dialog_w - 24, 22, &settings_zh_13);
-    lv_label_set_text_fmt(name, "连接 %s ?", s_ui.settings_bms_confirm_name);
+    lv_label_set_text_fmt(name, ui_t("连接 %s ?", "Connect %s ?"), s_ui.settings_bms_confirm_name);
     lv_label_set_long_mode(name, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
     lv_obj_set_style_text_align(name, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(name, COLOR_SETTINGS_MUTED, LV_PART_MAIN);
@@ -1867,13 +1891,15 @@ lv_obj_t *settings_detail_row(lv_obj_t *parent,
     const int32_t text_w = w - settings_scaled_px(12) - action_w;
 
     lv_obj_t *title = label(box, settings_scaled_px(12), text_y, text_w, title_h, title_font);
-    lv_label_set_text(title, row ? row->title : "");
+    lv_label_set_text(title, row ? ui_t(row->title, row->title_en) : "");
     lv_label_set_long_mode(title, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
     lv_obj_set_style_text_color(title, COLOR_SETTINGS_TEXT, LV_PART_MAIN);
 
     if (has_subtitle) {
         const char *subtitle_text =
-            row->system_view == SETTINGS_SYSTEM_VIEW_LEVEL_POSITION ? quick_level_position_text() : row->subtitle;
+            row->system_view == SETTINGS_SYSTEM_VIEW_LEVEL_POSITION
+                ? quick_level_position_text()
+                : ui_t(row->subtitle, row->subtitle_en);
         lv_obj_t *subtitle = label(box,
                                    settings_scaled_px(12),
                                    text_y + title_h + text_gap,
@@ -1913,7 +1939,8 @@ void settings_show_system_slider(quick_level_kind_t kind)
     lv_obj_set_style_border_color(card, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
     lv_obj_set_style_pad_all(card, 0, LV_PART_MAIN);
 
-    const char *title_text = kind == QUICK_LEVEL_VOLUME ? "提示音量" : "屏幕亮度";
+    const char *title_text = kind == QUICK_LEVEL_VOLUME ? ui_t("提示音量", "Beep volume")
+                                                        : ui_t("屏幕亮度", "Brightness");
     lv_obj_t *title = label(card, 12, 14, page_w - 24, 22, &settings_zh_16);
     lv_label_set_text(title, title_text);
     lv_obj_set_style_text_color(title, COLOR_SETTINGS_TEXT, LV_PART_MAIN);
@@ -1960,12 +1987,12 @@ void settings_show_system_position(void)
 {
     const bool portrait = s_ui.width < s_ui.height;
     const char *labels[QUICK_LEVEL_POSITION_COUNT] = {
-        "中间",
-        portrait ? "右边" : "下面",
-        portrait ? "左边" : "上面",
+        ui_t("中间", "Middle"),
+        portrait ? ui_t("右边", "Right") : ui_t("下面", "Bottom"),
+        portrait ? ui_t("左边", "Left") : ui_t("上面", "Top"),
     };
     lv_obj_t *description = label(s_ui.settings_detail, 12, 18, s_ui.width - 24, 24, &settings_zh_13);
-    lv_label_set_text(description, "选择快捷调节条出现的位置");
+    lv_label_set_text(description, ui_t("选择快捷调节条出现的位置", "Choose where the quick slider appears"));
     lv_label_set_long_mode(description, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
     lv_obj_set_style_text_align(description, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(description, COLOR_SETTINGS_MUTED, LV_PART_MAIN);
@@ -2021,7 +2048,7 @@ lv_obj_t *settings_option_card(lv_obj_t *parent,
     const lv_font_t *subtitle_font = settings_subtitle_font();
     const int32_t title_h = (int32_t)title_font->line_height + 4;
     const int32_t subtitle_h = (int32_t)subtitle_font->line_height + 4;
-    const char *subtitle_text = option ? option->subtitle : "";
+    const char *subtitle_text = option ? ui_t(option->subtitle, option->subtitle_en) : "";
     const bool show_subtitle = h >= 42 && subtitle_text[0] != '\0';
     const int32_t text_gap = show_subtitle ? 1 : 0;
     const int32_t total_text_h = title_h + (show_subtitle ? text_gap + subtitle_h : 0);
@@ -2032,7 +2059,7 @@ lv_obj_t *settings_option_card(lv_obj_t *parent,
                             w - text_x - settings_scaled_px(30),
                             title_h,
                             title_font);
-    lv_label_set_text(title, option ? option->title : "");
+    lv_label_set_text(title, option ? ui_t(option->title, option->title_en) : "");
     lv_label_set_long_mode(title, LV_LABEL_LONG_MODE_CLIP);
     lv_obj_set_style_text_color(title, COLOR_SETTINGS_TEXT, LV_PART_MAIN);
 

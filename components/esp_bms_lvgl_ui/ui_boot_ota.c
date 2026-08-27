@@ -535,6 +535,11 @@ esp_err_t esp_bms_lvgl_ui_boot_start(const esp_bms_dashboard_snapshot_t *snapsho
     ESP_RETURN_ON_ERROR(rebuild_screen_if_needed(snapshot), TAG,
                         "rebuild boot UI failed");
 
+    if (snapshot->language_zh != ui_language_zh()) {
+        ui_language_set_zh(snapshot->language_zh);
+        ESP_RETURN_ON_ERROR(ui_rebuild_screen(snapshot, true), TAG,
+                            "rebuild boot UI for language failed");
+    }
     const uint8_t configured_style = snapshot->boot_animation_style;
     s_ui.boot_animation_style = boot_animation_style_is_available(configured_style)
                                     ? configured_style

@@ -97,9 +97,9 @@ static const char *page_transition_title(esp_bms_lvgl_page_t page)
         return "BMS";
     case ESP_BMS_LVGL_PAGE_CONTROLLER:
     case ESP_BMS_LVGL_PAGE_GPS:
-        return "仪表";
+        return ui_t("仪表", "Dashboard");
     case ESP_BMS_LVGL_PAGE_CAST:
-        return "投屏";
+        return ui_t("投屏", "Cast");
     case ESP_BMS_LVGL_PAGE_MUSIC:
 #if MEDIA_HID_PAGE_ENABLED
         return "HID";
@@ -983,7 +983,7 @@ static void create_cast_page_content(void)
                                  s_ui.width,
                                  settings_zh_16.line_height,
                                  &settings_zh_16);
-    lv_label_set_text(cast_title, "扫码投屏");
+    lv_label_set_text(cast_title, ui_t("扫码投屏", "Scan to cast"));
     lv_obj_set_style_text_align(cast_title, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(cast_title, COLOR_ACCENT, LV_PART_MAIN);
 #if LV_USE_QRCODE
@@ -1049,7 +1049,8 @@ static void create_music_page_content(void)
     /* The play/pause key also answers/hangs up phone calls (standard media key
      * behaviour on Android/iOS), so the label shows both roles. */
     const char *const music_labels[MUSIC_CONTROL_COUNT] = {
-        "上一首", "播放/接听", "下一首", "音量-", "音量+",
+        ui_t("上一首", "Prev"), ui_t("播放/接听", "Play/Answer"), ui_t("下一首", "Next"),
+        ui_t("音量-", "Vol-"), ui_t("音量+", "Vol+"),
     };
     for (size_t index = 0U; index < MUSIC_CONTROL_COUNT; ++index) {
         const bool track_control = index < 3U;
@@ -1173,7 +1174,7 @@ static void create_battery_page_content(void)
         lv_label_set_text(s_ui.bms_status_ok, "OK");
         s_ui.remaining_range_separator = dashboard_separator(bms_panel, 8, 52, 92);
         s_ui.remaining_range_title = label(bms_panel, 4, 59, 100, 16, &settings_zh_13);
-        lv_label_set_text(s_ui.remaining_range_title, "剩余里程");
+        lv_label_set_text(s_ui.remaining_range_title, ui_t("剩余里程", "Range"));
         s_ui.remaining_range_value = label(bms_panel, 8, 77, 68, 30, &lv_font_montserrat_24);
         s_ui.remaining_range_unit = label(bms_panel, 72, 87, 28, 16, &lv_font_montserrat_14);
         lv_label_set_text(s_ui.remaining_range_unit, "km");
@@ -1266,7 +1267,7 @@ static void create_battery_page_content(void)
         s_ui.remaining_range_separator = dashboard_separator(bms_panel, 74, 8, 1);
         lv_obj_set_size(s_ui.remaining_range_separator, 1, 54);
         s_ui.remaining_range_title = label(bms_panel, 78, 6, 64, 16, &settings_zh_13);
-        lv_label_set_text(s_ui.remaining_range_title, "剩余里程");
+        lv_label_set_text(s_ui.remaining_range_title, ui_t("剩余里程", "Range"));
         s_ui.remaining_range_value = label(bms_panel, 78, 21, 64, 30, &lv_font_montserrat_24);
         s_ui.remaining_range_unit = label(bms_panel, 78, 50, 64, 16, &lv_font_montserrat_14);
         lv_label_set_text(s_ui.remaining_range_unit, "km");
@@ -1803,7 +1804,7 @@ void create_screen(lv_display_t *display)
                                        s_ui.width - (nav_title_x * 2),
                                        nav_title_h,
                                        settings_title_font());
-    lv_label_set_text(s_ui.settings_detail_title, "设置");
+    lv_label_set_text(s_ui.settings_detail_title, ui_t("设置", "Settings"));
     lv_obj_set_style_text_align(s_ui.settings_detail_title,
                                 LV_TEXT_ALIGN_CENTER,
                                 LV_PART_MAIN);

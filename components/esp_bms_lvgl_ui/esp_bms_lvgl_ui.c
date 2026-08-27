@@ -43,6 +43,26 @@ esp_bms_lvgl_ui_t s_ui;
 bool s_touch_calibration_supported = true;
 bool s_native_gestures_supported;
 
+static bool s_language_zh = true;
+
+void ui_language_set_zh(bool zh)
+{
+    s_language_zh = zh;
+}
+
+bool ui_language_zh(void)
+{
+    return s_language_zh;
+}
+
+const char *ui_t(const char *zh, const char *en)
+{
+    if (!zh) {
+        return en;
+    }
+    return s_language_zh ? zh : (en && en[0] != '\0' ? en : zh);
+}
+
 
 
 
@@ -154,6 +174,11 @@ const uint16_t BMS_SAFETY_BITS[ESP_BMS_BMS_SAFETY_COUNT] = {
 const char *const BMS_SAFETY_KEYS[ESP_BMS_BMS_SAFETY_COUNT] = {
     "过压保护", "欠压保护", "高温保护", "低温保护",
     "过流保护", "短路保护", "压差保护", "均衡状态",
+};
+
+const char *const BMS_SAFETY_KEYS_EN[ESP_BMS_BMS_SAFETY_COUNT] = {
+    "Over-voltage", "Under-voltage", "Over-temp", "Under-temp",
+    "Over-current", "Short circuit", "Cell delta", "Balancing",
 };
 
 #if ESP_BMS_FEATURE_DASHBOARD_FIREBLADE
@@ -331,10 +356,10 @@ void bms_native_set_safety_status(const esp_bms_dashboard_snapshot_t *snapshot)
         const char *text = "--";
         lv_color_t color = COLOR_MUTED;
         if (supported && bit == ESP_BMS_BMS_SAFETY_BALANCING) {
-            text = active ? "均衡中" : "待机";
+            text = active ? ui_t("均衡中", "Balancing") : ui_t("待机", "Idle");
             color = active ? COLOR_ACCENT : COLOR_MUTED;
         } else if (supported) {
-            text = active ? "告警" : "正常";
+            text = active ? ui_t("告警", "Alarm") : ui_t("正常", "OK");
             color = active ? COLOR_BAD : COLOR_STATUS_OK;
         }
         bms_label_set(s_ui.bms_safety_values[index],
@@ -567,7 +592,8 @@ void perform_ui_action(esp_bms_lvgl_action_t action, bool close_quick_panel)
         }
         if (s_ui.music_control_captions[1]) {
             lv_label_set_text(s_ui.music_control_captions[1],
-                              s_ui.music_play_paused ? "暂停/挂断" : "播放/接听");
+                              s_ui.music_play_paused ? ui_t("暂停/挂断", "Pause/Hang up")
+                                                     : ui_t("播放/接听", "Play/Answer"));
         }
     }
 #endif
@@ -804,64 +830,72 @@ void quick_pull_event_cb(lv_event_t *event)
 const quick_panel_item_t QUICK_PANEL_ITEMS[QUICK_PANEL_BUTTON_COUNT] = {
 #if ESP_BMS_FEATURE_BMS || ESP_BMS_FEATURE_CONTROLLER
     { QUICK_ITEM_BLUETOOTH, QUICK_BLUETOOTH_SYMBOL, ESP_BMS_LVGL_ACTION_SHOW_SETTINGS,
-      "蓝牙设置", false },
+      "蓝牙设置", "Bluetooth", false },
 #endif
 #if ESP_BMS_FEATURE_NETWORK
     { QUICK_ITEM_HOTSPOT, NULL, ESP_BMS_LVGL_ACTION_SHOW_SETTINGS,
-      "热点设置", true },
+      "热点设置", "Hotspot", true },
 #endif
     { QUICK_ITEM_ROTATE, LV_SYMBOL_LOOP, ESP_BMS_LVGL_ACTION_ROTATE_DISPLAY,
-      "旋转屏幕", false },
+      "旋转屏幕", "Rotate", false },
 #if ESP_BMS_FEATURE_GPS || ESP_BMS_FEATURE_CONTROLLER
     { QUICK_ITEM_SPEED, LV_SYMBOL_GPS, ESP_BMS_LVGL_ACTION_TOGGLE_SPEED_UNIT,
-      "点击切换", false },
+      "点击切换", "Tap to switch", false },
 #endif
     { QUICK_ITEM_SETTINGS, LV_SYMBOL_SETTINGS, ESP_BMS_LVGL_ACTION_SHOW_SETTINGS,
-      "设备设置", false },
+      "设备设置", "Settings", false },
     { QUICK_ITEM_LOCK, NULL, ESP_BMS_LVGL_ACTION_NONE,
-      "LOCK", false },
+      "LOCK", "LOCK", false },
 };
 
 const settings_option_t SETTINGS_OPTIONS[SETTINGS_OPTIONS_COUNT] = {
 #if ESP_BMS_FEATURE_NETWORK
-    { SETTINGS_DETAIL_HOTSPOT, "热点共享", "Setup AP", QUICK_HOTSPOT_SYMBOL, &wlanJZ },
+    { SETTINGS_DETAIL_HOTSPOT, "热点共享", "Hotspot share", "Setup AP", "Setup AP",
+      QUICK_HOTSPOT_SYMBOL, &wlanJZ },
 #endif
 #if ESP_BMS_FEATURE_BMS || ESP_BMS_FEATURE_CONTROLLER
-    { SETTINGS_DETAIL_BLUETOOTH, "蓝牙", "附近可见", QUICK_BLUETOOTH_SYMBOL, &bluetoothon },
+    { SETTINGS_DETAIL_BLUETOOTH, "蓝牙", "Bluetooth", "附近可见", "Visible nearby",
+      QUICK_BLUETOOTH_SYMBOL, &bluetoothon },
 #endif
 #if ESP_BMS_FEATURE_BMS
-    { SETTINGS_DETAIL_BMS, "BMS设置", "扫描绑定", LV_SYMBOL_CHARGE, &lv_font_montserrat_24 },
+    { SETTINGS_DETAIL_BMS, "BMS设置", "BMS settings", "扫描绑定", "Scan & bind",
+      LV_SYMBOL_CHARGE, &lv_font_montserrat_24 },
 #endif
 #if ESP_BMS_FEATURE_GPS
-    { SETTINGS_DETAIL_GPS, "GPS", "定位与搜星", LV_SYMBOL_GPS, &lv_font_montserrat_24 },
+    { SETTINGS_DETAIL_GPS, "GPS", "GPS", "定位与搜星", "Position & satellites",
+      LV_SYMBOL_GPS, &lv_font_montserrat_24 },
 #endif
 #if ESP_BMS_FEATURE_GPS || ESP_BMS_FEATURE_CONTROLLER
-    { SETTINGS_DETAIL_DASHBOARD, "仪表", "显示与速度", "D", &lv_font_montserrat_24 },
+    { SETTINGS_DETAIL_DASHBOARD, "仪表", "Dashboard", "显示与速度", "Display & speed",
+      "D", &lv_font_montserrat_24 },
 #endif
 #if ESP_BMS_FEATURE_CONTROLLER
-    { SETTINGS_DETAIL_CONTROLLER, "控制器", "FarDriver", "C", &lv_font_montserrat_24 },
+    { SETTINGS_DETAIL_CONTROLLER, "控制器", "Controller", "FarDriver", "FarDriver",
+      "C", &lv_font_montserrat_24 },
 #endif
-    { SETTINGS_DETAIL_SYSTEM, "系统", "显示与控制", LV_SYMBOL_SETTINGS, &lv_font_montserrat_24 },
-    { SETTINGS_DETAIL_ABOUT, "关于本机", "设备信息", "i", &lv_font_montserrat_24 },
+    { SETTINGS_DETAIL_SYSTEM, "系统", "System", "显示与控制", "Display & controls",
+      LV_SYMBOL_SETTINGS, &lv_font_montserrat_24 },
+    { SETTINGS_DETAIL_ABOUT, "关于本机", "About", "设备信息", "Device info",
+      "i", &lv_font_montserrat_24 },
 };
 
 const settings_detail_row_t SETTINGS_HOTSPOT_ROWS[SETTINGS_HOTSPOT_ROWS_COUNT] = {
-    { "状态", "热点已打开", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
-    { "名称", "fuckingBms_xxxxxx", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
-    { "密码", "8 DIGITS", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
-    { "手机页面", "192.168.4.1 网页配置", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
-    { "配置入口", "开启配网入口", ESP_BMS_LVGL_ACTION_ENABLE_WIFI_REPROVISIONING, SETTINGS_SYSTEM_VIEW_ROOT },
-    { "二维码", "网页查看", ESP_BMS_LVGL_ACTION_ENABLE_WIFI_REPROVISIONING, SETTINGS_SYSTEM_VIEW_ROOT },
+    { "状态", "Status", "热点已打开", "Hotspot on", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
+    { "名称", "Name", "fuckingBms_xxxxxx", "fuckingBms_xxxxxx", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
+    { "密码", "Password", "8 DIGITS", "8 DIGITS", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
+    { "手机页面", "Web page", "192.168.4.1 网页配置", "192.168.4.1 web config", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
+    { "配置入口", "Setup portal", "开启配网入口", "Enable setup portal", ESP_BMS_LVGL_ACTION_ENABLE_WIFI_REPROVISIONING, SETTINGS_SYSTEM_VIEW_ROOT },
+    { "二维码", "QR code", "网页查看", "See on web page", ESP_BMS_LVGL_ACTION_ENABLE_WIFI_REPROVISIONING, SETTINGS_SYSTEM_VIEW_ROOT },
 };
 
 const settings_detail_row_t SETTINGS_BLUETOOTH_ROWS[SETTINGS_BLUETOOTH_ROWS_COUNT] = {
-    { "状态", "未连接", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
-    { "名称", "ESP32 BMS GPS", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
-    { "可被发现", "附近可见", ESP_BMS_LVGL_ACTION_ENABLE_BLUETOOTH_ADVERTISING, SETTINGS_SYSTEM_VIEW_ROOT },
+    { "状态", "Status", "未连接", "Not connected", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
+    { "名称", "Name", "ESP32 BMS GPS", "ESP32 BMS GPS", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
+    { "可被发现", "Discoverable", "附近可见", "Visible nearby", ESP_BMS_LVGL_ACTION_ENABLE_BLUETOOTH_ADVERTISING, SETTINGS_SYSTEM_VIEW_ROOT },
 };
 
 const settings_detail_row_t SETTINGS_BMS_ROWS[SETTINGS_BMS_ROWS_COUNT] = {
-    { "蓝牙连接", "扫描绑定", ESP_BMS_LVGL_ACTION_START_BMS_BIND, SETTINGS_SYSTEM_VIEW_ROOT },
+    { "蓝牙连接", "Bluetooth", "扫描绑定", "Scan & bind", ESP_BMS_LVGL_ACTION_START_BMS_BIND, SETTINGS_SYSTEM_VIEW_ROOT },
 };
 
 const char *const SETTINGS_BMS_TYPE_LABELS[SETTINGS_BMS_TYPE_COUNT] = {
@@ -870,6 +904,14 @@ const char *const SETTINGS_BMS_TYPE_LABELS[SETTINGS_BMS_TYPE_COUNT] = {
     "嘉佰达 JBD",
     "达锂 Daly",
     "彦阳 BMS",
+};
+
+const char *const SETTINGS_BMS_TYPE_LABELS_EN[SETTINGS_BMS_TYPE_COUNT] = {
+    "ANT",
+    "JK",
+    "JBD",
+    "Daly",
+    "Yanyang BMS",
 };
 
 const esp_bms_lvgl_action_t SETTINGS_BMS_TYPE_ACTIONS[SETTINGS_BMS_TYPE_COUNT] = {
@@ -885,24 +927,24 @@ _Static_assert(ARRAY_SIZE(SETTINGS_BMS_TYPE_LABELS) == ARRAY_SIZE(SETTINGS_BMS_T
 
 const settings_detail_row_t SETTINGS_SYSTEM_ROWS[SETTINGS_SYSTEM_ROWS_COUNT] = {
 #if CONFIG_ESP_BMS_LVGL_BRIDGE_BACKLIGHT_DIMMING
-    { "亮度", "调节屏幕亮度", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_BRIGHTNESS },
+    { "亮度", "Brightness", "调节屏幕亮度", "Adjust screen brightness", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_BRIGHTNESS },
 #endif
 #if ESP_BMS_FEATURE_AUDIO
-    { "音量", "调节提示音量", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_VOLUME },
+    { "音量", "Volume", "调节提示音量", "Adjust beep volume", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_VOLUME },
 #endif
-    { "调节条位置", "中间", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_LEVEL_POSITION },
-    { "启动动画", "电量 / BMW / HONDA", ESP_BMS_LVGL_ACTION_NONE,
+    { "调节条位置", "Slider position", "中间", "Middle", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_LEVEL_POSITION },
+    { "启动动画", "Boot animation", "电量 / BMW / HONDA", "Battery / BMW / HONDA", ESP_BMS_LVGL_ACTION_NONE,
       SETTINGS_SYSTEM_VIEW_BOOT_ANIMATION },
-    { "屏幕校准", "校准触摸位置", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_TOUCH_CALIBRATION },
-    { "旋转屏幕", "点击操作", ESP_BMS_LVGL_ACTION_ROTATE_DISPLAY, SETTINGS_SYSTEM_VIEW_ROOT },
-    { "语言切换", "点击操作", ESP_BMS_LVGL_ACTION_TOGGLE_LANGUAGE, SETTINGS_SYSTEM_VIEW_ROOT },
-    { "恢复默认", "清除设置", ESP_BMS_LVGL_ACTION_RESTORE_DEFAULTS, SETTINGS_SYSTEM_VIEW_ROOT },
+    { "屏幕校准", "Touch calibration", "校准触摸位置", "Calibrate touch position", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_TOUCH_CALIBRATION },
+    { "旋转屏幕", "Rotate screen", "点击操作", "Tap to act", ESP_BMS_LVGL_ACTION_ROTATE_DISPLAY, SETTINGS_SYSTEM_VIEW_ROOT },
+    { "语言切换", "Language", "点击操作", "Tap to act", ESP_BMS_LVGL_ACTION_TOGGLE_LANGUAGE, SETTINGS_SYSTEM_VIEW_ROOT },
+    { "恢复默认", "Restore defaults", "清除设置", "Clear settings", ESP_BMS_LVGL_ACTION_RESTORE_DEFAULTS, SETTINGS_SYSTEM_VIEW_ROOT },
 };
 
 const settings_detail_row_t SETTINGS_ABOUT_ROWS[SETTINGS_ABOUT_ROWS_COUNT] = {
-    { "设备", SETTINGS_ABOUT_DEVICE_MODEL, ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
-    { "固件版本", "--", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
-    { "屏幕", SETTINGS_ABOUT_DISPLAY_MODEL, ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
+    { "设备", "Device", SETTINGS_ABOUT_DEVICE_MODEL, SETTINGS_ABOUT_DEVICE_MODEL, ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
+    { "固件版本", "Firmware", "--", "--", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
+    { "屏幕", "Display", SETTINGS_ABOUT_DISPLAY_MODEL, SETTINGS_ABOUT_DISPLAY_MODEL, ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
 };
 
 /* 定义大小必须与 esp_bms_lvgl_ui_internal.h 中的 extern 声明一致，
@@ -1027,7 +1069,7 @@ void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapshot)
     if (had_last_snapshot &&
         ((!previous_bms_online && SNAPSHOT_FLAG(snapshot, BMS_ONLINE)) ||
          (!previous_controller_online && SNAPSHOT_FLAG(snapshot, CONTROLLER_ONLINE)))) {
-        quick_toast_show_text("绑定成功");
+        quick_toast_show_text(ui_t("绑定成功", "Bound"));
     } else if (s_ui.quick_connecting_toast_active &&
                had_last_snapshot &&
                strcmp(previous_bms_info_text, snapshot->bms_info_text) != 0 &&
@@ -1132,15 +1174,10 @@ void flush_deferred_dashboard_snapshot(void)
     apply_dashboard_snapshot(&snapshot);
 }
 
-esp_err_t rebuild_screen_if_needed(const esp_bms_dashboard_snapshot_t *snapshot)
+esp_err_t ui_rebuild_screen(const esp_bms_dashboard_snapshot_t *snapshot,
+                            bool language_changed)
 {
     ESP_RETURN_ON_FALSE(s_ui.display, ESP_ERR_INVALID_STATE, TAG, "display is not initialized");
-
-    const int32_t width = lv_display_get_horizontal_resolution(s_ui.display);
-    const int32_t height = lv_display_get_vertical_resolution(s_ui.display);
-    if (width == s_ui.width && height == s_ui.height) {
-        return ESP_OK;
-    }
 
     lv_obj_t *old_root = s_ui.root;
     esp_bms_lvgl_page_t page = s_ui.page;
@@ -1158,6 +1195,8 @@ esp_err_t rebuild_screen_if_needed(const esp_bms_dashboard_snapshot_t *snapshot)
         s_ui.quick_layouts[QUICK_LAYOUT_PORTRAIT],
         s_ui.quick_layouts[QUICK_LAYOUT_LANDSCAPE],
     };
+    const uint8_t settings_detail_id = language_changed ? s_ui.settings_detail_id
+                                                        : (uint8_t)SETTINGS_DETAIL_NONE;
     lv_display_t *display = s_ui.display;
 
     lv_indev_reset(NULL, NULL);
@@ -1205,6 +1244,10 @@ esp_err_t rebuild_screen_if_needed(const esp_bms_dashboard_snapshot_t *snapshot)
         settings_show_system_view(SETTINGS_SYSTEM_VIEW_BOOT_ANIMATION);
     } else if (settings_visible) {
         show_settings_view();
+        if (settings_detail_id != (uint8_t)SETTINGS_DETAIL_NONE &&
+            settings_detail_is_enabled((settings_detail_id_t)settings_detail_id)) {
+            settings_show_detail((settings_detail_id_t)settings_detail_id);
+        }
     } else {
         show_dashboard_view();
     }
@@ -1213,6 +1256,19 @@ esp_err_t rebuild_screen_if_needed(const esp_bms_dashboard_snapshot_t *snapshot)
     }
     screen_lock_reapply();
     return ESP_OK;
+}
+
+esp_err_t rebuild_screen_if_needed(const esp_bms_dashboard_snapshot_t *snapshot)
+{
+    ESP_RETURN_ON_FALSE(s_ui.display, ESP_ERR_INVALID_STATE, TAG, "display is not initialized");
+
+    const int32_t width = lv_display_get_horizontal_resolution(s_ui.display);
+    const int32_t height = lv_display_get_vertical_resolution(s_ui.display);
+    if (width == s_ui.width && height == s_ui.height) {
+        return ESP_OK;
+    }
+
+    return ui_rebuild_screen(snapshot, false);
 }
 
 esp_err_t esp_bms_lvgl_ui_init(lv_display_t *display,
@@ -1267,10 +1323,15 @@ esp_err_t esp_bms_lvgl_ui_update(const esp_bms_dashboard_snapshot_t *snapshot)
 {
     ESP_RETURN_ON_FALSE(snapshot, ESP_ERR_INVALID_ARG, TAG, "snapshot is required");
     ESP_RETURN_ON_FALSE(UI_FLAG(INITIALIZED), ESP_ERR_INVALID_STATE, TAG, "UI is not initialized");
+    const bool language_changed = snapshot->language_zh != s_language_zh;
     ESP_RETURN_ON_ERROR(rebuild_screen_if_needed(snapshot), TAG, "rebuild UI failed");
     if (UI_FLAG(DRAGGING) || UI_FLAG(SETTLING)) {
         defer_dashboard_snapshot(snapshot);
         return ESP_OK;
+    }
+    if (language_changed) {
+        ui_language_set_zh(snapshot->language_zh);
+        return ui_rebuild_screen(snapshot, true);
     }
 
     apply_dashboard_snapshot(snapshot);
@@ -1297,7 +1358,8 @@ esp_err_t esp_bms_lvgl_ui_touch_calibration_result(bool success)
                         ESP_ERR_INVALID_STATE, TAG, "touch calibration view is not active");
     set_obj_hidden(s_ui.settings_calibration_target, true);
     label_set_text_if_changed(s_ui.settings_calibration_status,
-                              success ? "校准成功，返回系统设置" : "校准失败，返回后重试");
+                              success ? ui_t("校准成功，返回系统设置", "Calibrated, back to System")
+                                      : ui_t("校准失败，返回后重试", "Calibration failed, retry"));
     return ESP_OK;
 }
 

@@ -116,12 +116,14 @@ static void refresh_speed_snapshot(host_app_t *app)
         &snapshot->remaining_range_km);
 }
 
+static bool s_preview_language_zh = true;
+
 static void init_snapshot(host_app_t *app)
 {
     esp_bms_dashboard_snapshot_t *snapshot = &app->snapshot;
     memset(snapshot, 0, sizeof(*snapshot));
 
-    snapshot->flags = ESP_BMS_DASHBOARD_FLAG_SPEED_VALID |
+    snapshot->language_zh = s_preview_language_zh;    snapshot->flags = ESP_BMS_DASHBOARD_FLAG_SPEED_VALID |
                       ESP_BMS_DASHBOARD_FLAG_GPS_FIX_VALID |
                       ESP_BMS_DASHBOARD_FLAG_BMS_ONLINE |
                       ESP_BMS_DASHBOARD_FLAG_PACK_VOLTAGE_VALID |
@@ -600,7 +602,7 @@ static void print_help(const char *program)
     printf("用法: %s [--portrait] [--resolution WIDTHxHEIGHT] [--headless] [--screenshot FILE.bmp] "
            "[--page battery|controller|gps|cast|music] "
            "[--style s1000rr|controller|fireblade] [--boot charge|bmw|honda] "
-           "[--boot-progress 0..100]\n",
+           "[--boot-progress 0..100] [--language zh|en]\n",
            program);
     puts("鼠标: 横向拖动=切页（黑场跟手）  下拉=快捷面板");
     puts("快捷键: 上/下=速度  1/2/3/4=页面  f=GPS定位  g=GPS模块  b=BMS  c=控制器  u=单位  e=电耗  r=重新构建并重启  q=退出");
@@ -1040,6 +1042,7 @@ int main(int argc, char **argv)
     esp_bms_speed_dashboard_style_t preview_dashboard_style =
         ESP_BMS_SPEED_DASHBOARD_STYLE_HONDA_FIREBLADE;
     const char *screenshot_path = NULL;
+    bool preview_language_zh = true;
     for (int index = 1; index < argc; ++index) {
         if (strcmp(argv[index], "--portrait") == 0) {
             display_width = 240;
@@ -1101,6 +1104,16 @@ int main(int argc, char **argv)
                 return 2;
             }
             preview_boot_progress = (uint8_t)value;
+        } else if (strcmp(argv[index], "--language") == 0 && index + 1 < argc) {
+            const char *language = argv[++index];
+            if (strcmp(language, "zh") == 0) {
+                preview_language_zh = true;
+            } else if (strcmp(language, "en") == 0) {
+                preview_language_zh = false;
+            } else {
+                fprintf(stderr, "未知语言: %s (zh|en)\n", language);
+                return 2;
+            }
         } else if (strcmp(argv[index], "--help") == 0 || strcmp(argv[index], "-h") == 0) {
             print_help(argv[0]);
             return 0;
@@ -1120,6 +1133,7 @@ int main(int argc, char **argv)
         .argv = argv,
         .running = true,
     };
+    s_preview_language_zh = preview_language_zh;
     init_snapshot(&app);
     app.snapshot.speed_dashboard_style = preview_dashboard_style;
     refresh_speed_snapshot(&app);
