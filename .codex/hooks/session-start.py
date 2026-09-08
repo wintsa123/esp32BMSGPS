@@ -128,9 +128,10 @@ def configure_project_encoding(project_dir: Path) -> None:
 def _has_curated_jsonl_entry(jsonl_path: Path) -> bool:
     """Return True iff jsonl has at least one row with a ``file`` field.
 
-    A freshly seeded jsonl only contains a ``{"_example": ...}`` row (no
-    ``file`` key) — that is NOT "ready". Readiness requires at least one
-    curated entry. Matches the contract used by ``inject-subagent-context.py``.
+    A newly created jsonl is empty, and older tasks may still carry a
+    ``{"_example": ...}`` placeholder row (no ``file`` key) — neither is
+    "ready". Readiness requires at least one curated entry. Matches the
+    contract used by ``inject-subagent-context.py``.
     """
     try:
         for line in jsonl_path.read_text(encoding="utf-8").splitlines():
@@ -231,8 +232,9 @@ def _get_task_status(trellis_dir: Path, hook_input: dict) -> str:
     if not active.task_path:
         return (
             "Status: NO ACTIVE TASK\n"
-            "Next: Classify the current turn and ask for task-creation consent "
-            "before creating any Trellis task."
+            "Next: Read-only questions, reviews, and small bounded tasks proceed without a task or a task-creation question. "
+            "Obtain consent before creating a task when needed. Honor an existing refusal for this session. "
+            "Complex implementation still requires a task and planning; if declined, continue independent read-only work."
         )
 
     task_ref = active.task_path
@@ -279,10 +281,10 @@ def _get_task_status(trellis_dir: Path, hook_input: dict) -> str:
 
     if task_status == "planning":
         if has_design and has_implement:
-            next_action = "Review planning artifacts with the user before `task.py start`."
+            next_action = "Reuse valid explicit approval of the unchanged final plan or request review before `task.py start`."
         else:
             next_action = (
-                "Lightweight task can ask for start review with PRD-only; "
+                "Lightweight task can reuse valid approval of its unchanged final plan or request start review with PRD-only; "
                 "complex task must add design.md and implement.md before `task.py start`."
             )
         return (

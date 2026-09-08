@@ -38,7 +38,7 @@ Read the specific guideline files referenced — the index is a pointer, not the
 
 ## Step 3: Run Project Checks
 
-Run the project's lint, type-check, and test commands. Fix any failures before proceeding.
+Run the project's applicable lint, type-check, and test commands. Fix failures introduced by this change within the approved scope. Distinguish existing or environmental failures using evidence, continue independent checks, and report any blocked required verification; never label it as passed.
 
 ## Step 4: Review Against Checklist
 
@@ -62,6 +62,14 @@ Run the project's lint, type-check, and test commands. Fix any failures before p
 
 > "If I fixed a bug or discovered something non-obvious, should I document it so future me won't hit the same issue?" → If YES, update the relevant spec doc.
 
+### Scope Discipline
+
+- [ ] Any tidying of code the task did not require?
+- [ ] Any abstraction, config or extension point added for a case that does not exist yet?
+- [ ] Any speculative fallback for a state that cannot occur?
+- [ ] Any file changed that the acceptance criteria do not mention?
+- [ ] Any workaround added at the caller instead of a fix where the behavior actually lives?
+
 ## Step 5: Cross-Layer Dimensions (if applicable)
 
 Skip this step if your change is confined to a single layer.
@@ -79,7 +87,7 @@ Skip this step if your change is confined to a single layer.
   ```bash
   grep -r "pattern" src/
   ```
-- [ ] If 2+ places define same value → extracted to shared constant?
+- [ ] If the same value repeats, does it represent one stable concept whose callers must change together? Extract only then — two literals that merely happen to match today should stay separate.
 - [ ] After batch modification, all occurrences updated?
 
 ### C. Import/Dependency (creating new files)
@@ -95,4 +103,9 @@ Skip this step if your change is confined to a single layer.
 
 ## Step 6: Report and Fix
 
-Report violations found and fix them directly. Re-run project checks after fixes.
+Report every violation you find. Then:
+
+- Mechanical and local (lint nit, missing type, wrong import, dead branch, failing assertion) → fix in place, then re-run project checks.
+- Design or judgment (naming a shared concept, moving a module boundary, changing a public interface, reassigning where behavior lives) → record evidence and a recommendation, and hand the issue back to the main session without silently rewriting it. Continue independent checks.
+
+If a fix would exceed the approved task scope, report it without widening the change. The main session continues approved-scope implementation and re-checks; only unresolved user-owned decisions or material scope changes require clarification or renewed approval. A check-agent handoff is not completion of the overall task.

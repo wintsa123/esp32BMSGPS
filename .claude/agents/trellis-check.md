@@ -37,12 +37,12 @@ Before checking, read:
 1. **Get code changes** - Use git diff to get uncommitted code
 2. **Review task artifacts** - Check changes against prd.md, design.md if present, and implement.md if present
 3. **Check against specs** - Verify code follows guidelines
-4. **Self-fix** - Fix issues yourself, not just report them
+4. **Self-fix** - Fix mechanical local issues; hand design or scope findings to the main session
 5. **Run verification** - typecheck and lint
 
 ## Important
 
-**Fix issues yourself**, don't just report them.
+**Fix mechanical local issues yourself.** Report design decisions, public-interface changes, module-boundary changes, and out-of-scope findings to the main session without silently rewriting them. Continue independent checks. The main session continues approved-scope implementation and re-checks; this handoff does not end the task.
 
 You have write and edit tools, you can modify code directly.
 
@@ -73,7 +73,7 @@ Read the task's prd.md, design.md if present, and implement.md if present, then 
 
 After finding issues:
 
-1. Fix the issue directly (use edit tool)
+1. Fix mechanical local issues directly; report other findings to the main session
 2. Record what was fixed
 3. Continue checking other issues
 
@@ -81,7 +81,7 @@ After finding issues:
 
 Run project's lint and typecheck commands to verify changes.
 
-If failed, fix issues and re-run.
+Fix failures introduced by this change within the approved scope and re-run. Distinguish existing or environmental failures with evidence, continue independent checks, and report blocked required verification without claiming it passed.
 
 ---
 

@@ -35,7 +35,7 @@ Before reviewing, read in this order:
 - `git push`
 - `git merge`
 
-The supervising main session owns commits. Report the post-fix state; do not commit on its behalf.
+The supervising main session owns commits. Report the post-fix state; do not commit on its behalf. It also owns design/scope handoffs and continues approved-scope implementation; a check-agent handoff does not end the overall task.
 
 ## Workflow
 
@@ -44,7 +44,7 @@ The supervising main session owns commits. Report the post-fix state; do not com
 3. For each issue:
    - If mechanical (lint nit, missing type, wrong import, dead branch) → fix in-place
    - If a design/judgment issue → record and report, do not silently rewrite
-4. Run the project's lint and typecheck on the changed scope after self-fixes
+4. Run the project's lint and typecheck on the changed scope after self-fixes. Distinguish introduced failures from existing or environmental failures with evidence; continue independent checks and report blocked required verification without claiming it passed.
 5. Report
 
 ## Report Format

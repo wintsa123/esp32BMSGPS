@@ -129,10 +129,10 @@ if sys.platform.startswith("win"):
 def _has_curated_jsonl_entry(jsonl_path: Path) -> bool:
     """Return True iff jsonl has at least one row with a ``file`` field.
 
-    A freshly seeded jsonl only contains a ``{"_example": ...}`` row (no
-    ``file`` key) — that is NOT "ready". Readiness requires at least one
-    curated entry. Matches the contract used by hook-inject and pull-based
-    sub-agent context loaders.
+    A newly created jsonl is empty, and older tasks may still carry a
+    ``{"_example": ...}`` placeholder row (no ``file`` key) — neither is
+    "ready". Readiness requires at least one curated entry. Matches the
+    contract used by hook-inject and pull-based sub-agent context loaders.
     """
     try:
         for line in jsonl_path.read_text(encoding="utf-8").splitlines():
@@ -428,9 +428,9 @@ def _get_task_status(trellis_dir: Path, input_data: dict) -> str:
     if not active.task_path:
         return (
             "Status: NO ACTIVE TASK\n"
-            "Next-Action: Classify the current turn before creating any Trellis task. "
-            "Simple conversation / small task asks only whether this turn should create a Trellis task. "
-            "Complex task asks whether task creation and planning are allowed."
+            "Next-Action: Read-only questions, reviews, and small bounded tasks proceed without a task or a task-creation question. "
+            "Obtain consent before creating a task when needed. Honor an existing refusal for this session. "
+            "Complex implementation still requires a task and planning; if declined, continue independent read-only work."
         )
 
     task_ref = active.task_path
@@ -493,17 +493,17 @@ def _get_task_status(trellis_dir: Path, input_data: dict) -> str:
         next_bits: list[str] = []
         if missing_complex:
             next_bits.append(
-                "Lightweight task can request start review with PRD-only; "
+                "Lightweight task can reuse valid approval of its unchanged final plan or request start review with PRD-only; "
                 f"complex task must add {', '.join(missing_complex)} before start"
             )
         else:
-            next_bits.append("Planning artifacts are present; ask for review before `task.py start`")
+            next_bits.append("Planning artifacts are present; reuse valid explicit approval of the unchanged final plan or request review before `task.py start`")
         if not jsonl_ready:
             next_bits.append("curate `implement.jsonl` and `check.jsonl` before sub-agent mode start")
         return (
             f"Status: PLANNING\nTask: {task_title}\n"
             f"Present: {present_line}\n"
-            f"Next-Action: {'; '.join(next_bits)}. Do not enter implementation until the user confirms start."
+            f"Next-Action: {'; '.join(next_bits)}. Implementation requires valid explicit approval; do not ask again for an unchanged approved plan."
         )
 
     return (

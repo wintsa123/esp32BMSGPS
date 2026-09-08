@@ -47,7 +47,7 @@ From Step 1 you know the current task and status. Check the task directory:
   ```bash
   python3 ./.trellis/scripts/get_context.py --mode phase --step 2.1 --platform reasonix
   ```
-- **No active task** → classify first. For simple conversation / small task, ask only whether this turn should create a Trellis task. For complex work, ask whether you may create a Trellis task and enter planning. If the user says no, skip Trellis for this session.
+- **No active task** → read-only questions, reviews, and small bounded tasks proceed without a task or a task-creation question. Obtain consent before creating a task when one is needed. Honor a refusal for the rest of the session unless the user changes it. Complex implementation still requires a task and planning; if declined, continue independent read-only work and explain the implementation boundary or suggest a smaller split.
 
 ---
 

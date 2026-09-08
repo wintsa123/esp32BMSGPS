@@ -7,11 +7,11 @@ description: "Guides collaborative requirements discovery before implementation.
 
 ## Non-Negotiable Planning Contract
 
-A request to build, implement, fix, refactor, or "go ahead" is not approval to leave planning. Task-creation consent is also not implementation approval.
+The initial request to build, implement, fix, or refactor is not approval to leave planning. Task-creation consent is also not implementation approval. An explicit reply such as "go ahead" to the final planning summary is implementation approval for that reviewed scope.
 
 For every non-trivial task, the user must respond at least once after the initial request before implementation begins. If no clarification is needed, that response must approve the final planning summary described below.
 
-While any user-owned product, scope, UX, compatibility, risk, or acceptance decision remains unresolved, end the turn with exactly one highest-value question. Do not edit product code, dispatch implementation, or run `task.py start`.
+While a material user-owned product, scope, UX, compatibility, risk, or acceptance decision remains unresolved, ask the highest-value blocking question. Continue independent investigation and planning while awaiting the answer. Do not edit product code, dispatch implementation, or run `task.py start` before the planning gate is satisfied.
 
 ## Non-Negotiable Evidence Rule
 
@@ -21,7 +21,7 @@ This is mandatory. Before asking the user a question, first check whether the an
 
 Do not ask the user to confirm facts that the repository can answer. Ask only for product intent, preference, scope, risk tolerance, acceptance behavior, or decisions that remain ambiguous after inspection.
 
-Repository evidence establishes current behavior and technical constraints. The user's intended behavior, feature scope boundaries, and UX preferences are never answerable by repository evidence alone, even when an existing pattern exists; existing patterns are options and recommendation evidence, not decisions.
+Repository evidence establishes current behavior and technical constraints. Ask about unresolved choices that materially change observable behavior, scope, compatibility, acceptance, or risk. Choose routine technical details using the user's request and existing conventions; do not turn them into product questions. Existing patterns do not override explicit user intent or settle a material product trade-off.
 
 ---
 
@@ -34,10 +34,10 @@ Use this skill only after task-creation consent has been given and the user is r
 If no task exists yet, create one:
 
 ```bash
-TASK_DIR=$(python3 ./.trellis/scripts/task.py create "<short task title>" --slug <slug>)
+TASK_DIR=$(python3 ./.trellis/scripts/task.py create "<short task title>" --description "<one-line summary>" --slug <slug>)
 ```
 
-Use a concise title from the user's request. Use a slug without a date prefix. `task.py create` adds the `MM-DD-` directory prefix automatically.
+Use a concise title from the user's request. Both the title and `--description` must be non-empty — `create` rejects blanks, and a record with either one empty is refused at archive. Use a slug without a date prefix. `task.py create` adds the `MM-DD-` directory prefix automatically.
 
 `task.py create` creates the default `prd.md`. Update that file with the current understanding before asking follow-up questions.
 
@@ -53,12 +53,12 @@ Use a concise title from the user's request. Use a slug without a date prefix. `
    - product intent still needed from the user
    - scope or risk decisions still needed from the user
    - likely out-of-scope items
-4. If a user-owned decision remains, ask the single highest-value question, include your recommendation and trade-off, then stop. Do not perform implementation work in the same turn.
+4. If a material user-owned decision remains, ask the single highest-value question with your recommendation and trade-off. Pause dependent decisions and implementation; continue independent evidence gathering and planning.
 5. After each user answer, update `prd.md`, recompute the decision inventory, and repeat from step 2.
 6. When no user-owned decision remains, create or update `design.md` and `implement.md` for complex tasks.
 7. Run the requirement convergence gate, then the PRD convergence pass.
-8. Present the final planning summary and stop. Do not run `task.py start` or edit product code in the same turn.
-9. Only a subsequent user message that explicitly approves the latest planning summary authorizes `task.py start` and implementation. If the artifacts change materially after approval, repeat the final review.
+8. Present the final planning summary for explicit approval before implementation. On resume, check whether this unchanged plan already has valid approval instead of presenting it as a new gate.
+9. A subsequent user message explicitly approving the final planning summary authorizes `task.py start` and implementation. That approval remains valid across turns and resumes. Check conversation evidence and existing task records; artifact existence alone is not approval. Reformatting or reorganizing unchanged artifacts does not invalidate approval. Repeat review for material changes to behavior, scope, compatibility, acceptance, or risk.
 
 Do not invent a project-specific product/spec hierarchy. If the repository already has product, domain, or spec docs, use them. If it does not, proceed with the evidence that exists.
 
@@ -79,7 +79,7 @@ Recommendations are not default selections. Never choose a recommended product d
 
 Do not manufacture clarification questions when the request and repository evidence already resolve every decision. In that case, proceed directly to the final planning summary, which still requires a subsequent explicit approval.
 
-The final review is a required phase-transition gate, not a prohibited process question. Task-creation consent, the initial implementation request, and approval given before the latest final summary do not satisfy this gate.
+The final review is a required phase-transition gate. Task-creation consent and the initial implementation request do not satisfy it. A valid approval of the same final plan must not be requested again merely because the session resumed or the summary was restated. In a combined workflow, one explicit approval can satisfy both Trellis and GitNexus execution gates when the same final plan and execution scope were presented.
 
 ## Thinking Framework: First Principles Analysis
 
@@ -135,7 +135,7 @@ Before final review, verify all of the following:
 - blocking open questions are empty
 - technical unknowns are researched or explicitly deferred without changing MVP behavior
 
-Lightweight tasks may omit `design.md` and `implement.md`; they may not skip evidence inspection, requirement convergence, final review, or fresh implementation approval.
+Lightweight tasks in Trellis planning may omit `design.md` and `implement.md`; they still require evidence inspection, requirement convergence, final review, and valid explicit implementation approval. Do not renew an unchanged approval.
 
 The final planning summary must show Goal, In Scope, Out of Scope, Acceptance Criteria, Key Decisions, relevant Risks or Deferred Items, and artifact status.
 
@@ -167,7 +167,7 @@ The final planning summary must show Goal, In Scope, Out of Scope, Acceptance Cr
 
 Lightweight tasks may have only `prd.md`. Complex tasks must have `prd.md`, `design.md`, and `implement.md` before `task.py start`.
 
-`implement.md` is not a replacement for `implement.jsonl`. On sub-agent-dispatch workflows, `implement.jsonl` and `check.jsonl` must each contain at least one real spec/research entry before `task.py start`; the seed `_example` row does not count. Inline workflows skip this JSONL gate because Phase 2 loads context through `trellis-before-dev`.
+`implement.md` is not a replacement for `implement.jsonl`. On sub-agent-dispatch workflows, `implement.jsonl` and `check.jsonl` must each contain at least one real spec/research entry before `task.py start`; an empty manifest, or one holding only a legacy `_example` placeholder row, does not count. Inline workflows skip this JSONL gate because Phase 2 loads context through `trellis-before-dev`.
 
 ## PRD Convergence Pass
 

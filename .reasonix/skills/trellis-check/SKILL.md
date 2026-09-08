@@ -21,8 +21,8 @@ You are already the `trellis-check` sub-agent that the main session dispatched. 
 1. Inspect the current git diff.
 2. Read and follow the spec and research files listed in the task's `check.jsonl`.
 3. Review all changed code against the task PRD and project specs.
-4. Fix issues directly when they are within scope.
-5. Run the relevant lint, typecheck, and focused tests available for the touched code.
+4. Fix mechanical local issues within scope. Hand design decisions, public-interface changes, module-boundary changes, and out-of-scope findings to the main session; continue independent checks. The main session continues approved-scope implementation and re-checks; this handoff does not end the task.
+5. Run the relevant lint, typecheck, and focused tests available for the touched code. Fix introduced failures within the approved scope; distinguish existing or environmental failures with evidence.
 
 ## Review Priorities
 
@@ -33,4 +33,4 @@ You are already the `trellis-check` sub-agent that the main session dispatched. 
 
 ## Output
 
-Report findings fixed, files changed, and verification results. If no issues remain, say that clearly.
+Report findings fixed, files changed, verification results, and findings handed to the main session. Blocked required verification is not a pass. If no issues remain and required checks passed, say that clearly.
