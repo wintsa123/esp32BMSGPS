@@ -418,7 +418,7 @@ void settings_bms_bind_confirm_accept_event_cb(lv_event_t *event)
         settings_show_controller_detail();
     }
     settings_navigation_set_hidden(false, false);
-    quick_toast_show_connecting();
+    quick_toast_show_connecting(source);
     ESP_LOGI(TAG,
              "[ble-ui] %s bind confirmed: mac=%s",
              source == SETTINGS_BLE_SOURCE_BMS ? "BMS" : "controller",

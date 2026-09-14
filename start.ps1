@@ -937,7 +937,7 @@ function Write-Profile([System.Collections.IDictionary]$Config) {
                 $true
             }
     )
-    $SdkconfigLines += "CONFIG_PARTITION_TABLE_CUSTOM_FILENAME=`"$ProfilePartitionTable`""
+    $SdkconfigLines += "CONFIG_PARTITION_TABLE_CUSTOM_FILENAME=`"$($ProfilePartitionTable -replace '\\', '/')`""
     Write-Utf8NoBom (Join-Path $Temp 'sdkconfig.defaults') (($SdkconfigLines -join "`n") + "`n")
     Copy-Item -LiteralPath (Join-Path $Root $script:BoardPartitions) -Destination (Join-Path $Temp 'partitions.csv')
     $Report = @("PROFILE=$Profile", "MCU=$($Config.MCU)", "BOARD=$($Config.BOARD)", "BUILD_READY=$script:BoardBuildReady", "COMMUNICATION_COPROCESSOR=$CommunicationCoprocessor", "MODULES=$($Config.MODULES)", "DASHBOARDS=$($Config.DASHBOARDS)", "TRIMMING=$Trimming", 'NOTE=Component dependencies are fixed by the selected display and touch catalog records.')
@@ -956,8 +956,9 @@ function Prepare-ProfileIdfProject([string]$ProfileDir, [string]$ProjectDir) {
     if (Test-Path -LiteralPath $ProjectDir) { Remove-Item -LiteralPath $ProjectDir -Recurse -Force }
     New-Item -ItemType Directory -Path (Join-Path $ProjectDir 'main') -Force | Out-Null
     Copy-Item -Path (Join-Path $Root 'main/*') -Destination (Join-Path $ProjectDir 'main') -Recurse -Force
-    Write-Utf8NoBom (Join-Path $ProjectDir 'CMakeLists.txt') @("cmake_minimum_required(VERSION 3.16)", "set(EXTRA_COMPONENT_DIRS `"$Root/components`")", 'set(COMPONENTS main)', 'include("$ENV{IDF_PATH}/tools/cmake/project.cmake")', 'project(esp32_bms_gps_idf)') -join "`n" + "`n"
-    Write-Utf8NoBom (Join-Path $ProjectDir 'main/CMakeLists.txt') "include(`"$Root/main/CMakeLists.txt`")`n"
+    $RootCmakePath = $Root -replace '\\', '/'
+    Write-Utf8NoBom (Join-Path $ProjectDir 'CMakeLists.txt') ((@("cmake_minimum_required(VERSION 3.16)", "set(EXTRA_COMPONENT_DIRS `"$RootCmakePath/components`")", 'set(COMPONENTS main)', 'include("$ENV{IDF_PATH}/tools/cmake/project.cmake")', 'project(esp32_bms_gps_idf)') -join "`n") + "`n")
+    Write-Utf8NoBom (Join-Path $ProjectDir 'main/CMakeLists.txt') "include(`"$RootCmakePath/main/CMakeLists.txt`")`n"
     Copy-Item -LiteralPath (Join-Path $ProfileDir 'generated/idf_component.yml') -Destination (Join-Path $ProjectDir 'main/idf_component.yml')
 }
 
@@ -1031,7 +1032,7 @@ function Get-FirmwareOtaCode([string]$FirmwarePath) {
     $Python = Get-PythonExecutable
 
     # Keep this byte-for-byte compatible with esp_bms_ota and scripts/build-firmware.py.
-    $PythonCode = 'import functools,sys,zlib;firmware=open(sys.argv[1],"rb");crc=functools.reduce(lambda value,chunk:zlib.crc32(chunk,value),iter(lambda:firmware.read(65536),b""),0);print(f"{(crc & 0xffffffff) % 10000:04d}")'
+    $PythonCode = 'import functools,sys,zlib;firmware=open(sys.argv[1],''rb'');crc=functools.reduce(lambda value,chunk:zlib.crc32(chunk,value),iter(lambda:firmware.read(65536),b''''),0);print(f''{(crc & 0xffffffff) % 10000:04d}'')'
     $CodeLines = @(& $Python -c $PythonCode $FirmwarePath)
     if ($LASTEXITCODE -ne 0 -or $CodeLines.Count -ne 1 -or $CodeLines[0] -notmatch '^[0-9]{4}$') {
         if ($script:Language -eq 'en') { Fail 'failed to calculate the OTA code from the firmware' }
@@ -1593,7 +1594,7 @@ function Set-CustomBoardConfig([System.Collections.IDictionary]$Config) {
     $Config.BOARD = 'custom'
     Read-CustomId $Config 'BOARD_NAME' '自定义开发板名称（ASCII）' 'Custom board name (ASCII)'
     $Stage = 'mcu'
-    while ($true) {
+    :stageSelection while ($true) {
         switch ($Stage) {
             'mcu' {
                 $Config.MCU = Select-CatalogOption 'mcu' 'MCU' $Config.MCU @(Get-CatalogIds 'mcu')
@@ -1639,7 +1640,7 @@ function Set-CustomBoardConfig([System.Collections.IDictionary]$Config) {
             'dashboard' {
                 $Config.DASHBOARDS = Select-DashboardOptions $Config
                 if ($script:ReturnToPreviousFunctionList) { $Stage = 'module'; continue }
-                break
+                break stageSelection
             }
         }
     }
@@ -1863,14 +1864,14 @@ function Invoke-Interactive {
         $Config.DISPLAY_BUS = $Board.DISPLAY_BUS
         $Config.INPUT_BUS = $Board.INPUT_BUS
         $Stage = 'input'
-        while ($true) {
+        :stageSelection while ($true) {
             switch ($Stage) {
                 'input' {
                     $InputOptions = @($Board.INPUT)
                     if ($Board.INPUT -ne 'none') { $InputOptions += 'none' }
                     $Config.INPUT = $Board.INPUT
                     $Config.INPUT = Select-CatalogOption 'input' 'Touch' $Config.INPUT $InputOptions
-                    if ($script:ReturnToPreviousFunctionList) { continue 2 }
+                    if ($script:ReturnToPreviousFunctionList) { continue stageSelection }
                     if ($Config.INPUT -eq 'none') { $Config.INPUT_BUS = 'NONE' } else { $Config.INPUT_BUS = $Board.INPUT_BUS }
                     $Stage = 'module'
                 }
@@ -1882,7 +1883,7 @@ function Invoke-Interactive {
                 'dashboard' {
                     $Config.DASHBOARDS = Select-DashboardOptions $Config
                     if ($script:ReturnToPreviousFunctionList) { $Stage = 'module'; continue }
-                    break
+                    break stageSelection
                 }
             }
         }

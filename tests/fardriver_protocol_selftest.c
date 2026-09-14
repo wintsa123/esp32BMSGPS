@@ -10,35 +10,27 @@ static void finish_frame(uint8_t frame[ESP_FARDRIVER_FRAME_LEN])
     frame[15] = (uint8_t)crc;
 }
 
-static void finish_compact_frame(uint8_t frame[ESP_FARDRIVER_FRAME_LEN])
-{
-    uint16_t checksum = 0U;
-    for (size_t index = 0U; index < ESP_FARDRIVER_FRAME_LEN - 2U; ++index) {
-        checksum = (uint16_t)(checksum + frame[index]);
-    }
-    frame[14] = (uint8_t)(checksum >> 8U);
-    frame[15] = (uint8_t)checksum;
-}
-
-static void make_speed_params_frame(uint8_t frame[ESP_FARDRIVER_FRAME_LEN])
+/* 真机帧格式：AA | 0x80|索引 | 12 字节数据 | CRC16 */
+static void make_device_frame(uint8_t frame[ESP_FARDRIVER_FRAME_LEN],
+                              uint8_t index,
+                              const uint8_t data[12])
 {
     memset(frame, 0, ESP_FARDRIVER_FRAME_LEN);
     frame[0] = 0xAAU;
-    frame[1] = 47U; /* FLASH_READ_ADDR[47] is D0, which includes D2-D4. */
-    frame[6] = 70U;
-    frame[7] = 12U;
-    frame[8] = 90U;
-    frame[9] = 0U;
-    frame[10] = 60U;
-    frame[11] = 0U;
+    frame[1] = (uint8_t)(0x80U | (index & 0x3FU));
+    memcpy(frame + 2U, data, 12U);
     finish_frame(frame);
 }
 
-static void make_nus_speed_params_frame(uint8_t frame[ESP_FARDRIVER_FRAME_LEN])
+/* 参数块 0xD0：data[4..5]=0xD2 轮胎规格、data[6..7]=0xD3 胎宽、data[8..9]=0xD4 传动比 */
+static void make_params_frame(uint8_t frame[ESP_FARDRIVER_FRAME_LEN])
 {
-    make_speed_params_frame(frame);
-    frame[1] |= 0x80U;
-    finish_frame(frame);
+    uint8_t data[12] = { 0 };
+    data[4] = 70U; /* 扁平比 70% */
+    data[5] = 12U; /* 轮辋 12 英寸 */
+    data[6] = 90U; /* 胎宽 90mm */
+    data[8] = 60U; /* 传动比原始值 60 -> 1.00 */
+    make_device_frame(frame, 47U, data); /* FLASH_READ_ADDR[47] = 0xD0 */
 }
 
 int main(void)
@@ -46,69 +38,92 @@ int main(void)
     esp_fardriver_state_t state = { .fallback_wheel_circumference_mm = 1350U,
                                     .fallback_gear_ratio_centi = 400U };
     uint8_t frame[ESP_FARDRIVER_FRAME_LEN] = { 0 };
+    uint8_t data[12] = { 0 };
 
-    /* id 0 帧: RPM + 档位（档位在 fault_byte4 的 bit2-3）+ 相电流 iq/id */
-    for (uint8_t gear = 0U; gear < 4U; ++gear) {
-        memset(frame, 0, sizeof(frame));
-        frame[0] = 0xAAU;
-        frame[1] = 0U;
-        frame[4] = (uint8_t)(gear << 2U);
-        frame[6] = 0x12U;
-        frame[7] = 0xC0U;
-        finish_frame(frame);
+    /* 真机抓包回归：0xE2 挡位=2、转速=0（YuanQu-V3.3 静止） */
+    const uint8_t rpm_block[12] = { 0x85, 0x0F, 0x11, 0x20, 0x00, 0x00,
+                                    0x00, 0x00, 0xFC, 0xFF, 0x00, 0x00 };
+    make_device_frame(frame, 0U, rpm_block);
+    assert(esp_fardriver_parse_frame(&state, frame, sizeof(frame)));
+    assert(state.gear_valid && state.gear == 2U);
+    assert(state.rpm_valid && state.rpm == 0U);
+
+    /* 真机抓包回归：0xE8 电压 22.7V、电流 0 */
+    const uint8_t power_block[12] = { 0xE3, 0x00, 0xEA, 0x00, 0x00, 0x00,
+                                      0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+    make_device_frame(frame, 1U, power_block);
+    assert(esp_fardriver_parse_frame(&state, frame, sizeof(frame)));
+    assert(state.voltage_deci_v == 227U);
+    assert(state.current_valid && state.current_centi_a == 0);
+
+    /* 真机抓包回归：0xD6 控制器温度 29℃ */
+    const uint8_t controller_temp_block[12] = { 0x01, 0x4A, 0x02, 0x05, 0x10, 0x70,
+                                                0x00, 0x04, 0x80, 0x12, 0x1D, 0x00 };
+    make_device_frame(frame, 51U, controller_temp_block);
+    assert(esp_fardriver_parse_frame(&state, frame, sizeof(frame)));
+    assert(state.controller_temp_valid && state.controller_temp_c == 29);
+
+    /* 真机抓包回归：0xF4 未接电机读到 -40，必须被丢弃 */
+    const uint8_t motor_temp_block[12] = { 0xD8, 0xFF, 0xE8, 0x00, 0x79, 0x18,
+                                           0x01, 0x11, 0x01, 0x09, 0xA7, 0x00 };
+    make_device_frame(frame, 53U, motor_temp_block);
+    assert(esp_fardriver_parse_frame(&state, frame, sizeof(frame)));
+    assert(!state.motor_temp_valid);
+    assert(esp_fardriver_has_instrument_telemetry(&state));
+    assert(esp_fardriver_link_online(&state));
+
+    /* 挡位 1..4（data[0] 的 bit2-3）与转速小端编码 */
+    for (uint8_t gear = 1U; gear <= 4U; ++gear) {
+        memset(data, 0, sizeof(data));
+        data[0] = (uint8_t)((gear - 1U) << 2U);
+        data[6] = 0xC0U;
+        data[7] = 0x12U; /* 小端 0x12C0 = 4800 */
+        make_device_frame(frame, 0U, data);
         assert(esp_fardriver_parse_frame(&state, frame, sizeof(frame)));
-        assert(state.rpm_valid && state.rpm == 4800U);
         assert(state.gear_valid && state.gear == gear);
-        assert(state.speed_valid && state.speed_deci_kmh == 972U);
+        assert(state.rpm_valid && state.rpm == 4800U);
     }
 
-    /* id 0 帧: iq=4.00A, id=0 -> 线电流 400 (0.01A) */
-    memset(frame, 0, sizeof(frame));
-    frame[0] = 0xAAU;
-    frame[1] = 0U;
-    frame[6] = 0x12U;
-    frame[7] = 0xC0U; /* 保持 rpm=4800，避免影响后续速度断言 */
-    frame[10] = 0x01U;
-    frame[11] = 0x90U;
-    finish_frame(frame);
+    /* 电压 22.7V + 电流 4.00A（0.25A 单位）= 90W */
+    memset(data, 0, sizeof(data));
+    data[0] = 0xE3U;
+    data[4] = 0x10U; /* 16 * 0.25A = 4.00A */
+    make_device_frame(frame, 1U, data);
     assert(esp_fardriver_parse_frame(&state, frame, sizeof(frame)));
-    assert(state.current_valid && state.current_centi_a == 400);
+    assert(state.voltage_deci_v == 227U && state.current_centi_a == 400);
+    assert(state.power_valid && state.power_w == 90);
 
-    /* id 1 帧: 电压 90.0V -> 功率 = 90.0V * 4.00A = 360W */
-    memset(frame, 0, sizeof(frame));
-    frame[0] = 0xAAU;
-    frame[1] = 1U;
-    frame[2] = 0x03U;
-    frame[3] = 0x84U;
-    finish_frame(frame);
+    /* 回充：负电流 -> 负功率 */
+    memset(data, 0, sizeof(data));
+    data[0] = 0xE3U;
+    data[4] = 0xF0U;
+    data[5] = 0xFFU; /* -16 */
+    make_device_frame(frame, 1U, data);
     assert(esp_fardriver_parse_frame(&state, frame, sizeof(frame)));
-    assert(state.voltage_deci_v == 900U && state.power_valid && state.power_w == 360);
+    assert(state.current_centi_a == -400);
+    assert(state.power_valid && state.power_w == -90);
 
-    /* id 4 帧: 控制器温度 */
-    memset(frame, 0, sizeof(frame));
-    frame[0] = 0xAAU;
-    frame[1] = 4U;
-    frame[4] = 72U;
-    finish_frame(frame);
-    assert(esp_fardriver_parse_frame(&state, frame, sizeof(frame)));
-    assert(state.controller_temp_valid && state.controller_temp_c == 72);
-
-    /* id 13 帧: 电机温度 */
-    memset(frame, 0, sizeof(frame));
-    frame[0] = 0xAAU;
-    frame[1] = 13U;
-    frame[2] = 61U;
-    finish_frame(frame);
-    assert(esp_fardriver_parse_frame(&state, frame, sizeof(frame)));
-    assert(state.motor_temp_valid && state.motor_temp_c == 61);
-
-    /* id 47 帧: 轮胎/传动比参数块（0xD0 起，含 D2-D4） */
-    make_speed_params_frame(frame);
+    /* 参数块：轮胎 70/12/90 + 传动比 1.00 -> 周长 1353mm，4800rpm 对应 3896 (0.1km/h) */
+    make_params_frame(frame);
     assert(esp_fardriver_parse_frame(&state, frame, sizeof(frame)));
     assert(state.controller_speed_params_valid);
     assert(state.tire_aspect_percent == 70U && state.tire_rim_inch == 12U &&
            state.tire_width_mm == 90U && state.wheel_circumference_mm == 1353U &&
-           state.gear_ratio_centi == 100U && state.speed_deci_kmh == 3896U);
+           state.gear_ratio_centi == 100U);
+    assert(state.speed_valid && state.speed_deci_kmh == 3896U);
+
+    /* 只收到参数块时：不算仪器遥测，但仍算链路在线 */
+    esp_fardriver_state_t params_only_state = { 0 };
+    assert(esp_fardriver_parse_frame(&params_only_state, frame, sizeof(frame)));
+    assert(params_only_state.controller_speed_params_valid);
+    assert(!esp_fardriver_has_instrument_telemetry(&params_only_state));
+    assert(esp_fardriver_link_online(&params_only_state));
+
+    /* 空状态判据 */
+    esp_fardriver_state_t empty_state = { 0 };
+    assert(!esp_fardriver_has_instrument_telemetry(&empty_state));
+    assert(!esp_fardriver_link_online(&empty_state));
+    assert(!esp_fardriver_link_online(NULL));
 
     /* open / keepalive 命令字节（与已验证可用的参考实现一致） */
     uint8_t command[ESP_FARDRIVER_COMMAND_LEN] = { 0 };
@@ -121,7 +136,7 @@ int main(void)
            command[3] == 0x07U && command[4] == 0x5FU && command[5] == 0x5FU &&
            command[6] == 0x6EU && command[7] == 0x91U);
 
-    /* Nordic UART uses the APK-backed five-byte read-only poll contract. */
+    /* 五字节读请求（Nordic UART 轮询协议） */
     uint8_t request[ESP_FARDRIVER_READ_REQUEST_LEN] = { 0 };
     assert(esp_fardriver_poll_address_count() == 40U);
     assert(esp_fardriver_poll_address(0U, &request[0]) && request[0] == 0xE2U);
@@ -132,54 +147,20 @@ int main(void)
     assert(request[0] == 0xE2U && request[1] == 0xE2U && request[2] == 0x80U &&
            request[3] == 0x09U && request[4] == 0x0AU);
 
-    esp_fardriver_state_t nus_state = { .fallback_wheel_circumference_mm = 1350U,
-                                        .fallback_gear_ratio_centi = 400U };
-    for (uint8_t gear = 0U; gear < 4U; ++gear) {
-        memset(frame, 0, sizeof(frame));
-        frame[0] = 0xAAU;
-        frame[1] = 0U;
-        frame[4] = (uint8_t)(0xA8U | gear);
-        frame[6] = 0x12U;
-        frame[7] = 0xC0U;
-        finish_compact_frame(frame);
-        assert(esp_fardriver_parse_frame(&nus_state, frame, sizeof(frame)));
-        assert(nus_state.rpm_valid && nus_state.rpm == 4800U);
-        assert(nus_state.gear_valid && nus_state.gear == gear);
-    }
-
-    memset(frame, 0, sizeof(frame));
-    frame[0] = 0xAAU;
-    frame[1] = 1U;
-    frame[2] = 0x03U;
-    frame[3] = 0x84U;
-    frame[4] = 0xFFU;
-    frame[5] = 0xF8U;
-    finish_compact_frame(frame);
-    assert(esp_fardriver_parse_frame(&nus_state, frame, sizeof(frame)));
-    assert(nus_state.voltage_deci_v == 900U && nus_state.current_valid &&
-           nus_state.current_centi_a == -200 && nus_state.power_valid &&
-           nus_state.power_w == -180);
-
-    make_nus_speed_params_frame(frame);
-    assert(esp_fardriver_parse_frame(&nus_state, frame, sizeof(frame)));
-    assert(nus_state.controller_speed_params_valid);
-    assert(esp_fardriver_has_instrument_telemetry(&nus_state));
-    assert(nus_state.tire_aspect_percent == 70U && nus_state.tire_rim_inch == 12U &&
-           nus_state.tire_width_mm == 90U && nus_state.wheel_circumference_mm == 1353U &&
-           nus_state.gear_ratio_centi == 100U);
-
-    esp_fardriver_state_t params_only_state = { 0 };
-    assert(esp_fardriver_parse_frame(&params_only_state, frame, sizeof(frame)));
-    assert(params_only_state.controller_speed_params_valid);
-    assert(!esp_fardriver_has_instrument_telemetry(&params_only_state));
-
-    /* 无效帧 */
-    const esp_fardriver_state_t before_invalid_frame = nus_state;
+    /* 无效帧：CRC/长度/帧头/索引越界，且不得改变已有状态 */
+    make_params_frame(frame);
+    assert(esp_fardriver_parse_frame(&state, frame, sizeof(frame)));
+    const esp_fardriver_state_t before_invalid_frame = state;
     frame[15] ^= 1U;
-    assert(!esp_fardriver_parse_frame(&nus_state, frame, sizeof(frame)));
-    assert(memcmp(&nus_state, &before_invalid_frame, sizeof(nus_state)) == 0);
-    assert(!esp_fardriver_parse_frame(&nus_state, frame, sizeof(frame) - 1U));
+    assert(!esp_fardriver_parse_frame(&state, frame, sizeof(frame)));
+    assert(memcmp(&state, &before_invalid_frame, sizeof(state)) == 0);
+    assert(!esp_fardriver_parse_frame(&state, frame, sizeof(frame) - 1U));
+    finish_frame(frame);
     frame[0] = 0xABU;
-    assert(!esp_fardriver_parse_frame(&nus_state, frame, sizeof(frame)));
+    assert(!esp_fardriver_parse_frame(&state, frame, sizeof(frame)));
+    frame[0] = 0xAAU;
+    frame[1] = (uint8_t)(0x80U | 55U); /* 索引越界 */
+    finish_frame(frame);
+    assert(!esp_fardriver_parse_frame(&state, frame, sizeof(frame)));
     return 0;
 }

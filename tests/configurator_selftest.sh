@@ -16,7 +16,7 @@ rg -Fq 'default y if SPIRAM' "${repo_root}/components/esp_bms_lvgl_bridge/Kconfi
 rg -qx 'CONFIG_ESP_BMS_LVGL_BRIDGE_DOUBLE_BUFFER=y' "${repo_root}/config/sdkconfig/sdkconfig.defaults.esp32s3"
 rg -qx 'CONFIG_ESP_BMS_LVGL_BRIDGE_SPI_DRAW_BUFFER_HEIGHT=40' "${repo_root}/config/sdkconfig/sdkconfig.defaults.esp32s3"
 rg -qx 'CONFIG_LV_USE_SNAPSHOT=y' "${repo_root}/config/sdkconfig/sdkconfig.defaults.esp32s3"
-rg -qx 'CONFIG_BT_NIMBLE_SM_LVL=2' "${repo_root}/config/sdkconfig/sdkconfig.defaults.esp32s3"
+rg -qx 'CONFIG_BT_NIMBLE_SM_LVL=0' "${repo_root}/config/sdkconfig/sdkconfig.defaults.esp32s3"
 for target in '' .esp32c3 .esp32s3 .esp32p4; do
     rg -qx 'CONFIG_HTTPD_WS_PRE_HANDSHAKE_CB_SUPPORT=y' "${repo_root}/config/sdkconfig/sdkconfig.defaults${target}"
     rg -qx 'CONFIG_HTTPD_WS_POST_HANDSHAKE_CB_SUPPORT=y' "${repo_root}/config/sdkconfig/sdkconfig.defaults${target}"

@@ -3,21 +3,12 @@
 #include <math.h>
 #include <string.h>
 
-/* FFE0 controllers push low-bit CRC frames; Nordic UART controllers answer
- * five-byte read requests with additive compact or high-bit CRC frames. */
+/* 远驱（YuanQu/FarDriver）真机帧：AA | 0x80|索引 | 12 字节数据 | CRC16。
+ * 索引 = frame[1] & 0x3F，查下表得到寄存器地址：
+ *   0xE2 挡位+转速、0xE8 电压+电流、0xD6 控制器温度、0xF4 电机温度+SOC，
+ *   其余地址为控制器参数块（轮胎规格、传动比等）。 */
 static const uint8_t FLASH_READ_ADDR[] = {
     0xE2, 0xE8, 0xEE, 0xE4, 0x06, 0x0C, 0x12,
-    0xE2, 0xE8, 0xEE, 0x18, 0x1E, 0x24, 0x2A,
-    0xE2, 0xE8, 0xEE, 0x30, 0x5D, 0x63, 0x69,
-    0xE2, 0xE8, 0xEE, 0x7C, 0x82, 0x88, 0x8E,
-    0xE2, 0xE8, 0xEE, 0x94, 0x9A, 0xA0, 0xA6,
-    0xE2, 0xE8, 0xEE, 0xAC, 0xB2, 0xB8, 0xBE,
-    0xE2, 0xE8, 0xEE, 0xC4, 0xCA, 0xD0,
-    0xE2, 0xE8, 0xEE, 0xD6, 0xDC, 0xF4, 0xFA,
-};
-
-static const uint8_t NUS_FLASH_READ_ADDR[] = {
-    0xE2, 0xE8, 0xEE, 0x00, 0x06, 0x0C, 0x12,
     0xE2, 0xE8, 0xEE, 0x18, 0x1E, 0x24, 0x2A,
     0xE2, 0xE8, 0xEE, 0x30, 0x5D, 0x63, 0x69,
     0xE2, 0xE8, 0xEE, 0x7C, 0x82, 0x88, 0x8E,
@@ -117,11 +108,6 @@ bool esp_fardriver_build_keepalive_command(uint8_t out[ESP_FARDRIVER_COMMAND_LEN
     return build_command(0x13U, 0x07U, 0x5FU, 0x5FU, out);
 }
 
-static uint16_t be16(const uint8_t *data)
-{
-    return (uint16_t)(((uint16_t)data[0] << 8U) | data[1]);
-}
-
 static uint16_t le16(const uint8_t *data)
 {
     return (uint16_t)(((uint16_t)data[1] << 8U) | data[0]);
@@ -165,50 +151,43 @@ static void store_extended_block(esp_fardriver_state_t *state, uint8_t base, con
     }
 }
 
-static void parse_compact(esp_fardriver_state_t *state, uint8_t index, const uint8_t *data)
+static void parse_device_block(esp_fardriver_state_t *state, uint8_t address, const uint8_t *data)
 {
-    if (index == 0U) {
-        state->rpm = be16(data + 4U);
-        state->rpm_valid = true;
-        state->gear = (uint8_t)(data[2] & 0x03U);
+    switch (address) {
+    case 0xE2U:
+        /* 挡位（1..4，取自 data[0] 的 bit2-3）与电机转速 */
+        state->gear = (uint8_t)(((data[0] >> 2U) & 0x03U) + 1U);
         state->gear_valid = true;
-    } else if (index == 1U) {
-        state->voltage_deci_v = be16(data);
-        state->current_centi_a = (int32_t)(int16_t)be16(data + 2U) * 25;
+        state->rpm = (uint16_t)(int16_t)(((uint16_t)data[7] << 8U) | data[6]);
+        state->rpm_valid = true;
+        break;
+    case 0xE8U:
+        /* 母线电压（0.1V）与线电流（0.25A，负值为回充） */
+        state->voltage_deci_v = (uint16_t)(((uint16_t)data[1] << 8U) | data[0]);
+        state->current_centi_a =
+            (int32_t)(int16_t)(((uint16_t)data[5] << 8U) | data[4]) * 25;
         state->current_valid = true;
-    } else if (index == 4U) {
-        state->controller_temp_c = (int8_t)data[2];
-        state->controller_temp_valid = true;
-    } else if (index == 13U) {
-        state->motor_temp_c = (int8_t)data[0];
-        state->motor_temp_valid = true;
+        break;
+    case 0xD6U: {
+        /* 控制器温度；未接传感器时会读到越界值，丢弃 */
+        const int16_t temperature = (int16_t)(((uint16_t)data[11] << 8U) | data[10]);
+        if (temperature > -20 && temperature < 120) {
+            state->controller_temp_c = temperature;
+            state->controller_temp_valid = true;
+        }
+        break;
     }
-}
-
-static void parse_live_telemetry(esp_fardriver_state_t *state, uint8_t id, const uint8_t *data)
-{
-    if (id == 0U) {
-        /* RPM/档位/故障/相电流帧 */
-        const uint16_t raw_rpm = be16(data + 4U);
-        state->rpm = raw_rpm;
-        state->rpm_valid = true;
-        /* 档位位于 fault_byte4 的 bit2-3（bit0-1 为霍尔/油门故障位） */
-        state->gear = (uint8_t)((data[2] >> 2U) & 0x03U);
-        state->gear_valid = true;
-        /* 相电流 iq/id（单位 0.01A），线电流为两者合成 */
-        const int32_t iq = (int16_t)be16(data + 8U);
-        const int32_t idq = (int16_t)be16(data + 10U);
-        state->current_centi_a = (int32_t)lroundf(sqrtf((float)(iq * iq + idq * idq)));
-        state->current_valid = true;
-    } else if (id == 1U) {
-        /* 电压帧（单位 0.1V） */
-        state->voltage_deci_v = be16(data);
-    } else if (id == 4U) {
-        state->controller_temp_c = (int8_t)data[2];
-        state->controller_temp_valid = true;
-    } else if (id == 13U) {
-        state->motor_temp_c = (int8_t)data[0];
-        state->motor_temp_valid = true;
+    case 0xF4U: {
+        /* 电机温度；未接电机时读到 -40 之类哨兵值，丢弃 */
+        const int16_t temperature = (int16_t)(((uint16_t)data[1] << 8U) | data[0]);
+        if (temperature > -20 && temperature < 200) {
+            state->motor_temp_c = temperature;
+            state->motor_temp_valid = true;
+        }
+        break;
+    }
+    default:
+        break;
     }
 }
 
@@ -277,36 +256,38 @@ bool esp_fardriver_parse_frame(esp_fardriver_state_t *state,
         return false;
     }
     const uint16_t wire_checksum = (uint16_t)(((uint16_t)frame[14] << 8U) | frame[15]);
-    if ((frame[1] & 0x80U) != 0U) {
-        const uint8_t index = (uint8_t)(frame[1] & 0x7FU);
-        if (index >= sizeof(NUS_FLASH_READ_ADDR) ||
-            wire_checksum != esp_fardriver_crc(frame, ESP_FARDRIVER_FRAME_LEN - 2U)) {
-            return false;
-        }
-        store_extended_block(state, NUS_FLASH_READ_ADDR[index], frame + 2U);
-    } else {
-        uint16_t additive_checksum = 0U;
-        for (size_t index = 0U; index < ESP_FARDRIVER_FRAME_LEN - 2U; ++index) {
-            additive_checksum = (uint16_t)(additive_checksum + frame[index]);
-        }
-        if (wire_checksum == additive_checksum) {
-            const uint8_t index = (uint8_t)(frame[1] & 0x7FU);
-            if (index > 29U) {
-                return false;
-            }
-            parse_compact(state, index, frame + 2U);
-        } else {
-            const uint8_t id = (uint8_t)(frame[1] & 0x3FU);
-            if (id >= sizeof(FLASH_READ_ADDR) ||
-                wire_checksum != esp_fardriver_crc(frame, ESP_FARDRIVER_FRAME_LEN - 2U)) {
-                return false;
-            }
-            store_extended_block(state, FLASH_READ_ADDR[id], frame + 2U);
-            parse_live_telemetry(state, id, frame + 2U);
-        }
+    if (wire_checksum != esp_fardriver_crc(frame, ESP_FARDRIVER_FRAME_LEN - 2U)) {
+        return false;
     }
+    const uint8_t index = (uint8_t)(frame[1] & 0x3FU);
+    if (index >= sizeof(FLASH_READ_ADDR)) {
+        return false;
+    }
+    const uint8_t address = FLASH_READ_ADDR[index];
+    store_extended_block(state, address, frame + 2U);
+    parse_device_block(state, address, frame + 2U);
     esp_fardriver_refresh_derived(state);
     return true;
+}
+
+bool esp_fardriver_link_online(const esp_fardriver_state_t *state)
+{
+    if (!state) {
+        return false;
+    }
+    if (state->rpm_valid || state->current_valid ||
+        state->controller_temp_valid || state->motor_temp_valid) {
+        return true;
+    }
+    /* 远驱（YuanQu）控制器上电后会持续推送参数块数据流，转速/电流等遥测帧只在
+     * 行驶过程中出现。只要收到过通过校验的帧（block_valid 被置位）即认为链路
+     * 已经在线，否则界面会一直停在“连接中”。 */
+    for (size_t index = 0U; index < sizeof(state->block_valid); ++index) {
+        if (state->block_valid[index] != 0U) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool esp_fardriver_has_instrument_telemetry(const esp_fardriver_state_t *state)

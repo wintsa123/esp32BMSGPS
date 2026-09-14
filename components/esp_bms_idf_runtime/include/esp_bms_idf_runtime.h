@@ -317,6 +317,7 @@ esp_err_t esp_bms_idf_runtime_start_setup_ap(esp_bms_idf_runtime_t *runtime);
 esp_err_t esp_bms_idf_runtime_start_http_server(esp_bms_idf_runtime_t *runtime);
 esp_err_t esp_bms_idf_runtime_stop_setup_services(esp_bms_idf_runtime_t *runtime);
 esp_err_t esp_bms_idf_runtime_ensure_ble_host(esp_bms_idf_runtime_t *runtime);
+esp_err_t esp_bms_idf_runtime_recover_ble_host(esp_bms_idf_runtime_t *runtime);
 void esp_bms_idf_runtime_request_coded_phy(uint16_t conn_handle, const char *source);
 void esp_bms_idf_runtime_register_bms_frame_handler(
     esp_bms_idf_runtime_t *runtime,

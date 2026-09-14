@@ -24,8 +24,11 @@ static const char *TAG = "esp_bms_controller_ble";
 #define CONTROLLER_SCAN_DURATION_MS 10000U
 #define CONTROLLER_CONNECT_TIMEOUT_MS 10000U
 #define CONTROLLER_FIRST_FRAME_TIMEOUT_MS 10000U
+/* 宿主未同步（NimBLE reset 后可能不再自动同步）时，超过这个时间就重建宿主栈 */
+#define CONTROLLER_HOST_SYNC_TIMEOUT_MS 5000U
 #define CONTROLLER_READ_PERIOD_MS 200U
 #define CONTROLLER_KEEPALIVE_PERIOD_MS 3000U
+#define CONTROLLER_OPEN_RETRY_MS 1000U
 #define CONTROLLER_TIRE_RIM_MIN ESP_BMS_CONTROLLER_TIRE_RIM_MIN
 #define CONTROLLER_TIRE_RIM_MAX ESP_BMS_CONTROLLER_TIRE_RIM_MAX
 #define CONTROLLER_TIRE_ASPECT_MIN ESP_BMS_CONTROLLER_TIRE_ASPECT_MIN
@@ -112,6 +115,7 @@ static const controller_profile_config_t CONTROLLER_PROFILES[] = {
 static controller_profile_t s_controller_profile;
 static uint8_t s_controller_poll_index;
 static uint32_t s_controller_first_frame_elapsed_ms;
+static uint8_t s_notify_diag_count;
 
 static void controller_copy_text(char *out, size_t out_len, const char *text)
 {
@@ -384,10 +388,13 @@ static void controller_send_command(esp_bms_idf_runtime_t *runtime,
         runtime->controller_write_char_val_handle == 0U) {
         return;
     }
+    /* 实测 FFEC 属性 0x14 = Notify | Write Without Response，与 PC 路径一致。 */
     const int rc = ble_gattc_write_no_rsp_flat(runtime->controller_conn_handle,
                                                runtime->controller_write_char_val_handle,
-                                               command,
-                                               len);
+                                               command, len);
+    ESP_LOGI(TAG, "command tx: profile=%s conn=%u handle=%u mode=no-response len=%u rc=%d",
+             controller_profile_config()->name, runtime->controller_conn_handle,
+             runtime->controller_write_char_val_handle, (unsigned)len, rc);
     if (rc != 0) {
         ESP_LOGW(TAG, "command send failed: rc=%d", rc);
     }
@@ -409,8 +416,7 @@ static void controller_send_read_request(esp_bms_idf_runtime_t *runtime)
     }
     const int rc = ble_gattc_write_no_rsp_flat(runtime->controller_conn_handle,
                                                runtime->controller_write_char_val_handle,
-                                               request,
-                                               sizeof(request));
+                                               request, sizeof(request));
     runtime->controller_keepalive_elapsed_ms = 0U;
     if (rc != 0) {
         ESP_LOGW(TAG, "read request failed: address=0x%02X rc=%d", address, rc);
@@ -465,7 +471,8 @@ static int controller_write_cb(uint16_t conn_handle,
     if (controller_profile_config()->read_polling) {
         controller_send_read_request(runtime);
     } else {
-        controller_send_open(runtime);
+        /* 等待订阅及对端连接参数更新完成后，由 tick 开启数据流。 */
+        ESP_LOGI(TAG, "stream start deferred: delay_ms=%u", CONTROLLER_OPEN_RETRY_MS);
     }
     return 0;
 }
@@ -545,8 +552,10 @@ static int controller_chr_cb(uint16_t conn_handle,
                      controller_profile_config()->name,
                      chr->val_handle,
                      chr->properties);
-        } else if (ble_uuid_cmp(&chr->uuid.u, controller_profile_config()->write_uuid) == 0 &&
-                   (chr->properties & (BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP)) != 0) {
+        }
+        /* FFE0 的 notify 与 write 共用同一个特征（0xFFEC），两个句柄都要记录 */
+        if (ble_uuid_cmp(&chr->uuid.u, controller_profile_config()->write_uuid) == 0 &&
+            (chr->properties & (BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP)) != 0) {
             runtime->controller_write_char_val_handle = chr->val_handle;
             ESP_LOGI(TAG,
                      "write characteristic: profile=%s handle=%u properties=0x%02x",
@@ -636,16 +645,39 @@ static esp_err_t controller_connect(esp_bms_idf_runtime_t *runtime,
         return ESP_ERR_INVALID_STATE;
     }
     if (ble_gap_disc_active()) {
-        (void)ble_gap_disc_cancel();
+        const int cancel_rc = ble_gap_disc_cancel();
+        if (cancel_rc != 0) {
+            ESP_LOGW(TAG, "scan cancel before connect failed: rc=%d", cancel_rc);
+            return ESP_FAIL;
+        }
     }
+    /* 主动取消扫描不保证触发 DISC_COMPLETE，必须同步本地标记。 */
+    RUNTIME_SET_FLAG(runtime, CONTROLLER_SCAN_ACTIVE, false);
     uint8_t own_addr_type = 0U;
-    if (ble_hs_id_infer_auto(0, &own_addr_type) != 0 ||
-        ble_gap_connect(own_addr_type,
+    /* 远驱控制器的 BLE 模块对激进参数兼容性差：改用 30-50ms 间隔 + 长监督超时，
+     * 避免订阅后因空包丢失而链路超时（reason=520 / first-frame-timeout）。 */
+    const struct ble_gap_conn_params conn_params = {
+        .scan_itvl = 0x0010,
+        .scan_window = 0x0010,
+        .itvl_min = 0x0018,
+        .itvl_max = 0x0028,
+        .latency = 0,
+        .supervision_timeout = 0x0C80,
+        .min_ce_len = 0,
+        .max_ce_len = 0,
+    };
+    int rc = ble_hs_id_infer_auto(0, &own_addr_type);
+    if (rc == 0) {
+        rc = ble_gap_connect(own_addr_type,
                         &disc->addr,
                         CONTROLLER_CONNECT_TIMEOUT_MS,
-                        NULL,
+                        &conn_params,
                         controller_gap_event,
-                        runtime) != 0) {
+                        runtime);
+    }
+    if (rc != 0) {
+        runtime->controller_ble_phase = (uint8_t)CONTROLLER_BLE_PHASE_BACKOFF;
+        ESP_LOGW(TAG, "connect start failed: rc=%d addr_type=%u", rc, disc->addr.type);
         return ESP_FAIL;
     }
     runtime->controller_ble_phase = (uint8_t)CONTROLLER_BLE_PHASE_CONNECTING;
@@ -682,7 +714,15 @@ static int controller_gap_event(struct ble_gap_event *event, void *arg)
                      event->connect.conn_handle,
                      runtime->controller_bound_mac,
                      runtime->controller_bound_name[0] != '\0' ? runtime->controller_bound_name : "-");
-            esp_bms_idf_runtime_request_coded_phy(event->connect.conn_handle, "controller");
+            /* 远驱（YuanQu）这类老式 BLE 4.0 控制器只支持 1M PHY：连接后请求 Coded PHY
+             * 会让对端收到它不认识的 LL 控制 PDU，并以 BLE_ERR_UNSUPP_REM_FEATURE 拒绝
+             * （日志里的 "controller Coded PHY request failed: conn=1 rc=538"），此后
+             * 控制器不再推送任何数据帧，订阅必然走到 first-frame-timeout。
+             * Windows 侧 BLE 栈从不发起该请求，这里对齐已验证可用的 PC 路径，
+             * 控制器链路保持默认 1M PHY。 */
+            const int mtu_rc = ble_gattc_exchange_mtu(event->connect.conn_handle, NULL, NULL);
+            ESP_LOGI(TAG, "controller MTU exchange submitted: rc=%d", mtu_rc);
+            s_notify_diag_count = 0U;
             (void)controller_discover_profile(runtime, CONTROLLER_PROFILE_NUS);
         } else {
             ESP_LOGW(TAG, "GAP connect failed: status=%d", event->connect.status);
@@ -695,6 +735,18 @@ static int controller_gap_event(struct ble_gap_event *event, void *arg)
             controller_clear_telemetry(runtime);
         }
         esp_bms_idf_runtime_project_controller_snapshot(runtime);
+        return 0;
+    case BLE_GAP_EVENT_MTU:
+        ESP_LOGI(TAG,
+                 "mtu update: conn=%u value=%u",
+                 event->mtu.conn_handle,
+                 event->mtu.value);
+        return 0;
+    case BLE_GAP_EVENT_CONN_UPDATE:
+        ESP_LOGI(TAG,
+                 "conn update: conn=%u status=%d",
+                 event->conn_update.conn_handle,
+                 event->conn_update.status);
         return 0;
 #if CONFIG_BT_NIMBLE_LL_CFG_FEAT_LE_CODED_PHY
     case BLE_GAP_EVENT_PHY_UPDATE_COMPLETE:
@@ -737,6 +789,17 @@ static int controller_gap_event(struct ble_gap_event *event, void *arg)
         }
         return 0;
     case BLE_GAP_EVENT_NOTIFY_RX:
+        if (s_notify_diag_count < 8U) {
+            s_notify_diag_count++;
+            ESP_LOGI(TAG,
+                     "notify rx #%u: conn=%u handle=%u len=%d phase=%u subscribed=%u",
+                     (unsigned)s_notify_diag_count,
+                     event->notify_rx.conn_handle,
+                     event->notify_rx.attr_handle,
+                     OS_MBUF_PKTLEN(event->notify_rx.om),
+                     runtime->controller_ble_phase,
+                     RUNTIME_FLAG(runtime, CONTROLLER_SUBSCRIBED) ? 1U : 0U);
+        }
         if (event->notify_rx.conn_handle == runtime->controller_conn_handle &&
             event->notify_rx.attr_handle == runtime->controller_char_val_handle &&
             (runtime->controller_ble_phase == (uint8_t)CONTROLLER_BLE_PHASE_SUBSCRIBING ||
@@ -751,14 +814,14 @@ static int controller_gap_event(struct ble_gap_event *event, void *arg)
                                               sizeof(frame))) {
                     if (runtime->controller_ble_phase ==
                             (uint8_t)CONTROLLER_BLE_PHASE_SUBSCRIBING &&
-                        esp_fardriver_has_instrument_telemetry(&runtime->controller_state)) {
+                        esp_fardriver_link_online(&runtime->controller_state)) {
                         runtime->controller_ble_phase = (uint8_t)CONTROLLER_BLE_PHASE_ONLINE;
                         s_controller_first_frame_elapsed_ms = 0U;
                         __atomic_fetch_or(&runtime->pending_audio_events,
                                           ESP_BMS_IDF_RUNTIME_AUDIO_EVENT_CONTROLLER_CONNECTED,
                                           __ATOMIC_RELAXED);
                         ESP_LOGI(TAG,
-                                 "controller ready: conn=%u profile=%s stage=first-telemetry",
+                                 "controller ready: conn=%u profile=%s stage=first-frame",
                                  event->notify_rx.conn_handle,
                                  controller_profile_config()->name);
                     }
@@ -928,10 +991,11 @@ static esp_err_t controller_start_scan(esp_bms_idf_runtime_t *runtime)
         RUNTIME_SET_FLAG(runtime, CONTROLLER_SCAN_REQUESTED, true);
         return ESP_OK;
     }
-    if (RUNTIME_FLAG(runtime, CONTROLLER_SCAN_ACTIVE)) {
+    if (RUNTIME_FLAG(runtime, CONTROLLER_SCAN_ACTIVE) && ble_gap_disc_active()) {
         esp_bms_idf_runtime_project_controller_snapshot(runtime);
         return ESP_OK;
     }
+    RUNTIME_SET_FLAG(runtime, CONTROLLER_SCAN_ACTIVE, false);
     if (ble_gap_disc_active()) {
         /* NimBLE has one global discovery callback; hand ownership to controller. */
         RUNTIME_SET_FLAG(runtime, BMS_SCAN_REQUESTED, false);
@@ -1041,6 +1105,23 @@ static bool controller_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_ms)
         return false;
     }
     bool changed = false;
+    /* 宿主未同步时扫描会一直排队（NimBLE reset 后可能不再自动同步），
+     * 超时后重建宿主栈，避免界面永久停在“连接中”。 */
+    static uint32_t s_host_sync_wait_ms;
+    if (RUNTIME_FLAG(runtime, CONTROLLER_SCAN_REQUESTED) &&
+        !RUNTIME_FLAG(runtime, BLE_HOST_SYNCED)) {
+        s_host_sync_wait_ms += elapsed_ms;
+        if (s_host_sync_wait_ms >= CONTROLLER_HOST_SYNC_TIMEOUT_MS) {
+            s_host_sync_wait_ms = 0U;
+            ESP_LOGW(TAG, "BLE host not synced while a scan is pending; rebuilding host");
+            const esp_err_t recover_ret = esp_bms_idf_runtime_recover_ble_host(runtime);
+            if (recover_ret != ESP_OK) {
+                ESP_LOGW(TAG, "BLE host rebuild failed: %s", esp_err_to_name(recover_ret));
+            }
+        }
+    } else {
+        s_host_sync_wait_ms = 0U;
+    }
     if (RUNTIME_FLAG(runtime, CONTROLLER_SCAN_REQUESTED) && !ble_gap_disc_active()) {
         (void)controller_start_scan(runtime);
         changed = true;
@@ -1069,10 +1150,14 @@ static bool controller_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_ms)
         runtime->controller_keepalive_elapsed_ms += elapsed_ms;
         const uint32_t period_ms = controller_profile_config()->read_polling
                                        ? CONTROLLER_READ_PERIOD_MS
-                                       : CONTROLLER_KEEPALIVE_PERIOD_MS;
+                                       : (waiting_for_frame ? CONTROLLER_OPEN_RETRY_MS
+                                                            : CONTROLLER_KEEPALIVE_PERIOD_MS);
         if (runtime->controller_keepalive_elapsed_ms >= period_ms) {
             if (controller_profile_config()->read_polling) {
                 controller_send_read_request(runtime);
+            } else if (waiting_for_frame) {
+                /* 首帧前重试开启；保活命令不能恢复丢失的开启请求。 */
+                controller_send_open(runtime);
             } else {
                 controller_send_keepalive(runtime);
             }

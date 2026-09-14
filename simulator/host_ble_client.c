@@ -653,7 +653,7 @@ static bool handle_line(esp_bms_host_ble_client_t *client,
                     client->controller_frame_len - consumed);
             client->controller_frame_len -= consumed;
         }
-        if (changed && esp_fardriver_has_instrument_telemetry(&client->controller_state)) {
+        if (changed && esp_fardriver_link_online(&client->controller_state)) {
             apply_controller_state(snapshot, &client->controller_state);
         }
         return changed;

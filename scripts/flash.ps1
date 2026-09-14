@@ -115,6 +115,20 @@ function Resolve-BuildDirectory {
     return (Resolve-Path -LiteralPath $candidate).Path
 }
 
+function Resolve-IdfProjectDirectory {
+    param([string]$BuildDirectory)
+
+    # idf.py resolves the project from the working directory, so run it from the
+    # idf-project next to the requested build directory instead of the repo root.
+    if (-not [string]::IsNullOrWhiteSpace($BuildDirectory)) {
+        $candidate = Join-Path (Split-Path -Parent $BuildDirectory) "idf-project"
+        if (Test-Path -LiteralPath (Join-Path $candidate "CMakeLists.txt") -PathType Leaf) {
+            return (Resolve-Path -LiteralPath $candidate).Path
+        }
+    }
+    return $repoRoot
+}
+
 function Test-ProjectS3Rfc2217Endpoint {
     param([Parameter(Mandatory = $true)][string]$SerialPort)
 
@@ -236,14 +250,15 @@ function Initialize-IdfEnvironment {
 }
 
 try {
-    Push-Location $repoRoot
     Set-DefaultProxyEnv
+    $resolvedPort = Resolve-FlashPort -RequestedPort $Port
+    $resolvedBuildDir = Resolve-BuildDirectory -RequestedBuildDir $BuildDir
+    $resolvedProjectDir = Resolve-IdfProjectDirectory -BuildDirectory $resolvedBuildDir
+    Push-Location $resolvedProjectDir
     Initialize-IdfEnvironment
     Test-CommandExists idf.py
     Test-RequiredIdfVersion
 
-    $resolvedPort = Resolve-FlashPort -RequestedPort $Port
-    $resolvedBuildDir = Resolve-BuildDirectory -RequestedBuildDir $BuildDir
     if (Test-ProjectS3Rfc2217Endpoint -SerialPort $resolvedPort) {
         Restart-ProjectS3Bridge -Endpoint $resolvedPort
     }

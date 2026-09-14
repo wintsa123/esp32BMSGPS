@@ -970,8 +970,6 @@ void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapshot)
 {
     const bool had_last_snapshot = UI_FLAG(LAST_SNAPSHOT_VALID);
     const bool previous_bms_online = SNAPSHOT_FLAG(&s_ui.last_snapshot, BMS_ONLINE);
-    const bool previous_controller_online =
-        SNAPSHOT_FLAG(&s_ui.last_snapshot, CONTROLLER_ONLINE);
     const uint8_t previous_bms_type = s_ui.last_snapshot.bms_type;
     const uint8_t previous_boot_animation_style =
         s_ui.last_snapshot.boot_animation_style;
@@ -1050,6 +1048,7 @@ void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapshot)
         strcmp(s_ui.last_snapshot.controller_bound_name,
                snapshot->controller_bound_name) != 0 ||
         settings_controller_candidate_rows_changed(&s_ui.last_snapshot, snapshot);
+    quick_toast_update_connection(&s_ui.last_snapshot, snapshot, had_last_snapshot);
     memcpy(&s_ui.last_snapshot, snapshot, sizeof(s_ui.last_snapshot));
     UI_SET_FLAG(LAST_SNAPSHOT_VALID, true);
 
@@ -1066,23 +1065,6 @@ void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapshot)
     set_gps_dashboard(snapshot);
     set_cast_page(snapshot);
     set_music_page(snapshot);
-    if (had_last_snapshot &&
-        ((!previous_bms_online && SNAPSHOT_FLAG(snapshot, BMS_ONLINE)) ||
-         (!previous_controller_online && SNAPSHOT_FLAG(snapshot, CONTROLLER_ONLINE)))) {
-        quick_toast_show_text(ui_t("绑定成功", "Bound"));
-    } else if (s_ui.quick_connecting_toast_active &&
-               had_last_snapshot &&
-               strcmp(previous_bms_info_text, snapshot->bms_info_text) != 0 &&
-               snapshot->bms_info_text[0] != '\0' &&
-               strcmp(snapshot->bms_info_text, "BMS BIND") != 0 &&
-               strcmp(snapshot->bms_info_text, "BMS SCAN") != 0 &&
-               strcmp(snapshot->bms_info_text, "BMS CONN") != 0 &&
-               strcmp(snapshot->bms_info_text, "BMS DISC") != 0 &&
-               strcmp(snapshot->bms_info_text, "BMS ON") != 0 &&
-               strcmp(snapshot->bms_info_text, "BMS OFF") != 0) {
-        quick_toast_cancel();
-        set_obj_hidden(s_ui.quick_toast, true);
-    }
 
     if (s_ui.settings_detail_id == (uint8_t)SETTINGS_DETAIL_BLUETOOTH &&
         (!had_last_snapshot ||

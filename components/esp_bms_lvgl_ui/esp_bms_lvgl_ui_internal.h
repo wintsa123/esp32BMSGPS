@@ -134,6 +134,7 @@ LV_FONT_DECLARE(settings_zh_18);
 #define QUICK_LEVEL_SAVE_DELAY_MS 2000U
 #define QUICK_LEVEL_OVERLAY_FADE_MS 140U
 #define QUICK_TOAST_MS 950
+#define QUICK_TOAST_CONNECTING_TIMEOUT_MS 30000U
 #define QUICK_ROTATE_TOAST_TICK_MS 1000U
 #define QUICK_TOAST_SORT_HINT "快捷面板调节"
 #define QUICK_BRIGHTNESS_TOAST_HINT "亮度调节"
@@ -496,6 +497,7 @@ typedef struct {
     bool settings_bms_ble_popup_open;
     bool settings_ble_more_page;
     bool quick_connecting_toast_active;
+    uint8_t quick_connecting_toast_source;
     bool settings_nav_hidden;
     bool settings_nav_layout_updating;
     bool setup_ap_qr_ready;
@@ -1001,7 +1003,10 @@ int32_t quick_pull_open_threshold(void);
 void quick_panel_animate_to_open_state(bool open);
 void quick_toast_cancel(void);
 void quick_toast_show_text(const char *text);
-void quick_toast_show_connecting(void);
+void quick_toast_show_connecting(settings_ble_source_t source);
+void quick_toast_update_connection(const esp_bms_dashboard_snapshot_t *previous,
+                                   const esp_bms_dashboard_snapshot_t *snapshot,
+                                   bool had_previous);
 void quick_rotate_toast_show(void);
 void set_quick_panel_open(bool open);
 void set_quick_edit_mode(bool edit_mode);

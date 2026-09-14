@@ -54,6 +54,7 @@ bool esp_fardriver_tire_circumference_mm(uint8_t rim_inch,
 bool esp_fardriver_parse_frame(esp_fardriver_state_t *state,
                                const uint8_t *frame,
                                size_t len);
+bool esp_fardriver_link_online(const esp_fardriver_state_t *state);
 bool esp_fardriver_has_instrument_telemetry(const esp_fardriver_state_t *state);
 void esp_fardriver_refresh_derived(esp_fardriver_state_t *state);
 

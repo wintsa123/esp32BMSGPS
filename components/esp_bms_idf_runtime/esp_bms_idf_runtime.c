@@ -293,15 +293,10 @@ static esp_bms_idf_runtime_t *s_ble_host_runtime;
 #define BLE_MEDIA_HID_EXTERNAL_REPORT_REFERENCE_UUID16 0x2907U
 #define BLE_MEDIA_HID_REPORT_REFERENCE_UUID16 0x2908U
 #define BLE_MEDIA_HID_APPEARANCE 0x03C0U
-#if CONFIG_BT_NIMBLE_SM_LVL >= 2
+/* 本机 HID 强制加密；不依赖用于接收外设明文遥测的全局 SM 等级。 */
 #define BLE_MEDIA_HID_READ_SECURITY_FLAGS BLE_GATT_CHR_F_READ_ENC
 #define BLE_MEDIA_HID_WRITE_SECURITY_FLAGS BLE_GATT_CHR_F_WRITE_ENC
 #define BLE_MEDIA_HID_NOTIFY_SECURITY_FLAGS BLE_GATT_CHR_F_NOTIFY_INDICATE_ENC
-#else
-#define BLE_MEDIA_HID_READ_SECURITY_FLAGS 0
-#define BLE_MEDIA_HID_WRITE_SECURITY_FLAGS 0
-#define BLE_MEDIA_HID_NOTIFY_SECURITY_FLAGS 0
-#endif
 
 static const ble_uuid16_t BLE_MEDIA_HID_SERVICE_UUID =
     BLE_UUID16_INIT(BLE_MEDIA_HID_SERVICE_UUID16);
@@ -5532,19 +5527,22 @@ static bool runtime_apply_pending_http_controller_bind(esp_bms_idf_runtime_t *ru
     runtime_copy_snapshot_text(mac, sizeof(mac), runtime->http_pending_controller_bound_mac);
     char previous[sizeof(runtime->controller_bound_mac)] = { 0 };
     runtime_copy_snapshot_text(previous, sizeof(previous), runtime->controller_bound_mac);
+    const bool previous_enabled = runtime->controller_connection_enabled;
     runtime_copy_snapshot_text(runtime->controller_bound_mac,
                                sizeof(runtime->controller_bound_mac), mac);
     RUNTIME_SET_FLAG(runtime, HTTP_CONTROLLER_BIND_PENDING, false);
     xSemaphoreGive(runtime->http_pending_lock);
 
+    /* 用户选择的地址和自动连接开关一起保存，确保重启后恢复本次绑定。 */
+    runtime->controller_connection_enabled = true;
     const esp_err_t save_ret = esp_bms_idf_runtime_save_display_settings(runtime);
     if (save_ret != ESP_OK) {
         runtime_copy_snapshot_text(runtime->controller_bound_mac,
                                    sizeof(runtime->controller_bound_mac), previous);
+        runtime->controller_connection_enabled = previous_enabled;
         ESP_LOGW(TAG, "[controller] bound MAC save failed: %s", esp_err_to_name(save_ret));
         return true;
     }
-    runtime->controller_connection_enabled = true;
     runtime_project_controller_snapshot(runtime);
     (void)esp_bms_idf_runtime_start_controller_ble_if_enabled(runtime);
     ESP_LOGI(TAG, "[controller] bound MAC saved: mac=%s", mac);
@@ -6113,6 +6111,29 @@ esp_err_t esp_bms_idf_runtime_ensure_ble_host(esp_bms_idf_runtime_t *runtime)
     return runtime_init_ble_host(runtime);
 }
 
+/* 宿主栈可能因 HCI 异常触发 reset 后不再自动同步（BLE_HOST_SYNCED 保持 false），
+ * 此时控制器扫描会一直排队、界面停在“连接中”。这里做一次彻底重建把链路拉回。 */
+esp_err_t esp_bms_idf_runtime_recover_ble_host(esp_bms_idf_runtime_t *runtime)
+{
+    if (!runtime) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!RUNTIME_FLAG(runtime, BLE_HOST_READY)) {
+        return runtime_init_ble_host(runtime);
+    }
+    ESP_LOGW(TAG,
+             "[ble] recovering BLE host (synced=%u)",
+             RUNTIME_FLAG(runtime, BLE_HOST_SYNCED) ? 1U : 0U);
+    const esp_err_t deinit_ret = nimble_port_deinit();
+    if (deinit_ret != ESP_OK) {
+        ESP_LOGW(TAG, "[ble] NimBLE deinit during recovery failed: %s", esp_err_to_name(deinit_ret));
+    }
+    RUNTIME_SET_FLAG(runtime, BLE_HOST_READY, false);
+    RUNTIME_SET_FLAG(runtime, BLE_HOST_STARTED, false);
+    RUNTIME_SET_FLAG(runtime, BLE_HOST_SYNCED, false);
+    return runtime_init_ble_host(runtime);
+}
+
 void esp_bms_idf_runtime_request_coded_phy(uint16_t conn_handle, const char *source)
 {
 #if CONFIG_BT_NIMBLE_LL_CFG_FEAT_LE_CODED_PHY
@@ -6131,6 +6152,11 @@ void esp_bms_idf_runtime_request_coded_phy(uint16_t conn_handle, const char *sou
 }
 #else
 esp_err_t esp_bms_idf_runtime_ensure_ble_host(esp_bms_idf_runtime_t *runtime)
+{
+    return runtime ? ESP_ERR_NOT_SUPPORTED : ESP_ERR_INVALID_ARG;
+}
+
+esp_err_t esp_bms_idf_runtime_recover_ble_host(esp_bms_idf_runtime_t *runtime)
 {
     return runtime ? ESP_ERR_NOT_SUPPORTED : ESP_ERR_INVALID_ARG;
 }

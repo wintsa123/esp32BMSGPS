@@ -612,6 +612,16 @@ static void quick_toast_timer_cb(lv_timer_t *timer)
     s_ui.quick_toast_timer = NULL;
 }
 
+/* 单次定时器由 LVGL 回收，先解除引用再创建结果提示的定时器。 */
+static void quick_toast_connecting_timeout_cb(lv_timer_t *timer)
+{
+    (void)timer;
+    s_ui.quick_toast_timer = NULL;
+    ESP_LOGI(TAG, "[ble-ui] connection result: source=%s result=failed reason=timeout",
+             s_ui.quick_connecting_toast_source == SETTINGS_BLE_SOURCE_CONTROLLER ? "controller" : "BMS");
+    quick_toast_show_text(ui_t("连接失败", "Connection failed"));
+}
+
 static void quick_rotate_toast_set_countdown(void)
 {
     if (!s_ui.quick_toast_rotate_countdown) {
@@ -656,13 +666,43 @@ void quick_toast_show_text(const char *text)
     }
 }
 
-void quick_toast_show_connecting(void)
+void quick_toast_update_connection(const esp_bms_dashboard_snapshot_t *previous,
+                                   const esp_bms_dashboard_snapshot_t *snapshot,
+                                   bool had_previous)
+{
+    if (!s_ui.quick_connecting_toast_active || !had_previous) {
+        return;
+    }
+    /* 固定本次请求的来源，之后切换设置页面不会串到另一设备的结果。 */
+    const bool controller = s_ui.quick_connecting_toast_source == SETTINGS_BLE_SOURCE_CONTROLLER;
+    const bool was_online = controller ? SNAPSHOT_FLAG(previous, CONTROLLER_ONLINE)
+                                       : SNAPSHOT_FLAG(previous, BMS_ONLINE);
+    const bool online = controller ? SNAPSHOT_FLAG(snapshot, CONTROLLER_ONLINE)
+                                   : SNAPSHOT_FLAG(snapshot, BMS_ONLINE);
+    if (!was_online && online) {
+        ESP_LOGI(TAG, "[ble-ui] connection result: source=%s result=success reason=online",
+                 controller ? "controller" : "BMS");
+        quick_toast_show_text(ui_t("连接成功", "Connected"));
+    } else if (!controller && !online &&
+               strcmp(previous->bms_info_text, snapshot->bms_info_text) != 0 &&
+               (strstr(snapshot->bms_info_text, "FAIL") ||
+                strstr(snapshot->bms_info_text, "ERR") ||
+                strstr(snapshot->bms_info_text, "TIMEOUT") ||
+                strncmp(snapshot->bms_info_text, "BMS NO ", 7) == 0)) {
+        ESP_LOGI(TAG, "[ble-ui] connection result: source=BMS result=failed reason=%s",
+                 snapshot->bms_info_text);
+        quick_toast_show_text(ui_t("连接失败", "Connection failed"));
+    }
+}
+
+void quick_toast_show_connecting(settings_ble_source_t source)
 {
     if (!s_ui.quick_toast || !s_ui.quick_toast_text || !s_ui.quick_toast_rotate_icon) {
         return;
     }
 
     quick_toast_cancel();
+    s_ui.quick_connecting_toast_source = (uint8_t)source;
     UI_SET_FLAG(QUICK_ROTATE_TOAST_ACTIVE, false);
 
     const int32_t toast_w = s_ui.width < 150 ? s_ui.width - 24 : 126;
@@ -708,6 +748,14 @@ void quick_toast_show_connecting(void)
     lv_anim_set_repeat_count(&anim, LV_ANIM_REPEAT_INFINITE);
     s_ui.quick_connecting_toast_active = true;
     lv_anim_start(&anim);
+
+    /* 控制器快照没有失败阶段，等待窗口结束后明确显示失败。 */
+    s_ui.quick_toast_timer = lv_timer_create(quick_toast_connecting_timeout_cb,
+                                             QUICK_TOAST_CONNECTING_TIMEOUT_MS,
+                                             NULL);
+    if (s_ui.quick_toast_timer) {
+        lv_timer_set_repeat_count(s_ui.quick_toast_timer, 1);
+    }
 }
 
 void quick_rotate_toast_show(void)
