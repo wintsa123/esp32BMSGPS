@@ -367,12 +367,17 @@ static void settings_swipe_indicator_settle(bool committed)
         return;
     }
 
+    /* 提交与否都滑回左边缘外：目标曾写成 s_ui.width（屏幕最右），松手瞬间气泡
+     * 会从左侧横穿整屏冲到最右边，等 completed 回调把它隐藏时，返回切页已经
+     * 发生，那一帧就露在屏幕上。 */
+    (void)committed;
+
     lv_anim_t anim;
     lv_anim_init(&anim);
     lv_anim_set_var(&anim, s_ui.settings_swipe_indicator);
     lv_anim_set_values(&anim,
                        lv_obj_get_x(s_ui.settings_swipe_indicator),
-                       committed ? s_ui.width : -SETTINGS_SWIPE_INDICATOR_SIZE);
+                       -SETTINGS_SWIPE_INDICATOR_SIZE);
     lv_anim_set_duration(&anim, SETTINGS_SWIPE_INDICATOR_SETTLE_MS);
     lv_anim_set_path_cb(&anim, lv_anim_path_ease_out);
     lv_anim_set_exec_cb(&anim, settings_swipe_indicator_x_anim_cb);
@@ -425,21 +430,25 @@ static void settings_swipe_event_cb(lv_event_t *event)
     }
 
     if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
+        const int32_t drag_dx = s_ui.settings_swipe_drag_dx;
         const bool committed = code == LV_EVENT_RELEASED &&
-                               s_ui.settings_swipe_drag_dx >= SETTINGS_SWIPE_BACK_MIN_DX;
+                               drag_dx >= SETTINGS_SWIPE_BACK_MIN_DX;
         UI_SET_FLAG(SETTINGS_SWIPE_TRACKING, false);
         settings_swipe_indicator_settle(committed);
+        /* 先清拖动量再返回：settings_show_root() / show_dashboard_view() 只在
+         * settings_swipe_drag_dx == 0 时复位气泡，放在返回之后清零会让这条
+         * 复位路径整段被跳过。 */
+        s_ui.settings_swipe_drag_dx = 0;
+        s_ui.settings_nav_drag_anchor_y = 0;
         if (committed) {
             ESP_LOGI(TAG,
                      "[settings] edge back committed: detail=%u dx=%ld",
                      (unsigned)s_ui.settings_detail_id,
-                     (long)s_ui.settings_swipe_drag_dx);
+                     (long)drag_dx);
             settings_navigate_back();
             lv_indev_wait_release(lv_indev_active());
         }
         UI_SET_FLAG(SETTINGS_SWIPE_CONSUMED, false);
-        s_ui.settings_swipe_drag_dx = 0;
-        s_ui.settings_nav_drag_anchor_y = 0;
     }
 }
 

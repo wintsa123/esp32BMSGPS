@@ -2,4 +2,7 @@
 allow = ["Bash=ls /vol1/1000/project/esp32BmsGps && git -C /vol1/1000/project/esp32BmsGps status --short | head -20 && git -C /vol1/1000/project/esp32BmsGps log --oneline -5", "Bash(sed -n:*)", "Bash=cd \"C:\\Users\\77077\\Desktop\\esp\" && python -c \"import bleak,sys;print(bleak.__version__)\" && echo OK"]
 
 [sandbox]
-allow_write = ["${HOME}/AppData/Local/Temp/bmsdiag", "${HOME}/AppData/Local/Temp"]
+# 原值（Windows 侧）：["${HOME}/AppData/Local/Temp/bmsdiag", "${HOME}/AppData/Local/Temp"]
+# 这些路径在 Linux 主机上不存在，会让 bwrap 直接失败（bash / grep / rg 全部报
+# "Can't find source path"），故改为本机真实存在的临时目录。
+allow_write = ["/tmp"]

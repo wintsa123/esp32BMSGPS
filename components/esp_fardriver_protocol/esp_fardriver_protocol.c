@@ -78,8 +78,8 @@ bool esp_fardriver_build_read_request(uint8_t address,
     return true;
 }
 
-static bool build_command(uint8_t cmd, uint8_t sub, uint8_t v1, uint8_t v2,
-                          uint8_t out[ESP_FARDRIVER_COMMAND_LEN])
+bool esp_fardriver_build_control_command(uint8_t cmd, uint8_t sub, uint8_t v1, uint8_t v2,
+                                         uint8_t out[ESP_FARDRIVER_COMMAND_LEN])
 {
     if (!out) {
         return false;
@@ -99,13 +99,13 @@ static bool build_command(uint8_t cmd, uint8_t sub, uint8_t v1, uint8_t v2,
 bool esp_fardriver_build_open_command(uint8_t out[ESP_FARDRIVER_COMMAND_LEN])
 {
     /* AA 13 EC 07 01 F1 A2 5D: 开启数据流，控制器开始推送遥测帧 */
-    return build_command(0x13U, 0x07U, 0x01U, 0xF1U, out);
+    return esp_fardriver_build_control_command(0x13U, 0x07U, 0x01U, 0xF1U, out);
 }
 
 bool esp_fardriver_build_keepalive_command(uint8_t out[ESP_FARDRIVER_COMMAND_LEN])
 {
     /* AA 13 EC 07 5F 5F 6E 91: 保活心跳 */
-    return build_command(0x13U, 0x07U, 0x5FU, 0x5FU, out);
+    return esp_fardriver_build_control_command(0x13U, 0x07U, 0x5FU, 0x5FU, out);
 }
 
 static uint16_t le16(const uint8_t *data)
@@ -248,18 +248,31 @@ void esp_fardriver_refresh_derived(esp_fardriver_state_t *state)
     }
 }
 
-bool esp_fardriver_parse_frame(esp_fardriver_state_t *state,
-                               const uint8_t *frame,
-                               size_t len)
+/* 远驱存在两套校验（官方 App 的 fdHandleNotification 同时接受两种，靠 frame[1]
+ * 的最高位区分）：bit7=1 用表驱动 CRC16，bit7=0 用 16 位求和。
+ * 只实现其中一种会把另一种固件的控制器判成"没有任何数据"。 */
+static bool frame_checksum_valid(const uint8_t *frame)
 {
-    if (!state || !frame || len != ESP_FARDRIVER_FRAME_LEN || frame[0] != 0xAAU) {
+    if ((frame[1] & 0x80U) != 0U) {
+        const uint16_t wire_checksum = (uint16_t)(((uint16_t)frame[14] << 8U) | frame[15]);
+        return wire_checksum == esp_fardriver_crc(frame, ESP_FARDRIVER_FRAME_LEN - 2U);
+    }
+    /* 求和帧：0xAA + 索引 + 12 字节数据，frame[14] 高字节、frame[15] 低字节 */
+    uint32_t sum = (uint32_t)0xAAU + frame[1];
+    for (size_t index = 2U; index < ESP_FARDRIVER_FRAME_LEN - 2U; ++index) {
+        sum += frame[index];
+    }
+    return frame[14] == (uint8_t)((sum >> 8U) & 0xFFU) &&
+           frame[15] == (uint8_t)(sum & 0xFFU);
+}
+
+static bool parse_frame_at(esp_fardriver_state_t *state, const uint8_t *frame)
+{
+    if (!frame_checksum_valid(frame)) {
         return false;
     }
-    const uint16_t wire_checksum = (uint16_t)(((uint16_t)frame[14] << 8U) | frame[15]);
-    if (wire_checksum != esp_fardriver_crc(frame, ESP_FARDRIVER_FRAME_LEN - 2U)) {
-        return false;
-    }
-    const uint8_t index = (uint8_t)(frame[1] & 0x3FU);
+    /* 索引是 7 位：bit7 只表示校验方式，不参与寄存器映射 */
+    const uint8_t index = (uint8_t)(frame[1] & 0x7FU);
     if (index >= sizeof(FLASH_READ_ADDR)) {
         return false;
     }
@@ -268,6 +281,27 @@ bool esp_fardriver_parse_frame(esp_fardriver_state_t *state,
     parse_device_block(state, address, frame + 2U);
     esp_fardriver_refresh_derived(state);
     return true;
+}
+
+bool esp_fardriver_parse_frame(esp_fardriver_state_t *state,
+                               const uint8_t *frame,
+                               size_t len)
+{
+    if (!state || !frame || len < ESP_FARDRIVER_FRAME_LEN) {
+        return false;
+    }
+    /* 部分型号的 BLE 模块与 PC 抓包不同：一帧可能被塞进更长的通知，或者一次
+     * 通知里带上两帧。与其按固定长度丢弃，不如整段滑动 16 字节窗口，靠帧头
+     * 0xAA 与 CRC16 定位真实帧——CRC 校验让误判概率低到可以忽略。 */
+    for (size_t offset = 0U; offset + ESP_FARDRIVER_FRAME_LEN <= len; ++offset) {
+        if (frame[offset] != 0xAAU) {
+            continue;
+        }
+        if (parse_frame_at(state, frame + offset)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool esp_fardriver_link_online(const esp_fardriver_state_t *state)

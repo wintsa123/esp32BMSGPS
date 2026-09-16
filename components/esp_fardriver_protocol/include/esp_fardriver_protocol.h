@@ -46,11 +46,17 @@ bool esp_fardriver_poll_address(size_t poll_index, uint8_t *address);
 bool esp_fardriver_build_read_request(uint8_t address,
                                       uint8_t out[ESP_FARDRIVER_READ_REQUEST_LEN]);
 bool esp_fardriver_build_open_command(uint8_t out[ESP_FARDRIVER_COMMAND_LEN]);
+/* 通用 8 字节控制帧：AA | cmd | ~cmd | sub | v1 | v2 | sum | ~sum。
+ * 不同固件版本用不同参数开启/复位数据流，控制器型号之间不通用。 */
+bool esp_fardriver_build_control_command(uint8_t cmd, uint8_t sub, uint8_t v1, uint8_t v2,
+                                         uint8_t out[ESP_FARDRIVER_COMMAND_LEN]);
 bool esp_fardriver_build_keepalive_command(uint8_t out[ESP_FARDRIVER_COMMAND_LEN]);
 bool esp_fardriver_tire_circumference_mm(uint8_t rim_inch,
                                          uint8_t aspect_percent,
                                          uint16_t width_mm,
                                          uint16_t *circumference_mm);
+/* 解析一段通知数据：可传入等于或多于一帧的缓冲区（至少
+ * ESP_FARDRIVER_FRAME_LEN 字节），函数按 16 字节窗口滑动定位 CRC 正确的帧。 */
 bool esp_fardriver_parse_frame(esp_fardriver_state_t *state,
                                const uint8_t *frame,
                                size_t len);

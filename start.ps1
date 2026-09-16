@@ -703,7 +703,7 @@ function Validate-Config([System.Collections.IDictionary]$Config) {
         $script:BoardAudioBackend = $Board.AUDIO_BACKEND
         $script:BoardAudioDacChannel = $Board.AUDIO_DAC_CHANNEL
         $script:BoardAudioEnableActiveLevel = $Board.AUDIO_ENABLE_ACTIVE_LEVEL
-        $script:BoardExpander = if ([string]::IsNullOrEmpty($Board.EXPANDER)) { 'NONE' } else { $Board.EXPANDER }
+        $script:BoardExpander = if ($Board.ContainsKey('EXPANDER') -and -not [string]::IsNullOrEmpty($Board.EXPANDER)) { $Board.EXPANDER } else { 'NONE' }
         $BoardInputGpio = $Board.INPUT_GPIO
         $BoardOutputGpio = $Board.OUTPUT_GPIO
     }
@@ -1677,7 +1677,7 @@ function Set-MissingBoardGpio([System.Collections.IDictionary]$Config) {
     $script:BoardAudioBackend = $Board.AUDIO_BACKEND
     $script:BoardAudioDacChannel = $Board.AUDIO_DAC_CHANNEL
     $script:BoardAudioEnableActiveLevel = $Board.AUDIO_ENABLE_ACTIVE_LEVEL
-    $script:BoardExpander = if ([string]::IsNullOrEmpty($Board.EXPANDER)) { 'NONE' } else { $Board.EXPANDER }
+    $script:BoardExpander = if ($Board.ContainsKey('EXPANDER') -and -not [string]::IsNullOrEmpty($Board.EXPANDER)) { $Board.EXPANDER } else { 'NONE' }
     $BoardInputGpio = $Board.INPUT_GPIO
     $BoardOutputGpio = $Board.OUTPUT_GPIO
     Set-RequiredGpioRoles $Config

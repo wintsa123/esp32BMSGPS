@@ -33,6 +33,23 @@ static void make_params_frame(uint8_t frame[ESP_FARDRIVER_FRAME_LEN])
     make_device_frame(frame, 47U, data); /* FLASH_READ_ADDR[47] = 0xD0 */
 }
 
+/* 老固件的求和校验帧：AA | 索引(bit7=0) | 12 字节数据 | 校验和高字节 | 低字节 */
+static void make_sum_frame(uint8_t frame[ESP_FARDRIVER_FRAME_LEN],
+                           uint8_t index,
+                           const uint8_t data[12])
+{
+    memset(frame, 0, ESP_FARDRIVER_FRAME_LEN);
+    frame[0] = 0xAAU;
+    frame[1] = (uint8_t)(index & 0x7FU);
+    memcpy(frame + 2U, data, 12U);
+    uint32_t sum = (uint32_t)0xAAU + frame[1];
+    for (size_t position = 2U; position < ESP_FARDRIVER_FRAME_LEN - 2U; ++position) {
+        sum += frame[position];
+    }
+    frame[14] = (uint8_t)((sum >> 8U) & 0xFFU);
+    frame[15] = (uint8_t)(sum & 0xFFU);
+}
+
 int main(void)
 {
     esp_fardriver_state_t state = { .fallback_wheel_circumference_mm = 1350U,
@@ -146,6 +163,54 @@ int main(void)
     assert(esp_fardriver_build_read_request(0xE2U, request));
     assert(request[0] == 0xE2U && request[1] == 0xE2U && request[2] == 0x80U &&
            request[3] == 0x09U && request[4] == 0x0AU);
+
+    /* 未知型号的 BLE 模块可能把帧放在更长的通知里，或一次通知带两帧：
+     * 滑动窗口必须能靠帧头与 CRC 定位真实帧。 */
+    uint8_t framing[ESP_FARDRIVER_FRAME_LEN + 2U] = { 0 };
+    esp_fardriver_state_t framing_state = { 0 };
+    framing[0] = 0x5AU;
+    framing[1] = 0xAAU; /* 前面出现假帧头也不能误判 */
+    make_params_frame(framing + 2U);
+    assert(esp_fardriver_parse_frame(&framing_state, framing, sizeof(framing)));
+    assert(framing_state.controller_speed_params_valid);
+
+    uint8_t joined[ESP_FARDRIVER_FRAME_LEN * 2U] = { 0 };
+    esp_fardriver_state_t joined_state = { 0 };
+    make_device_frame(joined, 0U, rpm_block);
+    make_params_frame(joined + ESP_FARDRIVER_FRAME_LEN);
+    assert(esp_fardriver_parse_frame(&joined_state, joined, sizeof(joined)));
+    assert(joined_state.rpm_valid && !joined_state.controller_speed_params_valid);
+
+    /* 另一些固件用 16 位求和校验（frame[1] bit7=0），官方 App 也同时支持：
+     * 只认 CRC 会把这类控制器判成"没有任何数据"。 */
+    esp_fardriver_state_t sum_state = { 0 };
+    memset(data, 0, sizeof(data));
+    data[0] = (uint8_t)((3U - 1U) << 2U); /* 挡位 3 */
+    data[6] = 0xC0U;
+    data[7] = 0x12U; /* 转速 4800 */
+    make_sum_frame(frame, 0U, data);
+    assert(esp_fardriver_parse_frame(&sum_state, frame, sizeof(frame)));
+    assert(sum_state.gear_valid && sum_state.gear == 3U);
+    assert(sum_state.rpm_valid && sum_state.rpm == 4800U);
+
+    /* 求和错误必须被拒绝，且不改变状态 */
+    make_sum_frame(frame, 0U, data);
+    frame[15] ^= 1U;
+    esp_fardriver_state_t before_sum_failure = sum_state;
+    assert(!esp_fardriver_parse_frame(&sum_state, frame, sizeof(frame)));
+    assert(memcmp(&sum_state, &before_sum_failure, sizeof(sum_state)) == 0);
+
+    /* 索引是 7 位：超过寄存器表的索引（>= 56）按未知块丢弃 */
+    make_sum_frame(frame, 0x40U, data);
+    assert(!esp_fardriver_parse_frame(&sum_state, frame, sizeof(frame)));
+
+    /* 求和帧同样支持滑动定位（更长缓冲、带前缀） */
+    uint8_t sum_framing[ESP_FARDRIVER_FRAME_LEN + 1U] = { 0 };
+    esp_fardriver_state_t sum_framing_state = { 0 };
+    sum_framing[0] = 0x11U;
+    make_sum_frame(sum_framing + 1U, 0U, data);
+    assert(esp_fardriver_parse_frame(&sum_framing_state, sum_framing, sizeof(sum_framing)));
+    assert(sum_framing_state.rpm_valid);
 
     /* 无效帧：CRC/长度/帧头/索引越界，且不得改变已有状态 */
     make_params_frame(frame);
