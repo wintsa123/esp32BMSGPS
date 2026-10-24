@@ -844,3 +844,13 @@ esp_err_t esp_bms_display_service_get_logical_resolution(
                         "display service is not running");
     return esp_bms_lvgl_bridge_get_logical_resolution(rotation, width, height);
 }
+
+esp_err_t esp_bms_display_service_read_cast_touch(uint16_t *x, uint16_t *y, bool *pressed)
+{
+    ESP_RETURN_ON_FALSE(x && y && pressed, ESP_ERR_INVALID_ARG, TAG,
+                        "cast touch outputs are required");
+    *pressed = false;
+    ESP_RETURN_ON_FALSE(service_cast_active(), ESP_ERR_INVALID_STATE, TAG,
+                        "cast mode is not active");
+    return esp_bms_lvgl_bridge_read_cast_touch(x, y, pressed);
+}

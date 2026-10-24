@@ -17,15 +17,11 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Directory Structure](./directory-structure.md) | Module organization and file layout | To fill |
 | [Database Guidelines](./database-guidelines.md) | ORM patterns, queries, migrations | To fill |
 | [Error Handling](./error-handling.md) | Error types, handling strategies | To fill |
-| [Quality Guidelines](./quality-guidelines.md) | Runtime, display, backlight, and code safety contracts | Active |
+| [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | To fill |
 | [Logging Guidelines](./logging-guidelines.md) | Structured logging, log levels | Started |
+| [BLE notification security](./ble-peripheral-notification-security.md) | Unencrypted peripheral telemetry and encrypted local GATT services | Active |
+| [Controller binding persistence](./controller-binding-persistence.md) | Empty factory binding, user selection and boot reconnect | Active |
 | [Hardware, Build, and Flash](./hardware-build-flash.md) | GPIO ownership, board conflicts, toolchains, partitions, and supported flash paths | Active |
-| [FarDriver Gear Telemetry](./fardriver-gear-telemetry.md) | Compact-frame gear extraction and dashboard display contract | Active |
-| [LVGL Carousel Drag Diagnostics](./lvgl-carousel-drag-diagnostics.md) | Default invalidation policy and A/B diagnostic build contract | Active |
-| [GPS Diagnostic Telemetry](./gps-diagnostic-telemetry.md) | GSA/GSV parsing, snapshot projection, and settings-page status contract | Active |
-| [FlashDB History Storage](./flashdb-history.md) | Board-flash session, sample, fault, and Android API contract | Active |
-| [JK BMS BLE Protocol](./jk-bms-protocol.md) | GATT matching and three-layout JK frame contract | Active |
-| [JBD BMS BLE Protocol](./jbd-bms-protocol.md) | Read-only frame assembly, checksums, and resynchronization contract | Active |
 
 ---
 

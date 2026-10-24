@@ -706,6 +706,9 @@ collect_required_gpio_roles() {
         I80)
             for ((index = 0; index < BOARD_DISPLAY_DATA_WIDTH; index++)); do require_gpio_role output "TFT_D$index"; done
             for role in TFT_WR TFT_CS TFT_DC; do require_gpio_role output "$role"; done
+            for role in TFT_RD TFT_RESET TFT_BACKLIGHT; do
+                if board_declares_gpio_role "$role"; then require_gpio_role output "$role"; fi
+            done
             ;;
     esac
     load_record display "${CFG[DISPLAY]}"
@@ -724,6 +727,7 @@ collect_required_gpio_roles() {
                 ;;
             I2C)
                 for role in TOUCH_SDA TOUCH_SCL; do require_gpio_role output "$role"; done
+                if board_declares_gpio_role TOUCH_RESET; then require_gpio_role output TOUCH_RESET; fi
                 ;;
         esac
         if [[ "${CFG[INPUT]}" != custom ]]; then

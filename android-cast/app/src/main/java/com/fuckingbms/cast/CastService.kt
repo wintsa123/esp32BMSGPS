@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.Rect
@@ -35,10 +36,12 @@ import java.net.URI
 import java.nio.ByteBuffer
 import java.security.SecureRandom
 import kotlin.concurrent.thread
+import kotlin.math.abs
 import kotlin.math.ceil
-import kotlin.math.floor
 
 private const val CAST_METRICS_LOG_WINDOW_NANOS = 5_000_000_000L
+/* Panel-space movement below this is treated as a tap rather than a swipe. */
+private const val TOUCH_TAP_SLOP_PX = 12
 
 internal data class CaptureInsets(val left: Int, val top: Int, val right: Int, val bottom: Int) {
     companion object { val ZERO = CaptureInsets(0, 0, 0, 0) }
@@ -71,6 +74,9 @@ class CastService : Service() {
     private var targetCanvas: Canvas? = null
     private val jpegBuffer = ByteArrayOutputStream(64 * 1024)
     private val scalePaint = Paint(Paint.FILTER_BITMAP_FLAG)
+    @Volatile private var touchGeometry: CastTouchGeometry? = null
+    private var touchStart: TouchEvent? = null
+    private var touchLast: TouchEvent? = null
     private val displayListener = object : DisplayManager.DisplayListener {
         override fun onDisplayAdded(displayId: Int) = Unit
         override fun onDisplayRemoved(displayId: Int) = Unit
@@ -208,20 +214,28 @@ class CastService : Service() {
                 targetBitmap = output
                 targetCanvas = Canvas(output)
             }
+            val layout = castLayoutFor(
+                imageWidth = image.width,
+                imageHeight = image.height,
+                sourceWidth = displayWidth,
+                sourceHeight = displayHeight,
+                insets = cropInsets,
+                targetWidth = target.width,
+                targetHeight = target.height,
+            )
+            touchGeometry = CastTouchGeometry(
+                imageWidth = image.width,
+                imageHeight = image.height,
+                sourceWidth = displayWidth,
+                sourceHeight = displayHeight,
+                layout = layout,
+            )
+            /* Fit, don't fill: the phone picture stays complete and the panel letterboxes. */
+            targetCanvas!!.drawColor(Color.BLACK)
             targetCanvas!!.drawBitmap(
                 sourceFrame,
-                cropRectFor(
-                    image.width,
-                    image.height,
-                    displayWidth,
-                    displayHeight,
-                    cropInsets,
-                    target.width,
-                    target.height,
-                ).let {
-                    Rect(it.left, it.top, it.right, it.bottom)
-                },
-                Rect(0, 0, target.width, target.height),
+                Rect(layout.src.left, layout.src.top, layout.src.right, layout.src.bottom),
+                Rect(layout.dst.left, layout.dst.top, layout.dst.right, layout.dst.bottom),
                 scalePaint,
             )
             val encodeStartedAtNanos = SystemClock.elapsedRealtimeNanos()
@@ -258,6 +272,36 @@ class CastService : Service() {
         return jpegBuffer.toByteArray()
     }
 
+    /** Turns device touch samples into phone input; the cast pipeline is the inverse map. */
+    private fun handleTouch(event: TouchEvent) {
+        when (event.phase) {
+            CastProtocol.INPUT_PHASE_DOWN -> {
+                touchStart = event
+                touchLast = event
+            }
+            CastProtocol.INPUT_PHASE_MOVE -> touchLast = event
+            CastProtocol.INPUT_PHASE_UP -> {
+                val start = touchStart
+                touchStart = null
+                touchLast = null
+                if (start != null) injectTouch(start, event)
+            }
+        }
+    }
+
+    private fun injectTouch(start: TouchEvent, end: TouchEvent) {
+        val geometry = touchGeometry ?: return
+        val from = geometry.toScreen(start.x, start.y) ?: return
+        val to = geometry.toScreen(end.x, end.y) ?: return
+        val moved = abs(start.x - end.x) + abs(start.y - end.y)
+        val injected = if (moved <= TOUCH_TAP_SLOP_PX) {
+            CastAccessibilityService.tap(from.first, from.second)
+        } else {
+            CastAccessibilityService.swipe(from.first, from.second, to.first, to.second)
+        }
+        if (!injected) Log.i("CastService", "[cast] touch injection unavailable")
+    }
+
     private fun transmit(host: String) {
         var firstFailure: Exception? = null
         for (attempt in 1..3) {
@@ -279,8 +323,21 @@ class CastService : Service() {
                         if (sentFrameId == 0L) {
                             Log.i("CastService", "[cast] first frame sent id=${frame.id} seq=$sequence bytes=${frame.jpeg.size}")
                         }
-                        if (socket!!.readAck() != sequence) {
-                            throw IOException("设备未确认画面 $sequence")
+                        when (val inbound = socket!!.readFrame { handleTouch(it) }) {
+                            is CastInbound.Ack ->
+                                if (inbound.sequence != sequence) {
+                                    throw IOException("设备未确认画面 $sequence")
+                                }
+                            CastInbound.DeviceExit -> {
+                                Log.i("CastService", "[cast] device ended the cast session")
+                                running = false
+                                socket?.close()
+                                socket = null
+                                report(STATE_STOPPED)
+                                stopSelf()
+                                return
+                            }
+                            null -> throw IOException("设备未确认画面 $sequence")
                         }
                         metrics.record(
                             frame = frame,
@@ -336,6 +393,9 @@ class CastService : Service() {
         captureThread?.quitSafely()
         captureThread = null
         castInfo = null
+        touchGeometry = null
+        touchStart = null
+        touchLast = null
         projection?.unregisterCallback(projectionCallback)
         projection?.stop()
         projection = null
@@ -380,55 +440,6 @@ class CastService : Service() {
             putExtra("inset_bottom", insets.bottom)
         }
     }
-}
-
-internal fun cropRectFor(
-    imageWidth: Int,
-    imageHeight: Int,
-    sourceWidth: Int,
-    sourceHeight: Int,
-    insets: CaptureInsets,
-    targetWidth: Int = 0,
-    targetHeight: Int = 0,
-): CaptureRect {
-    if (imageWidth <= 0 || imageHeight <= 0 || sourceWidth <= 0 || sourceHeight <= 0 ||
-        (targetWidth < 0 || targetHeight < 0 || (targetWidth == 0) != (targetHeight == 0))
-    ) {
-        return CaptureRect(0, 0, imageWidth.coerceAtLeast(0), imageHeight.coerceAtLeast(0))
-    }
-    if (insets.left < 0 || insets.top < 0 || insets.right < 0 || insets.bottom < 0 ||
-        insets.left + insets.right >= sourceWidth || insets.top + insets.bottom >= sourceHeight
-    ) {
-        return CaptureRect(0, 0, imageWidth, imageHeight)
-    }
-    val left = floor(insets.left.toDouble() * imageWidth / sourceWidth).toInt()
-    val top = floor(insets.top.toDouble() * imageHeight / sourceHeight).toInt()
-    val right = (imageWidth - ceil(insets.right.toDouble() * imageWidth / sourceWidth).toInt())
-    val bottom = (imageHeight - ceil(insets.bottom.toDouble() * imageHeight / sourceHeight).toInt())
-    if (right <= left || bottom <= top) return CaptureRect(0, 0, imageWidth, imageHeight)
-    var cropLeft = left
-    var cropTop = top
-    var cropRight = right
-    var cropBottom = bottom
-    val width = cropRight - cropLeft
-    val height = cropBottom - cropTop
-    if (targetWidth > 0 && width.toLong() * targetHeight > height.toLong() * targetWidth) {
-        val croppedWidth = (height.toLong() * targetWidth / targetHeight).toInt().coerceAtLeast(1)
-        val trim = width - croppedWidth
-        cropLeft += trim / 2
-        cropRight = cropLeft + croppedWidth
-    } else if (targetWidth > 0 && height.toLong() * targetWidth > width.toLong() * targetHeight) {
-        val croppedHeight = (width.toLong() * targetHeight / targetWidth).toInt().coerceAtLeast(1)
-        val trim = height - croppedHeight
-        cropTop += trim / 2
-        cropBottom = cropTop + croppedHeight
-    }
-    return CaptureRect(
-        cropLeft.coerceIn(0, imageWidth - 1),
-        cropTop.coerceIn(0, imageHeight - 1),
-        cropRight.coerceIn(1, imageWidth),
-        cropBottom.coerceIn(1, imageHeight),
-    )
 }
 
 internal fun captureSizeFor(sourceWidth: Int, sourceHeight: Int, target: CastTarget): Pair<Int, Int> {
@@ -528,24 +539,54 @@ private class CastSocket(host: String) {
         }
     }
     fun send(payload: ByteArray) { val mask = ByteArray(4).also { random.nextBytes(it) }; output.write(0x82); output.write(CastProtocol.maskedPayloadLength(payload.size)); output.write(mask); for (index in payload.indices) payload[index] = (payload[index].toInt() xor mask[index % 4].toInt()).toByte(); output.write(payload); output.flush() }
-    fun readAck(): Int? {
-        val first = input.read()
-        val second = input.read()
-        if (first != 0x82 || second !in 0..127 || second != 5) {
-            Log.e("CastService", "[cast] invalid ACK header first=$first second=$second")
-            return null
-        }
-        val data = ByteArray(5)
-        var offset = 0
-        while (offset < data.size) {
-            val read = input.read(data, offset, data.size - offset)
-            if (read < 0) {
-                Log.e("CastService", "[cast] ACK socket closed offset=$offset")
+    /** Reads until the next ACK or device exit, dispatching interleaved input events. */
+    fun readFrame(onTouch: (TouchEvent) -> Unit): CastInbound? {
+        while (true) {
+            val first = input.read()
+            val second = input.read()
+            if (first != 0x82 || second < 0) {
+                Log.e("CastService", "[cast] invalid frame header first=$first second=$second")
                 return null
             }
-            offset += read
+            val length = when {
+                second <= 125 -> second
+                second == 126 -> readLength(2)
+                else -> readLength(8)
+            }
+            if (length < 0 || length > CastProtocol.MAX_INBOUND_FRAME_BYTES) {
+                Log.e("CastService", "[cast] invalid frame length=$length")
+                return null
+            }
+            val data = ByteArray(length)
+            var offset = 0
+            while (offset < data.size) {
+                val read = input.read(data, offset, data.size - offset)
+                if (read < 0) {
+                    Log.e("CastService", "[cast] frame socket closed offset=$offset")
+                    return null
+                }
+                offset += read
+            }
+            CastProtocol.ackSequence(data)?.let { return CastInbound.Ack(it) }
+            if (CastProtocol.exitRequest(data)) return CastInbound.DeviceExit
+            val touch = CastProtocol.inputEvent(data)
+            if (touch != null) {
+                onTouch(touch)
+                continue
+            }
+            Log.e("CastService", "[cast] unexpected frame length=${data.size}")
+            return null
         }
-        return CastProtocol.ackSequence(data)
+    }
+
+    private fun readLength(bytes: Int): Int {
+        var value = 0L
+        repeat(bytes) {
+            val next = input.read()
+            if (next < 0) return -1
+            value = (value shl 8) or next.toLong()
+        }
+        return if (value > Int.MAX_VALUE) -1 else value.toInt()
     }
     private fun readLine(): String { val bytes = ArrayList<Byte>(); while (true) { val value = input.read(); if (value < 0 || value == '\n'.code) return bytes.toByteArray().toString(Charsets.ISO_8859_1).trimEnd('\r'); bytes += value.toByte() } }
     fun close() { socket.close() }

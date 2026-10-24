@@ -49,3 +49,33 @@ bool esp_bms_cast_protocol_encode_ack(uint32_t sequence,
     ack[4] = (uint8_t)sequence;
     return true;
 }
+
+bool esp_bms_cast_protocol_encode_input(uint8_t phase,
+                                        uint16_t x,
+                                        uint16_t y,
+                                        uint8_t *input,
+                                        size_t input_bytes)
+{
+    if (!input || input_bytes != ESP_BMS_CAST_INPUT_FRAME_BYTES ||
+        phase > ESP_BMS_CAST_INPUT_PHASE_UP) {
+        return false;
+    }
+    input[0] = ESP_BMS_CAST_TYPE_INPUT_TOUCH;
+    input[1] = ESP_BMS_CAST_PROTOCOL_VERSION;
+    input[2] = phase;
+    input[3] = (uint8_t)(x >> 8U);
+    input[4] = (uint8_t)x;
+    input[5] = (uint8_t)(y >> 8U);
+    input[6] = (uint8_t)y;
+    return true;
+}
+
+bool esp_bms_cast_protocol_encode_exit(uint8_t *exit_frame, size_t exit_bytes)
+{
+    if (!exit_frame || exit_bytes != ESP_BMS_CAST_EXIT_FRAME_BYTES) {
+        return false;
+    }
+    exit_frame[0] = ESP_BMS_CAST_TYPE_EXIT_CAST;
+    exit_frame[1] = ESP_BMS_CAST_PROTOCOL_VERSION;
+    return true;
+}

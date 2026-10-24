@@ -13,121 +13,85 @@ Primary validation:
 ./scripts/esp-idf-env.sh build
 ```
 
+## Scenario: BLE Scan Candidate Names
+
+### 1. Scope / Trigger
+- Trigger: changing BMS/controller BLE discovery, candidate storage, or scan UI.
+
+### 2. Contracts
+- User-facing scan candidates must have a UTF-8 advertised name containing at
+  least one CJK Unified Ideograph (`U+4E00`-`U+9FFF`).
+- Nameless, ASCII-only, and symbol-only advertisements are discovery noise and
+  must be discarded before entering the shared candidate snapshot.
+- Filtering must not gate reconnects to an already bound MAC address.
+- Do not synthesize `设备 N`/`Device N` labels for scan results.
+
+### 3. Validation & Error Matrix
+- Complete Chinese UTF-8 name -> candidate is stored and returned by the Web API.
+- Missing/ASCII-only name -> candidate is not stored; scan may still connect a
+  matching bound MAC.
+- Truncated UTF-8 name -> candidate is rejected unless a complete Chinese
+  codepoint is present.
+
+### 4. Tests Required
+- Exercise Chinese, ASCII, empty, malformed, and mixed-name advertisements.
+- Verify both BMS and controller paths and assert no numbered fallback rows.
+
+### 5. Wrong vs Correct
+```c
+/* Wrong: stripping UTF-8 first turns Chinese names into "unnamed" devices. */
+copy_ascii_only(name, advertisement_name);
+
+/* Correct: inspect the raw field, then preserve complete UTF-8 bytes. */
+if (name_has_chinese(advertisement_name)) {
+    store_scan_candidate(advertisement_name);
+}
+```
+
+## Scenario: Windows Simulator Host BLE
+
+### 1. Scope / Trigger
+
+- Trigger: changing the Windows simulator runner, host BLE bridge, or simulator
+  BLE action routing.
+
+### 2. Contracts
+
+- `run-lvgl-simulator.ps1` enables the Windows host BLE bridge by default.
+  `-NoHostBle` is the explicit opt-out for pure UI simulation; `-HostBle`
+  remains accepted for compatibility and is mutually exclusive with the
+  opt-out.
+- A UI scan action is functional only when the runner starts
+  `ble_host_bridge.py`, sets `ESP_BMS_SIMULATOR_BLE_ENDPOINT`, and the simulator
+  creates its host BLE client. Do not validate only one layer of this chain.
+- A readiness TCP probe may connect briefly before the simulator. The bridge
+  must remain available for the simulator's subsequent connection.
+
+### 3. Tests Required
+
+- Run the Python bridge unit tests.
+- Send a real `SCAN BMS` command through the bridge on Windows and require at
+  least `READY`, `SCAN_CLEAR`, and `SCAN_DONE`; record any discovered device as
+  hardware evidence rather than a fixed test expectation.
+- Run the PowerShell script once with default settings and require the
+  simulator log `host BLE bridge connected`; run it again with `-NoHostBle`
+  and require the headless smoke test to pass.
+- Confirm the runner leaves no bridge process or listening port after the
+  simulator exits.
+
 GPIO ownership, toolchain inputs, partition layout, and supported flash paths
 are defined in [Hardware, Build, and Flash](./hardware-build-flash.md).
 
 ## Scenario: 投屏二维码可见性
 
-- `set_cast_page()` 的二维码载荷必须使用离线 App 深链 `fuckingbms://cast/v1?host=192.168.4.1&v=1`，不得包含 Setup AP SSID、密码或依赖互联网的 HTTPS 落地页。Setup AP 页面继续使用包含当前 SSID 与密码的标准 `WIFI:` 二维码。
+- `set_cast_page()` 的二维码载荷包含 HTTPS 落地页、SSID、密码与设备地址；缓冲区必须至少为 `256` 字节，不能沿用短域名时代的 `128` 字节假设。
 - 投屏二维码是常驻界面元素：热点关闭时仍显示；页面只显示“扫码投屏”标题，不显示连接状态、SSID 或密码文字。
-- 修改投屏深链或二维码逻辑后，必须确认载荷仍不含热点凭据并检查 `lv_qrcode_update()` 返回成功；不得把编码失败静默处理成隐藏二维码。
+- 修改投屏 URL、SSID 长度或二维码逻辑后，必须用最长可能载荷验证 `snprintf()` 未截断，并确认 `lv_qrcode_update()` 返回成功；不得把编码失败静默处理成隐藏二维码。
 
 Run GitNexus change detection before commit:
 
 ```bash
 node .gitnexus/run.cjs detect-changes -r esp32BMSGPS
-```
-
-## Scenario: JPEG Cast Aspect Ratio And Quality
-
-### 1. Scope / Trigger
-
-- Trigger: changing Android cast capture geometry, JPEG quality, or the device
-  cast capability response.
-
-### 2. Signatures
-
-- Android geometry helper: `cropRectFor(..., targetWidth, targetHeight)`.
-- Capability field: `GET /api/cast/info` returns `jpeg_quality: 80`.
-
-### 3. Contracts
-
-- Map system insets into the captured image first, then center-crop the
-  remaining source rectangle to the target aspect ratio.
-- Draw the aspect-matched source rectangle into the full target rectangle;
-  never scale width and height independently from mismatched aspect ratios.
-- Keep JPEG v3, latest-frame replacement, ACK backpressure, target resolution,
-  and the maximum frame size unchanged. RGB565 is not the fallback path.
-
-### 4. Validation & Error Matrix
-
-- Invalid insets -> use the full captured image.
-- Explicit positive target dimensions -> center-crop to that aspect ratio.
-- No target dimensions -> preserve inset-only helper behavior.
-- JPEG larger than the protocol maximum -> retain the existing frame rejection
-  behavior; do not queue or split the frame.
-
-### 5. Good / Base / Bad Cases
-
-- Good: a square source sent to a 3:5 target crops equal left/right margins.
-- Base: matching source and target ratios require no additional crop.
-- Bad: drawing an arbitrary source rectangle directly into the full target
-  rectangle stretches circles and text.
-
-### 6. Tests Required
-
-- `RUN_TESTS=1 ./scripts/build-android-cast.sh` must cover portrait and landscape
-  center-crop geometry plus the quality-80 capability fixture.
-- `./scripts/run-host-selftests.sh` must preserve the JPEG v3 protocol contract.
-
-### 7. Wrong vs Correct
-
-```kotlin
-// Wrong: source and target ratios can differ.
-canvas.drawBitmap(source, insetRect, fullTargetRect, paint)
-
-// Correct: crop after inset mapping so both rectangles share one ratio.
-canvas.drawBitmap(source, aspectMatchedCrop, fullTargetRect, paint)
-```
-
-## Scenario: Cast WebSocket Frame Handler Lifecycle
-
-### 1. Scope / Trigger
-
-- Trigger: changing `/cast` WebSocket registration, handshake callbacks, or the
-  frame receive handler.
-
-### 2. Signatures
-
-- Handler: `esp_bms_idf_runtime_http_cast_ws_handler(httpd_req_t *req)`.
-- Route: `GET /cast` with `is_websocket = true`.
-
-### 3. Contracts
-
-- ESP-IDF completes the HTTP-to-WebSocket upgrade before invoking the registered
-  handler; the handler must process the subsequent binary frames.
-- Do not gate frame handling on `req->method == HTTP_GET`: the route method stays
-  GET for WebSocket callbacks.
-- JPEG and ACK payload formats remain owned by `esp_bms_cast_protocol`.
-
-### 4. Validation & Error Matrix
-
-- WebSocket frame callback -> read and validate the binary frame.
-- Valid binary frame -> parse and process normally.
-- Invalid, oversized, or closed frame -> stop casting through the existing
-  error path.
-
-### 5. Good / Base / Bad Cases
-
-- Good: Android receives HTTP `101`, then the handler receives its first frame or heartbeat.
-- Base: an idle upgraded connection remains alive through heartbeat frames.
-- Bad: returning early whenever `req->method == HTTP_GET` drops every WebSocket
-  frame and causes heartbeat timeout.
-
-### 6. Tests Required
-
-- `python3 -m unittest tests.test_cast_websocket_contract` must verify that the
-  frame handler is not gated on the HTTP method.
-- Build the selected ESP32-S3 profile and flash through the RFC2217 bridge.
-
-### 7. Wrong vs Correct
-
-```c
-/* Wrong: the route method remains GET for frame callbacks. */
-if (req->method == HTTP_GET) return ESP_OK;
-
-/* Correct: process the callback as a WebSocket frame. */
-httpd_ws_recv_frame(req, &frame, 0);
 ```
 
 ## Scenario: Preset And Remaining Range
@@ -549,10 +513,6 @@ ble_gattc_disc_all_dscs(conn, chr->val_handle, service_end, cb, arg);
 - Cache non-empty candidate names by MAC in bounded component memory. A later
   nameless advertisement or visible-list refresh must reuse that name rather
   than downgrade the row to `设备 N`.
-- While the matching scan is active, store every observed MAC as a candidate.
-  A local name is optional metadata: ASCII, UTF-8 Chinese, and nameless reports
-  must all reach the existing per-MAC candidate store. Never use name language
-  or successful name decoding as the candidate admission filter.
 - Candidate array slots are immutable during one scan. When the array is full,
   ignore unseen MACs; never reuse a visible row for a different device until an
   explicit refresh clears the list.
@@ -569,12 +529,8 @@ ble_gattc_disc_all_dscs(conn, chr->val_handle, service_end, cb, arg);
 
 - Good: repeated refresh during discovery logs `reused active discovery`.
 - Base: idle host starts a new 10-second discovery.
-- Base: a nameless advertisement creates a placeholder row; a later named scan
-  response for the same MAC upgrades that row without adding another slot.
 - Bad: call `ble_gap_disc_cancel()` and immediately call `ble_gap_disc()`;
   asynchronous cancellation can return busy and surface `BLE FAIL`.
-- Bad: store candidates only when the local name contains a particular language;
-  normal ASCII BMS and controller advertisements then produce an empty list.
 
 ### 6. Tests Required
 
@@ -595,70 +551,6 @@ ble_gap_disc(...);
 
 ```c
 if (BMS_SCAN_ACTIVE || ble_gap_disc_active()) return ESP_OK;
-```
-
-## Scenario: BLE Candidate Row Identity
-
-### 1. Scope / Trigger
-
-- Trigger: changing BMS/controller scan candidates, their snapshot projection,
-  candidate-list text, pagination, or click handling.
-
-### 2. Signatures
-
-- Candidate identity: complete MAC text in `esp_bms_bms_scan_candidate_t.mac`.
-- Shared renderer: `settings_bms_ble_refresh_rows(...)`.
-- Row mapping: `settings_bms_ble_candidate_index(count, more_page, row, ...)`.
-
-### 3. Contracts
-
-- A candidate name belongs only to the same complete MAC's advertisement or
-  bounded name-cache entry. Never propagate another MAC's name based on row,
-  RSSI, discovery order, or a guessed device count.
-- Every candidate selected by the pagination mapper produces exactly one
-  visual line. A missing name renders `设备` and must not skip the line.
-- Candidate lines include the last two MAC octets so equal advertised names
-  remain distinguishable. Copy the suffix through a bounded local buffer.
-- The multiline label's visual row and click row remain one-to-one. When more
-  than six candidates exist, row 5 is `More devices`; activating it changes
-  pages and must not open a binding confirmation.
-
-### 4. Validation & Error Matrix
-
-- Named report -> preserve that name for its MAC and render one line.
-- Nameless report without same-MAC cache -> render `设备 XX:XX` on one line.
-- Two `midea` MACs plus another name -> only the two matching MACs show
-  `midea`; all three keep distinct suffixes.
-- More row -> open page two with no confirmation MAC/name populated.
-
-### 5. Good / Base / Bad Cases
-
-- Good: `midea 11:4D`, `Other BMS 44:01`, and `设备 38:84` remain separate.
-- Base: a later named report upgrades only the matching nameless MAC.
-- Bad: omit a nameless row; every following touch then selects the wrong
-  candidate and `More devices` can open a device confirmation.
-
-### 6. Tests Required
-
-- Run the BLE source contract test and both LVGL simulator orientations.
-- Exercise the real row coordinate for `More devices`, then a page-two row;
-  assert page transition first and exact confirmation MAC/name second.
-- Build and flash the selected profile. Compare raw scan logs and visible rows
-  by MAC; do not accept MAC suffixes as a substitute for a correct name.
-
-### 7. Wrong vs Correct
-
-#### Wrong
-
-```c
-if (!candidate->has_name) continue;
-```
-
-#### Correct
-
-```c
-const char *name = candidate->has_name ? candidate->name : "设备";
-append_one_row(name, bounded_mac_suffix(candidate->mac));
 ```
 
 ## Scenario: Persistent Touch Calibration
@@ -729,34 +621,6 @@ x = touch_calibration_map(x, calibration.x_min, calibration.x_max, width - 1);
 touch_canonical_to_display(x, y, &display_x, &display_y);
 ```
 
-## Scenario: GT1151 Invalid Touch Reports
-
-- `0x814E` bit 7 is the GT1151 buffer-ready flag. A clear bit makes the
-  coordinate buffer invalid; it is not a zero-contact release report.
-- The bridge keeps the most recent accepted complete touch point while that
-  bit is clear, and only a valid zero-contact frame releases LVGL.
-- This guard is compiled only for the GT1151 profile. If the status-register
-  read fails, retain the driver's existing read path rather than blocking input.
-- Validate with the selected S3 profile build, RFC2217 flash, and a held drag,
-  a short tap, and a release on the physical screen.
-
-## Scenario: GT1151Q Native Gestures
-
-- Read `0x814C` only for the GT1151 profile, before the third-party driver
-  consumes its existing `0x814E` coordinate frame. Do not write `0x814C`
-  without controller evidence; preserve the driver's `0x814E` acknowledgement.
-- Decode only `AA/BB/AB/BA/CC/C1/C2/C4/C8`; unknown, ASCII, and custom values
-  do nothing. A nonzero value dispatches once and must return to zero before it
-  can dispatch again.
-- The bridge emits one semantic gesture for the display service to consume in
-  its existing LVGL task. The UI owns page, quick-panel, and focus behavior;
-  it must not read I2C. GT1151 skips `touch_cal`, while other touch drivers
-  retain their calibration flow.
-- Native horizontal/page and quick-panel swipe paths are mutually exclusive
-  with their coordinate equivalents. Keep coordinate click, scroll, slider,
-  edge-return, and LVGL long-press behavior intact; double tap is diagnostics
-  only until it has an approved action.
-
 ## Required Patterns
 
 - Keep `main/idf_main.c` as orchestration only. Subsystem logic belongs in
@@ -771,9 +635,8 @@ touch_canonical_to_display(x, y, &display_x, &display_y);
   `components/esp_bms_idf_runtime/CMakeLists.txt`.
 - Use bounded buffers and explicit length checks for HTTP JSON parsing and
   response formatting.
-- Do not mutate LVGL/display hardware from the HTTP server task. Submit display
-  work to `esp_bms_display_service`; the service owns the bridge, UI, LVGL lock,
-  and timer loop.
+- Do not mutate LVGL/display hardware from the HTTP server task. Queue changes
+  and apply them from the main runtime loop.
 - Setup AP / HTTP service tasks must not preempt the LVGL adapter or the main
   runtime action loop; keep HTTP priority below the action loop and capture
   bounded heap snapshots around AP client joins and Web API requests when
@@ -822,10 +685,6 @@ touch_canonical_to_display(x, y, &display_x, &display_y);
   encryption event, and resume advertising after a pairing failure.
 - The discoverable switch represents user intent while pairing. Turning it off
   during pairing terminates the pending local Bluetooth connection.
-- `runtime_reset_state()` initializes `BLUETOOTH_ADVERTISE_REQUESTED` to false,
-  including builds with BLE media HID. Compiling a local Bluetooth service must
-  never imply consent to advertise it at boot; only the existing user action
-  may set the request flag and start discoverability.
 - Wi-Fi STA scan/connect is started from Wi-Fi settings actions only.
 
 ### 4. Validation & Error Matrix
@@ -848,12 +707,8 @@ touch_canonical_to_display(x, y, &display_x, &display_y);
   reconnects; a silent link is terminated and rescanned after the backoff.
 - Base: tapping hotspot starts SoftAP and HTTP; tapping Wi-Fi scan starts Wi-Fi
   scan; tapping BMS bind starts NimBLE scan.
-- Base: booting with BLE media HID compiled keeps local advertising off until
-  the discoverable switch is explicitly enabled.
 - Bad: calling `esp_bms_idf_runtime_start_setup_ap()` from boot as a catch-all
   initializer that also starts HTTP, Wi-Fi STA, or NimBLE.
-- Bad: derive `BLUETOOTH_ADVERTISE_REQUESTED` from a compile-time HID feature;
-  this makes the device discoverable without current user intent.
 
 ### 6. Tests Required
 
@@ -914,212 +769,13 @@ if (action == ESP_BMS_LVGL_ACTION_ENABLE_WIFI_REPROVISIONING) {
 - ST7789 is initialized through ESP LCD panel APIs and registered through the
   LVGL adapter.
 - Touch uses XPT2046 through `esp_lcd_touch_xpt2046` and the LVGL adapter.
-- Brightness changes must call `esp_bms_lvgl_bridge_set_brightness()`; the
-  bridge selects the board-specific LEDC or XL9555 implementation.
+- Brightness changes must call `esp_bms_lvgl_bridge_set_brightness()` and drive
+  GPIO21 through LEDC PWM.
 - Rotation changes must keep ST7789 panel flags, LVGL resolution/layout, and
   XPT2046 touch transforms in sync.
 - Dynamic LVGL labels and QR widgets should update only when their rendered
   value changes.
 - Runtime snapshot updates should be deferred while page drag/settle is active.
-- On PSRAM targets, LVGL partial draw buffers may use external RAM. Request two
-  buffers only when the PSRAM heap can hold both; when only one fits, keep one
-  PSRAM buffer instead of falling back to two internal-RAM buffers.
-- No-PSRAM profiles stay single-buffered by default. An explicitly enabled
-  drag-diagnostic double buffer remains valid and uses internal RAM.
-- Do not move hot code, the LVGL worker stack, or existing ARGB8888 canvases
-  into PSRAM solely for FPS. Double buffering overlaps rendering with panel DMA
-  but cannot exceed the display-bus limit.
-
-## Scenario: ST7796U XL9555 Backlight Brightness
-
-### 1. Scope / Trigger
-
-- Apply when changing brightness, the quick-panel level control, display-task
-  priorities, XL9555 I2C access, or the
-  `esp32s3-n16r8-st7796u-gt1151` hardware profile.
-- This board routes `BL_CTR` through XL9555 `IO1_3` to an S8050 transistor. It
-  does not route an ESP32 GPIO or the ST7796U `CABC_PWM` signal to the LEDs.
-
-### 2. Signatures
-
-- `esp_bms_lvgl_bridge_set_brightness(uint8_t percent)` accepts `0..100` and
-  clamps larger values to `100`.
-- `ESP_BMS_LVGL_ACTION_SET_BRIGHTNESS` carries the latest quick-panel value
-  through `esp_bms_display_service`.
-
-### 3. Contracts
-
-- GPIO-backed profiles keep using LEDC. The XL9555 profile uses the bridge's
-  500 Hz software PWM task and one-shot timer; do not replace it with a binary
-  `percent > 0` write.
-- The PWM task priority must remain above the display service priority so LVGL
-  drag and quick-panel animations cannot delay PWM edges and produce visible
-  flicker. Brightness updates take effect at PWM period boundaries.
-- The quick-panel widget updates its label/overlay geometry only when the
-  clamped value changes. The display service coalesces pending brightness
-  actions to the newest value without reordering other actions.
-- Do not use ST7796U commands `0x51`/`0x53` as a substitute: the panel command
-  path cannot modulate this board's physical LED backlight.
-
-### 4. Validation & Error Matrix
-
-| Condition | Required response |
-| --- | --- |
-| Brightness is `0` or `100` | Hold a static XL9555 output; do not keep scheduling PWM edges. |
-| Brightness changes during a pulse | Store the target and apply it at the next complete PWM period. |
-| A newer brightness action is queued | Replace the older brightness action; preserve all non-brightness action order. |
-| XL9555 timer or I2C operation fails | Log the ESP-IDF error; do not silently claim brightness was applied. |
-| UI animation causes visible flicker | Check PWM task priority and I2C/timer errors before changing PWM frequency. |
-
-### 5. Good / Base / Bad Cases
-
-- Good: continuously dragging brightness changes duty cycle without repeated
-  overlay animation or visible flashes while the status panel moves.
-- Base: `0` and `100` produce stable off/on levels with no periodic I2C writes.
-- Bad: every snapshot redraws the brightness overlay, or LVGL work preempts the
-  XL9555 PWM task and stretches individual pulses.
-
-### 6. Tests Required
-
-- Build the S3 profile with casting enabled and run
-  `./scripts/run-host-selftests.sh` plus `git diff --check`.
-- Flash through RFC2217 and verify hash completion, normal display/touch/BLE
-  startup, and no timer, I2C, watchdog, assertion, or reboot errors.
-- On hardware, hold and drag the brightness control through intermediate
-  values while repeatedly pulling down the status panel; assert no visible
-  flicker and no duplicate brightness-overlay animation.
-
-### 7. Wrong vs Correct
-
-#### Wrong
-
-```c
-return xl9555_set_backlight(percent > 0U);
-```
-
-#### Correct
-
-```c
-atomic_store(&s_xl9555_brightness_percent, percent > 100U ? 100U : percent);
-xTaskNotify(s_xl9555_backlight_task, XL9555_BACKLIGHT_NOTIFY_UPDATE, eSetBits);
-```
-
-## Scenario: Single-Owner LVGL Display Service
-
-### 1. Scope / Trigger
-
-- Apply when changing firmware display initialization, runtime snapshots, UI
-  actions, brightness, rotation, touch calibration, or RGB565 cast blocks.
-- The S3 carousel path has one LVGL owner so concurrent main/runtime/HTTP
-  access cannot race the adapter or redraw during a drag.
-
-### 2. Signatures
-
-- `esp_bms_display_service_start(config, brightness, snapshot)` starts the
-  static display task and initializes bridge plus UI there.
-- `esp_bms_display_service_publish_snapshot(snapshot)` is the runtime telemetry
-  entry point; `esp_bms_display_service_submit_command(command, timeout_ms)`
-  carries display commands; `esp_bms_display_service_take_action_event(event)`
-  returns UI actions to runtime.
-- Commands are `ESP_BMS_DISPLAY_SERVICE_COMMAND_*`, including brightness,
-  rotation, dashboard/page selection, calibration, boot state, and RGB565.
-
-### 3. Contracts
-
-- Only `esp_bms_display_service` calls `lv_*`, `esp_bms_lvgl_ui_*`,
-  `esp_bms_lvgl_bridge_*`, or `lv_timer_handler()` in firmware runtime.
-  `esp_lv_adapter_start()` remains unused; the service runs the sole timer loop.
-- Snapshots use a depth-one static overwrite queue. A drag/settle retains only
-  the newest snapshot and applies it once after the gesture completes.
-- Commands and action events use bounded static queues. Borrowed JPEG input and
-  metrics output are dereferenced only while their synchronous command is
-  pending; callers must keep both valid until `submit_command()` returns.
-- Cast is a display-service-owned `ENTER_CAST -> ACTIVE -> EXIT_CAST` session.
-  Entering it pauses the adapter/input, enables dummy draw, and suspends the
-  UI tree; while active only cast rotation and complete JPEG presentation
-  commands may reach the bridge. Keep a recovery guard active until the saved
-  rotation, UI tree, and full refresh are restored, then resume the adapter and
-  paused modules.
-- Cast uses protocol v3 single-message baseline JPEG frames. The payload is a
-  7-byte header (`type`, version, big-endian sequence, rotation) followed by
-  at most `262144` JPEG bytes; v2 RGB565 block messages are rejected. Android
-  advertises `codec=jpeg`, quality `80`, target `20 fps`, and this same byte
-  limit, lowering quality to `60` once before dropping an oversized frame.
-- The display service receives only a complete validated message. It parses
-  the JPEG dimensions, applies rotation only after decode succeeds, then
-  submits contiguous 40-row dummy-draw DMA strips. Select JPEG RGB565 byte
-  order by the final panel submission path, never by `CONFIG_IDF_TARGET_*`.
-  The verified S3 ST7796U 16-bit I80 partial path decodes `RGB565_BE` because
-  dummy draw bypasses the adapter's normal `OTHER`-interface pre-swap and the
-  I80 callback swaps it once into its DMA staging buffer. SPI paths and I80
-  profiles using `I80_SWAP_COLOR_BYTES=1` need their own connected-board color
-  matrix before being declared compatible. Android performs no RGB565 swap.
-- Runtime owns one PSRAM receive buffer for the lifetime of the device and
-  sends the ACK only after synchronous decode and all display strips complete.
-  Truncated, oversized, invalid-version/rotation, wrong-size, decode, or
-  display failures leave the previous frame visible and terminate the cast
-  session; the main loop then exits cast mode and resumes paused modules.
-- Delete and null every screen-owned timer before deleting, rebuilding, or
-  suspending the root, including one-shot touch-calibration startup timers.
-- S3 BMS and Fireblade static RGB565 images and the 480x40 draw buffers are
-  created at UI initialization/rebuild and reused. Gesture and telemetry paths
-  must not allocate or free them.
-- `drag_perf` logs P95 handler time plus render/flush/DMA wait, invalidation,
-  queue delay, and PSRAM/DMA minimum-free counters after a drag session.
-
-### 4. Validation & Error Matrix
-
-| Condition | Required response |
-| --- | --- |
-| Main/runtime/HTTP directly calls bridge, UI, LVGL, or an LVGL lock | Reject the change; express it as a display-service command or snapshot. |
-| Snapshot arrives during drag or settle | Overwrite the pending snapshot; do not rebuild dynamic widgets mid-gesture. |
-| Static cache allocation or snapshot creation fails | Log `dashboard_cache ... cache=off`, retain the object-tree fallback, and do not claim the FPS target. |
-| Display command times out or returns an error | Log `esp_err_to_name(ret)`, retain the previous persisted setting, and keep the runtime loop alive. |
-| Hardware I80 clock is unstable at 25 MHz | Keep the service/cache changes and roll only the ST7796U catalog clock back to 10 MHz. |
-
-### 5. Good / Base / Bad Cases
-
-- Good: a WebSocket cast block uses `submit_command()` and the service writes it
-  while holding the adapter lock.
-- Base: the runtime publishes a new telemetry snapshot and returns immediately.
-- Bad: an HTTP handler takes the LVGL lock, invokes `write_rgb565()`, or starts
-  a second adapter worker.
-
-### 6. Tests Required
-
-- `tests/configurator_selftest.sh` asserts S3 480x40 buffers, snapshot cache
-  enablement, static queues, the 25 MHz ST7796U-only clock, and no direct
-  main/runtime LVGL bridge/UI calls.
-- Cast changes run the host protocol self-test, Android unit tests, and both
-  headless LVGL simulator orientations in addition to the selected S3 build.
-- Build and run the 480x320 Fireblade simulator stress path; assert two
-  307200-byte caches, rotation rebuild stability, deferred latest-snapshot
-  replay, and no object growth.
-- Build the selected S3 profile, then flash through RFC2217 and check slow
-  drag/fling/snap, three cold boots, full touch coverage, and `drag_perf` P95.
-
-### 7. Wrong vs Correct
-
-#### Wrong
-
-```c
-esp_bms_lvgl_bridge_lock(-1);
-esp_bms_lvgl_bridge_write_rgb565(x, y, width, height, pixels, bytes);
-esp_bms_lvgl_bridge_unlock();
-```
-
-#### Correct
-
-```c
-const esp_bms_display_service_command_t command = {
-    .kind = ESP_BMS_DISPLAY_SERVICE_COMMAND_WRITE_RGB565,
-    .data.rgb565 = {
-        .x = x, .y = y, .width = width, .height = height,
-        .pixels = pixels, .pixel_bytes = bytes,
-    },
-};
-return esp_bms_display_service_submit_command(&command, 1000U);
-```
 
 ## Scenario: Cross-Component C Flag Storage
 
@@ -1252,22 +908,11 @@ typedef struct {
 
 ## Web API Contract
 
-### Device BLE API Contract
-
-The APK device BLE service is a transport for the existing device settings
-contract, not a second business API. It may expose only `GET /api/status`,
-`GET /api/config`, `GET /api/settings/manifest`, and `POST /api/config`.
-Requests are bounded, serialized through the BLE worker, and must reuse the
-same JSON serializers and config validation as HTTP. Cast, history, OTA, Wi-Fi,
-BMS scan/bind, and controller operations stay Wi-Fi-only. Never log raw BLE
-request bodies or credentials.
-
 The embedded Web UI currently calls these routes:
 
 - `GET /api/status`
 - `GET /api/config`
 - `GET /api/bms/candidates`
-- `GET /api/bms/ride-records`
 - `POST /api/config`
 - `POST /api/wifi`
 - `POST /api/ap-password`
@@ -1278,73 +923,6 @@ The embedded Web UI currently calls these routes:
 Every route must either be implemented or intentionally return a clear error
 while the remaining ESP-IDF subsystem is being built. Do not return fake BMS
 candidates or fake OTA success.
-
-## Scenario: BMS Ride Peak Records
-
-### 1. Scope / Trigger
-
-- Trigger: changing BMS telemetry application, the per-boot peak history, its
-  NVS persistence, `GET /api/bms/ride-records`, or either device Web consumer.
-
-### 2. Signatures
-
-- API: `GET /api/bms/ride-records` returns `{"records":[...]}` newest first.
-- Persistence: namespace `esp_bms`, versioned blob key `ride_records`.
-- Snapshot fields: `pack_voltage_mv`, signed `current_deci_amps`,
-  `delta_cell_voltage_mv`, `soc_percent`, and six nullable temperatures.
-
-### 3. Contracts
-
-- The first complete, valid BMS sample after boot starts exactly one record;
-  disconnects, timeouts, GPS, and speed never split a record.
-- Replace `max_current` only when `abs(current_deci_amps)` strictly grows, and
-  replace `max_delta` only when the cell-voltage delta strictly grows. Keep the
-  signed current and copy every snapshot field from that same sample.
-- Keep five records oldest-to-newest in NVS; creating a sixth drops the oldest.
-  A missing, malformed, or incompatible blob reads as an empty history.
-- The NimBLE notification path may only update bounded RAM and mark it dirty.
-  The runtime tick persists it; NVS failure keeps the dirty history for a
-  rate-limited retry. Flash is the only persistent source, including on PSRAM
-  targets.
-- JSON temperature positions without a valid bit are `null`; `current` marks
-  only the active boot record. The local Web page and Vercel page read this
-  HTTP route directly, never through BLE or a cloud mirror.
-
-### 4. Validation & Error Matrix
-
-- No complete valid sample -> `records` is an empty array; create no blank row.
-- Partial or core-invalid sample -> ignore it and retain prior peaks.
-- Equal or smaller magnitude/delta -> retain the prior snapshot and do not
-  schedule an NVS write.
-- Sixth boot with a valid sample -> retain only the latest five records.
-- NVS write failure -> keep in-memory history dirty and retry; do not lose the
-  established peak.
-
-### 5. Good / Base / Bad Cases
-
-- Good: a negative discharge current with a larger magnitude replaces the
-  current peak and preserves its negative sign.
-- Base: the first valid sample initializes both peak snapshots, including when
-  both values are zero.
-- Bad: write NVS from a NimBLE callback, use PSRAM as the only history source,
-  or create a new record after a reconnect in the same boot.
-
-### 6. Tests Required
-
-- Run `./scripts/run-host-selftests.sh`; assert strict comparisons,
-  `INT16_MIN`, invalid samples, same-frame dual-peak updates, and five-slot
-  eviction.
-- Run the selected hardware-profile build, `git diff --check`, Vercel
-  type-check/build, and GitNexus change detection.
-- On hardware with an actual BMS, verify peak replacement, reboot recovery,
-  and both Web consumers; no connected BMS means this last check remains open.
-
-### 7. Wrong vs Correct
-
-```text
-Wrong: every notification writes Flash and reconnect creates another ride.
-Correct: one boot-owned RAM record updates on strict peaks, then tick persists it.
-```
 
 ## Scenario: Local Web OTA Firmware Confirmation
 
@@ -1429,9 +1007,8 @@ Correct: ESP32 hashes received bytes -> compare code -> validate image -> set bo
 
 ### 3. Contracts
 
-- An explicit BMS scan records every observed MAC in the bounded candidate list;
-  protocol suitability is determined only after the user binds and the known
-  GATT service/characteristic contract is discovered.
+- Scan records candidates only from ANT-looking advertisements, service
+  advertisements, or the currently bound MAC.
 - Binding persists a normalized uppercase MAC in NVS key `bms_mac`.
 - A saved or newly bound MAC should trigger a scan; a matching advertisement
   may start a GATT connection.
@@ -1478,71 +1055,6 @@ GATT discovery, or frame parsing has not produced real data.
 
 Keep BMS fields offline/invalid until validated BLE notifications from the
 bound device update the runtime snapshot.
-
-## Scenario: Yanyang BMS BLE Telemetry
-
-### 1. Scope / Trigger
-
-- Trigger: adding or changing the Yanyang BMS selection, BLE discovery, read
-  polling, or notification parser.
-
-### 2. Signatures
-
-- BMS type: `ESP_BMS_IDF_BMS_TYPE_YANYANG = 4`; API/Web value: `yanyang`.
-- GATT service: `0000FE59-0000-1000-8000-00805F9B34FB`; write/notify
-  characteristics end in `...0001` and `...0002` respectively.
-- Parser boundary: `protocols/yanyang/esp_bms_yanyang_protocol.c` is pure C;
-  NimBLE lifecycle remains in `esp_bms_bms_ble.c`.
-
-### 3. Contracts
-
-- Poll only the APK-confirmed Modbus reads, in sequence: `0x003F/4`,
-  `0x0001/47`, `0x0030/42`, and `0x005A/22`.
-- CRC-16 uses Modbus `0xFFFF`/`0xA001`; frames place the CRC high byte first.
-  A response has `[address, 0x03, byte_count, payload..., crc_hi, crc_lo]`.
-- The `0x0001` page uses confirmed big-endian offsets for pack voltage,
-  signed current, SOC, capacities, and cell statistics. In APK `3.4.11`, its
-  four temperature bytes are `MOS=84`, `T1=83`, `T2=86`, and `BAL=85`, all as
-  unsigned byte minus `40` degrees C. Project them to the existing slots
-  `MOS->[5]`, `T1->[0]`, `T2->[1]`, and `BAL->[4]`; leave `T3/T4` invalid.
-  Do not infer control commands, protection-bit names, or additional
-  temperature offsets.
-
-### 4. Validation & Error Matrix
-
-- Split or concatenated notifications -> reassemble and accept only a complete
-  valid frame.
-- Invalid function, length, CRC, or stream overflow -> discard/resynchronize;
-  retain the last runtime snapshot and online timestamp.
-- Missing Yanyang service, write characteristic, notify characteristic, or
-  CCCD -> terminate discovery and leave BMS telemetry offline.
-
-### 5. Good / Base / Bad Cases
-
-- Good: discovery finds both characteristics, the CCCD enables, and a valid
-  `0x0001` frame updates the normalized dashboard snapshot, including
-  `T1/T2/BAL/MOS` after the `-40` conversion.
-- Base: a valid non-`0x0001` polling response advances the polling sequence but
-  does not invent dashboard fields.
-- Bad: treating little-endian Modbus CRC byte order as the wire order, or
-  sending configuration, calibration, or upgrade commands without APK or
-  capture evidence.
-
-### 6. Tests Required
-
-- Run `./scripts/run-host-selftests.sh`; assert all four request frames, CRC,
-  split/concatenated stream handling, rejected CRC, and scalar conversions.
-- Run the landscape and portrait LVGL headless smoke checks, the matching
-  hardware-profile build, and GitNexus `detect-changes`.
-- Real Yanyang hardware validation remains required for GATT discovery and
-  telemetry before extending the protocol beyond confirmed read-only fields.
-
-### 7. Wrong vs Correct
-
-```text
-Wrong: add an unverified write command or map unknown bytes to a temperature.
-Correct: poll only confirmed pages and project only APK-confirmed fields.
-```
 
 ## Scenario: Unified Speed Dashboard And Source Selection
 
@@ -1877,10 +1389,9 @@ not add those hooks to the firmware symbol table.
 
 ### 2. Signatures
 
-- Preferred BLE profile: Nordic UART service `6e400001-b5a3-f393-e0a9-e50e24dcca9e`,
-  notify `6e400003-...`, and write `6e400002-...`.
-- Compatibility BLE profile: service `0xFFE0`, notify `0xFFEC`, and write
-  `0xFFEF`.
+- FFE0 BLE profile: service `0xFFE0`, notification characteristic `0xFFEC`,
+  and write characteristic `0xFFEC`. Do not use the nonexistent `0xFFEF`
+  characteristic for this profile.
 - Stable source API: `esp_bms_lvgl_ui_stable_data_source()` and
   `esp_bms_idf_runtime_set_active_data_source()`.
 - Unified dashboard source: `ESP_BMS_LVGL_DATA_SOURCE_SPEED_DASHBOARD` keeps
@@ -1911,17 +1422,6 @@ not add those hooks to the firmware symbol table.
 - `controller_connection_enabled` is the lifecycle switch. Disabling it stops
   scan intent and terminates current or late-arriving connections without
   clearing the bound MAC/name; enabling it reconnects a bound controller.
-- GAP connection and successful CCCD subscription are discovery states, not
-  controller-online proof. Discover Nordic UART first and fall back explicitly
-  to FFE0 only when the NUS service is absent. Publish `CONTROLLER_ONLINE`, play
-  the connected prompt, and expose controller-only settings only after a valid
-  frame sets RPM, current, controller-temperature, or motor-temperature
-  telemetry. Parameter-only blocks and a voltage value without an instrument
-  validity flag remain offline.
-- After CCCD acknowledgement, NUS sends the five-byte read-only poll every
-  200 ms; FFE0 sends its open command and existing keepalive. If no instrument
-  telemetry arrives within 10 seconds, log the profile/stage and terminate the
-  connection so a subscribed but empty instrument cannot appear online.
 - The unified speed dashboard object tree persists, but carousel participation
   is capability-gated by GPS module availability or controller online state. A
   stable visible speed dashboard enables the FFEC CCCD and high-rate projection
@@ -1963,8 +1463,6 @@ not add those hooks to the firmware symbol table.
   controller connection.
 - Connect callback arrives after controller connection was disabled ->
   terminate that connection immediately and skip GATT discovery.
-- CCCD subscribed but only parameter blocks arrive -> keep the controller
-  offline and terminate on the first-telemetry timeout.
 - Disconnect during rebind -> clear telemetry, then start the deferred scan
   only when connection remains enabled.
 - Offline controller -> keep the unified page present only when GPS capability
@@ -1973,35 +1471,56 @@ not add those hooks to the firmware symbol table.
   controller parameters.
 - Online controller with invalid speed -> keep controller as the active source
   and render `-`; do not silently switch to GPS.
+- FFE0 service found but FFEC cannot be subscribed or written -> fail the GATT
+  profile negotiation; a successful BLE link alone is not telemetry success.
+- FFEC subscribes and accepts writes but emits no valid 16-byte frame -> retain
+  invalid telemetry and report the first-frame timeout. Do not mark the
+  hardware validation complete from `CONNECTED` alone.
 
 ### 5. Good/Base/Bad Cases
 
-- Good: NUS or FFE0 discovery and CCCD subscription complete without exposing
-  controller-only settings; the first validated instrument-telemetry frame
-  marks the controller online and updates fixed label buffers. `12-70-90` plus
-  `RateRatio=60` projects about `1353 mm` and ratio `1.00`, then schedules one
-  persistence update.
+- Good: the unified speed page settles, CCCD enables, validated FFEC frames
+  update fixed label buffers; `12-70-90` plus `RateRatio=60` projects about
+  `1353 mm` and ratio `1.00`, then schedules one persistence update.
 - Base: without a controller but with an available GPS module, the unified page
   remains available; telemetry stays invalid, controller-only settings and
   temperatures hide, gear renders `1`, and legacy `ctl_wheel` still loads safely.
+- Base: FFEC connects, subscribes, and accepts a telemetry request but no
+  notification arrives; keep telemetry invalid and record the raw zero-frame
+  result until the bounded first-frame timeout.
 - Bad: clamping a controller-provided `26-110-210` tuple into roller limits,
   overwriting the user's fallback on every notification, removing the speed
-  page when controller preference is off, or selecting a new MAC while leaving
-  the old GATT connection active.
+  page when controller preference is off, selecting a new MAC while leaving
+  the old GATT connection active, or treating GATT connection as proof that
+  telemetry data was received.
 
 ### 6. Tests Required
 
 - Run the host parser self-test for compact/extended frames, exact `D2/D3/D4`
   offsets, `12-70-90 ~= 1353 mm`, `RateRatio=60 -> 1.00`, exact fallback and
   controller-priority speed, CRC, zero divisors, and overflow.
-- Run `git diff --check`, the selected profile build through `start.sh`,
-  GitNexus `detect_changes`, and one RFC2217 flash plus boot-log capture.
+- Assert in host and firmware source-contract tests that the FFE0 profile uses
+  FFEC for both notification and writes and contains no FFEF write target.
+- Run `git diff --check`, `./scripts/esp-idf-env.sh build`, GitNexus
+  `detect-changes`, and one RFC2217 flash plus boot-log capture.
 - On hardware, verify three carousel positions with either speed capability and
   the compressed Battery/Cast mapping with neither, plus settings return,
   source fallback/recovery, rotation, rebind, and
   BMS/FarDriver/phone coexistence for at least 10 minutes.
 
 ### 7. Wrong vs Correct
+
+#### Wrong
+
+```c
+static const ble_uuid16_t write_uuid = BLE_UUID16_INIT(0xFFEFU);
+```
+
+#### Correct
+
+```c
+static const ble_uuid16_t write_uuid = BLE_UUID16_INIT(0xFFECU);
+```
 
 #### Wrong
 
@@ -2078,187 +1597,3 @@ Before a firmware build, scan all local font sources for `.fallback = &<font>`
 where `<font>` is the descriptor defined in the same file. The scan must return
 no self-references; the legacy profile build and a cold-boot WDT observation are
 required after changing generated or hand-maintained font descriptors.
-
-## Scenario: Supported BMS Real Capacity Estimate
-
-### 1. Scope / Trigger
-
-- Apply when changing ANT/JK native total-cycle decoding, Daly/Yanyang local
-  current integration, the capacity estimator, its `esp_bms` NVS state, or
-  the capacity fields in `/api/status`.
-
-### 2. Signatures
-
-- Native telemetry: `total_cycle_mah` with `total_cycle_valid` for ANT and JK.
-- Local integration: `esp_bms_capacity_integrator_observe(state, now_us,
-  current_deci_amps)` for Daly and Yanyang; it returns a synthetic monotonic
-  `total_cycle_mah`.
-- Estimator: `esp_bms_capacity_estimate_observe(state, total_cycle_mah,
-  soc_percent)` keeps at most 8 raw mAh samples and exposes the arithmetic
-  mean only after 3 accepted samples.
-- API: `bms_capacity_estimate_mah` (`number|null`) and
-  `bms_capacity_estimate_state` (`ready`, `estimating`, or `unsupported`).
-- NVS: version-2 `bms_cap_est` blob, bound to BMS type and MAC, is statically
-  limited to 80 bytes.
-
-### 3. Contracts
-
-- Decode ANT new total-cycle mAh as little-endian at dynamic offset
-  `58 + 2 * cells + 2 * temperatures`; decode old ANT as big-endian at `83`.
-- Decode JK cumulative cycle capacity using its protocol-confirmed raw `0.1 Ah`
-  value; `raw * 100` is mAh. Do not substitute cycle count or rated capacity.
-- Daly and Yanyang do not have a verified cumulative-Ah field. Integrate only a
-  validated, non-partial status frame with nonzero pack voltage and `SOC <= 100`:
-  `abs(current_deci_amps) * delta_us / 36000000` mAh. Keep the integer
-  remainder, ignore magnitudes below `0.5 A`, and do not add an interval that
-  is non-positive or longer than three seconds.
-- Only accept a sample after a monotonic total-cycle increase of at least
-  `1000 mAh` and a SOC span of at least `20` points. Re-anchor, without
-  sampling, for delayed SOC correction or a direction reversal.
-- A reconnect or rejected local interval re-anchors the SOC estimator without
-  discarding an already credible estimate. A changed type/MAC or reduced
-  native counter clears the old estimate. For a matching Daly/Yanyang identity
-  after reboot, seed the integrator from `last_accepted_cycle_mah`; persist only
-  an accepted estimate or a cleared identity, never per-frame integration data.
-- Persist only the fixed 8-entry raw-sample ring plus count, next slot, mean,
-  last accepted cycle capacity, BMS type, and MAC. Version-1 single-value data
-  is incompatible and must be ignored so the estimator relearns safely.
-- Before 3 samples, accept structurally valid samples only to establish a
-  baseline. Thereafter, reject a candidate whose absolute deviation from the
-  sorted-history median is greater than 25%; use 64-bit intermediate arithmetic.
-  A rejection re-anchors the current interval and never writes NVS. At 8
-  samples, replace the next ring slot and recalculate the mean over all 8.
-- The result is usable Ah estimated from the BMS SOC, not voltage, rated Ah,
-  energy density, or state of health. This is mandatory for flat LFP voltage
-  plateaus.
-
-### 4. Validation & Error Matrix
-
-| Condition | Required response |
-| --- | --- |
-| JBD or an unsupported BMS | `unsupported`, null estimate |
-| ANT/JK/Daly/Yanyang without enough credible data | `estimating`, null estimate |
-| Delayed SOC correction | Re-anchor and retain any credible estimate |
-| Native counter regression | Clear estimate and persist the reset state |
-| Daly/Yanyang frame is partial, invalid, SOC > 100, or gap > 3 s | Do not integrate; re-anchor on a gap |
-| Daly/Yanyang type or bound MAC changes | Clear the estimate and local integrator before the next sample |
-| Fewer than 3 accepted samples | `estimating`, null estimate |
-| Candidate differs from the history median by more than 25% | Re-anchor without updating history or NVS |
-| Missing, malformed, or version-1 `bms_cap_est` blob | Ignore it and begin with an empty history |
-
-### 5. Good / Base / Bad Cases
-
-- Good: a 20% partial charge with a 10 Ah native or locally integrated cycle
-  increase estimates 50 Ah.
-- Base: a user never reaches 0% or 100%; a credible partial interval is enough.
-- Good: after 3 consistent 50 Ah samples, store only 8 values total and reject
-  an 80 Ah candidate without changing the displayed mean.
-- Bad: use pack voltage, remaining/rated capacity, a delayed SOC recalculation,
-  another BMS identity as throughput, or an unbounded NVS history.
-
-### 6. Tests Required
-
-- Run `./scripts/run-host-selftests.sh`; assert both ANT frame layouts, JK
-  cycle-capacity scaling, Daly/Yanyang signed current, and positive/negative
-  current integration, remainder, deadband, gap, and counter-reset cases; also
-  assert 3-sample readiness, 25% outlier rejection, 8-slot replacement, mean,
-  and reset handling.
-- Run both LVGL simulator orientations when changing the disabled BMS settings
-  row; ANT/JK/Daly/Yanyang show `估算中` or Ah, while JBD stays unsupported.
-- Build the `esp32all` profile, flash through RFC2217, and inspect boot output
-  when the selected profile exposes it. With a bound supported BMS, confirm
-  `estimating` changes to `ready` only after an eligible interval.
-
-### 7. Wrong vs Correct
-
-#### Wrong
-
-```c
-estimate_mah = pack_voltage_mv * 100 / soc_span; /* voltage is not throughput */
-```
-
-#### Correct
-
-```c
-if (cycle_delta_mah < 1000U || soc_span < 20U) {
-    reanchor_without_sampling();
-}
-```
-
-#### Correct Multi-Day History
-
-```c
-if (sample_count >= 3U && deviation_from_median_percent > 25U) {
-    reanchor_without_sampling();
-} else {
-    replace_next_of_eight_samples_and_recalculate_mean();
-}
-```
-
-## Scenario: FarDriver Nordic UART Telemetry Polling
-
-### 1. Scope / Trigger
-
-- Apply when changing FarDriver Nordic UART discovery, CCCD subscription, read
-  polling, notification parsing, or controller telemetry projection.
-
-### 2. Signatures
-
-- Poller: `controller_send_read_request(esp_bms_idf_runtime_t *runtime)`.
-- Telemetry request: existing five-byte FarDriver read frame.
-- Data write: `ble_gattc_write_no_rsp_flat(...)`.
-- Subscription write: `ble_gattc_write_flat(...)` to the CCCD only.
-
-### 3. Contracts
-
-- Send read-only FarDriver polls with Write Without Response; the Android
-  Nordic UART client uses that transport and a response write can leave GAP
-  connected without controller telemetry.
-- Keep the existing address order and advance `controller_poll_index` only
-  when the immediate no-response write call succeeds.
-- On an immediate failure, keep the current address for the next 200 ms retry
-  and log both the address and return code. Do not clear parsed telemetry.
-- A saved `ctl_conn=1` is not a binding. `ctl_mac` must exist before the
-  controller driver scans and connects; rebind from the controller settings
-  when it is absent.
-
-### 4. Validation & Error Matrix
-
-| Condition | Required response |
-| --- | --- |
-| No-response write returns nonzero | Log address and return code; retry the same address. |
-| CCCD subscription is changed to no-response write | Reject the change; keep its response callback path. |
-| `ctl_conn=1` and no `ctl_mac` | Do not expect a scan or connection; bind a discovered FarDriver first. |
-| Valid 16-byte notification | Parse and project telemetry without changing the poll transport. |
-
-### 5. Good / Base / Bad Cases
-
-- Good: CCCD uses `ble_gattc_write_flat`, read polls use
-  `ble_gattc_write_no_rsp_flat`.
-- Base: a failed immediate poll retries the same register on the next period.
-- Bad: treating the controller connection switch as a saved MAC binding, or
-  advancing the poll address after a failed write.
-
-### 6. Tests Required
-
-- Run `tests/fardriver_protocol_selftest.c`, the selected ESP-IDF profile
-  build, and `git diff --check`.
-- Flash through RFC2217. With a bound FarDriver and the controller or speed
-  dashboard visible, confirm telemetry notifications update the dashboard.
-
-### 7. Wrong vs Correct
-
-#### Wrong
-
-```c
-ble_gattc_write_flat(conn, write_handle, request, sizeof(request), callback, runtime);
-```
-
-#### Correct
-
-```c
-int rc = ble_gattc_write_no_rsp_flat(conn, write_handle, request, sizeof(request));
-if (rc == 0) {
-    advance_poll_address();
-}
-```

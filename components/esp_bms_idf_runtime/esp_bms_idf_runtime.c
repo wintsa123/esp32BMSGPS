@@ -129,6 +129,12 @@ static const char *TAG = "bms_idf_runtime";
 #define HTTP_MANIFEST_JSON_MAX_LEN 3072U
 #define CAST_HEARTBEAT_TIMEOUT_MS 5000U
 #define CAST_METRICS_LOG_WINDOW_US INT64_C(5000000)
+#define CAST_TOUCH_TASK_STACK 3072U
+#define CAST_TOUCH_TASK_PRIORITY 3U
+#define CAST_TOUCH_POLL_INTERVAL_MS 20U
+#define CAST_TX_LOCK_TIMEOUT_MS 50U
+#define CAST_TOUCH_STOP_WAIT_MS 500U
+#define CAST_TOUCH_LONGPRESS_US INT64_C(2000000)
 #define BLE_MEDIA_HID_USAGE_QUEUE_LEN 8U
 #define BLE_MEDIA_HID_WORKER_STACK 2048U
 #define BLE_MEDIA_HID_WORKER_PRIORITY 4U
@@ -157,6 +163,9 @@ static esp_err_t runtime_cast_resolution(uint8_t rotation, uint16_t *width, uint
         (esp_bms_display_rotation_t)rotation, width, height);
 }
 
+static void runtime_cast_touch_start(esp_bms_idf_runtime_t *runtime);
+static void runtime_cast_touch_stop(esp_bms_idf_runtime_t *runtime);
+
 void esp_bms_idf_runtime_stop_cast(esp_bms_idf_runtime_t *runtime, const char *reason)
 {
     if (!runtime) {
@@ -166,8 +175,10 @@ void esp_bms_idf_runtime_stop_cast(esp_bms_idf_runtime_t *runtime, const char *r
         ESP_LOGI(TAG, "[cast] stopped: %s", reason);
     }
     __atomic_store_n(&runtime->cast_active, false, __ATOMIC_RELAXED);
+    runtime_cast_touch_stop(runtime);
     runtime->cast_frame_active = false;
     runtime->cast_socket_fd = -1;
+    runtime->cast_httpd = NULL;
     runtime->cast_rotation = (uint8_t)ESP_BMS_DISPLAY_ROTATION_PORTRAIT;
     runtime->cast_width = 0U;
     runtime->cast_height = 0U;
@@ -4710,6 +4721,7 @@ esp_err_t esp_bms_idf_runtime_http_cast_connected(httpd_req_t *req)
     }
     runtime->cast_frame_active = false;
     runtime->cast_socket_fd = httpd_req_to_sockfd(req);
+    runtime->cast_httpd = req->handle;
     runtime->cast_rotation = (uint8_t)ESP_BMS_DISPLAY_ROTATION_PORTRAIT;
     runtime->cast_width = 0U;
     runtime->cast_height = 0U;
@@ -4738,11 +4750,152 @@ esp_err_t esp_bms_idf_runtime_http_cast_connected(httpd_req_t *req)
         return ret;
     }
     __atomic_store_n(&runtime->cast_display_active, true, __ATOMIC_RELEASE);
+    runtime_cast_touch_start(runtime);
     ESP_LOGI(TAG, "[cast] client connected fd=%d", runtime->cast_socket_fd);
     return ESP_OK;
 }
 
-static esp_err_t runtime_cast_send_ack(httpd_req_t *req, uint32_t sequence)
+static void runtime_cast_send_input(esp_bms_idf_runtime_t *runtime,
+                                    uint8_t phase,
+                                    uint16_t x,
+                                    uint16_t y)
+{
+    uint8_t input[ESP_BMS_CAST_INPUT_FRAME_BYTES] = { 0 };
+    if (!runtime || runtime->cast_socket_fd < 0 || !runtime->cast_httpd ||
+        !esp_bms_cast_protocol_encode_input(phase, x, y, input, sizeof(input))) {
+        return;
+    }
+    httpd_ws_frame_t frame = {
+        .type = HTTPD_WS_TYPE_BINARY,
+        .payload = input,
+        .len = sizeof(input),
+    };
+    /* ACK and input frames share one socket; the lock keeps frame writes whole. */
+    if (runtime->cast_tx_lock &&
+        xSemaphoreTake(runtime->cast_tx_lock,
+                       pdMS_TO_TICKS(CAST_TX_LOCK_TIMEOUT_MS)) != pdTRUE) {
+        return;
+    }
+    const esp_err_t ret =
+        httpd_ws_send_frame_async(runtime->cast_httpd, runtime->cast_socket_fd, &frame);
+    if (runtime->cast_tx_lock) {
+        xSemaphoreGive(runtime->cast_tx_lock);
+    }
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "[cast] input frame send failed: %s", esp_err_to_name(ret));
+    }
+}
+
+/* Tells the phone to stop casting; the panel long press is the only source. */
+static void runtime_cast_send_exit(esp_bms_idf_runtime_t *runtime)
+{
+    uint8_t exit_frame[ESP_BMS_CAST_EXIT_FRAME_BYTES] = { 0 };
+    if (!runtime || runtime->cast_socket_fd < 0 || !runtime->cast_httpd ||
+        !esp_bms_cast_protocol_encode_exit(exit_frame, sizeof(exit_frame))) {
+        return;
+    }
+    httpd_ws_frame_t frame = {
+        .type = HTTPD_WS_TYPE_BINARY,
+        .payload = exit_frame,
+        .len = sizeof(exit_frame),
+    };
+    if (runtime->cast_tx_lock &&
+        xSemaphoreTake(runtime->cast_tx_lock,
+                       pdMS_TO_TICKS(CAST_TX_LOCK_TIMEOUT_MS)) != pdTRUE) {
+        return;
+    }
+    (void)httpd_ws_send_frame_async(runtime->cast_httpd, runtime->cast_socket_fd, &frame);
+    if (runtime->cast_tx_lock) {
+        xSemaphoreGive(runtime->cast_tx_lock);
+    }
+}
+
+static void runtime_cast_touch_task(void *arg)
+{
+    esp_bms_idf_runtime_t *runtime = arg;
+    bool pressed_before = false;
+    uint16_t last_x = 0U;
+    uint16_t last_y = 0U;
+    int64_t press_started_us = 0;
+    while (__atomic_load_n(&runtime->cast_touch_task_running, __ATOMIC_ACQUIRE)) {
+        uint16_t x = 0U;
+        uint16_t y = 0U;
+        bool pressed = false;
+        if (esp_bms_display_service_read_cast_touch(&x, &y, &pressed) == ESP_OK) {
+            if (pressed && !pressed_before) {
+                press_started_us = esp_timer_get_time();
+            }
+            if (pressed && press_started_us != 0 &&
+                (esp_timer_get_time() - press_started_us) >= CAST_TOUCH_LONGPRESS_US) {
+                /* A long press anywhere ends the session: tell the phone first, then let
+                 * the runtime tick restore the dashboard from its own context. */
+                ESP_LOGI(TAG, "[cast] panel long press: ending cast session");
+                runtime_cast_send_exit(runtime);
+                __atomic_store_n(&runtime->cast_exit_requested, true, __ATOMIC_RELEASE);
+                break;
+            }
+            if (pressed && (!pressed_before || x != last_x || y != last_y)) {
+                runtime_cast_send_input(runtime,
+                                        pressed_before ? ESP_BMS_CAST_INPUT_PHASE_MOVE
+                                                       : ESP_BMS_CAST_INPUT_PHASE_DOWN,
+                                        x,
+                                        y);
+            } else if (!pressed && pressed_before) {
+                runtime_cast_send_input(runtime, ESP_BMS_CAST_INPUT_PHASE_UP, last_x, last_y);
+            }
+            if (!pressed) {
+                press_started_us = 0;
+            }
+            pressed_before = pressed;
+            last_x = x;
+            last_y = y;
+        }
+        vTaskDelay(pdMS_TO_TICKS(CAST_TOUCH_POLL_INTERVAL_MS));
+    }
+    runtime->cast_touch_task = NULL;
+    vTaskDelete(NULL);
+}
+
+static void runtime_cast_touch_start(esp_bms_idf_runtime_t *runtime)
+{
+    if (!runtime || runtime->cast_touch_task) {
+        return;
+    }
+    __atomic_store_n(&runtime->cast_touch_task_running, true, __ATOMIC_RELEASE);
+    if (xTaskCreate(runtime_cast_touch_task,
+                    "cast-touch",
+                    CAST_TOUCH_TASK_STACK,
+                    runtime,
+                    CAST_TOUCH_TASK_PRIORITY,
+                    &runtime->cast_touch_task) != pdPASS) {
+        __atomic_store_n(&runtime->cast_touch_task_running, false, __ATOMIC_RELEASE);
+        runtime->cast_touch_task = NULL;
+        ESP_LOGW(TAG, "[cast] touch forward task allocation failed");
+    }
+}
+
+static void runtime_cast_touch_stop(esp_bms_idf_runtime_t *runtime)
+{
+    if (!runtime || !runtime->cast_touch_task) {
+        return;
+    }
+    __atomic_store_n(&runtime->cast_touch_task_running, false, __ATOMIC_RELEASE);
+    for (uint32_t waited_ms = 0U;
+         waited_ms < CAST_TOUCH_STOP_WAIT_MS && runtime->cast_touch_task;
+         waited_ms += CAST_TOUCH_POLL_INTERVAL_MS) {
+        vTaskDelay(pdMS_TO_TICKS(CAST_TOUCH_POLL_INTERVAL_MS));
+    }
+    if (runtime->cast_touch_task) {
+        /* The task clears its own handle just before it exits. Deleting the handle
+         * from here could race with that self-delete and touch freed memory, so let
+         * it wind down on its own; the loop condition is already false. */
+        ESP_LOGW(TAG, "[cast] touch forward task is still winding down");
+    }
+}
+
+static esp_err_t runtime_cast_send_ack(httpd_req_t *req,
+                                       esp_bms_idf_runtime_t *runtime,
+                                       uint32_t sequence)
 {
     uint8_t ack[ESP_BMS_CAST_ACK_BYTES] = { 0 };
     if (!esp_bms_cast_protocol_encode_ack(sequence, ack, sizeof(ack))) {
@@ -4753,7 +4906,17 @@ static esp_err_t runtime_cast_send_ack(httpd_req_t *req, uint32_t sequence)
         .payload = ack,
         .len = sizeof(ack),
     };
-    return httpd_ws_send_frame(req, &frame);
+    /* ACK and input frames share one socket; the lock keeps frame writes whole. */
+    if (runtime && runtime->cast_tx_lock &&
+        xSemaphoreTake(runtime->cast_tx_lock,
+                       pdMS_TO_TICKS(CAST_TX_LOCK_TIMEOUT_MS)) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+    const esp_err_t ret = httpd_ws_send_frame(req, &frame);
+    if (runtime && runtime->cast_tx_lock) {
+        xSemaphoreGive(runtime->cast_tx_lock);
+    }
+    return ret;
 }
 
 static void runtime_cast_record_metrics(esp_bms_idf_runtime_t *runtime,
@@ -4887,7 +5050,7 @@ esp_err_t esp_bms_idf_runtime_http_cast_ws_handler(httpd_req_t *req)
                                 metrics.decode_us,
                                 metrics.present_us,
                                 total_us);
-    ret = runtime_cast_send_ack(req, jpeg_frame.sequence);
+    ret = runtime_cast_send_ack(req, runtime, jpeg_frame.sequence);
     if (ret != ESP_OK) {
         esp_bms_idf_runtime_stop_cast(runtime, "ack send failed");
     }
@@ -6264,6 +6427,10 @@ void esp_bms_idf_runtime_init(esp_bms_idf_runtime_t *runtime)
     if (!runtime->capacity_estimate_lock) {
         ESP_LOGW(TAG, "[bms] capacity estimate mutex allocation failed");
     }
+    runtime->cast_tx_lock = xSemaphoreCreateMutex();
+    if (!runtime->cast_tx_lock) {
+        ESP_LOGW(TAG, "[cast] transmit mutex allocation failed");
+    }
     runtime_reset_state(runtime);
     const esp_err_t flashdb_ret = esp_bms_flashdb_init();
     if (flashdb_ret != ESP_OK) {
@@ -6554,6 +6721,14 @@ bool esp_bms_idf_runtime_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_m
     }
 
     bool cast_active = __atomic_load_n(&runtime->cast_active, __ATOMIC_ACQUIRE);
+    if (cast_active) {
+        /* A panel long press asks for teardown from the touch task; run it here so the
+         * touch task never has to wait for itself to stop. */
+        if (__atomic_exchange_n(&runtime->cast_exit_requested, false, __ATOMIC_ACQ_REL)) {
+            esp_bms_idf_runtime_stop_cast(runtime, "panel long press");
+            cast_active = false;
+        }
+    }
     if (cast_active) {
         const uint32_t elapsed =
             __atomic_add_fetch(&runtime->cast_heartbeat_elapsed_ms, elapsed_ms, __ATOMIC_RELAXED);

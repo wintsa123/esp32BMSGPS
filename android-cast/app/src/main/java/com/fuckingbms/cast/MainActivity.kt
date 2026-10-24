@@ -29,6 +29,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.provider.OpenableColumns
+import android.provider.Settings
 import android.text.InputType
 import android.text.TextUtils
 import android.util.TypedValue
@@ -86,6 +87,7 @@ class MainActivity : Activity() {
     private lateinit var deviceView: TextView
     private lateinit var castButton: Button
     private lateinit var connectionButton: Button
+    private lateinit var touchControlButton: Button
 
     private lateinit var bmsPage: ScrollView
     private lateinit var recordsPage: ScrollView
@@ -296,6 +298,7 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         startDeviceBle()
+        refreshTouchControlButton()
         when (CastService.currentState) {
             CastService.STATE_CONNECTING, CastService.STATE_RETRYING -> setStage(UiStage.CAST_CONNECTING)
             CastService.STATE_STREAMING -> setStage(UiStage.CASTING)
@@ -717,9 +720,14 @@ class MainActivity : Activity() {
             info = null
             refreshAll()
         }
-        column.addView(connectionButton, rowParams(bottom = 14, height = dp(52)))
+        column.addView(connectionButton, rowParams(bottom = 10, height = dp(52)))
+        touchControlButton = actionButton("启用屏幕控制", false) {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        }
+        column.addView(touchControlButton, rowParams(bottom = 14, height = dp(52)))
 
         column.addView(label("投屏只在手机与设备热点之间传输。网络较慢时会主动丢弃旧画面以减少延迟。", 13f, COLOR_MUTED))
+        column.addView(label("反向控制需要在系统设置里手动开启「两轮智控屏幕控制」无障碍服务。", 13f, COLOR_MUTED), rowParams(top = 6))
         page.addView(column, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         return page
     }
@@ -773,6 +781,13 @@ class MainActivity : Activity() {
         headerView.visibility = if (secondary) View.GONE else View.VISIBLE
         routeBar.visibility = if (secondary) View.GONE else View.VISIBLE
         if (refresh) refreshRouteData(route)
+    }
+
+    private fun refreshTouchControlButton() {
+        if (::touchControlButton.isInitialized) {
+            touchControlButton.text =
+                if (CastAccessibilityService.isConnected()) "屏幕控制已启用" else "启用屏幕控制"
+        }
     }
 
     private fun refreshAll() {

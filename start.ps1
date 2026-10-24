@@ -585,6 +585,9 @@ function Set-RequiredGpioRoles([System.Collections.IDictionary]$Config) {
         'I80' {
             for ($Index = 0; $Index -lt [int]$script:BoardDisplayDataWidth; $Index++) { Add-RequiredGpioRole 'output' "TFT_D$Index" }
             foreach ($Role in @('TFT_WR', 'TFT_CS', 'TFT_DC')) { Add-RequiredGpioRole 'output' $Role }
+            foreach ($Role in @('TFT_RD', 'TFT_RESET', 'TFT_BACKLIGHT')) {
+                if (Test-BoardDeclaresGpioRole $Role $Board.INPUT_GPIO $Board.OUTPUT_GPIO) { Add-RequiredGpioRole 'output' $Role }
+            }
         }
     }
     if ($script:BoardExpander -eq 'XL9555') {
@@ -596,7 +599,10 @@ function Set-RequiredGpioRoles([System.Collections.IDictionary]$Config) {
                 Add-RequiredGpioRole 'input' 'TOUCH_MISO'
                 foreach ($Role in @('TOUCH_MOSI', 'TOUCH_CS', 'TOUCH_SCLK')) { Add-RequiredGpioRole 'output' $Role }
             }
-            'I2C' { foreach ($Role in @('TOUCH_SDA', 'TOUCH_SCL')) { Add-RequiredGpioRole 'output' $Role } }
+            'I2C' {
+                foreach ($Role in @('TOUCH_SDA', 'TOUCH_SCL')) { Add-RequiredGpioRole 'output' $Role }
+                if (Test-BoardDeclaresGpioRole 'TOUCH_RESET' $Board.INPUT_GPIO $Board.OUTPUT_GPIO) { Add-RequiredGpioRole 'output' 'TOUCH_RESET' }
+            }
         }
         if ($Config.INPUT -ne 'custom' -and (Get-Record 'input' $Config.INPUT).USE_IRQ -eq '1') {
             Add-RequiredGpioRole 'input' 'TOUCH_INT'

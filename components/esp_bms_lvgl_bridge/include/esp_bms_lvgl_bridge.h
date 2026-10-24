@@ -126,6 +126,9 @@ esp_err_t esp_bms_lvgl_bridge_pause_for_cast(void);
 esp_err_t esp_bms_lvgl_bridge_enter_cast(void);
 esp_err_t esp_bms_lvgl_bridge_exit_cast(void);
 esp_err_t esp_bms_lvgl_bridge_resume_after_cast(void);
+/* Cast-mode touch readback in the current cast rotation's logical coordinates.
+ * The LVGL indev stays disabled during casting, so this is the only reader. */
+esp_err_t esp_bms_lvgl_bridge_read_cast_touch(uint16_t *x, uint16_t *y, bool *pressed);
 esp_err_t esp_bms_lvgl_bridge_load_touch_calibration(void);
 esp_err_t esp_bms_lvgl_bridge_begin_touch_calibration(void);
 esp_err_t esp_bms_lvgl_bridge_add_touch_calibration_sample(uint8_t target_index,

@@ -5,33 +5,11 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class CastCapabilitiesTest {
-    @Test fun cropRectMapsSystemInsetsAndFallsBackForInvalidValues() {
-        assertEquals(
-            CaptureRect(0, 100, 1000, 900),
-            cropRectFor(1000, 1000, 1000, 1000, CaptureInsets(0, 100, 0, 100)),
-        )
-        assertEquals(
-            CaptureRect(0, 0, 1000, 1000),
-            cropRectFor(1000, 1000, 1000, 1000, CaptureInsets(600, 0, 500, 0)),
-        )
-    }
-
-    @Test fun cropRectCenterCropsToTargetAspectRatio() {
-        assertEquals(
-            CaptureRect(200, 0, 800, 1000),
-            cropRectFor(1000, 1000, 1000, 1000, CaptureInsets.ZERO, 3, 5),
-        )
-        assertEquals(
-            CaptureRect(0, 200, 1000, 800),
-            cropRectFor(1000, 1000, 1000, 1000, CaptureInsets.ZERO, 5, 3),
-        )
-    }
-
     @Test fun parsesDeviceCapabilitiesAndChoosesLogicalDirection() {
         val info = CastInfo.parse(
             """
                 {
-                  "protocol_version": 3,
+                  "protocol_version": 4,
                   "physical_width": 320,
                   "physical_height": 480,
                   "codec": "jpeg",
@@ -60,13 +38,13 @@ class CastCapabilitiesTest {
         assertEquals(270 to 480, captureSizeFor(1080, 1920, CastTarget(0, 270, 480)))
     }
 
-    @Test fun rejectsV2Capabilities() {
+    @Test fun rejectsV3Capabilities() {
         assertThrows(IllegalArgumentException::class.java) {
-            CastInfo.parse(validJson().replace("\"protocol_version\": 3", "\"protocol_version\": 2"))
+            CastInfo.parse(validJson().replace("\"protocol_version\": 4", "\"protocol_version\": 3"))
         }
     }
 
-    @Test fun rejectsNonJpegV3Capabilities() {
+    @Test fun rejectsNonJpegV4Capabilities() {
         assertThrows(IllegalArgumentException::class.java) {
             CastInfo.parse(validJson().replace("\"codec\": \"jpeg\"", "\"codec\": \"rgb565\""))
         }
@@ -74,7 +52,7 @@ class CastCapabilitiesTest {
 
     private fun validJson() = """
         {
-          "protocol_version": 3,
+          "protocol_version": 4,
           "physical_width": 320,
           "physical_height": 480,
           "codec": "jpeg",

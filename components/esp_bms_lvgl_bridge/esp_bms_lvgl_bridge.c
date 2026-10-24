@@ -11,6 +11,7 @@
 #include "driver/i2c_master.h"
 #include "driver/ledc.h"
 #include "driver/spi_master.h"
+#include "esp_attr.h"
 #include "esp_check.h"
 #include "esp_heap_caps.h"
 #include "esp_lcd_io_i2c.h"
@@ -63,6 +64,8 @@ static const char *TAG = "bms_lvgl_bridge";
 #define BACKLIGHT_PWM_DUTY_BITS 10U
 #define BACKLIGHT_PWM_DUTY_MAX ((1U << BACKLIGHT_PWM_DUTY_BITS) - 1U)
 #define BACKLIGHT_PWM_MODE LEDC_LOW_SPEED_MODE
+/* How long a draw waits for the previous I80 DMA transfer to release the shared buffer. */
+#define I80_TRANS_DONE_WAIT_MS 50U
 #define BACKLIGHT_PWM_TIMER LEDC_TIMER_0
 #define BACKLIGHT_PWM_CHANNEL LEDC_CHANNEL_0
 #if CONFIG_ESP_BMS_LVGL_BRIDGE_BACKLIGHT_DIMMING
@@ -101,6 +104,13 @@ static const char *TAG = "bms_lvgl_bridge";
 #define TOUCH_FILTER_PRESS_STABILITY_DISTANCE 16U
 #define CAST_FRAME_BUFFER_ALIGNMENT 16U
 #define CAST_PRESENT_STRIP_ROWS 40U
+/* Touch feedback drawn over the cast picture. */
+#define CAST_TRAIL_POINTS 32U
+#define CAST_TRAIL_TTL_US INT64_C(350000)
+#define CAST_TRAIL_RGB565 0x07FFU
+#define CAST_TOUCH_DOT_RADIUS 5
+#define CAST_LONGPRESS_HINT_US INT64_C(2000000)
+#define CAST_LONGPRESS_RGB565 0xF800U
 #if ESP_BMS_PROFILE_TOUCH_GT1151
 #define GT1151_GESTURE_REGISTER 0x814CU
 #define GT1151_POINT_STATUS_REGISTER 0x814EU
@@ -111,14 +121,60 @@ static const char *TAG = "bms_lvgl_bridge";
 #else
 #define LVGL_REQUIRE_DOUBLE_BUFFER false
 #endif
-/* Keep object invalidation local; full-frame mode refreshes the whole TFT for every widget change. */
+/* Full-frame I80 refresh: render one whole PSRAM frame per flush and push it to
+ * the panel as a few back-to-back transfers instead of letting the 40-row bands
+ * fall wherever the renderer happens to be, which is what made page drags and
+ * carousel transitions look torn.
+ *
+ * The frame still travels through the internal DMA bounce buffer: the I80 DMA
+ * cannot read a PSRAM draw buffer reliably (the panel shows garbage), so the
+ * full frame is copied out in chunks that are large enough for the tear to
+ * collapse into one sweep.
+ *
+ * Only the ST7796 I80 path implements this callback, so every other panel, bus
+ * width, or board keeps the partial-refresh behaviour. See
+ * CONFIG_ESP_BMS_LVGL_BRIDGE_FULL_REFRESH_DOUBLE_BUFFER. */
+#if CONFIG_ESP_BMS_LVGL_BRIDGE_FULL_REFRESH_DOUBLE_BUFFER && ESP_BMS_PROFILE_PANEL_ST7796
+#define LVGL_FULL_REFRESH_DOUBLE_BUFFER true
+#else
 #define LVGL_FULL_REFRESH_DOUBLE_BUFFER false
+#endif
+/* Rows per I80 transfer on the full-frame path, and how many bounce buffers are
+ * rotated so the next copy overlaps the transfer already in flight. 480 px x
+ * 40 rows x 2 B = 37.5 KiB each; two of them cost the same internal DMA RAM as
+ * the single 80-row buffer they replace. */
+#define LVGL_FULL_FRAME_CHUNK_ROWS 40U
+#define I80_BOUNCE_BUFFER_COUNT 2U
 
 static esp_lcd_panel_io_handle_t s_panel_io;
 static esp_lcd_panel_handle_t s_panel;
 #if ESP_BMS_PROFILE_PANEL_ST7796
-static void *s_i80_draw_buffer;
+/* Partial mode fills buffer 0 once per flush. The full-frame path rotates every
+ * bounce buffer, so a copy can start while the previous DMA is still reading. */
+static void *s_i80_draw_buffer[I80_BOUNCE_BUFFER_COUNT];
 static size_t s_i80_draw_buffer_bytes;
+static SemaphoreHandle_t s_i80_trans_done_sem;
+/* Transfers submitted but not yet completed. Started from the LVGL task and
+ * retired from the I80 completion ISR, so both sides take the spinlock; a plain
+ * atomic would risk an out-of-line libatomic call inside the ISR. */
+static volatile uint32_t s_i80_trans_in_flight;
+static portMUX_TYPE s_i80_trans_lock = portMUX_INITIALIZER_UNLOCKED;
+
+/* Bounce-buffer bookkeeping shared with the I80 completion ISR. */
+static inline uint32_t i80_trans_pending(void)
+{
+    portENTER_CRITICAL(&s_i80_trans_lock);
+    const uint32_t pending = s_i80_trans_in_flight;
+    portEXIT_CRITICAL(&s_i80_trans_lock);
+    return pending;
+}
+
+static inline void i80_trans_started(void)
+{
+    portENTER_CRITICAL(&s_i80_trans_lock);
+    ++s_i80_trans_in_flight;
+    portEXIT_CRITICAL(&s_i80_trans_lock);
+}
 #endif
 static esp_lcd_panel_io_handle_t s_touch_io;
 static esp_lcd_touch_handle_t s_touch;
@@ -154,6 +210,24 @@ static size_t s_cast_frame_buffer_bytes;
 static jpeg_dec_handle_t s_cast_decoder;
 static uint16_t s_cast_decoder_width;
 static uint16_t s_cast_decoder_height;
+/* Cast mode reads the panel directly; the LVGL indev path stays disabled there. */
+static esp_lcd_touch_point_data_t s_cast_touch_hold;
+static bool s_cast_touch_hold_valid;
+
+typedef struct {
+    uint16_t x;
+    uint16_t y;
+    int64_t at_us;
+} cast_trail_point_t;
+
+static cast_trail_point_t s_cast_trail[CAST_TRAIL_POINTS];
+static uint8_t s_cast_trail_count;
+static uint8_t s_cast_trail_next;
+static portMUX_TYPE s_cast_trail_lock = portMUX_INITIALIZER_UNLOCKED;
+static int64_t s_cast_touch_down_us;
+static bool s_cast_touch_down;
+
+static void cast_trail_reset(void);
 static TickType_t s_touch_last_log_tick;
 static TickType_t s_touch_last_filter_log_tick;
 static bool s_touch_read_callback_logged;
@@ -1154,6 +1228,8 @@ esp_err_t esp_bms_lvgl_bridge_enter_cast(void)
         lv_indev_reset(s_touch_indev, NULL);
         lv_indev_enable(s_touch_indev, false);
     }
+    s_cast_touch_hold_valid = false;
+    cast_trail_reset();
 
     const esp_err_t ret = esp_lv_adapter_set_dummy_draw(s_display, true);
     if (ret != ESP_OK) {
@@ -1186,6 +1262,8 @@ esp_err_t esp_bms_lvgl_bridge_exit_cast(void)
         lv_indev_reset(s_touch_indev, NULL);
         lv_indev_enable(s_touch_indev, true);
     }
+    s_cast_touch_hold_valid = false;
+    cast_trail_reset();
 
     s_cast_mode = false;
     heap_caps_free(s_cast_frame_buffer);
@@ -1324,6 +1402,257 @@ static esp_err_t touch_read_with_diagnostics(esp_lcd_touch_handle_t tp,
         s_touch_last_log_tick = now;
     }
 
+    return ESP_OK;
+}
+
+/* ---- Cast touch feedback overlay ---- */
+
+static void cast_trail_reset(void)
+{
+    taskENTER_CRITICAL(&s_cast_trail_lock);
+    s_cast_trail_count = 0U;
+    s_cast_trail_next = 0U;
+    taskEXIT_CRITICAL(&s_cast_trail_lock);
+    s_cast_touch_down = false;
+    s_cast_touch_down_us = 0;
+}
+
+static void cast_trail_push(uint16_t x, uint16_t y, int64_t now_us)
+{
+    taskENTER_CRITICAL(&s_cast_trail_lock);
+    s_cast_trail[s_cast_trail_next].x = x;
+    s_cast_trail[s_cast_trail_next].y = y;
+    s_cast_trail[s_cast_trail_next].at_us = now_us;
+    s_cast_trail_next = (uint8_t)((s_cast_trail_next + 1U) % CAST_TRAIL_POINTS);
+    if (s_cast_trail_count < CAST_TRAIL_POINTS) {
+        ++s_cast_trail_count;
+    }
+    taskEXIT_CRITICAL(&s_cast_trail_lock);
+}
+
+/* Copies the trail oldest-first so the painter can walk it without holding the lock. */
+static uint8_t cast_trail_snapshot(cast_trail_point_t *out)
+{
+    uint8_t count = 0U;
+    taskENTER_CRITICAL(&s_cast_trail_lock);
+    count = s_cast_trail_count;
+    for (uint8_t index = 0U; index < count; ++index) {
+        const uint8_t slot =
+            (uint8_t)((s_cast_trail_next + CAST_TRAIL_POINTS - count + index) % CAST_TRAIL_POINTS);
+        out[index] = s_cast_trail[slot];
+    }
+    taskEXIT_CRITICAL(&s_cast_trail_lock);
+    return count;
+}
+
+static void cast_overlay_plot(uint16_t *buffer,
+                              uint16_t width,
+                              uint16_t height,
+                              int x,
+                              int y,
+                              uint16_t color)
+{
+    if (!buffer || x < 0 || y < 0 || x >= (int)width || y >= (int)height) {
+        return;
+    }
+    /* The JPEG decoder writes RGB565 big-endian, so swap for this little-endian target. */
+    buffer[(size_t)y * width + (size_t)x] = (uint16_t)((color >> 8) | (color << 8));
+}
+
+static uint16_t cast_overlay_fade(uint16_t color, uint32_t remain_us, uint32_t total_us)
+{
+    if (total_us == 0U) {
+        return color;
+    }
+    const uint32_t red = (uint32_t)((color >> 11) & 0x1FU) * remain_us / total_us;
+    const uint32_t green = (uint32_t)((color >> 5) & 0x3FU) * remain_us / total_us;
+    const uint32_t blue = (uint32_t)(color & 0x1FU) * remain_us / total_us;
+    return (uint16_t)((red << 11) | (green << 5) | blue);
+}
+
+static void cast_overlay_line(uint16_t *buffer,
+                              uint16_t width,
+                              uint16_t height,
+                              int x0,
+                              int y0,
+                              int x1,
+                              int y1,
+                              uint16_t color)
+{
+    const int dx = x1 > x0 ? x1 - x0 : x0 - x1;
+    const int dy = y1 > y0 ? y0 - y1 : y1 - y0;
+    const int step_x = x0 < x1 ? 1 : -1;
+    const int step_y = y0 < y1 ? 1 : -1;
+    int err = dx + dy;
+    while (true) {
+        cast_overlay_plot(buffer, width, height, x0, y0, color);
+        if (x0 == x1 && y0 == y1) {
+            break;
+        }
+        const int err2 = 2 * err;
+        if (err2 >= dy) {
+            err += dy;
+            x0 += step_x;
+        }
+        if (err2 <= dx) {
+            err += dx;
+            y0 += step_y;
+        }
+    }
+}
+
+static void cast_overlay_dot(uint16_t *buffer,
+                             uint16_t width,
+                             uint16_t height,
+                             int center_x,
+                             int center_y,
+                             int radius,
+                             uint16_t color)
+{
+    for (int offset_y = -radius; offset_y <= radius; ++offset_y) {
+        for (int offset_x = -radius; offset_x <= radius; ++offset_x) {
+            if (offset_x * offset_x + offset_y * offset_y <= radius * radius) {
+                cast_overlay_plot(buffer,
+                                  width,
+                                  height,
+                                  center_x + offset_x,
+                                  center_y + offset_y,
+                                  color);
+            }
+        }
+    }
+}
+
+/* Paints the recent touch trail and the current contact point over one decoded frame. */
+static void cast_overlay_touch(uint8_t *buffer, uint16_t width, uint16_t height)
+{
+    if (!buffer || width == 0U || height == 0U) {
+        return;
+    }
+    /* The frame buffer is RGB565_BE; the alignment from heap_caps_aligned_alloc holds. */
+    uint16_t *const pixels = (uint16_t *)buffer;
+    cast_trail_point_t points[CAST_TRAIL_POINTS];
+    const uint8_t count = cast_trail_snapshot(points);
+    if (count == 0U) {
+        return;
+    }
+
+    const int64_t now_us = esp_timer_get_time();
+    int previous_x = -1;
+    int previous_y = -1;
+    int last_x = -1;
+    int last_y = -1;
+    for (uint8_t index = 0U; index < count; ++index) {
+        const int64_t age_us = now_us - points[index].at_us;
+        if (age_us < 0 || age_us > CAST_TRAIL_TTL_US) {
+            previous_x = -1;
+            continue;
+        }
+        const uint16_t color =
+            cast_overlay_fade(CAST_TRAIL_RGB565,
+                              (uint32_t)(CAST_TRAIL_TTL_US - age_us),
+                              (uint32_t)CAST_TRAIL_TTL_US);
+        if (previous_x >= 0) {
+            cast_overlay_line(pixels,
+                              width,
+                              height,
+                              previous_x,
+                              previous_y,
+                              points[index].x,
+                              points[index].y,
+                              color);
+        }
+        previous_x = points[index].x;
+        previous_y = points[index].y;
+        last_x = points[index].x;
+        last_y = points[index].y;
+    }
+    if (last_x < 0) {
+        return;
+    }
+
+    /* The contact dot turns red while a long press is on its way to ending the cast. */
+    const bool long_press =
+        s_cast_touch_down && (now_us - s_cast_touch_down_us) >= CAST_LONGPRESS_HINT_US;
+    cast_overlay_dot(pixels,
+                     width,
+                     height,
+                     last_x,
+                     last_y,
+                     CAST_TOUCH_DOT_RADIUS,
+                     long_press ? CAST_LONGPRESS_RGB565 : CAST_TRAIL_RGB565);
+}
+
+static void cast_touch_mark_pressed(uint16_t x, uint16_t y)
+{
+    const int64_t now_us = esp_timer_get_time();
+    if (!s_cast_touch_down) {
+        s_cast_touch_down = true;
+        s_cast_touch_down_us = now_us;
+    }
+    cast_trail_push(x, y, now_us);
+}
+
+static void cast_touch_mark_released(void)
+{
+    s_cast_touch_down = false;
+    s_cast_touch_down_us = 0;
+}
+
+esp_err_t esp_bms_lvgl_bridge_read_cast_touch(uint16_t *x, uint16_t *y, bool *pressed)
+{
+    ESP_RETURN_ON_FALSE(x && y && pressed, ESP_ERR_INVALID_ARG, TAG,
+                        "cast touch outputs are required");
+    *pressed = false;
+    ESP_RETURN_ON_FALSE(s_cast_mode, ESP_ERR_INVALID_STATE, TAG, "cast mode is not active");
+    ESP_RETURN_ON_FALSE(s_touch, ESP_ERR_INVALID_STATE, TAG, "touch controller is unavailable");
+
+#if ESP_BMS_PROFILE_TOUCH_GT1151
+    /* Mirror the LVGL hold rule: a cleared ready bit means "no fresh sample", not
+     * "finger released", so keep reporting the last accepted point while held. */
+    uint8_t gt1151_status = 0;
+    const esp_err_t gt1151_status_ret =
+        esp_lcd_panel_io_rx_param(s_touch_io,
+                                  GT1151_POINT_STATUS_REGISTER,
+                                  &gt1151_status,
+                                  sizeof(gt1151_status));
+    if (gt1151_status_ret == ESP_OK &&
+        (gt1151_status & GT1151_POINT_STATUS_READY_BIT) == 0U && s_cast_touch_hold_valid) {
+        *x = s_cast_touch_hold.x;
+        *y = s_cast_touch_hold.y;
+        *pressed = true;
+        cast_touch_mark_pressed(*x, *y);
+        return ESP_OK;
+    }
+#endif
+
+    esp_err_t ret = esp_lcd_touch_read_data(s_touch);
+    if (ret != ESP_OK) {
+        s_cast_touch_hold_valid = false;
+        cast_touch_mark_released();
+        return ret;
+    }
+    esp_lcd_touch_point_data_t points[1] = { 0 };
+    uint8_t count = 0;
+    ret = esp_lcd_touch_get_data(s_touch, points, &count, 1);
+    if (ret != ESP_OK) {
+        s_cast_touch_hold_valid = false;
+        cast_touch_mark_released();
+        return ret;
+    }
+    if (count == 0U) {
+        s_cast_touch_hold_valid = false;
+        cast_touch_mark_released();
+        return ESP_OK;
+    }
+
+    touch_calibration_apply(points, count);
+    s_cast_touch_hold = points[0];
+    s_cast_touch_hold_valid = true;
+    *x = points[0].x;
+    *y = points[0].y;
+    *pressed = true;
+    cast_touch_mark_pressed(*x, *y);
     return ESP_OK;
 }
 
@@ -1492,6 +1821,33 @@ static esp_err_t init_touch(const esp_bms_lvgl_bridge_config_t *config, uint16_t
 
 #if ESP_BMS_PROFILE_PANEL_ST7796
 /**
+ * Replaces the adapter's I80 completion hook so this bridge learns when the DMA has
+ * released its shared draw buffer. The adapter's own bookkeeping (dummy-draw event,
+ * flush_ready) is preserved by forwarding through its public notify API, which runs
+ * the same handler the adapter's own I80 hook used.
+ */
+static bool IRAM_ATTR i80_color_trans_done(esp_lcd_panel_io_handle_t panel_io,
+                                           esp_lcd_panel_io_event_data_t *edata,
+                                           void *user_ctx)
+{
+    (void)panel_io;
+    (void)edata;
+    (void)user_ctx;
+    BaseType_t need_yield = pdFALSE;
+    /* One transfer left the bus; a waiting draw callback may reuse its bounce buffer. */
+    portENTER_CRITICAL_ISR(&s_i80_trans_lock);
+    if (s_i80_trans_in_flight > 0U) {
+        --s_i80_trans_in_flight;
+    }
+    portEXIT_CRITICAL_ISR(&s_i80_trans_lock);
+    if (s_i80_trans_done_sem) {
+        xSemaphoreGiveFromISR(s_i80_trans_done_sem, &need_yield);
+    }
+    const bool adapter_yield = esp_lv_adapter_display_notify_color_trans_done_from_isr(s_display);
+    return adapter_yield || (need_yield == pdTRUE);
+}
+
+/**
  * Custom draw bitmap callback for 16-bit I80 panels.
  * ESP32-S3 I80 DMA sends low-address byte on D[15:8] (big-endian wire order),
  * but LVGL renders RGB565 in native little-endian.  Swap bytes before sending.
@@ -1508,13 +1864,92 @@ static esp_err_t i80_draw_bitmap_swap(lv_display_t *disp,
                         ESP_ERR_INVALID_ARG, TAG, "invalid I80 draw area");
     const uint32_t pixel_count = (uint32_t)(x_end - x_start) * (uint32_t)(y_end - y_start);
     const size_t transfer_bytes = pixel_count * sizeof(uint16_t);
-    ESP_RETURN_ON_FALSE(s_i80_draw_buffer && transfer_bytes <= s_i80_draw_buffer_bytes,
+    ESP_RETURN_ON_FALSE(s_i80_draw_buffer[0] && transfer_bytes <= s_i80_draw_buffer_bytes,
                         ESP_ERR_INVALID_SIZE, TAG, "I80 draw area exceeds DMA buffer");
 
-    /* The adapter releases this slot only from the I80 color-transfer callback. */
-    memcpy(s_i80_draw_buffer, color_map, transfer_bytes);
-    lv_draw_sw_rgb565_swap(s_i80_draw_buffer, pixel_count);
-    return esp_lcd_panel_draw_bitmap(panel, x_start, y_start, x_end, y_end, s_i80_draw_buffer);
+    /* The partial path always uses bounce buffer 0, so it must wait for the previous
+     * transfer to release it. Without that wait the memcpy below can overwrite rows
+     * the panel is still shifting out, which shows up as a torn or shifted picture. */
+    if (i80_trans_pending() > 0U && s_i80_trans_done_sem &&
+        xSemaphoreTake(s_i80_trans_done_sem, pdMS_TO_TICKS(I80_TRANS_DONE_WAIT_MS)) != pdTRUE) {
+        ESP_LOGW(TAG, "I80 transfer did not finish within %u ms", (unsigned)I80_TRANS_DONE_WAIT_MS);
+    }
+
+    memcpy(s_i80_draw_buffer[0], color_map, transfer_bytes);
+    lv_draw_sw_rgb565_swap(s_i80_draw_buffer[0], pixel_count);
+    const esp_err_t ret =
+        esp_lcd_panel_draw_bitmap(panel, x_start, y_start, x_end, y_end, s_i80_draw_buffer[0]);
+    if (ret == ESP_OK) {
+        i80_trans_started();
+    }
+    return ret;
+}
+
+/**
+ * Custom draw bitmap callback for the full-frame I80 path.
+ *
+ * LVGL renders the whole frame into one PSRAM draw buffer, so this callback sees
+ * a single full-width area instead of 40-row bands.  The adapter has already
+ * byte-swapped the RGB565 pixels once, so copying into an internal bounce buffer
+ * and swapping again submits exactly the wire order the partial path uses.
+ *
+ * Bounce buffers are rotated: the copy for chunk N+1 runs while the DMA for
+ * chunk N is still reading its buffer, so the transfer cost largely hides behind
+ * the copy instead of adding to it.  The callback returns once the last chunk is
+ * submitted; the LVGL draw buffer is already fully copied out at that point, so
+ * the panel keeps draining while LVGL renders the next frame.
+ */
+static esp_err_t i80_draw_bitmap_full_frame(lv_display_t *disp,
+                                            esp_lcd_panel_handle_t panel,
+                                            int x_start, int y_start,
+                                            int x_end, int y_end,
+                                            const void *color_map, void *user_ctx)
+{
+    (void)disp;
+    (void)user_ctx;
+    ESP_RETURN_ON_FALSE(color_map && x_end > x_start && y_end > y_start,
+                        ESP_ERR_INVALID_ARG, TAG, "invalid I80 draw area");
+    const size_t row_bytes = (size_t)(x_end - x_start) * sizeof(uint16_t);
+    ESP_RETURN_ON_FALSE(s_i80_draw_buffer[0] && row_bytes > 0U &&
+                            row_bytes <= s_i80_draw_buffer_bytes,
+                        ESP_ERR_INVALID_SIZE, TAG, "I80 draw row exceeds DMA buffer");
+    const int chunk_rows = (int)(s_i80_draw_buffer_bytes / row_bytes);
+    const uint8_t *src = (const uint8_t *)color_map;
+    int chunk = 0;
+
+    /* The previous frame's tail may still be on the bus, and it holds the bounce
+     * buffers this call is about to rotate. Drain it before reusing them. */
+    while (i80_trans_pending() > 0U) {
+        if (!s_i80_trans_done_sem ||
+            xSemaphoreTake(s_i80_trans_done_sem, pdMS_TO_TICKS(I80_TRANS_DONE_WAIT_MS)) != pdTRUE) {
+            ESP_LOGW(TAG, "I80 transfer did not finish within %u ms", (unsigned)I80_TRANS_DONE_WAIT_MS);
+            break;
+        }
+    }
+
+    for (int y = y_start; y < y_end; y += chunk_rows, chunk++) {
+        const int rows = (y_end - y) < chunk_rows ? (y_end - y) : chunk_rows;
+        const size_t chunk_bytes = row_bytes * (size_t)rows;
+        void *const dst = s_i80_draw_buffer[chunk % I80_BOUNCE_BUFFER_COUNT];
+
+        /* Rotate the buffers: this one was used two chunks ago, so its transfer is
+         * the oldest one still in flight. Waiting here lets the copy of chunk N+1
+         * overlap the DMA of chunk N. */
+        if (chunk >= I80_BOUNCE_BUFFER_COUNT && s_i80_trans_done_sem &&
+            xSemaphoreTake(s_i80_trans_done_sem, pdMS_TO_TICKS(I80_TRANS_DONE_WAIT_MS)) != pdTRUE) {
+            ESP_LOGW(TAG, "I80 transfer did not finish within %u ms", (unsigned)I80_TRANS_DONE_WAIT_MS);
+        }
+
+        memcpy(dst, src, chunk_bytes);
+        lv_draw_sw_rgb565_swap(dst, (uint32_t)rows * (uint32_t)(x_end - x_start));
+        const esp_err_t ret = esp_lcd_panel_draw_bitmap(panel, x_start, y, x_end, y + rows, dst);
+        if (ret != ESP_OK) {
+            return ret;
+        }
+        i80_trans_started();
+        src += chunk_bytes;
+    }
+    return ESP_OK;
 }
 #endif
 
@@ -1627,21 +2062,21 @@ static esp_err_t init_panel_i80(const esp_bms_lvgl_bridge_config_t *config,
 #endif
 #if ESP_BMS_PROFILE_PANEL_ST7796
     if (config->panel_driver == ESP_BMS_LVGL_PANEL_ST7796) {
-        if (!full_refresh) {
-            s_i80_draw_buffer = esp_lcd_i80_alloc_draw_buffer(s_panel_io, (size_t)max_transfer_sz,
-                                                               MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
-            ESP_RETURN_ON_FALSE(s_i80_draw_buffer, ESP_ERR_NO_MEM, TAG,
+        /* Both I80 paths submit through internal DMA bounce buffers: the I80 DMA
+         * cannot read a PSRAM source reliably. Partial mode fills buffer 0 once
+         * per flush; the full-frame path rotates all buffers so a copy overlaps
+         * the transfer in flight, and only then needs the second one. */
+        const uint8_t buffer_count = full_refresh ? I80_BOUNCE_BUFFER_COUNT : 1U;
+        s_i80_draw_buffer_bytes = (size_t)max_transfer_sz;
+        for (uint8_t i = 0; i < buffer_count; ++i) {
+            s_i80_draw_buffer[i] = esp_lcd_i80_alloc_draw_buffer(s_panel_io, s_i80_draw_buffer_bytes,
+                                                                 MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+            ESP_RETURN_ON_FALSE(s_i80_draw_buffer[i], ESP_ERR_NO_MEM, TAG,
                                 "allocate I80 internal DMA draw buffer failed");
-            s_i80_draw_buffer_bytes = (size_t)max_transfer_sz;
-            ESP_LOGI(TAG, "I80 RD pin=%d, internal DMA draw buffer=%u", config->pin_rd,
-                     (unsigned)s_i80_draw_buffer_bytes);
-        } else {
-            /* Full-refresh mode sends LVGL buffers straight to the panel in
-             * RGB565_SWAPPED order; the byte-swap bounce buffer is not used. */
-            s_i80_draw_buffer = NULL;
-            s_i80_draw_buffer_bytes = 0;
-            ESP_LOGI(TAG, "I80 RD pin=%d, full-refresh mode (no bounce buffer)", config->pin_rd);
         }
+        ESP_LOGI(TAG, "I80 RD pin=%d, internal DMA draw buffers=%u x %u (%s)", config->pin_rd,
+                 (unsigned)buffer_count, (unsigned)s_i80_draw_buffer_bytes,
+                 full_refresh ? "full-frame" : "partial");
         return esp_lcd_new_panel_st7796(s_panel_io, &panel_config, &s_panel);
     }
  #endif
@@ -1694,20 +2129,22 @@ esp_err_t esp_bms_lvgl_bridge_init(const esp_bms_lvgl_bridge_config_t *config)
     const size_t full_frame_bytes = (size_t)hres * vres * sizeof(uint16_t);
     size_t psram_free = 0;
     size_t psram_largest = 0;
-    /* Full-screen single-buffered refresh on 16-bit I80 panels with PSRAM:
-     * every frame renders into a full-screen PSRAM buffer and the panel
-     * updates in one full-frame pass, so page drags/carousel transitions no
-     * longer refresh in visible row bands.
+    /* Full-frame refresh on 16-bit I80 panels with PSRAM: every frame renders
+     * into a full-screen PSRAM buffer and the panel updates in a sweep of
+     * back-to-back transfers, so page drags and carousel transitions no longer
+     * refresh in visible 40-row bands.
      *
-     * The adapter's DOUBLE_FULL tear-avoidance modes are RGB/MIPI-only, and
-     * NONE-mode double buffering deadlocks: display_bridge_v9_flush_default
-     * never calls lv_display_flush_ready on success, so with two buffers LVGL
-     * blocks forever in wait_for_flushing().  Single buffering avoids that
-     * (LVGL only waits when double buffered) and stays safe in practice
-     * because a full-frame SW render takes longer than the I80 DMA transfer.
+     * The frame still goes through the internal DMA bounce buffers (a PSRAM
+     * source garbles the panel) and those buffers rotate, so each copy overlaps
+     * the transfer already in flight. With two LVGL draw buffers LVGL can also
+     * start rendering the next frame while the last chunk drains.
      *
-     * The hardware byte swizzle flag must stay off: LVGL renders
-     * RGB565_SWAPPED directly, and a second hardware swap would garble. */
+     * The adapter's DOUBLE_FULL/TRIPLE_FULL tear-avoidance modes stay unused:
+     * they are RGB/MIPI-only and need panel frame buffers.
+     *
+     * The hardware byte swizzle flag must stay off: the draw callback performs
+     * the RGB565 byte swap in software, and a second hardware swap would
+     * garble the colors. */
     const bool use_full_refresh =
         LVGL_FULL_REFRESH_DOUBLE_BUFFER &&
         config->display_bus == ESP_BMS_LVGL_DISPLAY_BUS_I80 &&
@@ -1715,13 +2152,21 @@ esp_err_t esp_bms_lvgl_bridge_init(const esp_bms_lvgl_bridge_config_t *config)
         !config->i80_swap_color_bytes &&
         psram_can_hold_lvgl_buffers(full_frame_bytes, true, &psram_free, &psram_largest);
     const uint16_t effective_buffer_height = use_full_refresh ? vres : draw_buffer_height;
-    const int max_transfer_sz = (int)(use_full_refresh ? full_frame_bytes : draw_buffer_bytes);
+    /* Full-frame mode renders the whole screen but still submits through the
+     * internal DMA bounce buffer, so the transfer size is one chunk, not a frame. */
+    const size_t full_frame_chunk_bytes =
+        (size_t)hres * LVGL_FULL_FRAME_CHUNK_ROWS * sizeof(uint16_t);
+    const int max_transfer_sz =
+        (int)(use_full_refresh ? full_frame_chunk_bytes : draw_buffer_bytes);
     bool use_psram_buffers = false;
     bool use_double_buffer = false;
     if (use_full_refresh) {
         use_psram_buffers = true;
-        /* Keep single buffering: see the deadlock note above. */
-        use_double_buffer = false;
+        /* Two full-screen PSRAM buffers let LVGL start the next frame while the
+         * last DMA chunk is still draining. The draw callback has already copied
+         * the finished frame out of its buffer by then, so nothing races. */
+        use_double_buffer = LVGL_REQUIRE_DOUBLE_BUFFER &&
+                            psram_can_hold_lvgl_buffers(full_frame_bytes, true, NULL, NULL);
     } else {
         use_psram_buffers = psram_can_hold_lvgl_buffers(draw_buffer_bytes,
                                                         false,
@@ -1782,11 +2227,6 @@ esp_err_t esp_bms_lvgl_bridge_init(const esp_bms_lvgl_bridge_config_t *config)
     display_config.profile.require_double_buffer = use_double_buffer;
     s_display = esp_lv_adapter_register_display(&display_config);
     ESP_RETURN_ON_FALSE(s_display, ESP_FAIL, TAG, "register adapter display failed");
-    if (use_full_refresh) {
-        /* Render directly in the I80 big-endian wire order so the flush path
-         * can send LVGL buffers to the panel without a per-frame byte swap. */
-        lv_display_set_color_format(s_display, LV_COLOR_FORMAT_RGB565_SWAPPED);
-    }
     esp_bms_lvgl_bridge_reset_metrics();
     lv_display_add_event_cb(s_display, bridge_metrics_event_cb, LV_EVENT_INVALIDATE_AREA, NULL);
     lv_display_add_event_cb(s_display, bridge_metrics_event_cb, LV_EVENT_RENDER_START, NULL);
@@ -1796,17 +2236,35 @@ esp_err_t esp_bms_lvgl_bridge_init(const esp_bms_lvgl_bridge_config_t *config)
     lv_display_add_event_cb(s_display, bridge_metrics_event_cb, LV_EVENT_FLUSH_WAIT_START, NULL);
     lv_display_add_event_cb(s_display, bridge_metrics_event_cb, LV_EVENT_FLUSH_WAIT_FINISH, NULL);
 #if ESP_BMS_PROFILE_PANEL_ST7796
-    /* ESP32-S3 I80 16-bit DMA sends the low-address byte on D[15:8] (big-endian
-     * wire order).  In partial-refresh mode LVGL renders RGB565 in native
-     * little-endian, so we byte-swap each pixel in our custom draw callback
-     * before sending to the panel.  Full-refresh mode renders RGB565_SWAPPED
-     * instead and bypasses this callback entirely. */
-    if (config->display_bus == ESP_BMS_LVGL_DISPLAY_BUS_I80 && !use_full_refresh) {
+    /* Both I80 paths submit the same wire order: the adapter byte-swaps the
+     * RGB565 frame once, so the bridge swaps it back while copying into the
+     * internal DMA bounce buffer.
+     *
+     * Partial mode copies one band per flush; full-frame mode copies whole-frame
+     * chunks. Both reuse that one buffer, so both need the transfer-done hook to
+     * know when the DMA has released it. */
+    if (config->display_bus == ESP_BMS_LVGL_DISPLAY_BUS_I80) {
         const esp_lv_adapter_draw_bitmap_callbacks_t cbs = {
-            .custom_draw_bitmap = i80_draw_bitmap_swap,
+            .custom_draw_bitmap = use_full_refresh ? i80_draw_bitmap_full_frame
+                                                   : i80_draw_bitmap_swap,
         };
         ESP_RETURN_ON_ERROR(esp_lv_adapter_set_draw_bitmap_callbacks(s_display, &cbs, NULL),
                             TAG, "set draw bitmap callbacks failed");
+
+        /* Take over the I80 completion hook so the draw callbacks can wait for
+         * the DMA to release the shared buffer before refilling it. Registered
+         * after the adapter so it replaces the adapter's hook; the hook forwards
+         * to the adapter's public notify API to keep its bookkeeping intact. */
+        if (!s_i80_trans_done_sem) {
+            s_i80_trans_done_sem = xSemaphoreCreateBinary();
+        }
+        ESP_RETURN_ON_FALSE(s_i80_trans_done_sem, ESP_ERR_NO_MEM, TAG,
+                            "I80 completion semaphore allocation failed");
+        const esp_lcd_panel_io_callbacks_t io_cbs = {
+            .on_color_trans_done = i80_color_trans_done,
+        };
+        ESP_RETURN_ON_ERROR(esp_lcd_panel_io_register_event_callbacks(s_panel_io, &io_cbs, NULL),
+                            TAG, "register I80 completion callback failed");
     }
 #endif
 
@@ -1930,6 +2388,8 @@ esp_err_t esp_bms_lvgl_bridge_present_jpeg(uint32_t sequence,
     if (metrics) {
         metrics->decode_us = cast_elapsed_us(decode_started_us);
     }
+    /* Overlay the touch feedback onto the decoded frame before it reaches the panel. */
+    cast_overlay_touch(s_cast_frame_buffer, expected_width, expected_height);
 
     const int64_t present_started_us = esp_timer_get_time();
     ESP_RETURN_ON_ERROR(esp_bms_lvgl_bridge_set_rotation(rotation), TAG,

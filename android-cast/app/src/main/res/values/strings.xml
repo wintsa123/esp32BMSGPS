@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">两轮智控</string>
+    <string name="cast_accessibility_label">两轮智控屏幕控制</string>
+    <string name="cast_accessibility_description">投屏时允许用设备触摸屏点击和滑动手机屏幕。</string>
+</resources>

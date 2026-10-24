@@ -82,6 +82,8 @@ esp_err_t esp_bms_display_service_get_logical_resolution(
     esp_bms_display_rotation_t rotation,
     uint16_t *width,
     uint16_t *height);
+/* Cast-mode touch readback; only valid while the display service is casting. */
+esp_err_t esp_bms_display_service_read_cast_touch(uint16_t *x, uint16_t *y, bool *pressed);
 
 #ifdef __cplusplus
 }

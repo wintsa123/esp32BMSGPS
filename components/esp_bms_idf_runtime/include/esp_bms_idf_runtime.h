@@ -13,6 +13,7 @@
 #include "esp_fardriver_protocol.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
+#include "freertos/task.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -240,6 +241,11 @@ struct esp_bms_idf_runtime {
     bool capacity_estimate_dirty;
     bool ble_media_hid_input_report_subscribed;
     bool ble_media_hid_worker_started;
+    httpd_handle_t cast_httpd;
+    SemaphoreHandle_t cast_tx_lock;
+    TaskHandle_t cast_touch_task;
+    bool cast_touch_task_running;
+    bool cast_exit_requested;
     int cast_socket_fd;
     uint8_t *cast_receive_buffer;
     uint8_t cast_rotation;

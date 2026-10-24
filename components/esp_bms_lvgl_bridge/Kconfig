@@ -52,48 +52,56 @@ menu "ESP BMS LVGL Bridge"
             it for A/B testing on those targets.
 
             On 16-bit I80 boards with PSRAM this is superseded by
-            ESP_BMS_LVGL_BRIDGE_FULL_REFRESH_DOUBLE_BUFFER, which uses two
-            full-screen buffers instead of the partial-refresh pair.
+            ESP_BMS_LVGL_BRIDGE_FULL_REFRESH_DOUBLE_BUFFER, which renders one
+            full-screen buffer per frame instead of a partial-refresh pair.
 
     config ESP_BMS_LVGL_BRIDGE_FULL_REFRESH_DOUBLE_BUFFER
-        bool "Full-screen refresh with PSRAM (16-bit I80)"
+        bool "Full-frame refresh with PSRAM (16-bit I80)"
         default n
         help
             Use a full-screen PSRAM draw buffer on 16-bit I80 panels (e.g.
-            ST7796U on ESP32-S3) when PSRAM can hold a full-screen RGB565
+            ST7796 on ESP32-S3) when PSRAM can hold a full-screen RGB565
             buffer.
 
             Every frame renders into the full-screen buffer and the panel
-            updates in one full-frame pass. This removes the visible row-band
-            refresh ("screen moves in three rows") during page drags and
-            carousel transitions.
+            updates in a sweep of back-to-back transfers. This removes the
+            visible row-band refresh ("the picture moves in bands") during page
+            drags and carousel transitions.
 
-            LVGL output switches to RGB565_SWAPPED so the rendered byte order
-            already matches the I80 big-endian wire order; the per-frame byte
-            swap and the internal DMA bounce buffer are dropped entirely.
+            The frame still travels through internal DMA bounce buffers, in
+            chunks of LVGL_FULL_FRAME_CHUNK_ROWS rows: the I80 DMA cannot read a
+            PSRAM draw buffer reliably and shows garbage on the panel. The draw
+            callback swaps the RGB565 bytes while copying, so the submitted wire
+            order matches the partial-refresh path.
 
-            The buffer stays single-buffered: the LVGL adapter's NONE-mode
-            double buffering never signals flush completion and would freeze
-            the UI (wait_for_flushing deadlock). The option name is kept for
-            backward compatibility.
+            Two bounce buffers rotate, so copying chunk N+1 overlaps the transfer
+            of chunk N, and LVGL keeps two full-screen draw buffers so it can
+            start the next frame while the last chunk drains. Total internal DMA
+            RAM is the same as the single larger bounce buffer it replaces; the
+            extra LVGL buffer costs one more full-screen PSRAM allocation.
+
+            The adapter's DOUBLE_FULL and TRIPLE_FULL tear-avoidance modes stay
+            unused: they are RGB/MIPI-only and need panel frame buffers. The
+            option name is kept for backward compatibility.
 
             Requires PSRAM. On SPI panels, 8-bit I80, or targets without PSRAM
             this option has no effect and the partial-refresh path is used.
 
     config ESP_BMS_LVGL_BRIDGE_SKIP_RGB565_SWAP
-        bool "Skip adapter RGB565 byte swap (16-bit I80)"
+        bool "Record the 16-bit I80 wire order (no effect on the draw path)"
         default y if IDF_TARGET_ESP32S3
         default n
         help
-            The esp_lvgl_adapter flush callback byte-swaps RGB565 pixel data
-            for 8-bit SPI/I80 panels where bytes are transmitted sequentially.
-            On a 16-bit parallel I80 bus each pixel is a single atomic 16-bit
-            transfer, so the swap is incorrect and produces garbled colors.
-            Enable this to skip the swap.
+            Records that the display uses a 16-bit parallel I80 bus, where each
+            pixel is one atomic 16-bit transfer, instead of an 8-bit SPI/I80 bus
+            that shifts bytes out sequentially.
 
-            This project's ESP32-S3 boards use a 16-bit I80 panel (ST7796U),
-            so the default is to skip the swap. Classic ESP32 boards use an
-            8-bit SPI panel (ST7789) which needs the byte swap, so the default
-            there is to perform it. Override manually when the bus differs.
+            The byte order is not selected here: esp_bms_lvgl_bridge installs its
+            own draw-bitmap callback, which performs the RGB565 byte swap on both
+            the partial and the full-frame I80 path. This option only keeps the
+            documented convention for existing sdkconfig files.
+
+            This project's ESP32-S3 boards use a 16-bit I80 panel (ST7796);
+            classic ESP32 boards use an 8-bit SPI panel (ST7789).
 
 endmenu
