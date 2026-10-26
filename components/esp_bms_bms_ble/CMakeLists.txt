@@ -3,6 +3,7 @@ idf_component_register(
          "protocols/ant/esp_bms_ant_protocol.c"
          "protocols/bluebabe/esp_bms_bluebabe_protocol.c"
          "protocols/daly/esp_bms_daly_protocol.c"
+         "protocols/em02/esp_bms_em02_protocol.c"
          "protocols/jbd/esp_bms_jbd_protocol.c"
          "protocols/jk/esp_bms_jk_protocol.c"
          "protocols/mingtang/esp_bms_mingtang_protocol.c"

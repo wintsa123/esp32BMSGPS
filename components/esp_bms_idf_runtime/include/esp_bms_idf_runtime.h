@@ -47,6 +47,7 @@ typedef enum {
     ESP_BMS_IDF_BMS_TYPE_YANYANG = 4,
     ESP_BMS_IDF_BMS_TYPE_BLUEBABE = 5,
     ESP_BMS_IDF_BMS_TYPE_MINGTANG = 6,
+    ESP_BMS_IDF_BMS_TYPE_EM02 = 7,
 } esp_bms_idf_bms_type_t;
 
 #define ESP_BMS_IDF_BMS_SCAN_MAX_CANDIDATES ESP_BMS_BMS_SCAN_MAX_CANDIDATES
@@ -281,6 +282,7 @@ struct esp_bms_idf_runtime {
     uint8_t http_pending_volume_percent;
     uint8_t http_pending_bms_type;
     uint8_t http_pending_controller_type;
+    char http_pending_bluebabe_code[7];
     uint8_t capacity_estimate_bms_type;
     char http_pending_setup_ap_password[9];
     char http_pending_bms_bound_mac[18];

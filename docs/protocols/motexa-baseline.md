@@ -76,7 +76,7 @@
 
 ---
 
-## 2. 保护板清单（本项目 7 种）
+## 2. 保护板清单（本项目 8 种）
 
 | 本项目枚举 | Motexa 协议 id | 标签 | BLE | 模块 |
 | --- | --- | --- | --- | --- |
@@ -87,8 +87,20 @@
 | `ESP_BMS_IDF_BMS_TYPE_YANYANG` | `yanyang_bms_modbus` | 彦阳 BMS | 128 位自定义 | `protocols/yanyang` |
 | `ESP_BMS_IDF_BMS_TYPE_BLUEBABE` | `bluebabe_meter` | 蓝宝电量模块 | `FFE0`/`FFE1`/`FFE2` | `protocols/bluebabe` |
 | `ESP_BMS_IDF_BMS_TYPE_MINGTANG` | `mingtang_bms` | 明唐保护板 | `FA00`，特征按属性发现 | `protocols/mingtang` |
+| `ESP_BMS_IDF_BMS_TYPE_EM02` | `luxing-em02` | 鹿行 EM02 | `FFE0`/`FFE1`/`FFE2` | `protocols/em02` |
 
-### 2.1 新移植的两个保护板
+**鹿行 EM02（仅只读）**
+
+- GATT 服务 `FFE0`，通知 `FFE1`，带响应写入 `FFE2`。
+- 轮询请求固定为 `01 03 0F A0 00 59 86 C6`、`01 03 0F FC 00 36 06 F8`、
+  `01 03 10 68 00 2D 00 CB`、`01 03 10 38 00 30 C0 D3`。
+- 响应使用 Modbus RTU CRC16，`frame_len = byte_count + 5`；byte-count 为
+  `178/108/90/96`，对应完整帧 `183/113/95/101`。身份响应偏移 67 的型号字段必须包含
+  `EM02` 或 `LX-EM02`，否则不发布遥测。实时页按源码取总压、电流、单体和 SOC；额定容量在
+  `105`，剩余容量按额定容量×SOC 计算；MOS/BAL 标志和值在 `5..8`，计数温度从 `11` 开始。
+  字段偏移来自 Motexa 2.7.0 静态源码，EM02 实体设备仍待真机验证。
+
+### 2.1 新移植的保护板
 
 **蓝宝电量模块（bluebabe）**
 
@@ -132,7 +144,7 @@
 - 控制器型号：LVGL 设置 →「控制器」→「控制器型号」（17 项：自动识别 + 16 型号），
   Web 设置 →「设备」→「控制器型号」；持久化 NVS `ctl_type`，快照字段
   `controller_type`，JSON `controller_type`。
-- 保护板类型：新增「蓝宝电量模块」「明唐保护板」两个选项（LVGL + Web + 清单接口）。
+- 保护板类型：支持「蓝宝电量模块」「明唐保护板」「鹿行 EM02」（LVGL + Web + 清单接口）。
 - 蓝宝配对码：NVS `bb_code`，Web 配置项 `bluebabe_code`（6 位数字）。
 - 切换控制器型号会断开当前连接并按新型号重连已绑定设备（`runtime_select_controller_type`）。
 

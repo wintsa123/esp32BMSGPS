@@ -1,0 +1,8 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend verification requirements."}
+{"file":".trellis/spec/backend/ble-peripheral-notification-security.md","reason":"Validate BLE receive behavior without weakening security."}
+{"file":".trellis/spec/backend/jk-bms-protocol.md","reason":"Check BMS protocol framing and selector compatibility."}
+{"file":".trellis/spec/backend/jbd-bms-protocol.md","reason":"Check parser bounds, resynchronization, and protocol tests."}
+{"file":".trellis/spec/frontend/index.md","reason":"Frontend verification entry point."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Check embedded Web API contract and UI behavior."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Check LVGL disabled option behavior and target layout constraints."}
+{"file":".trellis/tasks/10-26-em02-bms-ble-protocol-audit/research/protocol-and-config-findings.md","reason":"Cross-check implementation and review conclusions against source evidence."}

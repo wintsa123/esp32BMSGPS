@@ -369,6 +369,9 @@ void settings_bms_type_option_event_cb(lv_event_t *event)
     if (selected >= ARRAY_SIZE(SETTINGS_BMS_TYPE_ACTIONS)) {
         return;
     }
+    if (selected == 5U) {
+        return;
+    }
 
     ESP_LOGI(TAG, "[bms-ui] BMS type selected: %s", SETTINGS_BMS_TYPE_LABELS[selected]);
     if (!UI_FLAG(LAST_SNAPSHOT_VALID) || settings_current_snapshot()->bms_type != selected) {

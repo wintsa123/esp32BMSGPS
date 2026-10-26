@@ -582,8 +582,14 @@ void settings_show_bms_type_picker(void)
                                text_font);
         lv_label_set_text(text, SETTINGS_BMS_TYPE_LABELS[index]);
         lv_obj_set_style_text_color(text,
-                                    active ? COLOR_SWITCH_ACTIVE : COLOR_SETTINGS_TEXT,
+                                    active ? COLOR_SWITCH_ACTIVE :
+                                    index == 5U
+                                        ? lv_color_mix(COLOR_SETTINGS_TEXT, COLOR_SETTINGS_CARD, 45)
+                                        : COLOR_SETTINGS_TEXT,
                                     LV_PART_MAIN);
+        if (index == 5U) {
+            lv_obj_clear_flag(row, LV_OBJ_FLAG_CLICKABLE);
+        }
         if (active) {
             lv_obj_t *check = label(row, card_w - 36, (row_h - text_h) / 2, 24, text_h,
                                     &lv_font_montserrat_14);

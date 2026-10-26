@@ -915,6 +915,7 @@ const char *const SETTINGS_BMS_TYPE_LABELS[SETTINGS_BMS_TYPE_COUNT] = {
     "彦阳 BMS",
     "蓝宝电量模块",
     "明唐保护板",
+    "鹿行 EM02",
 };
 
 const char *const SETTINGS_BMS_TYPE_LABELS_EN[SETTINGS_BMS_TYPE_COUNT] = {
@@ -925,6 +926,7 @@ const char *const SETTINGS_BMS_TYPE_LABELS_EN[SETTINGS_BMS_TYPE_COUNT] = {
     "Yanyang BMS",
     "Bluebabe meter",
     "Mingtang BMS",
+    "Luxing EM02",
 };
 
 const esp_bms_lvgl_action_t SETTINGS_BMS_TYPE_ACTIONS[SETTINGS_BMS_TYPE_COUNT] = {
@@ -935,6 +937,7 @@ const esp_bms_lvgl_action_t SETTINGS_BMS_TYPE_ACTIONS[SETTINGS_BMS_TYPE_COUNT] =
     ESP_BMS_LVGL_ACTION_SELECT_BMS_YANYANG,
     ESP_BMS_LVGL_ACTION_SELECT_BMS_BLUEBABE,
     ESP_BMS_LVGL_ACTION_SELECT_BMS_MINGTANG,
+    ESP_BMS_LVGL_ACTION_SELECT_BMS_EM02,
 };
 
 /* 控制器型号：顺序与 esp_bms_ctrl_type_t 对齐（0=AUTO，其后与注册表一致）。 */

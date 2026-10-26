@@ -33,7 +33,7 @@ static const char *TAG = "esp_bms_controller_ble";
 /* 在线后的操作周期：保活与轮询读包按此节奏交替 */
 #define CONTROLLER_ONLINE_PERIOD_MS 1000U
 /* 通知缓冲：型号之间的帧长与打包方式不同，按滑动解析需要的最大长度预留 */
-#define CONTROLLER_NOTIFY_BUFFER_LEN 128U
+#define CONTROLLER_NOTIFY_BUFFER_LEN 196U /* 4-byte envelope + 192-byte 甲胄 payload */
 #define CONTROLLER_TIRE_RIM_MIN ESP_BMS_CONTROLLER_TIRE_RIM_MIN
 #define CONTROLLER_TIRE_RIM_MAX ESP_BMS_CONTROLLER_TIRE_RIM_MAX
 #define CONTROLLER_TIRE_ASPECT_MIN ESP_BMS_CONTROLLER_TIRE_ASPECT_MIN

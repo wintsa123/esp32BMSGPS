@@ -19,6 +19,7 @@
 #include "protocols/ant/esp_bms_ant_protocol.h"
 #include "protocols/bluebabe/esp_bms_bluebabe_protocol.h"
 #include "protocols/daly/esp_bms_daly_protocol.h"
+#include "protocols/em02/esp_bms_em02_protocol.h"
 #include "protocols/esp_bms_bms_protocol.h"
 #include "protocols/jbd/esp_bms_jbd_protocol.h"
 #include "protocols/jk/esp_bms_jk_protocol.h"
@@ -360,6 +361,11 @@ static bool bms_is_mingtang(const esp_bms_idf_runtime_t *runtime)
     return runtime && runtime->bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_MINGTANG;
 }
 
+static bool bms_is_em02(const esp_bms_idf_runtime_t *runtime)
+{
+    return runtime && runtime->bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_EM02;
+}
+
 static bool bms_ant_uses_old_protocol(const esp_bms_idf_runtime_t *runtime)
 {
     return runtime && (runtime->bms_poll_index == (uint8_t)ANT_BLE_PROTOCOL_PROBE_OLD ||
@@ -369,7 +375,7 @@ static bool bms_ant_uses_old_protocol(const esp_bms_idf_runtime_t *runtime)
 static bool bms_has_separate_write_characteristic(const esp_bms_idf_runtime_t *runtime)
 {
     return bms_is_yanyang(runtime) || bms_is_jbd(runtime) || bms_is_daly(runtime) ||
-           bms_is_bluebabe(runtime) || bms_is_mingtang(runtime);
+           bms_is_bluebabe(runtime) || bms_is_mingtang(runtime) || bms_is_em02(runtime);
 }
 
 static bool bms_is_jk_characteristic(const struct ble_gatt_chr *chr)
@@ -386,6 +392,9 @@ static uint16_t bms_service_uuid_16(const esp_bms_idf_runtime_t *runtime)
         return 0xFFF0U;
     }
     if (bms_is_bluebabe(runtime)) {
+        return 0xFFE0U;
+    }
+    if (bms_is_em02(runtime)) {
         return 0xFFE0U;
     }
     if (bms_is_mingtang(runtime)) {
@@ -474,6 +483,33 @@ static bool bms_frame_push(esp_bms_idf_runtime_t *runtime,
                                                    &telemetry);
         runtime->bms_frame_len = (uint16_t)stream_len;
         return !decoded || bms_apply_telemetry(runtime, &telemetry);
+    }
+    if (bms_is_em02(runtime)) {
+        size_t stream_len = runtime->bms_frame_len;
+        bool identity_known = false;
+        const uint8_t response_index = runtime->bms_poll_index == 0U
+                                           ? 3U
+                                           : (uint8_t)((runtime->bms_poll_index + 3U) % 4U);
+        const bool decoded = esp_bms_em02_feed(runtime->bms_frame, &stream_len,
+                                               sizeof(runtime->bms_frame), chunk, chunk_len,
+                                               response_index, &identity_known, &telemetry);
+        runtime->bms_frame_len = (uint16_t)stream_len;
+        if (response_index == 0U) {
+            RUNTIME_SET_FLAG(runtime, BMS_DEVICE_INFO_KNOWN, identity_known);
+            /* A notification may contain only part of the Modbus response. Keep
+             * the link healthy while the parser retains that partial frame, but
+             * reject a complete response with an unknown model. */
+            return identity_known || (!decoded && runtime->bms_frame_len > 0U);
+        }
+        if (response_index >= 2U) {
+            /* These Motexa pages are CRC/length checked but not projected yet. */
+            return decoded || runtime->bms_frame_len > 0U;
+        }
+        if (!decoded) {
+            return runtime->bms_frame_len > 0U;
+        }
+        return RUNTIME_FLAG(runtime, BMS_DEVICE_INFO_KNOWN) &&
+               bms_apply_telemetry(runtime, &telemetry);
     }
     if (bms_is_mingtang(runtime)) {
         size_t stream_len = runtime->bms_frame_len;
@@ -734,6 +770,18 @@ static esp_err_t bms_send_poll_request(esp_bms_idf_runtime_t *runtime,
         }
         return ret;
     }
+    if (bms_is_em02(runtime)) {
+        uint8_t request[ESP_BMS_EM02_REQUEST_LEN] = { 0 };
+        if (!esp_bms_em02_poll_request(runtime->bms_poll_index % 4U, request)) {
+            return ESP_FAIL;
+        }
+        const esp_err_t ret = bms_write_frame(runtime, request, sizeof(request));
+        if (ret == ESP_OK) {
+            runtime->bms_poll_index = (uint8_t)((runtime->bms_poll_index + 1U) % 4U);
+            runtime->bms_status_poll_elapsed_ms = 0U;
+        }
+        return ret;
+    }
     if (bms_is_mingtang(runtime)) {
         uint8_t request[24] = { 0 };
         size_t request_len = 0U;
@@ -879,8 +927,8 @@ static int bms_chr_cb(uint16_t conn_handle,
             } else if (ble_uuid_cmp(&chr->uuid.u, &notify_uuid.u) == 0) {
                 runtime->bms_char_val_handle = chr->val_handle;
             }
-        } else if (bms_is_bluebabe(runtime)) {
-            /* 蓝宝：FFE1 通知、FFE2 写入 */
+        } else if (bms_is_bluebabe(runtime) || bms_is_em02(runtime)) {
+            /* Bluebabe/EM02: FFE1 notifications, FFE2 acknowledged writes. */
             const ble_uuid16_t write_uuid = BLE_UUID16_INIT(0xFFE2U);
             const ble_uuid16_t notify_uuid = BLE_UUID16_INIT(0xFFE1U);
             if (ble_uuid_cmp(&chr->uuid.u, &write_uuid.u) == 0) {

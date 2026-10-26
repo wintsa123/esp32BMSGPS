@@ -1,0 +1,9 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend coding entry point and quality checks."}
+{"file":".trellis/spec/backend/ble-peripheral-notification-security.md","reason":"NimBLE notification behavior and security constraints for central links."}
+{"file":".trellis/spec/backend/jk-bms-protocol.md","reason":"Existing BMS BLE framing, discovery, and protocol selection conventions."}
+{"file":".trellis/spec/backend/jbd-bms-protocol.md","reason":"Existing BMS stream assembly, parser bounds, and selftest conventions."}
+{"file":".trellis/spec/backend/controller-binding-persistence.md","reason":"Preserve binding and reconnect persistence behavior while extending BMS configuration."}
+{"file":".trellis/spec/frontend/index.md","reason":"Frontend layer entry point."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Embedded Web UI and API contract requirements."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"LVGL settings-row behavior, disabled interaction, and UI validation conventions."}
+{"file":".trellis/tasks/10-26-em02-bms-ble-protocol-audit/research/protocol-and-config-findings.md","reason":"Verified EM02 request vectors, framing lengths, current config gaps, and protocol evidence scope."}

@@ -1712,6 +1712,8 @@ static const char *runtime_bms_type_config_text(esp_bms_idf_bms_type_t type)
         return "bluebabe";
     case ESP_BMS_IDF_BMS_TYPE_MINGTANG:
         return "mingtang";
+    case ESP_BMS_IDF_BMS_TYPE_EM02:
+        return "em02";
     case ESP_BMS_IDF_BMS_TYPE_ANT:
     default:
         return "ant";
@@ -1746,6 +1748,10 @@ static bool runtime_parse_bms_type_config_text(const char *text, esp_bms_idf_bms
     }
     if (strcmp(text, "mingtang") == 0) {
         *out_type = ESP_BMS_IDF_BMS_TYPE_MINGTANG;
+        return true;
+    }
+    if (strcmp(text, "em02") == 0) {
+        *out_type = ESP_BMS_IDF_BMS_TYPE_EM02;
         return true;
     }
     return false;
@@ -1809,6 +1815,8 @@ static const char *runtime_bms_type_status_text(esp_bms_idf_bms_type_t type)
         return "BMS BB";
     case ESP_BMS_IDF_BMS_TYPE_MINGTANG:
         return "BMS MT";
+    case ESP_BMS_IDF_BMS_TYPE_EM02:
+        return "BMS EM02";
     case ESP_BMS_IDF_BMS_TYPE_ANT:
     default:
         return "BMS ANT";
@@ -1911,7 +1919,7 @@ static bool runtime_language_matches_policy(uint8_t language)
 
 static bool runtime_bms_type_matches_policy(uint8_t bms_type)
 {
-    return bms_type <= (uint8_t)ESP_BMS_IDF_BMS_TYPE_MINGTANG;
+    return bms_type <= (uint8_t)ESP_BMS_IDF_BMS_TYPE_EM02;
 }
 
 static bool runtime_bms_supports_capacity_estimate(uint8_t bms_type)
@@ -3308,7 +3316,8 @@ static bool runtime_set_pending_http_config(esp_bms_idf_runtime_t *runtime,
                                             esp_bms_speed_source_t speed_source,
                                             bool language_zh,
                                             esp_bms_idf_bms_type_t bms_type,
-                                            uint8_t controller_type)
+                                            uint8_t controller_type,
+                                            const char *bluebabe_code)
 {
     if (!runtime->http_pending_lock) {
         return false;
@@ -3325,6 +3334,9 @@ static bool runtime_set_pending_http_config(esp_bms_idf_runtime_t *runtime,
     RUNTIME_SET_FLAG(runtime, HTTP_PENDING_LANGUAGE_ZH, language_zh);
     runtime->http_pending_bms_type = (uint8_t)bms_type;
     runtime->http_pending_controller_type = controller_type;
+    runtime_copy_snapshot_text(runtime->http_pending_bluebabe_code,
+                               sizeof(runtime->http_pending_bluebabe_code),
+                               bluebabe_code ? bluebabe_code : runtime->bluebabe_code);
     RUNTIME_SET_FLAG(runtime, HTTP_CONFIG_PENDING, true);
 
     xSemaphoreGive(runtime->http_pending_lock);
@@ -3349,6 +3361,9 @@ bool esp_bms_idf_runtime_apply_pending_http_config(esp_bms_idf_runtime_t *runtim
     const bool language_zh = RUNTIME_FLAG(runtime, HTTP_PENDING_LANGUAGE_ZH);
     const uint8_t bms_type = runtime->http_pending_bms_type;
     const uint8_t controller_type = runtime->http_pending_controller_type;
+    char bluebabe_code[sizeof(runtime->bluebabe_code)] = { 0 };
+    runtime_copy_snapshot_text(bluebabe_code, sizeof(bluebabe_code),
+                               runtime->http_pending_bluebabe_code);
     RUNTIME_SET_FLAG(runtime, HTTP_CONFIG_PENDING, false);
     xSemaphoreGive(runtime->http_pending_lock);
 
@@ -3366,7 +3381,8 @@ bool esp_bms_idf_runtime_apply_pending_http_config(esp_bms_idf_runtime_t *runtim
                          runtime->snapshot.speed_unit != speed_unit ||
                          runtime->snapshot.speed_source != speed_source ||
                          RUNTIME_FLAG(runtime, LANGUAGE_ZH) != language_zh ||
-                         bms_type_changed || controller_type_changed;
+                         bms_type_changed || controller_type_changed ||
+                         strcmp(runtime->bluebabe_code, bluebabe_code) != 0;
     if (!changed) {
         ESP_LOGI(TAG, "[http] config consumed without value changes");
         return true;
@@ -3384,6 +3400,10 @@ bool esp_bms_idf_runtime_apply_pending_http_config(esp_bms_idf_runtime_t *runtim
     }
     if (controller_type_changed) {
         (void)runtime_select_controller_type(runtime, controller_type);
+    }
+    if (strcmp(runtime->bluebabe_code, bluebabe_code) != 0) {
+        memcpy(runtime->bluebabe_code, bluebabe_code, sizeof(runtime->bluebabe_code));
+        runtime->bluebabe_code[sizeof(runtime->bluebabe_code) - 1U] = '\0';
     }
     runtime_project_controller_snapshot(runtime);
     runtime_set_error(runtime, "HTTP CFG");
@@ -4050,7 +4070,7 @@ static bool runtime_config_json(esp_bms_idf_runtime_t *runtime, char *json, size
                                  "\"language\":\"%s\","
                                  "\"setup_ap_ssid\":\"%s\",\"setup_ap_password_saved\":%s,"
                                  "\"setup_ap_state\":\"%s\",\"bms_mac\":%s,\"controller_mac\":%s,\"bms_type\":\"%s\","
-                                 "\"controller_type\":\"%s\",\"bluebabe_code\":\"%s\"}",
+                                 "\"controller_type\":\"%s\",\"bluebabe_code_saved\":%s}",
                                  runtime->brightness_percent,
                                  runtime->volume_percent,
                                  runtime_rotation_config_text(runtime->display_rotation),
@@ -4066,7 +4086,7 @@ static bool runtime_config_json(esp_bms_idf_runtime_t *runtime, char *json, size
                                  controller_mac,
                                  runtime_bms_type_config_text((esp_bms_idf_bms_type_t)runtime->bms_type),
                                  runtime_controller_type_config_text(runtime->controller_type),
-                                 runtime->bluebabe_code);
+                                 runtime->bluebabe_code[0] == '\0' ? "false" : "true");
     return written >= 0 && (size_t)written < json_len;
 }
 
@@ -4130,7 +4150,7 @@ static bool runtime_settings_manifest_json(esp_bms_idf_runtime_t *runtime,
 #endif
     MANIFEST_ITEM("{\"id\":\"language\",\"kind\":\"select\",\"label\":{\"zh\":\"语言\",\"en\":\"Language\"},\"value\":\"%s\",\"options\":[{\"value\":\"zh\",\"label\":{\"zh\":\"中文\",\"en\":\"Chinese\"}},{\"value\":\"en\",\"label\":{\"zh\":\"英文\",\"en\":\"English\"}}]}", RUNTIME_FLAG(runtime, LANGUAGE_ZH) ? "zh" : "en");
 #if ESP_BMS_FEATURE_BMS
-    MANIFEST_ITEM("{\"id\":\"bms_type\",\"kind\":\"select\",\"label\":{\"zh\":\"保护板类型\",\"en\":\"BMS type\"},\"value\":\"%s\",\"options\":[{\"value\":\"ant\",\"label\":{\"zh\":\"蚂蚁 ANT\",\"en\":\"ANT\"}},{\"value\":\"jk\",\"label\":{\"zh\":\"极空 JK\",\"en\":\"JK\"}},{\"value\":\"jbd\",\"label\":{\"zh\":\"嘉佰达 JBD\",\"en\":\"JBD\"}},{\"value\":\"daly\",\"label\":{\"zh\":\"达锂 Daly\",\"en\":\"Daly\"}},{\"value\":\"yanyang\",\"label\":{\"zh\":\"彦阳 BMS\",\"en\":\"Yanyang BMS\"}},{\"value\":\"bluebabe\",\"label\":{\"zh\":\"蓝宝电量模块\",\"en\":\"Bluebabe meter\"}},{\"value\":\"mingtang\",\"label\":{\"zh\":\"明唐保护板\",\"en\":\"Mingtang BMS\"}}]}", runtime_bms_type_config_text((esp_bms_idf_bms_type_t)runtime->bms_type));
+    MANIFEST_ITEM("{\"id\":\"bms_type\",\"kind\":\"select\",\"label\":{\"zh\":\"保护板类型\",\"en\":\"BMS type\"},\"value\":\"%s\",\"options\":[{\"value\":\"ant\",\"label\":{\"zh\":\"蚂蚁 ANT\",\"en\":\"ANT\"}},{\"value\":\"jk\",\"label\":{\"zh\":\"极空 JK\",\"en\":\"JK\"}},{\"value\":\"jbd\",\"label\":{\"zh\":\"嘉佰达 JBD\",\"en\":\"JBD\"}},{\"value\":\"daly\",\"label\":{\"zh\":\"达锂 Daly\",\"en\":\"Daly\"}},{\"value\":\"yanyang\",\"label\":{\"zh\":\"彦阳 BMS\",\"en\":\"Yanyang BMS\"}},{\"value\":\"bluebabe\",\"label\":{\"zh\":\"蓝宝电量模块\",\"en\":\"Bluebabe meter\"}},{\"value\":\"mingtang\",\"label\":{\"zh\":\"明唐保护板\",\"en\":\"Mingtang BMS\"}},{\"value\":\"em02\",\"label\":{\"zh\":\"鹿行 EM02\",\"en\":\"Luxing EM02\"}}]}", runtime_bms_type_config_text((esp_bms_idf_bms_type_t)runtime->bms_type));
 #endif
 #if ESP_BMS_FEATURE_CONTROLLER
     MANIFEST_ITEM("{\"id\":\"controller_type\",\"kind\":\"select\",\"label\":{\"zh\":\"控制器型号\",\"en\":\"Controller model\"},\"value\":\"%s\",\"options\":%s}",
@@ -4256,6 +4276,7 @@ static int runtime_apply_config_json(esp_bms_idf_runtime_t *runtime,
     esp_bms_speed_source_t speed_source = runtime->snapshot.speed_source;
     bool language_zh = RUNTIME_FLAG(runtime, LANGUAGE_ZH);
     esp_bms_idf_bms_type_t bms_type = (esp_bms_idf_bms_type_t)runtime->bms_type;
+    char bluebabe_code[sizeof(runtime->bluebabe_code)] = { 0 };
 
     bool found = false;
     uint8_t parsed_u8 = 0;
@@ -4325,6 +4346,24 @@ static int runtime_apply_config_json(esp_bms_idf_runtime_t *runtime,
         CONFIG_REJECT("invalid BMS type");
     }
 
+    memset(parsed_text, 0, sizeof(parsed_text));
+    if (!runtime_json_get_string(body, "bluebabe_code", parsed_text, sizeof(parsed_text), &found)) {
+        CONFIG_REJECT("invalid Bluebabe code");
+    }
+    if (found && parsed_text[0] != '\0') {
+        if (strlen(parsed_text) != 6U) {
+            CONFIG_REJECT("invalid Bluebabe code");
+        }
+        for (size_t i = 0U; i < 6U; ++i) {
+            if (parsed_text[i] < '0' || parsed_text[i] > '9') {
+                CONFIG_REJECT("invalid Bluebabe code");
+            }
+        }
+        memcpy(bluebabe_code, parsed_text, sizeof(bluebabe_code));
+    } else {
+        memcpy(bluebabe_code, runtime->bluebabe_code, sizeof(bluebabe_code));
+    }
+
     uint8_t controller_type = runtime->controller_type;
     memset(parsed_text, 0, sizeof(parsed_text));
     if (!runtime_json_get_string(body, "controller_type", parsed_text, sizeof(parsed_text), &found)) {
@@ -4336,7 +4375,8 @@ static int runtime_apply_config_json(esp_bms_idf_runtime_t *runtime,
 
     if (!runtime_set_pending_http_config(runtime, brightness_percent, volume_percent,
                                          rotation, speed_unit, speed_source,
-                                         language_zh, bms_type, controller_type)) {
+                                         language_zh, bms_type, controller_type,
+                                         bluebabe_code)) {
         *message = "config queue failed";
         return 500;
     }
@@ -7021,10 +7061,13 @@ static bool runtime_action_feature_enabled(esp_bms_lvgl_action_t action)
     case ESP_BMS_LVGL_ACTION_SELECT_BMS_JBD:
     case ESP_BMS_LVGL_ACTION_SELECT_BMS_DALY:
     case ESP_BMS_LVGL_ACTION_SELECT_BMS_YANYANG:
-    case ESP_BMS_LVGL_ACTION_SELECT_BMS_BLUEBABE:
     case ESP_BMS_LVGL_ACTION_SELECT_BMS_MINGTANG:
+    case ESP_BMS_LVGL_ACTION_SELECT_BMS_EM02:
     case ESP_BMS_LVGL_ACTION_SET_PRESET_RANGE:
         return ESP_BMS_FEATURE_BMS;
+    case ESP_BMS_LVGL_ACTION_SELECT_BMS_BLUEBABE:
+        /* Bluebabe can only be selected through the Web configuration API. */
+        return false;
     case ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_CONNECTION:
     case ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_PAGE:
     case ESP_BMS_LVGL_ACTION_START_CONTROLLER_BIND:
@@ -7424,6 +7467,8 @@ bool esp_bms_idf_runtime_apply_action_event(esp_bms_idf_runtime_t *runtime,
         return runtime_select_bms_type(runtime, ESP_BMS_IDF_BMS_TYPE_BLUEBABE);
     case ESP_BMS_LVGL_ACTION_SELECT_BMS_MINGTANG:
         return runtime_select_bms_type(runtime, ESP_BMS_IDF_BMS_TYPE_MINGTANG);
+    case ESP_BMS_LVGL_ACTION_SELECT_BMS_EM02:
+        return runtime_select_bms_type(runtime, ESP_BMS_IDF_BMS_TYPE_EM02);
     case ESP_BMS_LVGL_ACTION_SELECT_CONTROLLER_TYPE:
         return runtime_select_controller_type(runtime, event->controller_type);
     case ESP_BMS_LVGL_ACTION_RESTORE_DEFAULTS:
@@ -7539,6 +7584,8 @@ const char *esp_bms_idf_runtime_action_name(esp_bms_lvgl_action_t action)
         return "select-bms-bluebabe";
     case ESP_BMS_LVGL_ACTION_SELECT_BMS_MINGTANG:
         return "select-bms-mingtang";
+    case ESP_BMS_LVGL_ACTION_SELECT_BMS_EM02:
+        return "select-bms-em02";
     case ESP_BMS_LVGL_ACTION_SELECT_CONTROLLER_TYPE:
         return "select-controller-type";
     case ESP_BMS_LVGL_ACTION_RESTORE_DEFAULTS:
