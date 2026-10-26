@@ -109,6 +109,9 @@ typedef enum {
     ESP_BMS_LVGL_ACTION_PHONE_MEDIA_VOLUME_DOWN = 38,
     ESP_BMS_LVGL_ACTION_PHONE_MEDIA_VOLUME_UP = 39,
     ESP_BMS_LVGL_ACTION_MEDIA_PLAY_PAUSE = 40,
+    ESP_BMS_LVGL_ACTION_SELECT_CONTROLLER_TYPE = 41,
+    ESP_BMS_LVGL_ACTION_SELECT_BMS_BLUEBABE = 42,
+    ESP_BMS_LVGL_ACTION_SELECT_BMS_MINGTANG = 43,
 } esp_bms_lvgl_action_t;
 
 #define ESP_BMS_LVGL_ACTION_EVENT_FLAG_COMMITTED (UINT8_C(1) << 0)
@@ -139,6 +142,8 @@ typedef struct {
     uint16_t touch_target_x;
     uint16_t touch_target_y;
     uint8_t touch_target_index;
+    /* SELECT_CONTROLLER_TYPE 使用：esp_bms_ctrl_type_t 取值 */
+    uint8_t controller_type;
 } esp_bms_lvgl_action_event_t;
 
 static inline bool esp_bms_lvgl_action_event_flag_get(const esp_bms_lvgl_action_event_t *event,
@@ -349,6 +354,7 @@ typedef struct {
     uint16_t controller_fallback_wheel_circumference_mm;
     uint16_t controller_fallback_gear_ratio_centi;
     uint8_t controller_gear;
+    uint8_t controller_type;
     uint8_t controller_scan_active;
     uint32_t controller_scan_revision;
     uint8_t controller_scan_candidate_count;

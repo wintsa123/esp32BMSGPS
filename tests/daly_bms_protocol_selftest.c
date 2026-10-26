@@ -57,5 +57,30 @@ int main(void)
     frame[128U] ^= 1U;
     stream_len = 0U;
     assert(!esp_bms_daly_feed(stream, &stream_len, sizeof(stream), frame, sizeof(frame), &telemetry));
+
+    /* 0x81 扩展地址响应：poll_index&2 会发出 0x81 请求，喂数据时必须能识别，
+     * 否则该响应被当噪声丢弃（当前实现只在 0xD2/0x51 处认帧）。 */
+    uint8_t p81[133] = { 0 };
+    p81[0] = 0x81U;
+    p81[1] = 0x03U;
+    p81[2] = 128U;
+    put_u16_be(p81, 3U, 4100U);
+    put_u16_be(p81, 5U, 4200U);
+    put_u16_be(p81, 99U, 65U);
+    put_u16_be(p81, 115U, 520U);
+    put_u16_be(p81, 117U, 30123U);
+    put_u16_be(p81, 119U, 785U);
+    p81[123U] = 2U;
+    p81[125U] = 1U;
+    const uint16_t p81_crc = crc16(p81, sizeof(p81) - 2U);
+    p81[131U] = (uint8_t)p81_crc;
+    p81[132U] = (uint8_t)(p81_crc >> 8U);
+    stream_len = 0U;
+    assert(esp_bms_daly_feed(stream, &stream_len, sizeof(stream), p81, sizeof(p81), &telemetry));
+    assert(stream_len == 0U);
+    assert(telemetry.pack_voltage_mv == 52000U && telemetry.current_deci_amps == 123 &&
+           telemetry.soc_percent == 78U && telemetry.temperature_valid[0U] &&
+           telemetry.temperatures_celsius[0U] == 25 && telemetry.min_cell_voltage_mv == 4100U &&
+           telemetry.max_cell_voltage_mv == 4200U && telemetry.average_cell_voltage_mv == 4150U);
     return 0;
 }

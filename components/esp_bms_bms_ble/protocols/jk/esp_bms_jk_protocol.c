@@ -159,11 +159,9 @@ static bool decode_jk02_cell_info(const uint8_t frame[ESP_BMS_JK_FRAME_LEN],
     telemetry->soc_percent = frame[141U + dynamic];
     telemetry->capacity_remaining_mah = read_u32_le(frame, 142U + dynamic);
     telemetry->total_capacity_mah = read_u32_le(frame, 146U + dynamic);
-    const uint32_t total_charge_deci_ah = read_u32_le(frame, 154U + dynamic);
-    if (total_charge_deci_ah > UINT32_MAX / 100U) {
-        return false;
-    }
-    telemetry->total_cycle_mah = total_charge_deci_ah * 100U;
+    /* 偏移 154 是「循环容量」，单位 0.001Ah（即 mAh 原值）。
+     * 参照 APK: q0.r() 用 F(bArr, i11+154) * 0.001d（Ah），换成 mAh 就是原值本身。 */
+    telemetry->total_cycle_mah = read_u32_le(frame, 154U + dynamic);
     telemetry->total_cycle_valid = true;
     telemetry->protection_mask = cell_slots == 32U ? read_u32_le(frame, 166U) : read_u16_le(frame, 136U);
     telemetry->balancing_supported = true;

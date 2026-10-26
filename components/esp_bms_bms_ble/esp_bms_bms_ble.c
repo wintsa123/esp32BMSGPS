@@ -17,10 +17,12 @@
 #include "esp_bms_idf_runtime.h"
 #include "esp_bms_bms_safety.h"
 #include "protocols/ant/esp_bms_ant_protocol.h"
+#include "protocols/bluebabe/esp_bms_bluebabe_protocol.h"
 #include "protocols/daly/esp_bms_daly_protocol.h"
 #include "protocols/esp_bms_bms_protocol.h"
 #include "protocols/jbd/esp_bms_jbd_protocol.h"
 #include "protocols/jk/esp_bms_jk_protocol.h"
+#include "protocols/mingtang/esp_bms_mingtang_protocol.h"
 #include "protocols/yanyang/esp_bms_yanyang_protocol.h"
 
 static const char *TAG = "esp_bms_bms_ble";
@@ -185,6 +187,17 @@ static void bms_apply_safety_status(esp_bms_idf_runtime_t *runtime,
                                  (UINT64_C(1) << 24U))) {
             active |= ESP_BMS_BMS_SAFETY_SHORT_CIRCUIT;
         }
+    } else if (runtime->bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_MINGTANG) {
+        /* 明唐：只有充电/放电/短路三类硬件保护位置位，位图由协议模块给到 bit0..2。
+         * 充电/放电保护分别视为过流；短路单独映射。 */
+        supported = ESP_BMS_BMS_SAFETY_OVER_CURRENT | ESP_BMS_BMS_SAFETY_SHORT_CIRCUIT;
+        if (bms_mask_has_any(mask, UINT64_C(1) << 0U) ||
+            bms_mask_has_any(mask, UINT64_C(1) << 1U)) {
+            active |= ESP_BMS_BMS_SAFETY_OVER_CURRENT;
+        }
+        if (bms_mask_has_any(mask, UINT64_C(1) << 2U)) {
+            active |= ESP_BMS_BMS_SAFETY_SHORT_CIRCUIT;
+        }
     } else if (runtime->bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_DALY) {
 #define DALY_PROTECTION_BIT(byte_index, bit_index) \
     (UINT64_C(1) << (((7U - (byte_index)) * 8U) + (bit_index)))
@@ -337,6 +350,16 @@ static bool bms_is_daly(const esp_bms_idf_runtime_t *runtime)
     return runtime && runtime->bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_DALY;
 }
 
+static bool bms_is_bluebabe(const esp_bms_idf_runtime_t *runtime)
+{
+    return runtime && runtime->bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_BLUEBABE;
+}
+
+static bool bms_is_mingtang(const esp_bms_idf_runtime_t *runtime)
+{
+    return runtime && runtime->bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_MINGTANG;
+}
+
 static bool bms_ant_uses_old_protocol(const esp_bms_idf_runtime_t *runtime)
 {
     return runtime && (runtime->bms_poll_index == (uint8_t)ANT_BLE_PROTOCOL_PROBE_OLD ||
@@ -345,7 +368,8 @@ static bool bms_ant_uses_old_protocol(const esp_bms_idf_runtime_t *runtime)
 
 static bool bms_has_separate_write_characteristic(const esp_bms_idf_runtime_t *runtime)
 {
-    return bms_is_yanyang(runtime) || bms_is_jbd(runtime) || bms_is_daly(runtime);
+    return bms_is_yanyang(runtime) || bms_is_jbd(runtime) || bms_is_daly(runtime) ||
+           bms_is_bluebabe(runtime) || bms_is_mingtang(runtime);
 }
 
 static bool bms_is_jk_characteristic(const struct ble_gatt_chr *chr)
@@ -360,6 +384,12 @@ static uint16_t bms_service_uuid_16(const esp_bms_idf_runtime_t *runtime)
     }
     if (bms_is_daly(runtime)) {
         return 0xFFF0U;
+    }
+    if (bms_is_bluebabe(runtime)) {
+        return 0xFFE0U;
+    }
+    if (bms_is_mingtang(runtime)) {
+        return 0xFA00U;
     }
     return ANT_BMS_SERVICE_UUID_16;
 }
@@ -431,6 +461,28 @@ static bool bms_frame_push(esp_bms_idf_runtime_t *runtime,
                                               chunk,
                                               chunk_len,
                                               &telemetry);
+        runtime->bms_frame_len = (uint16_t)stream_len;
+        return !decoded || bms_apply_telemetry(runtime, &telemetry);
+    }
+    if (bms_is_bluebabe(runtime)) {
+        size_t stream_len = runtime->bms_frame_len;
+        const bool decoded = esp_bms_bluebabe_feed(runtime->bms_frame,
+                                                   &stream_len,
+                                                   sizeof(runtime->bms_frame),
+                                                   chunk,
+                                                   chunk_len,
+                                                   &telemetry);
+        runtime->bms_frame_len = (uint16_t)stream_len;
+        return !decoded || bms_apply_telemetry(runtime, &telemetry);
+    }
+    if (bms_is_mingtang(runtime)) {
+        size_t stream_len = runtime->bms_frame_len;
+        const bool decoded = esp_bms_mingtang_feed(runtime->bms_frame,
+                                                   &stream_len,
+                                                   sizeof(runtime->bms_frame),
+                                                   chunk,
+                                                   chunk_len,
+                                                   &telemetry);
         runtime->bms_frame_len = (uint16_t)stream_len;
         return !decoded || bms_apply_telemetry(runtime, &telemetry);
     }
@@ -658,6 +710,44 @@ static esp_err_t bms_send_poll_request(esp_bms_idf_runtime_t *runtime,
         }
         return ret;
     }
+    if (bms_is_bluebabe(runtime)) {
+        if (!esp_bms_bluebabe_matching_code_configured()) {
+            uint8_t code[ESP_BMS_BLUEBABE_MATCHING_CODE_LEN] = { 0 };
+            bool code_ok = strlen(runtime->bluebabe_code) == ESP_BMS_BLUEBABE_MATCHING_CODE_LEN;
+            for (size_t index = 0U; code_ok && index < ESP_BMS_BLUEBABE_MATCHING_CODE_LEN; ++index) {
+                const char digit = runtime->bluebabe_code[index];
+                code_ok = digit >= '0' && digit <= '9';
+                code[index] = code_ok ? (uint8_t)(digit - '0') : 0U;
+            }
+            if (!code_ok || !esp_bms_bluebabe_set_matching_code(code)) {
+                return ESP_FAIL;
+            }
+        }
+        uint8_t request[ESP_BMS_BLUEBABE_REQUEST_LEN] = { 0 };
+        if (!esp_bms_bluebabe_poll_request(runtime->bms_poll_index % 2U, request)) {
+            return ESP_FAIL;
+        }
+        const esp_err_t ret = bms_write_frame(runtime, request, sizeof(request));
+        if (ret == ESP_OK) {
+            runtime->bms_poll_index = (uint8_t)((runtime->bms_poll_index + 1U) % 2U);
+            runtime->bms_status_poll_elapsed_ms = 0U;
+        }
+        return ret;
+    }
+    if (bms_is_mingtang(runtime)) {
+        uint8_t request[24] = { 0 };
+        size_t request_len = 0U;
+        if (!esp_bms_mingtang_poll_request(runtime->bms_poll_index % 4U, request, &request_len) ||
+            request_len == 0U || request_len > sizeof(request)) {
+            return ESP_FAIL;
+        }
+        const esp_err_t ret = bms_write_frame(runtime, request, request_len);
+        if (ret == ESP_OK) {
+            runtime->bms_poll_index = (uint8_t)((runtime->bms_poll_index + 1U) % 4U);
+            runtime->bms_status_poll_elapsed_ms = 0U;
+        }
+        return ret;
+    }
     const bool send_old = bms_ant_uses_old_protocol(runtime);
     uint8_t old_status_request[6] = { 0 };
     if (send_old && !esp_bms_ant_protocol_old_poll_request(old_status_request)) {
@@ -788,6 +878,27 @@ static int bms_chr_cb(uint16_t conn_handle,
                 runtime->bms_write_char_val_handle = chr->val_handle;
             } else if (ble_uuid_cmp(&chr->uuid.u, &notify_uuid.u) == 0) {
                 runtime->bms_char_val_handle = chr->val_handle;
+            }
+        } else if (bms_is_bluebabe(runtime)) {
+            /* 蓝宝：FFE1 通知、FFE2 写入 */
+            const ble_uuid16_t write_uuid = BLE_UUID16_INIT(0xFFE2U);
+            const ble_uuid16_t notify_uuid = BLE_UUID16_INIT(0xFFE1U);
+            if (ble_uuid_cmp(&chr->uuid.u, &write_uuid.u) == 0) {
+                runtime->bms_write_char_val_handle = chr->val_handle;
+            } else if (ble_uuid_cmp(&chr->uuid.u, &notify_uuid.u) == 0) {
+                runtime->bms_char_val_handle = chr->val_handle;
+                runtime->bms_cccd_value =
+                    (chr->properties & BLE_GATT_CHR_F_NOTIFY) != 0U ? 1U : 2U;
+            }
+        } else if (bms_is_mingtang(runtime)) {
+            /* 明唐：UUID 不固定，按属性挑 notify/indicate 与 write 特征 */
+            if ((chr->properties & (BLE_GATT_CHR_F_NOTIFY | BLE_GATT_CHR_F_INDICATE)) != 0U) {
+                runtime->bms_char_val_handle = chr->val_handle;
+                runtime->bms_cccd_value =
+                    (chr->properties & BLE_GATT_CHR_F_NOTIFY) != 0U ? 1U : 2U;
+            }
+            if ((chr->properties & (BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP)) != 0U) {
+                runtime->bms_write_char_val_handle = chr->val_handle;
             }
         } else if (bms_has_separate_write_characteristic(runtime)) {
             const uint16_t write_uuid_16 = bms_is_jbd(runtime) ? 0xFF02U : 0xFFF2U;

@@ -151,7 +151,11 @@ bool esp_bms_daly_feed(uint8_t *stream,
     *stream_len += chunk_len;
     while (*stream_len >= 3U) {
         size_t start = 0U;
-        while (start < *stream_len && stream[start] != 0xD2U && stream[start] != 0x51U) {
+        /* 0x81 是本模块自己用的扩展请求地址（见 esp_bms_daly_poll_request 的
+         * poll_index&2 分支），扫描时必须认它，否则 0x81 响应永远解析不到，
+         * 还会把后续帧一起卡在缓冲区里。 */
+        while (start < *stream_len && stream[start] != 0xD2U && stream[start] != 0x81U &&
+               stream[start] != 0x51U) {
             ++start;
         }
         if (start != 0U) {

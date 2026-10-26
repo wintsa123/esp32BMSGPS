@@ -594,6 +594,64 @@ void settings_show_bms_type_picker(void)
     }
 }
 
+void settings_show_controller_type_picker(void)
+{
+    const bool portrait = s_ui.width < s_ui.height;
+    const int32_t card_x = SETTINGS_LIST_MARGIN_X;
+    const int32_t card_w = s_ui.width - (SETTINGS_LIST_MARGIN_X * 2);
+    const int32_t row_h = portrait ? SETTINGS_CHOICE_ROW_H_PORTRAIT :
+                                     SETTINGS_CHOICE_ROW_H_LANDSCAPE;
+    const int32_t gap = settings_scaled_px(portrait ? 7 : 5);
+    const int32_t first_y = settings_scaled_px(12);
+    const uint8_t current = settings_current_snapshot()->controller_type;
+
+    s_ui.settings_controller_view = (uint8_t)SETTINGS_CONTROLLER_VIEW_TYPE_LIST;
+    s_ui.settings_bms_ble_status = NULL;
+    lv_obj_clean(s_ui.settings_detail);
+    label_set_text_if_changed(s_ui.settings_detail_title, ui_t("控制器型号", "Controller model"));
+    lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
+
+    for (size_t index = 0; index < SETTINGS_CONTROLLER_TYPE_COUNT; ++index) {
+        const bool active = SETTINGS_CONTROLLER_TYPE_VALUES[index] == current;
+        lv_obj_t *row = panel(s_ui.settings_detail,
+                              card_x,
+                              first_y + ((int32_t)index * (row_h + gap)),
+                              card_w,
+                              row_h,
+                              COLOR_SETTINGS_CARD);
+        lv_obj_set_style_radius(row, 8, LV_PART_MAIN);
+        lv_obj_set_style_border_width(row, active ? 2 : 1, LV_PART_MAIN);
+        lv_obj_set_style_border_color(row,
+                                      active ? COLOR_SWITCH_ACTIVE : COLOR_SETTINGS_BORDER,
+                                      LV_PART_MAIN);
+        lv_obj_set_style_border_opa(row, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_pad_all(row, 0, LV_PART_MAIN);
+        lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
+        settings_add_swipe_handlers(row);
+        lv_obj_add_event_cb(row,
+                            settings_controller_type_option_event_cb,
+                            LV_EVENT_CLICKED,
+                            (void *)(uintptr_t)index);
+
+        const lv_font_t *text_font = settings_title_font();
+        const int32_t text_h = (int32_t)text_font->line_height + 4;
+        lv_obj_t *text = label(row, 12, (row_h - text_h) / 2, card_w - 52, text_h,
+                               text_font);
+        lv_label_set_text(text, ui_t(SETTINGS_CONTROLLER_TYPE_LABELS[index],
+                                     SETTINGS_CONTROLLER_TYPE_LABELS_EN[index]));
+        lv_obj_set_style_text_color(text,
+                                    active ? COLOR_SWITCH_ACTIVE : COLOR_SETTINGS_TEXT,
+                                    LV_PART_MAIN);
+        if (active) {
+            lv_obj_t *check = label(row, card_w - 36, (row_h - text_h) / 2, 24, text_h,
+                                    &lv_font_montserrat_14);
+            lv_label_set_text(check, LV_SYMBOL_OK);
+            lv_obj_set_style_text_align(check, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+            lv_obj_set_style_text_color(check, COLOR_SWITCH_ACTIVE, LV_PART_MAIN);
+        }
+    }
+}
+
 void settings_bms_ble_format_status(char *out,
                                            size_t out_len,
                                            const esp_bms_dashboard_snapshot_t *snapshot,
@@ -1666,8 +1724,24 @@ void settings_show_controller_detail(void)
         { "控制器连接", "Controller link", ble_status, ble_status,
           ESP_BMS_LVGL_ACTION_START_CONTROLLER_BIND, SETTINGS_SYSTEM_VIEW_ROOT },
     };
+    char controller_type_zh[32] = { 0 };
+    char controller_type_en[32] = { 0 };
+    {
+        size_t selected = 0U;
+        for (size_t index = 0U; index < SETTINGS_CONTROLLER_TYPE_COUNT; ++index) {
+            if (SETTINGS_CONTROLLER_TYPE_VALUES[index] == snapshot->controller_type) {
+                selected = index;
+                break;
+            }
+        }
+        (void)snprintf(controller_type_zh, sizeof(controller_type_zh), "%s",
+                       SETTINGS_CONTROLLER_TYPE_LABELS[selected]);
+        (void)snprintf(controller_type_en, sizeof(controller_type_en), "%s",
+                       SETTINGS_CONTROLLER_TYPE_LABELS_EN[selected]);
+    }
     const settings_detail_row_t type_row = {
-        "控制器类型", "Controller type", "远驱", "FarDriver", ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT,
+        "控制器型号", "Controller model", controller_type_zh, controller_type_en,
+        ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT,
     };
 
     lv_obj_t *card = settings_list_card(s_ui.settings_detail,
@@ -1734,7 +1808,13 @@ void settings_show_controller_detail(void)
                                              card_w,
                                              row_h,
                                              1U);
-    settings_detail_row(type_card, 0, 0, card_w, row_h, &type_row);
+    lv_obj_t *type_box = settings_detail_row(type_card, 0, 0, card_w, row_h, &type_row);
+    lv_obj_add_event_cb(type_box, settings_controller_type_button_event_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *type_arrow = label(type_box, card_w - 24, 0, 14, 15, &settings_zh_13);
+    lv_label_set_text(type_arrow, ">");
+    lv_obj_align(type_arrow, LV_ALIGN_RIGHT_MID, -10, 0);
+    lv_obj_set_style_text_align(type_arrow, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(type_arrow, COLOR_SETTINGS_ACCENT, LV_PART_MAIN);
     lv_obj_update_layout(s_ui.settings_detail);
     lv_obj_scroll_to_y(s_ui.settings_detail, 0, LV_ANIM_OFF);
 }
