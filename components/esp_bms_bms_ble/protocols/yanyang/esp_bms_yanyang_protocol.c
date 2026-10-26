@@ -59,9 +59,11 @@ bool esp_bms_yanyang_poll_request(uint8_t poll_index, uint8_t out[8])
     out[3] = (uint8_t)start;
     out[4] = (uint8_t)(count >> 8U);
     out[5] = (uint8_t)count;
+    /* Modbus RTU 在线上先发 CRC 低字节（参照 APK: v6/i1.D() 写 [6]=crc&0xFF、
+     * [7]=crc>>8），高字节在前会被从站判为 CRC 错误。 */
     const uint16_t crc = esp_bms_yanyang_crc16(out, 6U);
-    out[6] = (uint8_t)(crc >> 8U);
-    out[7] = (uint8_t)crc;
+    out[6] = (uint8_t)crc;
+    out[7] = (uint8_t)(crc >> 8U);
     return true;
 }
 
@@ -119,7 +121,9 @@ static bool decode_frame(const uint8_t *frame, size_t frame_len, esp_bms_bms_tel
         return false;
     }
     const uint16_t expected_crc = esp_bms_yanyang_crc16(frame, frame_len - 2U);
-    const uint16_t remote_crc = ((uint16_t)frame[frame_len - 2U] << 8U) | frame[frame_len - 1U];
+    /* 响应里 CRC 同样是低字节在前（参照 APK: v6/i1.u() 用 [len-2] | [len-1]<<8）。 */
+    const uint16_t remote_crc = (uint16_t)frame[frame_len - 2U] |
+                                ((uint16_t)frame[frame_len - 1U] << 8U);
     if (expected_crc != remote_crc) {
         return false;
     }

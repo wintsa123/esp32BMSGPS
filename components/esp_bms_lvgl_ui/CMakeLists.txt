@@ -54,7 +54,7 @@ endif()
 idf_component_register(
     SRCS ${ESP_BMS_LVGL_UI_SRCS}
     INCLUDE_DIRS "include"
-    REQUIRES lvgl esp_bms_lvgl_contract esp_hw_support esp_timer
+    REQUIRES lvgl esp_bms_lvgl_contract esp_bms_controller_protocol esp_hw_support esp_timer
     EMBED_FILES ${ESP_BMS_LVGL_UI_EMBED_FILES}
 )
 

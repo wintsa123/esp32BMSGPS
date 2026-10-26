@@ -58,6 +58,7 @@ int main(void)
     assert(esp_bms_ant_protocol_old_feed(stream, &stream_len, sizeof(stream), old_status_frame + 37U,
                                          sizeof(old_status_frame) - 37U, &telemetry));
     assert(stream_len == 0U);
+    /* 产品要求：ANT 旧协议按原始符号显示（充电为负），不做 Motexa 的反向修正。 */
     assert(telemetry.pack_voltage_mv == 26700U && telemetry.current_deci_amps == -107 &&
            telemetry.soc_percent == 41U && telemetry.total_capacity_mah == 0U &&
            telemetry.capacity_remaining_mah == 48487U && telemetry.total_cycle_valid &&

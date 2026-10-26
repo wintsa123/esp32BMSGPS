@@ -10,6 +10,7 @@
 #include "esp_bms_display_service.h"
 #include "esp_bms_ride_records.h"
 #include "esp_bms_speed_dashboard.h"
+#include "esp_bms_controller_protocol.h"
 #include "esp_fardriver_protocol.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
@@ -44,6 +45,8 @@ typedef enum {
     ESP_BMS_IDF_BMS_TYPE_JBD = 2,
     ESP_BMS_IDF_BMS_TYPE_DALY = 3,
     ESP_BMS_IDF_BMS_TYPE_YANYANG = 4,
+    ESP_BMS_IDF_BMS_TYPE_BLUEBABE = 5,
+    ESP_BMS_IDF_BMS_TYPE_MINGTANG = 6,
 } esp_bms_idf_bms_type_t;
 
 #define ESP_BMS_IDF_BMS_SCAN_MAX_CANDIDATES ESP_BMS_BMS_SCAN_MAX_CANDIDATES
@@ -261,6 +264,9 @@ struct esp_bms_idf_runtime {
     int64_t cast_metric_started_us;
     bool controller_connection_enabled;
     bool controller_page_enabled;
+    uint8_t controller_type;
+    /* 蓝宝电量模块的六位配对码（ASCII 数字），空串表示未配置 */
+    char bluebabe_code[7];
     uint8_t controller_fallback_tire_rim_inch;
     uint8_t controller_fallback_tire_aspect_percent;
     uint16_t controller_fallback_tire_width_mm;
@@ -270,10 +276,11 @@ struct esp_bms_idf_runtime {
     uint16_t controller_observed_gear_ratio_centi;
     esp_bms_lvgl_data_source_t active_data_source;
     esp_bms_trip_efficiency_t trip_efficiency;
-    esp_fardriver_state_t controller_state;
+    esp_bms_ctrl_telemetry_t controller_state;
     uint8_t http_pending_brightness_percent;
     uint8_t http_pending_volume_percent;
     uint8_t http_pending_bms_type;
+    uint8_t http_pending_controller_type;
     uint8_t capacity_estimate_bms_type;
     char http_pending_setup_ap_password[9];
     char http_pending_bms_bound_mac[18];

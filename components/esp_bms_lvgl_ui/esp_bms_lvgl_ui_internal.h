@@ -261,6 +261,7 @@ typedef enum {
     SETTINGS_CONTROLLER_VIEW_BLE_LIST,
     SETTINGS_CONTROLLER_VIEW_TIRE_EDIT,
     SETTINGS_CONTROLLER_VIEW_RATIO_EDIT,
+    SETTINGS_CONTROLLER_VIEW_TYPE_LIST,
 } settings_controller_view_t;
 
 typedef enum {
@@ -355,7 +356,7 @@ _Static_assert(sizeof(esp_bms_boot_animation_style_t) == 4 &&
                    ESP_BMS_BOOT_ANIMATION_GAUGE_S1000RR == 1 &&
                    ESP_BMS_BOOT_ANIMATION_GAUGE_HONDA_FIREBLADE == 2,
                "esp_bms_boot_animation_style_t ABI changed; update runtime consumers too");
-_Static_assert(sizeof(esp_bms_dashboard_snapshot_t) == 1652,
+_Static_assert(sizeof(esp_bms_dashboard_snapshot_t) == 1656,
                "dashboard snapshot ABI size changed; update all C consumers too");
 _Static_assert(ESP_BMS_LVGL_ACTION_NONE == 0,
                "esp_bms_lvgl_action_t value changed; update C action consumers too");
@@ -910,7 +911,8 @@ extern const quick_panel_item_t QUICK_PANEL_ITEMS[QUICK_PANEL_BUTTON_COUNT];
 #define SETTINGS_HOTSPOT_ROWS_COUNT 6
 #define SETTINGS_BLUETOOTH_ROWS_COUNT 3
 #define SETTINGS_BMS_ROWS_COUNT 1
-#define SETTINGS_BMS_TYPE_COUNT 5
+#define SETTINGS_BMS_TYPE_COUNT 7
+#define SETTINGS_CONTROLLER_TYPE_COUNT 17
 #define SETTINGS_SYSTEM_ROWS_COUNT \
     (6 + CONFIG_ESP_BMS_LVGL_BRIDGE_BACKLIGHT_DIMMING + (ESP_BMS_FEATURE_AUDIO ? 1 : 0))
 #define SETTINGS_ABOUT_ROWS_COUNT 3
@@ -921,6 +923,9 @@ extern const settings_detail_row_t SETTINGS_BMS_ROWS[SETTINGS_BMS_ROWS_COUNT];
 extern const char *const SETTINGS_BMS_TYPE_LABELS[SETTINGS_BMS_TYPE_COUNT];
 extern const char *const SETTINGS_BMS_TYPE_LABELS_EN[SETTINGS_BMS_TYPE_COUNT];
 extern const esp_bms_lvgl_action_t SETTINGS_BMS_TYPE_ACTIONS[SETTINGS_BMS_TYPE_COUNT];
+extern const char *const SETTINGS_CONTROLLER_TYPE_LABELS[SETTINGS_CONTROLLER_TYPE_COUNT];
+extern const char *const SETTINGS_CONTROLLER_TYPE_LABELS_EN[SETTINGS_CONTROLLER_TYPE_COUNT];
+extern const uint8_t SETTINGS_CONTROLLER_TYPE_VALUES[SETTINGS_CONTROLLER_TYPE_COUNT];
 extern const settings_detail_row_t SETTINGS_SYSTEM_ROWS[SETTINGS_SYSTEM_ROWS_COUNT];
 extern const settings_detail_row_t SETTINGS_ABOUT_ROWS[SETTINGS_ABOUT_ROWS_COUNT];
 
@@ -955,6 +960,7 @@ void queue_action_with_commit(esp_bms_lvgl_action_t action, bool committed);
 void queue_action(esp_bms_lvgl_action_t action);
 void queue_bms_bind_action(const char *mac);
 void queue_controller_bind_action(const char *mac);
+void queue_controller_type_action(uint8_t controller_type);
 void queue_touch_calibration_sample(uint8_t target_index, const lv_point_t *observed, const lv_point_t *expected);
 uint8_t clamp_brightness_percent(int32_t value);
 uint8_t clamp_volume_percent(int32_t value);
@@ -1044,6 +1050,9 @@ lv_obj_t *settings_list_card(lv_obj_t *parent, int32_t x, int32_t y, int32_t w, 
 void settings_bms_popup_close(void);
 bool settings_bms_popup_click_ready(lv_event_t *event);
 void settings_show_bms_type_picker(void);
+void settings_show_controller_type_picker(void);
+void settings_controller_type_option_event_cb(lv_event_t *event);
+void settings_controller_type_button_event_cb(lv_event_t *event);
 void settings_bms_ble_format_status(char *out, size_t out_len, const esp_bms_dashboard_snapshot_t *snapshot, settings_ble_source_t source, bool scan_requested);
 void settings_bms_ble_start_scan(void);
 bool settings_bms_ble_connection_in_progress(const esp_bms_dashboard_snapshot_t *snapshot, settings_ble_source_t source);

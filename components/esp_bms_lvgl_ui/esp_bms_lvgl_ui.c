@@ -2,6 +2,7 @@
  * esp_bms_lvgl_ui 核心：入口 API、全局状态、手势与页面管理。
  * 由 ui_split.py 从原单文件拆分生成。
  */
+#include "esp_bms_controller_protocol.h"
 #include "esp_bms_lvgl_ui.h"
 #include "esp_bms_lvgl_ui_internal.h"
 
@@ -504,6 +505,14 @@ void queue_action(esp_bms_lvgl_action_t action)
     queue_action_with_commit(action, true);
 }
 
+void queue_controller_type_action(uint8_t controller_type)
+{
+    memset(&s_ui.pending_event, 0, sizeof(s_ui.pending_event));
+    s_ui.pending_event.action = ESP_BMS_LVGL_ACTION_SELECT_CONTROLLER_TYPE;
+    ACTION_EVENT_SET_FLAG(&s_ui.pending_event, COMMITTED, true);
+    s_ui.pending_event.controller_type = controller_type;
+}
+
 void queue_bms_bind_action(const char *mac)
 {
     if (!mac || mac[0] == '\0') {
@@ -904,6 +913,8 @@ const char *const SETTINGS_BMS_TYPE_LABELS[SETTINGS_BMS_TYPE_COUNT] = {
     "嘉佰达 JBD",
     "达锂 Daly",
     "彦阳 BMS",
+    "蓝宝电量模块",
+    "明唐保护板",
 };
 
 const char *const SETTINGS_BMS_TYPE_LABELS_EN[SETTINGS_BMS_TYPE_COUNT] = {
@@ -912,6 +923,8 @@ const char *const SETTINGS_BMS_TYPE_LABELS_EN[SETTINGS_BMS_TYPE_COUNT] = {
     "JBD",
     "Daly",
     "Yanyang BMS",
+    "Bluebabe meter",
+    "Mingtang BMS",
 };
 
 const esp_bms_lvgl_action_t SETTINGS_BMS_TYPE_ACTIONS[SETTINGS_BMS_TYPE_COUNT] = {
@@ -920,7 +933,77 @@ const esp_bms_lvgl_action_t SETTINGS_BMS_TYPE_ACTIONS[SETTINGS_BMS_TYPE_COUNT] =
     ESP_BMS_LVGL_ACTION_SELECT_BMS_JBD,
     ESP_BMS_LVGL_ACTION_SELECT_BMS_DALY,
     ESP_BMS_LVGL_ACTION_SELECT_BMS_YANYANG,
+    ESP_BMS_LVGL_ACTION_SELECT_BMS_BLUEBABE,
+    ESP_BMS_LVGL_ACTION_SELECT_BMS_MINGTANG,
 };
+
+/* 控制器型号：顺序与 esp_bms_ctrl_type_t 对齐（0=AUTO，其后与注册表一致）。 */
+const char *const SETTINGS_CONTROLLER_TYPE_LABELS[SETTINGS_CONTROLLER_TYPE_COUNT] = {
+    "自动识别",
+    "蓝石 BlueStone",
+    "远驱 FarDriver",
+    "远驱 YuanQu FOC",
+    "凌博 Lingbo",
+    "大泰 Datai",
+    "速牛 Suniu",
+    "雁鑫 Yanxin",
+    "APT A8",
+    "APT 旧版",
+    "顿恩 DN",
+    "智科 Zhike",
+    "晶汇 JH",
+    "AUSI 玉铖",
+    "甲胄 DS11/DS15",
+    "昕达 Xinda",
+    "好盈 SPD",
+};
+
+const char *const SETTINGS_CONTROLLER_TYPE_LABELS_EN[SETTINGS_CONTROLLER_TYPE_COUNT] = {
+    "Auto detect",
+    "BlueStone",
+    "FarDriver",
+    "YuanQu FOC",
+    "Lingbo",
+    "Datai",
+    "Suniu",
+    "Yanxin VITMC",
+    "APT A8",
+    "APT Anpei",
+    "DN Dunen",
+    "GEKOO Zhike",
+    "JH",
+    "AUSI",
+    "Jiazhou DS11/DS15",
+    "Xinda",
+    "Hobbywing SPD",
+};
+
+const uint8_t SETTINGS_CONTROLLER_TYPE_VALUES[SETTINGS_CONTROLLER_TYPE_COUNT] = {
+    ESP_BMS_CTRL_TYPE_AUTO,
+    ESP_BMS_CTRL_TYPE_BLUESTONE,
+    ESP_BMS_CTRL_TYPE_FARDRIVER,
+    ESP_BMS_CTRL_TYPE_YUANQU_FOC,
+    ESP_BMS_CTRL_TYPE_LINGBO,
+    ESP_BMS_CTRL_TYPE_DATAI,
+    ESP_BMS_CTRL_TYPE_SUNIU,
+    ESP_BMS_CTRL_TYPE_YANXIN,
+    ESP_BMS_CTRL_TYPE_APT_A8,
+    ESP_BMS_CTRL_TYPE_APT_LEGACY,
+    ESP_BMS_CTRL_TYPE_DUNEN,
+    ESP_BMS_CTRL_TYPE_ZHIKE,
+    ESP_BMS_CTRL_TYPE_JH,
+    ESP_BMS_CTRL_TYPE_AUSI,
+    ESP_BMS_CTRL_TYPE_JIAZHOU,
+    ESP_BMS_CTRL_TYPE_XINDA,
+    ESP_BMS_CTRL_TYPE_HOBBYWING,
+};
+
+_Static_assert(ARRAY_SIZE(SETTINGS_CONTROLLER_TYPE_LABELS) == SETTINGS_CONTROLLER_TYPE_COUNT,
+               "controller type labels size mismatch");
+_Static_assert(ARRAY_SIZE(SETTINGS_CONTROLLER_TYPE_LABELS_EN) == SETTINGS_CONTROLLER_TYPE_COUNT,
+               "controller type labels EN size mismatch");
+_Static_assert(ARRAY_SIZE(SETTINGS_CONTROLLER_TYPE_VALUES) == SETTINGS_CONTROLLER_TYPE_COUNT,
+               "controller type values size mismatch");
 
 _Static_assert(ARRAY_SIZE(SETTINGS_BMS_TYPE_LABELS) == ARRAY_SIZE(SETTINGS_BMS_TYPE_ACTIONS),
                "BMS type labels must match runtime BMS type count");

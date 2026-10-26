@@ -94,6 +94,9 @@ static bool action_should_save_display_settings(esp_bms_lvgl_action_t action)
            action == ESP_BMS_LVGL_ACTION_SELECT_BMS_JBD ||
            action == ESP_BMS_LVGL_ACTION_SELECT_BMS_DALY ||
            action == ESP_BMS_LVGL_ACTION_SELECT_BMS_YANYANG ||
+           action == ESP_BMS_LVGL_ACTION_SELECT_BMS_BLUEBABE ||
+           action == ESP_BMS_LVGL_ACTION_SELECT_BMS_MINGTANG ||
+           action == ESP_BMS_LVGL_ACTION_SELECT_CONTROLLER_TYPE ||
            action == ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_CONNECTION ||
            action == ESP_BMS_LVGL_ACTION_TOGGLE_CONTROLLER_PAGE ||
            action == ESP_BMS_LVGL_ACTION_SET_SPEED_DASHBOARD_STYLE ||

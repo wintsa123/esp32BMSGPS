@@ -16,6 +16,7 @@
 #include "host/ble_uuid.h"
 #include "os/os_mbuf.h"
 
+#include "esp_bms_controller_protocol.h"
 #include "esp_bms_idf_runtime.h"
 
 static const char *TAG = "esp_bms_controller_ble";
@@ -32,7 +33,7 @@ static const char *TAG = "esp_bms_controller_ble";
 /* 在线后的操作周期：保活与轮询读包按此节奏交替 */
 #define CONTROLLER_ONLINE_PERIOD_MS 1000U
 /* 通知缓冲：型号之间的帧长与打包方式不同，按滑动解析需要的最大长度预留 */
-#define CONTROLLER_NOTIFY_BUFFER_LEN 64U
+#define CONTROLLER_NOTIFY_BUFFER_LEN 128U
 #define CONTROLLER_TIRE_RIM_MIN ESP_BMS_CONTROLLER_TIRE_RIM_MIN
 #define CONTROLLER_TIRE_RIM_MAX ESP_BMS_CONTROLLER_TIRE_RIM_MAX
 #define CONTROLLER_TIRE_ASPECT_MIN ESP_BMS_CONTROLLER_TIRE_ASPECT_MIN
@@ -69,6 +70,8 @@ typedef enum {
     CONTROLLER_PROFILE_FFE0 = 2,
     /* 既不是 NUS 也不是 FFE0 的型号：UUID 由探测结果现场填入 */
     CONTROLLER_PROFILE_DISCOVERED = 3,
+    /* 注册表里声明了固定 UUID 的具体型号（凌博/蓝石/智科…）：UUID 连接前填入 */
+    CONTROLLER_PROFILE_CUSTOM = 4,
 } controller_profile_t;
 
 typedef struct {
@@ -134,6 +137,10 @@ static const ble_uuid16_t CONTROLLER_FFE0_SERVICE_UUID = BLE_UUID16_INIT(0xFFE0U
 static const ble_uuid16_t CONTROLLER_FFE0_NOTIFY_UUID = BLE_UUID16_INIT(0xFFECU);
 static const ble_uuid16_t CONTROLLER_FFE0_WRITE_UUID = BLE_UUID16_INIT(0xFFECU);
 
+static ble_uuid_any_t s_custom_service_uuid;
+static ble_uuid_any_t s_custom_notify_uuid;
+static ble_uuid_any_t s_custom_write_uuid;
+
 static const controller_profile_config_t CONTROLLER_PROFILES[] = {
     [CONTROLLER_PROFILE_NONE] = { .name = "none" },
     [CONTROLLER_PROFILE_NUS] = {
@@ -156,6 +163,14 @@ static const controller_profile_config_t CONTROLLER_PROFILES[] = {
         .notify_uuid = &s_discovered_notify_uuid.u,
         .write_uuid = &s_discovered_write_uuid.u,
         /* 未知型号按 FFE0 路径处理：先用开启指令拉数据流，首帧前再插入读请求。 */
+        .read_polling = false,
+    },
+    [CONTROLLER_PROFILE_CUSTOM] = {
+        .name = "custom",
+        .service_uuid = &s_custom_service_uuid.u,
+        .notify_uuid = &s_custom_notify_uuid.u,
+        .write_uuid = &s_custom_write_uuid.u,
+        /* 具体型号的收发节奏由协议引擎决定，传输层不再插入读请求。 */
         .read_polling = false,
     },
 };
@@ -188,6 +203,12 @@ static const struct ble_gap_conn_params CONTROLLER_CONN_PARAMS[] = {
 
 static controller_profile_t s_controller_profile;
 static uint8_t s_controller_poll_index;
+/* 具体型号协议引擎：controller_type 不是 AUTO 时启用，收发完全交给引擎。 */
+static const esp_bms_ctrl_protocol_t *s_ctrl_protocol;
+static uint8_t s_ctrl_start_attempt;
+static uint16_t s_ctrl_poll_step;
+/* 距上一帧有效数据的时间：部分引擎（蓝石）据此补发开启帧 */
+static uint32_t s_ctrl_since_frame_ms;
 static uint32_t s_controller_first_frame_elapsed_ms;
 static uint8_t s_notify_diag_count;
 /* CCCD 订阅值：0x0001=Notify，0x0002=Indicate；0 表示未探测到，按 Notify 处理 */
@@ -272,9 +293,46 @@ static bool controller_ratio_matches_policy(uint16_t ratio_centi)
            ratio_centi <= CONTROLLER_RATIO_CENTI_MAX;
 }
 
+/* 自动模式（controller_type == AUTO）仍走原有 FarDriver 解析：保留一份
+ * esp_fardriver_state_t，解析成功后投影到通用遥测结构。 */
+static esp_fardriver_state_t s_legacy_fardriver_state;
+
+static void controller_legacy_fardriver_project(esp_bms_idf_runtime_t *runtime)
+{
+    const esp_fardriver_state_t *state = &s_legacy_fardriver_state;
+    esp_bms_ctrl_telemetry_t *out = &runtime->controller_state;
+    const uint16_t fallback_wheel = out->fallback_wheel_circumference_mm;
+    const uint16_t fallback_ratio = out->fallback_gear_ratio_centi;
+    memset(out, 0, sizeof(*out));
+    out->fallback_wheel_circumference_mm = fallback_wheel;
+    out->fallback_gear_ratio_centi = fallback_ratio;
+    out->rpm_valid = state->rpm_valid;
+    out->speed_valid = state->speed_valid;
+    out->gear_valid = state->gear_valid;
+    out->current_valid = state->current_valid;
+    out->power_valid = state->power_valid;
+    out->voltage_valid = state->voltage_deci_v > 0U;
+    out->controller_temp_valid = state->controller_temp_valid;
+    out->motor_temp_valid = state->motor_temp_valid;
+    out->controller_speed_params_valid = state->controller_speed_params_valid;
+    out->rpm = state->rpm;
+    out->speed_deci_kmh = state->speed_deci_kmh;
+    out->gear = state->gear;
+    out->current_centi_a = state->current_centi_a;
+    out->power_w = state->power_w;
+    out->voltage_deci_v = state->voltage_deci_v;
+    out->controller_temp_c = state->controller_temp_c;
+    out->motor_temp_c = state->motor_temp_c;
+    out->tire_rim_inch = state->tire_rim_inch;
+    out->tire_aspect_percent = state->tire_aspect_percent;
+    out->tire_width_mm = state->tire_width_mm;
+    out->wheel_circumference_mm = state->wheel_circumference_mm;
+    out->gear_ratio_centi = state->gear_ratio_centi;
+}
+
 static void controller_sync_parameters(esp_bms_idf_runtime_t *runtime)
 {
-    const esp_fardriver_state_t *state = &runtime->controller_state;
+    const esp_bms_ctrl_telemetry_t *state = &runtime->controller_state;
     if (!state->controller_speed_params_valid) {
         return;
     }
@@ -455,6 +513,80 @@ static const controller_profile_config_t *controller_profile_config(void)
     return &CONTROLLER_PROFILES[s_controller_profile];
 }
 
+/* ---------- 具体型号协议引擎 ---------- */
+
+static const esp_bms_ctrl_protocol_t *controller_protocol_active(
+    const esp_bms_idf_runtime_t *runtime)
+{
+    if (!runtime || runtime->controller_type == (uint8_t)ESP_BMS_CTRL_TYPE_AUTO) {
+        return NULL;
+    }
+    return esp_bms_ctrl_protocol_get(runtime->controller_type);
+}
+
+/* 把注册表里的 UUID 填进 CUSTOM profile；返回 false 表示该型号依赖全服务探测。 */
+static bool controller_apply_custom_profile(const esp_bms_ctrl_protocol_t *protocol)
+{
+    if (!protocol) {
+        return false;
+    }
+    if (protocol->uuid128) {
+        if (!protocol->service_uuid || !protocol->notify_uuid || !protocol->write_uuid) {
+            return false;
+        }
+        if (ble_uuid_init_from_buf(&s_custom_service_uuid, protocol->service_uuid,
+                                   ESP_BMS_CTRL_UUID128_LEN) != 0 ||
+            ble_uuid_init_from_buf(&s_custom_notify_uuid, protocol->notify_uuid,
+                                   ESP_BMS_CTRL_UUID128_LEN) != 0 ||
+            ble_uuid_init_from_buf(&s_custom_write_uuid, protocol->write_uuid,
+                                   ESP_BMS_CTRL_UUID128_LEN) != 0) {
+            ESP_LOGW(TAG, "custom 128-bit UUID init failed: protocol=%s", protocol->id);
+            return false;
+        }
+        return true;
+    }
+    if (protocol->service_uuid16 == 0U) {
+        return false;
+    }
+    s_custom_service_uuid.u.type = BLE_UUID_TYPE_16;
+    s_custom_service_uuid.u16.value = protocol->service_uuid16;
+    s_custom_notify_uuid.u.type = BLE_UUID_TYPE_16;
+    s_custom_notify_uuid.u16.value =
+        protocol->notify_uuid16 != 0U ? protocol->notify_uuid16 : protocol->service_uuid16;
+    s_custom_write_uuid.u.type = BLE_UUID_TYPE_16;
+    s_custom_write_uuid.u16.value =
+        protocol->write_uuid16 != 0U ? protocol->write_uuid16 : protocol->service_uuid16;
+    return true;
+}
+
+/* 引擎一帧解析成功后，把遥测合并进 runtime（保留本地回退参数）。 */
+static bool controller_apply_engine_telemetry(esp_bms_idf_runtime_t *runtime)
+{
+    if (!runtime || !s_ctrl_protocol || !s_ctrl_protocol->telemetry) {
+        return false;
+    }
+    esp_bms_ctrl_telemetry_t telemetry = { 0 };
+    s_ctrl_protocol->telemetry(&telemetry);
+    const uint16_t fallback_wheel = runtime->controller_state.fallback_wheel_circumference_mm;
+    const uint16_t fallback_ratio = runtime->controller_state.fallback_gear_ratio_centi;
+    runtime->controller_state = telemetry;
+    runtime->controller_state.fallback_wheel_circumference_mm = fallback_wheel;
+    runtime->controller_state.fallback_gear_ratio_centi = fallback_ratio;
+    /* 轮径/齿比缺省时用本地配置补算速度；控制器原生车速（datai）必须保留，
+     * 不能被本地回退参数重算覆盖。 */
+    const bool engine_speed_valid = runtime->controller_state.speed_valid;
+    const uint16_t engine_speed = runtime->controller_state.speed_deci_kmh;
+    if (!engine_speed_valid) {
+        esp_bms_ctrl_refresh_derived(&runtime->controller_state);
+    }
+    return runtime->controller_state.rpm_valid || runtime->controller_state.speed_valid ||
+           runtime->controller_state.current_valid || runtime->controller_state.power_valid ||
+           runtime->controller_state.voltage_valid ||
+           runtime->controller_state.controller_temp_valid ||
+           runtime->controller_state.motor_temp_valid || runtime->controller_state.gear_valid ||
+           runtime->controller_state.throttle_valid || runtime->controller_state.fault_valid;
+}
+
 static void controller_fail_connection(esp_bms_idf_runtime_t *runtime,
                                        uint16_t conn_handle,
                                        const char *stage,
@@ -485,7 +617,8 @@ static bool controller_discover_profile(esp_bms_idf_runtime_t *runtime,
                                         controller_profile_t profile)
 {
     if (!runtime || runtime->controller_conn_handle == 0xFFFFU ||
-        profile <= CONTROLLER_PROFILE_NONE || profile > CONTROLLER_PROFILE_FFE0) {
+        profile <= CONTROLLER_PROFILE_NONE || profile > CONTROLLER_PROFILE_CUSTOM ||
+        CONTROLLER_PROFILES[profile].service_uuid == NULL) {
         return false;
     }
     s_controller_profile = profile;
@@ -994,7 +1127,13 @@ static int controller_write_cb(uint16_t conn_handle,
              runtime->controller_write_char_val_handle,
              runtime->controller_cccd_handle);
     esp_bms_idf_runtime_project_controller_snapshot(runtime);
-    if (controller_profile_config()->read_polling) {
+    if (s_ctrl_protocol) {
+        /* 具体型号：等连接参数更新后由 tick 发引擎给出的开启帧。 */
+        ESP_LOGI(TAG,
+                 "engine start deferred: protocol=%s delay_ms=%u",
+                 s_ctrl_protocol->id,
+                 s_ctrl_protocol->start_retry_ms);
+    } else if (controller_profile_config()->read_polling) {
         controller_send_read_request(runtime);
     } else {
         /* 等待订阅及对端连接参数更新完成后，由 tick 开启数据流。 */
@@ -1260,7 +1399,27 @@ static int controller_gap_event(struct ble_gap_event *event, void *arg)
             const int mtu_rc = ble_gattc_exchange_mtu(event->connect.conn_handle, NULL, NULL);
             ESP_LOGI(TAG, "controller MTU exchange submitted: rc=%d", mtu_rc);
             s_notify_diag_count = 0U;
-            controller_begin_profile_walk(runtime);
+            memset(&s_legacy_fardriver_state, 0, sizeof(s_legacy_fardriver_state));
+            s_ctrl_protocol = controller_protocol_active(runtime);
+            s_ctrl_start_attempt = 0U;
+            s_ctrl_poll_step = 0U;
+            s_ctrl_since_frame_ms = 0U;
+            if (s_ctrl_protocol) {
+                esp_bms_ctrl_reset(s_ctrl_protocol);
+                ESP_LOGI(TAG,
+                         "protocol engine: id=%s mtu=%u start_retry=%u poll=%u",
+                         s_ctrl_protocol->id,
+                         s_ctrl_protocol->requested_mtu,
+                         s_ctrl_protocol->start_retry_ms,
+                         s_ctrl_protocol->poll_period_ms);
+                if (controller_apply_custom_profile(s_ctrl_protocol)) {
+                    (void)controller_discover_profile(runtime, CONTROLLER_PROFILE_CUSTOM);
+                } else {
+                    (void)controller_start_discovery_probe(runtime);
+                }
+            } else {
+                controller_begin_profile_walk(runtime);
+            }
         } else {
             ESP_LOGW(TAG,
                      "GAP connect failed: status=%d stage=%u",
@@ -1277,6 +1436,10 @@ static int controller_gap_event(struct ble_gap_event *event, void *arg)
             s_controller_first_frame_elapsed_ms = 0U;
             s_controller_poll_index = 0U;
             s_controller_profile = CONTROLLER_PROFILE_NONE;
+            memset(&s_legacy_fardriver_state, 0, sizeof(s_legacy_fardriver_state));
+            s_ctrl_protocol = NULL;
+            s_ctrl_start_attempt = 0U;
+            s_ctrl_poll_step = 0U;
             controller_clear_telemetry(runtime);
         }
         esp_bms_idf_runtime_project_controller_snapshot(runtime);
@@ -1353,11 +1516,33 @@ static int controller_gap_event(struct ble_gap_event *event, void *arg)
             /* 型号之间的帧长与打包方式不同：按整段数据滑动解析，而不是只认 16 字节 */
             uint8_t frame[CONTROLLER_NOTIFY_BUFFER_LEN];
             const int len = OS_MBUF_PKTLEN(event->notify_rx.om);
-            if (len >= (int)ESP_FARDRIVER_FRAME_LEN && len <= (int)sizeof(frame) &&
+            if (len > 0 && len <= (int)sizeof(frame) &&
                 os_mbuf_copydata(event->notify_rx.om, 0, len, frame) == 0) {
-                if (esp_fardriver_parse_frame(&runtime->controller_state,
-                                              frame,
-                                              (size_t)len)) {
+                if (s_ctrl_protocol) {
+                    if (s_ctrl_protocol->feed && s_ctrl_protocol->feed(frame, (size_t)len)) {
+                        s_ctrl_since_frame_ms = 0U;
+                        const bool telemetry_ok = controller_apply_engine_telemetry(runtime);
+                        if (runtime->controller_ble_phase ==
+                                (uint8_t)CONTROLLER_BLE_PHASE_SUBSCRIBING &&
+                            telemetry_ok) {
+                            runtime->controller_ble_phase = (uint8_t)CONTROLLER_BLE_PHASE_ONLINE;
+                            s_controller_first_frame_elapsed_ms = 0U;
+                            __atomic_fetch_or(&runtime->pending_audio_events,
+                                              ESP_BMS_IDF_RUNTIME_AUDIO_EVENT_CONTROLLER_CONNECTED,
+                                              __ATOMIC_RELAXED);
+                            ESP_LOGI(TAG,
+                                     "controller ready: conn=%u protocol=%s stage=first-frame",
+                                     event->notify_rx.conn_handle,
+                                     s_ctrl_protocol->id);
+                        }
+                        controller_sync_parameters(runtime);
+                        esp_bms_idf_runtime_project_controller_snapshot(runtime);
+                    }
+                } else if (len >= (int)ESP_FARDRIVER_FRAME_LEN &&
+                           esp_fardriver_parse_frame(&s_legacy_fardriver_state,
+                                                     frame,
+                                                     (size_t)len)) {
+                    controller_legacy_fardriver_project(runtime);
                     if (s_notify_diag_count <= 8U) {
                         /* 型号之间校验方式不同：这里直接标出收到的是哪一套 */
                         ESP_LOGI(TAG,
@@ -1368,7 +1553,7 @@ static int controller_gap_event(struct ble_gap_event *event, void *arg)
                     }
                     if (runtime->controller_ble_phase ==
                             (uint8_t)CONTROLLER_BLE_PHASE_SUBSCRIBING &&
-                        esp_fardriver_link_online(&runtime->controller_state)) {
+                        esp_fardriver_link_online(&s_legacy_fardriver_state)) {
                         runtime->controller_ble_phase = (uint8_t)CONTROLLER_BLE_PHASE_ONLINE;
                         s_controller_first_frame_elapsed_ms = 0U;
                         __atomic_fetch_or(&runtime->pending_audio_events,
@@ -1614,6 +1799,9 @@ static void controller_stop(esp_bms_idf_runtime_t *runtime)
     runtime->controller_keepalive_elapsed_ms = 0U;
     s_controller_first_frame_elapsed_ms = 0U;
     s_controller_poll_index = 0U;
+    s_ctrl_protocol = NULL;
+    s_ctrl_start_attempt = 0U;
+    s_ctrl_poll_step = 0U;
     if (runtime->controller_conn_handle != 0xFFFFU) {
         ESP_LOGI(TAG,
                  "connection stop: conn=%u profile=%s phase=%u",
@@ -1646,6 +1834,9 @@ static void controller_on_ble_reset(esp_bms_idf_runtime_t *runtime)
     s_controller_first_frame_elapsed_ms = 0U;
     s_controller_poll_index = 0U;
     s_controller_profile = CONTROLLER_PROFILE_NONE;
+    s_ctrl_protocol = NULL;
+    s_ctrl_start_attempt = 0U;
+    s_ctrl_poll_step = 0U;
     RUNTIME_SET_FLAG(runtime,
                      CONTROLLER_SCAN_REQUESTED,
                      runtime->controller_connection_enabled && runtime->controller_bound_mac[0] != '\0');
@@ -1714,40 +1905,73 @@ static bool controller_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_ms)
     }
     if (waiting_for_frame || online_and_active) {
         runtime->controller_keepalive_elapsed_ms += elapsed_ms;
-        const uint32_t period_ms = controller_profile_config()->read_polling
-                                       ? CONTROLLER_READ_PERIOD_MS
-                                       : (waiting_for_frame ? CONTROLLER_OPEN_RETRY_MS
-                                                            : CONTROLLER_ONLINE_PERIOD_MS);
-        if (runtime->controller_keepalive_elapsed_ms >= period_ms) {
-            if (controller_profile_config()->read_polling) {
-                controller_send_read_request(runtime);
-            } else if (waiting_for_frame) {
-                /* 首帧前轮流尝试：老开启指令 → App 的开启变体 → App 的辅助指令 → 轮询读包。
-                 * 控制器固件只在其中一种上开始出数据，必须逐个试到。 */
-                switch (s_controller_stream_step % 4U) {
-                case 0U:
-                    controller_send_open(runtime);
-                    break;
-                case 1U:
-                    controller_send_stream_command(runtime);
-                    break;
-                case 2U:
-                    controller_send_aux_command(runtime);
-                    break;
-                default:
-                    controller_send_read_request(runtime);
-                    break;
-                }
-                s_controller_stream_step++;
-            } else if ((s_controller_online_step % 3U) == 0U) {
-                /* 在线后保活，其余拍发轮询读包：只回读包不主动推流的型号也能刷新数据 */
-                controller_send_keepalive(runtime);
-                s_controller_online_step++;
-            } else {
-                controller_send_read_request(runtime);
-                s_controller_online_step++;
+        if (s_ctrl_protocol) {
+            if (s_ctrl_since_frame_ms <= UINT32_MAX - elapsed_ms) {
+                s_ctrl_since_frame_ms += elapsed_ms;
             }
-            runtime->controller_keepalive_elapsed_ms = 0U;
+            /* 具体型号：首帧前按 start_retry，在线后按 poll_period 调用引擎。 */
+            const uint32_t engine_period =
+                waiting_for_frame
+                    ? (s_ctrl_protocol->start_retry_ms != 0U ? s_ctrl_protocol->start_retry_ms
+                                                             : CONTROLLER_OPEN_RETRY_MS)
+                    : (s_ctrl_protocol->poll_period_ms != 0U ? s_ctrl_protocol->poll_period_ms
+                                                             : CONTROLLER_ONLINE_PERIOD_MS);
+            if (runtime->controller_keepalive_elapsed_ms >= engine_period) {
+                uint8_t frame[ESP_BMS_CTRL_FRAME_MAX_LEN];
+                size_t frame_len = 0U;
+                bool built = false;
+                if (waiting_for_frame && s_ctrl_protocol->build_start) {
+                    built = s_ctrl_protocol->build_start(s_ctrl_start_attempt, frame, &frame_len);
+                    s_ctrl_start_attempt++;
+                }
+                if (!built && s_ctrl_protocol->build_poll) {
+                    built = s_ctrl_protocol->build_poll(s_ctrl_poll_step,
+                                                        s_ctrl_since_frame_ms,
+                                                        frame,
+                                                        &frame_len);
+                    s_ctrl_poll_step++;
+                }
+                if (built && frame_len > 0U && frame_len <= sizeof(frame)) {
+                    controller_send_command(runtime, frame, frame_len);
+                }
+                runtime->controller_keepalive_elapsed_ms = 0U;
+            }
+        } else {
+            const uint32_t period_ms = controller_profile_config()->read_polling
+                                           ? CONTROLLER_READ_PERIOD_MS
+                                           : (waiting_for_frame ? CONTROLLER_OPEN_RETRY_MS
+                                                                : CONTROLLER_ONLINE_PERIOD_MS);
+            if (runtime->controller_keepalive_elapsed_ms >= period_ms) {
+                if (controller_profile_config()->read_polling) {
+                    controller_send_read_request(runtime);
+                } else if (waiting_for_frame) {
+                    /* 首帧前轮流尝试：老开启指令 → App 的开启变体 → App 的辅助指令 → 轮询读包。
+                     * 控制器固件只在其中一种上开始出数据，必须逐个试到。 */
+                    switch (s_controller_stream_step % 4U) {
+                    case 0U:
+                        controller_send_open(runtime);
+                        break;
+                    case 1U:
+                        controller_send_stream_command(runtime);
+                        break;
+                    case 2U:
+                        controller_send_aux_command(runtime);
+                        break;
+                    default:
+                        controller_send_read_request(runtime);
+                        break;
+                    }
+                    s_controller_stream_step++;
+                } else if ((s_controller_online_step % 3U) == 0U) {
+                    /* 在线后保活，其余拍发轮询读包：只回读包不主动推流的型号也能刷新数据 */
+                    controller_send_keepalive(runtime);
+                    s_controller_online_step++;
+                } else {
+                    controller_send_read_request(runtime);
+                    s_controller_online_step++;
+                }
+                runtime->controller_keepalive_elapsed_ms = 0U;
+            }
         }
     }
     return changed;

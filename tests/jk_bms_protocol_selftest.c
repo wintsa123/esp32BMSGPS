@@ -99,7 +99,7 @@ int main(void)
     assert(esp_bms_jk_feed(stream, &stream_len, sizeof(stream), frame + 100U, sizeof(frame) - 100U, &telemetry));
     assert(telemetry.pack_voltage_mv == 52800U && telemetry.current_deci_amps == -12 &&
            telemetry.protection_mask == 0x12345678U && telemetry.soc_percent == 76U &&
-           telemetry.total_cycle_valid && telemetry.total_cycle_mah == 123400U &&
+           telemetry.total_cycle_valid && telemetry.total_cycle_mah == 1234U &&
            telemetry.balancing_supported && telemetry.balancing_active);
 
     stream_len = 0U;
@@ -108,7 +108,7 @@ int main(void)
     assert(esp_bms_jk_feed(stream, &stream_len, sizeof(stream), frame, sizeof(frame), &telemetry));
     assert(telemetry.pack_voltage_mv == 52800U && telemetry.current_deci_amps == -12 &&
            telemetry.protection_mask == 0x1234U && telemetry.soc_percent == 76U &&
-           telemetry.total_cycle_valid && telemetry.total_cycle_mah == 123400U &&
+           telemetry.total_cycle_valid && telemetry.total_cycle_mah == 1234U &&
            telemetry.balancing_supported && !telemetry.balancing_active);
 
     stream_len = 0U;
@@ -120,11 +120,13 @@ int main(void)
                            sizeof(frame_with_tail), &telemetry));
     assert(stream_len == 20U);
 
+    /* 偏移 154 的循环容量单位是 mAh：原样透传，不再 ×100（旧实现会放大 100 倍）。 */
     stream_len = 0U;
     esp_bms_jk_reset();
-    put_u32_le(frame, 154U, UINT32_MAX);
+    put_u32_le(frame, 154U, 987654U);
     set_checksum(frame);
-    assert(!esp_bms_jk_feed(stream, &stream_len, sizeof(stream), frame, sizeof(frame), &telemetry));
+    assert(esp_bms_jk_feed(stream, &stream_len, sizeof(stream), frame, sizeof(frame), &telemetry));
+    assert(telemetry.total_cycle_valid && telemetry.total_cycle_mah == 987654U);
 
     stream_len = 0U;
     esp_bms_jk_reset();

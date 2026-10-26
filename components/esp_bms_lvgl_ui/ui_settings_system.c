@@ -379,6 +379,34 @@ void settings_bms_type_option_event_cb(lv_event_t *event)
     lv_indev_wait_release(lv_indev_active());
 }
 
+void settings_controller_type_option_event_cb(lv_event_t *event)
+{
+    if (!settings_bms_popup_click_ready(event)) {
+        return;
+    }
+    const size_t selected = (size_t)(uintptr_t)lv_event_get_user_data(event);
+    if (selected >= SETTINGS_CONTROLLER_TYPE_COUNT) {
+        return;
+    }
+    const uint8_t controller_type = SETTINGS_CONTROLLER_TYPE_VALUES[selected];
+    ESP_LOGI(TAG, "[ctrl-ui] controller model selected: %s",
+             SETTINGS_CONTROLLER_TYPE_LABELS[selected]);
+    if (!UI_FLAG(LAST_SNAPSHOT_VALID) ||
+        settings_current_snapshot()->controller_type != controller_type) {
+        queue_controller_type_action(controller_type);
+    }
+    settings_show_controller_detail();
+    settings_navigation_set_hidden(false, false);
+    lv_indev_wait_release(lv_indev_active());
+}
+
+void settings_controller_type_button_event_cb(lv_event_t *event)
+{
+    (void)event;
+    settings_show_controller_type_picker();
+    settings_navigation_set_hidden(false, false);
+}
+
 void settings_bms_bind_confirm_cancel(void)
 {
     const settings_ble_source_t source = (settings_ble_source_t)s_ui.settings_ble_source;

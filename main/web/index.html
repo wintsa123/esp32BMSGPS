@@ -408,7 +408,8 @@
       <p class="section-note" data-i18n="bmsPurpose">选择保护板类型，再扫描或填入蓝牙 MAC 绑定。</p>
       <form id="bms-form">
         <div class="grid">
-          <label><span data-i18n="bmsType">保护板类型</span><select name="bms_type"><option value="ant" data-i18n="antBms">蚂蚁 ANT</option><option value="jk" data-i18n="jkBms">极空 JK</option><option value="jbd" data-i18n="jbdBms">嘉佰达 JBD</option><option value="daly" data-i18n="dalyBms">达锂 Daly</option><option value="yanyang" data-i18n="yanyangBms">彦阳 BMS</option></select></label>
+          <label><span data-i18n="bmsType">保护板类型</span><select name="bms_type"><option value="ant" data-i18n="antBms">蚂蚁 ANT</option><option value="jk" data-i18n="jkBms">极空 JK</option><option value="jbd" data-i18n="jbdBms">嘉佰达 JBD</option><option value="daly" data-i18n="dalyBms">达锂 Daly</option><option value="yanyang" data-i18n="yanyangBms">彦阳 BMS</option><option value="bluebabe" data-i18n="bluebabeBms">蓝宝电量模块</option><option value="mingtang" data-i18n="mingtangBms">明唐保护板</option></select></label>
+          <label><span data-i18n="controllerType">控制器型号</span><select name="controller_type"><option value="auto" data-i18n="ctrlAuto">自动识别</option><option value="bluestone">蓝石 BlueStone</option><option value="fardriver">远驱 FarDriver</option><option value="yuanqu_foc">远驱 YuanQu FOC</option><option value="lingbo">凌博 Lingbo</option><option value="datai">大泰 Datai</option><option value="suniu">速牛 Suniu</option><option value="yanxin">雁鑫 Yanxin</option><option value="apt_a8">APT A8</option><option value="apt_legacy">APT 旧版</option><option value="dunen">顿恩 DN</option><option value="zhike">智科 Zhike</option><option value="jh">晶汇 JH</option><option value="ausi">AUSI 玉铖</option><option value="jiazhou">甲胄 DS11/DS15</option><option value="xinda">昕达 Xinda</option><option value="hobbywing">好盈 SPD</option></select></label>
           <label><span data-i18n="bmsBleMac">蓝牙连接</span><input name="bms_mac" placeholder="AA:BB:CC:DD:EE:FF" autocomplete="off"></label>
         </div>
         <div class="refs">
@@ -495,6 +496,10 @@
         bmsCapacityEstimate: "电池真实容量估算",
         bmsPurpose: "选择保护板类型，再扫描或填入蓝牙 MAC 绑定。",
         bmsType: "保护板类型",
+        controllerType: "控制器型号",
+        ctrlAuto: "自动识别",
+        bluebabeBms: "蓝宝电量模块",
+        mingtangBms: "明唐保护板",
         brightness: "亮度",
         connected: "已连接",
         connecting: "连接中",
@@ -579,6 +584,10 @@
         bmsCapacityEstimate: "Estimated real battery capacity",
         bmsPurpose: "Choose a BMS type, then scan or enter a Bluetooth MAC to bind.",
         bmsType: "BMS type",
+        controllerType: "Controller model",
+        ctrlAuto: "Auto detect",
+        bluebabeBms: "Bluebabe meter",
+        mingtangBms: "Mingtang BMS",
         brightness: "Brightness",
         connected: "connected",
         connecting: "connecting",
@@ -1187,11 +1196,16 @@
         device.display_rotation.value = config.display_rotation ?? "landscape";
         device.speed_unit.value = config.speed_unit ?? "km/h";
         device.speed_source.value = config.speed_source === "controller" ? "controller" : "gps";
+        const controllerType = config.controller_type ?? "auto";
+        const controllerTypes = ["auto", "bluestone", "fardriver", "yuanqu_foc", "lingbo", "datai",
+          "suniu", "yanxin", "apt_a8", "apt_legacy", "dunen", "zhike", "jh", "ausi", "jiazhou",
+          "xinda", "hobbywing"];
+        device.controller_type.value = controllerTypes.includes(controllerType) ? controllerType : "auto";
         device.language.value = config.language ?? "zh";
         updateSpeedSourceHint(config);
         bms.bms_mac.value = config.bms_mac ?? "";
         const bmsType = config.bms_type ?? "ant";
-        bms.bms_type.value = ["ant", "jk", "jbd", "daly", "yanyang"].includes(bmsType) ? bmsType : "ant";
+        bms.bms_type.value = ["ant", "jk", "jbd", "daly", "yanyang", "bluebabe", "mingtang"].includes(bmsType) ? bmsType : "ant";
       } catch {
       }
     }
@@ -1240,6 +1254,17 @@
       bindBmsMac().then(refresh);
     });
     $("bms-form").elements.bms_type.addEventListener("change", () => saveBmsType().then(refresh));
+    if ($("bms-form").elements.controller_type) {
+      $("bms-form").elements.controller_type.addEventListener("change", async () => {
+        await api("/api/config", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ controller_type: $("bms-form").elements.controller_type.value })
+        });
+        await loadConfig();
+        refresh();
+      });
+    }
     $("device-form").elements.language.addEventListener("change", (event) => applyLanguage(event.target.value));
     $("device-form").elements.speed_source.addEventListener("change", () => updateSpeedSourceHint());
     $("ota-form").addEventListener("submit", (event) => {

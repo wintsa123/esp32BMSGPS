@@ -212,6 +212,9 @@ static bool decode_old_status(const uint8_t *data, size_t len, esp_bms_bms_telem
     }
     memset(telemetry, 0, sizeof(*telemetry));
     telemetry->pack_voltage_mv = (uint32_t)pack_voltage_dv * 100U;
+    /* 有意保留原始符号、不做取反：Motexa 的 k.s() 用 l(bArr,70)/(-10.0d) 把方向翻过来，
+     * 但本产品的用户反馈「按原始符号显示（充电为负）更直观」，这是产品要求，
+     * 不是协议错误。交叉验证时不要按参照实现「修正」成 +107。 */
     telemetry->current_deci_amps = (int16_t)(int32_t)current_raw;
     telemetry->soc_percent = data[74U];
     telemetry->max_cell_voltage_mv = max_cell_mv;

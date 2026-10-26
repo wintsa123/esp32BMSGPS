@@ -81,7 +81,7 @@ printf '%s\n' "Cast protocol self-test passed"
 "${build_dir}/ble_media_hid_protocol_selftest"
 printf '%s\n' "BLE media HID protocol self-test passed"
 
-for brand in jk jbd daly; do
+for brand in jk jbd daly bluebabe mingtang; do
     "${cc_bin}" "${cflags[@]}" \
         -I"${repo_root}/components/esp_bms_bms_ble/protocols" \
         -I"${repo_root}/components/esp_bms_bms_ble/protocols/${brand}" \
@@ -90,7 +90,22 @@ for brand in jk jbd daly; do
         -o "${build_dir}/${brand}_bms_protocol_selftest"
     "${build_dir}/${brand}_bms_protocol_selftest"
 done
-printf '%s\n' "JK/JBD/Daly BMS protocol self-tests passed"
+printf '%s\n' "JK/JBD/Daly/Bluebabe/Mingtang BMS protocol self-tests passed"
+
+for brand in bluestone fardriver lingbo yuanqu_foc datai suniu yanxin zhike jh ausi jiazhou xinda hobbywing dunen apt_a8 apt_legacy; do
+    if [[ ! -f "${repo_root}/tests/${brand}_ctrl_protocol_selftest.c" ]]; then
+        continue
+    fi
+    "${cc_bin}" "${cflags[@]}" \
+        -I"${repo_root}/components/esp_bms_controller_protocol/include" \
+        -I"${repo_root}/components/esp_fardriver_protocol/include" \
+        -I"${repo_root}/components/esp_bms_controller_protocol/protocols/${brand}" \
+        "${repo_root}/tests/${brand}_ctrl_protocol_selftest.c" \
+        "${repo_root}/components/esp_bms_controller_protocol/protocols/${brand}/esp_bms_ctrl_${brand}.c" \
+        -o "${build_dir}/${brand}_ctrl_protocol_selftest"
+    "${build_dir}/${brand}_ctrl_protocol_selftest"
+done
+printf '%s\n' "Controller protocol self-tests passed"
 
 python3 "${repo_root}/scripts/push-agnss.py" --self-test
 python3 "${repo_root}/scripts/build-firmware.py" --self-test
