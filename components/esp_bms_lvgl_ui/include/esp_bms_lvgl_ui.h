@@ -284,6 +284,26 @@ typedef struct {
 } esp_bms_bms_scan_candidate_t;
 
 typedef struct {
+    bool valid;
+    uint8_t cell_count;
+    uint16_t cell_voltage_mv[32U];
+    uint16_t soh_percent;
+    uint8_t charge_mos_state;
+    uint8_t discharge_mos_state;
+    uint8_t balance_state;
+    uint32_t balance_mask;
+    int32_t power_w;
+    uint32_t charge_time_seconds;
+    uint32_t last_charge_gap_seconds;
+    uint16_t remaining_charge_minutes;
+    uint16_t remaining_discharge_minutes;
+    bool charge_time_valid;
+    bool last_charge_gap_valid;
+    bool remaining_charge_valid;
+    bool remaining_discharge_valid;
+} esp_bms_ant_snapshot_diagnostics_t;
+
+typedef struct {
     uint32_t flags;
     uint32_t gps_sentences_seen;
     uint32_t uptime_seconds;
@@ -293,6 +313,7 @@ typedef struct {
     uint32_t bms_capacity_estimate_mah;
     uint32_t bms_running_time_seconds;
     uint32_t bms_cycle_capacity_mah;
+    esp_bms_ant_snapshot_diagnostics_t bms_ant_diagnostics;
     uint32_t local_battery_mv;
     esp_bms_speed_unit_t speed_unit;
     esp_bms_speed_source_t speed_source;

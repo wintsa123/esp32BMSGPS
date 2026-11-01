@@ -297,6 +297,7 @@ static void test_missing_tags(void)
     assert(telemetry.current_deci_amps == 0);
     assert(telemetry.total_capacity_mah == 0U);
     assert(telemetry.partial);
+    assert(telemetry.present_fields == (ESP_BMS_BMS_FIELD_PACK_VOLTAGE | ESP_BMS_BMS_FIELD_SOC));
     assert(telemetry.balancing_supported == false);
 }
 

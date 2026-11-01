@@ -409,6 +409,8 @@
       <form id="bms-form">
         <div class="grid">
           <label><span data-i18n="bmsType">保护板类型</span><select name="bms_type"><option value="ant" data-i18n="antBms">蚂蚁 ANT</option><option value="jk" data-i18n="jkBms">极空 JK</option><option value="jbd" data-i18n="jbdBms">嘉佰达 JBD</option><option value="daly" data-i18n="dalyBms">达锂 Daly</option><option value="yanyang" data-i18n="yanyangBms">彦阳 BMS</option><option value="bluebabe" data-i18n="bluebabeBms">蓝宝电量模块</option><option value="mingtang" data-i18n="mingtangBms">明唐保护板</option><option value="em02" data-i18n="em02Bms">鹿行 EM02</option></select></label>
+          <label><span data-i18n="antChannel">ANT 通道</span><select name="ant_channel"><option value="0" data-i18n="antDefault">默认 FFE1</option><option value="1" data-i18n="antChannelA">通道 A（蓝牙屏接口）</option><option value="2" data-i18n="antChannelB">通道 B（充电器接口）</option></select></label>
+          <p class="hint" data-i18n="antChannelWarning">仅 ANT 生效。A/B 会占用相应外设接口，请确认该接口未被使用；默认通道不会自动切换。</p>
           <label><span data-i18n="bluebabeCode">蓝宝配对码</span><input name="bluebabe_code" type="password" inputmode="numeric" autocomplete="off" minlength="6" maxlength="6" pattern="[0-9]{6}" placeholder="******"></label>
           <label><span data-i18n="controllerType">控制器型号</span><select name="controller_type"><option value="auto" data-i18n="ctrlAuto">自动识别</option><option value="bluestone">蓝石 BlueStone</option><option value="fardriver">远驱 FarDriver</option><option value="yuanqu_foc">远驱 YuanQu FOC</option><option value="lingbo">凌博 Lingbo</option><option value="datai">大泰 Datai</option><option value="suniu">速牛 Suniu</option><option value="yanxin">雁鑫 Yanxin</option><option value="apt_a8">APT A8</option><option value="apt_legacy">APT 旧版</option><option value="dunen">顿恩 DN</option><option value="zhike">智科 Zhike</option><option value="jh">晶汇 JH</option><option value="ausi">AUSI 玉铖</option><option value="jiazhou">甲胄 DS11/DS15</option><option value="xinda">昕达 Xinda</option><option value="hobbywing">好盈 SPD</option></select></label>
           <label><span data-i18n="bmsBleMac">蓝牙连接</span><input name="bms_mac" placeholder="AA:BB:CC:DD:EE:FF" autocomplete="off"></label>
@@ -502,6 +504,11 @@
         bluebabeBms: "蓝宝电量模块",
         mingtangBms: "明唐保护板",
         em02Bms: "鹿行 EM02",
+        antChannel: "ANT 通道",
+        antDefault: "默认 FFE1",
+        antChannelA: "通道 A（蓝牙屏接口）",
+        antChannelB: "通道 B（充电器接口）",
+        antChannelWarning: "仅 ANT 生效。A/B 会占用相应外设接口，请确认该接口未被使用；默认通道不会自动切换。",
         bluebabeCode: "蓝宝配对码",
         brightness: "亮度",
         connected: "已连接",
@@ -591,6 +598,11 @@
         ctrlAuto: "Auto detect",
         bluebabeBms: "Bluebabe meter",
         em02Bms: "Luxing EM02",
+        antChannel: "ANT channel",
+        antDefault: "Default FFE1",
+        antChannelA: "Channel A (Bluetooth display)",
+        antChannelB: "Channel B (charger)",
+        antChannelWarning: "ANT only. A/B occupy the corresponding peripheral interface; select only an unused interface. The default never switches automatically.",
         bluebabeCode: "Bluebabe pairing code",
         mingtangBms: "Mingtang BMS",
         brightness: "Brightness",
@@ -1211,6 +1223,7 @@
         bms.bms_mac.value = config.bms_mac ?? "";
         const bmsType = config.bms_type ?? "ant";
         bms.bms_type.value = ["ant", "jk", "jbd", "daly", "yanyang", "bluebabe", "mingtang", "em02"].includes(bmsType) ? bmsType : "ant";
+        bms.ant_channel.value = String(config.ant_channel ?? 0);
         bms.bluebabe_code.value = "";
         bms.bluebabe_code.placeholder = config.bluebabe_code_saved ? "******" : "______";
       } catch {
@@ -1224,7 +1237,7 @@
       await api("/api/config", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ bms_type: bmsType, ...(bluebabeCode ? { bluebabe_code: bluebabeCode } : {}) })
+        body: JSON.stringify({ bms_type: bmsType, ant_channel: Number(form.ant_channel.value), ...(bluebabeCode ? { bluebabe_code: bluebabeCode } : {}) })
       });
       form.bluebabe_code.value = "";
       await loadConfig();
@@ -1263,6 +1276,7 @@
       event.preventDefault();
       bindBmsMac().then(refresh);
     });
+    $("bms-form").elements.ant_channel.addEventListener("change", () => saveBmsType().then(refresh));
     $("bms-form").elements.bms_type.addEventListener("change", () => saveBmsType().then(refresh));
     if ($("bms-form").elements.controller_type) {
       $("bms-form").elements.controller_type.addEventListener("change", async () => {

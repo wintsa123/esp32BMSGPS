@@ -120,6 +120,9 @@ static bool decode_jk04_cell_info(const uint8_t frame[ESP_BMS_JK_FRAME_LEN],
     telemetry->delta_cell_voltage_mv = maximum_mv - minimum_mv;
     telemetry->average_cell_voltage_mv = (uint16_t)(total_mv / cells);
     telemetry->partial = true;
+    telemetry->present_fields = ESP_BMS_BMS_FIELD_PACK_VOLTAGE | ESP_BMS_BMS_FIELD_MIN_CELL |
+                                ESP_BMS_BMS_FIELD_AVERAGE_CELL | ESP_BMS_BMS_FIELD_MAX_CELL |
+                                ESP_BMS_BMS_FIELD_DELTA_CELL;
     return true;
 }
 

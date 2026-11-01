@@ -103,6 +103,7 @@ static const char *TAG = "bms_idf_runtime";
 #define DISPLAY_NVS_LANGUAGE_KEY "lang"
 #define DISPLAY_NVS_BMS_TYPE_KEY "bms_type"
 #define NVS_BLUEBABE_CODE_KEY "bb_code"
+#define NVS_ANT_CHANNEL_KEY "ant_channel"
 #define DISPLAY_NVS_PRESET_RANGE_KEY "preset_rng"
 #define CONTROLLER_NVS_CONNECTION_KEY "ctl_conn"
 #define CONTROLLER_NVS_PAGE_KEY "ctl_page"
@@ -1247,6 +1248,7 @@ static void runtime_clear_bms_telemetry(esp_bms_idf_runtime_t *runtime)
     runtime->snapshot.total_capacity_mah = 0;
     RUNTIME_SET_SNAPSHOT_FLAG(runtime, CAPACITY_REMAINING_VALID, false);
     runtime->snapshot.capacity_remaining_mah = 0;
+    memset(&runtime->snapshot.bms_ant_diagnostics, 0, sizeof(runtime->snapshot.bms_ant_diagnostics));
     runtime->snapshot.bms_running_time_seconds = 0U;
     runtime->snapshot.bms_running_time_valid = false;
     runtime->snapshot.bms_cycle_capacity_mah = 0U;
@@ -2045,7 +2047,10 @@ static bool runtime_json_get_u8(const char *body, const char *field, uint8_t *ou
         }
         cursor++;
     }
-    return seen_digit ? ((*out_value = (uint8_t)value), true) : false;
+    while (*cursor && isspace((unsigned char)*cursor)) cursor++;
+    if (!seen_digit || (*cursor != ',' && *cursor != '}')) return false;
+    *out_value = (uint8_t)value;
+    return true;
 }
 
 static bool runtime_json_get_u32(const char *body, const char *field, uint32_t *out_value, bool *found)
@@ -2928,6 +2933,7 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
     uint8_t boot_animation_style = (uint8_t)ESP_BMS_BOOT_ANIMATION_CHARGE;
     uint8_t language = 0;
     uint8_t bms_type = (uint8_t)ESP_BMS_IDF_BMS_TYPE_ANT;
+    uint8_t ant_channel = 0U;
     uint8_t controller_connection_enabled = 0;
     uint8_t legacy_controller_page_enabled = 0;
     uint8_t controller_type = (uint8_t)ESP_BMS_CTRL_TYPE_AUTO;
@@ -2970,6 +2976,12 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
         const esp_err_t bms_type_ret = nvs_get_u8(handle, DISPLAY_NVS_BMS_TYPE_KEY, &bms_type);
         if (bms_type_ret != ESP_ERR_NVS_NOT_FOUND) {
             ret = bms_type_ret;
+        }
+    }
+    if (ret == ESP_OK) {
+        ret = runtime_nvs_get_optional_u8(handle, NVS_ANT_CHANNEL_KEY, &ant_channel);
+        if (ant_channel > 2U) {
+            ant_channel = 0U;
         }
     }
     if (ret == ESP_OK) {
@@ -3142,6 +3154,7 @@ esp_err_t esp_bms_idf_runtime_load_display_settings(esp_bms_idf_runtime_t *runti
     RUNTIME_SET_FLAG(runtime, LANGUAGE_ZH, language != 0U);
     runtime->snapshot.language_zh = language != 0U;
     runtime->bms_type = bms_type;
+    runtime->bms_ant_channel = ant_channel;
     runtime->snapshot.bms_type = runtime->bms_type;
     memcpy(runtime->bluebabe_code, bluebabe_code, sizeof(runtime->bluebabe_code));
     runtime->bluebabe_code[sizeof(runtime->bluebabe_code) - 1U] = '\0';
@@ -3193,6 +3206,8 @@ esp_err_t esp_bms_idf_runtime_save_display_settings(esp_bms_idf_runtime_t *runti
                         ESP_ERR_INVALID_STATE, TAG, "invalid boot animation style");
     ESP_RETURN_ON_FALSE(runtime_bms_type_matches_policy(runtime->bms_type),
                         ESP_ERR_INVALID_STATE, TAG, "invalid BMS type");
+    ESP_RETURN_ON_FALSE(runtime->bms_ant_channel <= 2U,
+                        ESP_ERR_INVALID_STATE, TAG, "invalid ANT channel");
     ESP_RETURN_ON_FALSE(runtime->snapshot.preset_range_km <= ESP_BMS_REMAINING_RANGE_MAX_KM,
                         ESP_ERR_INVALID_STATE, TAG, "invalid preset range");
     ESP_RETURN_ON_FALSE(runtime_controller_ratio_matches_policy(
@@ -3257,6 +3272,9 @@ esp_err_t esp_bms_idf_runtime_save_display_settings(esp_bms_idf_runtime_t *runti
         ret = nvs_set_u8(handle, DISPLAY_NVS_BMS_TYPE_KEY, runtime->bms_type);
     }
     if (ret == ESP_OK) {
+        ret = nvs_set_u8(handle, NVS_ANT_CHANNEL_KEY, runtime->bms_ant_channel);
+    }
+    if (ret == ESP_OK) {
         ret = nvs_set_u16(handle,
                           DISPLAY_NVS_PRESET_RANGE_KEY,
                           runtime->snapshot.preset_range_km);
@@ -3317,7 +3335,8 @@ static bool runtime_set_pending_http_config(esp_bms_idf_runtime_t *runtime,
                                             bool language_zh,
                                             esp_bms_idf_bms_type_t bms_type,
                                             uint8_t controller_type,
-                                            const char *bluebabe_code)
+                                            const char *bluebabe_code,
+                                            uint8_t ant_channel)
 {
     if (!runtime->http_pending_lock) {
         return false;
@@ -3333,6 +3352,7 @@ static bool runtime_set_pending_http_config(esp_bms_idf_runtime_t *runtime,
     runtime->http_pending_speed_source = speed_source;
     RUNTIME_SET_FLAG(runtime, HTTP_PENDING_LANGUAGE_ZH, language_zh);
     runtime->http_pending_bms_type = (uint8_t)bms_type;
+    runtime->http_pending_bms_ant_channel = ant_channel;
     runtime->http_pending_controller_type = controller_type;
     runtime_copy_snapshot_text(runtime->http_pending_bluebabe_code,
                                sizeof(runtime->http_pending_bluebabe_code),
@@ -3360,6 +3380,7 @@ bool esp_bms_idf_runtime_apply_pending_http_config(esp_bms_idf_runtime_t *runtim
     const esp_bms_speed_source_t speed_source = runtime->http_pending_speed_source;
     const bool language_zh = RUNTIME_FLAG(runtime, HTTP_PENDING_LANGUAGE_ZH);
     const uint8_t bms_type = runtime->http_pending_bms_type;
+    const uint8_t ant_channel = runtime->http_pending_bms_ant_channel;
     const uint8_t controller_type = runtime->http_pending_controller_type;
     char bluebabe_code[sizeof(runtime->bluebabe_code)] = { 0 };
     runtime_copy_snapshot_text(bluebabe_code, sizeof(bluebabe_code),
@@ -3374,6 +3395,7 @@ bool esp_bms_idf_runtime_apply_pending_http_config(esp_bms_idf_runtime_t *runtim
     RUNTIME_SET_FLAG(runtime, HTTP_CONFIG_APPLIED, true);
 
     const bool bms_type_changed = runtime->bms_type != bms_type;
+    const bool ant_channel_changed = runtime->bms_ant_channel != ant_channel;
     const bool controller_type_changed = runtime->controller_type != controller_type;
     const bool changed = runtime->brightness_percent != brightness_percent ||
                          runtime->volume_percent != volume_percent ||
@@ -3381,7 +3403,7 @@ bool esp_bms_idf_runtime_apply_pending_http_config(esp_bms_idf_runtime_t *runtim
                          runtime->snapshot.speed_unit != speed_unit ||
                          runtime->snapshot.speed_source != speed_source ||
                          RUNTIME_FLAG(runtime, LANGUAGE_ZH) != language_zh ||
-                         bms_type_changed || controller_type_changed ||
+                         bms_type_changed || ant_channel_changed || controller_type_changed ||
                          strcmp(runtime->bluebabe_code, bluebabe_code) != 0;
     if (!changed) {
         ESP_LOGI(TAG, "[http] config consumed without value changes");
@@ -3395,6 +3417,19 @@ bool esp_bms_idf_runtime_apply_pending_http_config(esp_bms_idf_runtime_t *runtim
     runtime->snapshot.speed_source = speed_source;
     RUNTIME_SET_FLAG(runtime, LANGUAGE_ZH, language_zh);
     runtime->snapshot.language_zh = language_zh;
+    runtime->bms_ant_channel = ant_channel;
+    if (ant_channel_changed && !bms_type_changed &&
+        runtime->bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_ANT && runtime->bms_ble_driver) {
+        if (runtime->bms_ble_driver->stop) {
+            (void)runtime->bms_ble_driver->stop(runtime);
+        }
+        if (runtime->bms_bound_mac[0] != '\0' && runtime->bms_ble_driver->start_if_bound) {
+            const esp_err_t ret = runtime->bms_ble_driver->start_if_bound(runtime);
+            if (ret != ESP_OK) {
+                ESP_LOGW(TAG, "[bms] restart after ANT channel change failed: %s", esp_err_to_name(ret));
+            }
+        }
+    }
     if (bms_type_changed) {
         (void)runtime_select_bms_type(runtime, (esp_bms_idf_bms_type_t)bms_type);
     }
@@ -3673,8 +3708,54 @@ static bool runtime_json_write_bms_temperatures(char *out,
     return written >= 0 && (size_t)written < out_len - offset;
 }
 
+static bool runtime_json_write_ant_diagnostics(char *out,
+                                                size_t out_len,
+                                                const esp_bms_ant_snapshot_diagnostics_t *diag)
+{
+    if (!out || out_len == 0U || !diag || diag->cell_count > 32U) {
+        return false;
+    }
+    if (!diag->valid) {
+        const int written = snprintf(out, out_len, "null");
+        return written >= 0 && (size_t)written < out_len;
+    }
+    char cells[224] = "[";
+    size_t offset = 1U;
+    for (uint8_t index = 0U; index < diag->cell_count; ++index) {
+        const int written = snprintf(cells + offset, sizeof(cells) - offset, "%s%u",
+                                     index == 0U ? "" : ",", (unsigned)diag->cell_voltage_mv[index]);
+        if (written < 0 || (size_t)written >= sizeof(cells) - offset) return false;
+        offset += (size_t)written;
+    }
+    cells[offset++] = ']';
+    cells[offset] = '\0';
+    char charge_time[16], charge_gap[16], charge_remaining[16], discharge_remaining[16];
+    if (!runtime_json_write_u32_or_null(charge_time, sizeof(charge_time),
+                                        diag->charge_time_valid, diag->charge_time_seconds) ||
+        !runtime_json_write_u32_or_null(charge_gap, sizeof(charge_gap),
+                                        diag->last_charge_gap_valid, diag->last_charge_gap_seconds) ||
+        !runtime_json_write_u32_or_null(charge_remaining, sizeof(charge_remaining),
+                                        diag->remaining_charge_valid, diag->remaining_charge_minutes) ||
+        !runtime_json_write_u32_or_null(discharge_remaining, sizeof(discharge_remaining),
+                                        diag->remaining_discharge_valid, diag->remaining_discharge_minutes)) {
+        return false;
+    }
+    const int written = snprintf(out, out_len,
+        "{\"cell_voltage_mv\":%s,\"soh_percent\":%u,"
+        "\"charge_mos_state\":%u,\"discharge_mos_state\":%u,\"balance_state\":%u,"
+        "\"balance_mask\":%lu,\"power_w\":%ld,\"charge_time_seconds\":%s,"
+        "\"last_charge_gap_seconds\":%s,\"remaining_charge_minutes\":%s,"
+        "\"remaining_discharge_minutes\":%s}",
+        cells, (unsigned)diag->soh_percent, (unsigned)diag->charge_mos_state,
+        (unsigned)diag->discharge_mos_state, (unsigned)diag->balance_state,
+        (unsigned long)diag->balance_mask, (long)diag->power_w,
+        charge_time, charge_gap, charge_remaining, discharge_remaining);
+    return written >= 0 && (size_t)written < out_len;
+}
+
 static bool runtime_status_json(esp_bms_idf_runtime_t *runtime, char *json, size_t json_len)
 {
+    char ant_diagnostics[768];
     char pack_voltage[16] = { 0 };
     char current[16] = { 0 };
     char soc[16] = { 0 };
@@ -3707,7 +3788,9 @@ static bool runtime_status_json(esp_bms_idf_runtime_t *runtime, char *json, size
         capacity_estimate_mah = runtime->capacity_estimate.estimate_mah;
         xSemaphoreGive(runtime->capacity_estimate_lock);
     }
-    if (!runtime_json_write_u32_or_null(pack_voltage,
+    if (!runtime_json_write_ant_diagnostics(ant_diagnostics, sizeof(ant_diagnostics),
+                                             &runtime->snapshot.bms_ant_diagnostics) ||
+        !runtime_json_write_u32_or_null(pack_voltage,
                                         sizeof(pack_voltage),
                                         RUNTIME_SNAPSHOT_FLAG(runtime, PACK_VOLTAGE_VALID),
                                         runtime->snapshot.pack_voltage_mv) ||
@@ -3814,7 +3897,7 @@ static bool runtime_status_json(esp_bms_idf_runtime_t *runtime, char *json, size
                                  "\"average_cell_voltage_mv\":%s,\"max_cell_voltage_mv\":%s,"
                                  "\"delta_cell_voltage_mv\":%s,\"total_capacity_mah\":%s,"
                                  "\"capacity_remaining_mah\":%s,\"bms_running_time_seconds\":%s,"
-                                 "\"bms_cycle_capacity_mah\":%s,\"controller_online\":%s,"
+                                 "\"bms_cycle_capacity_mah\":%s,\"bms_ant_diagnostics\":%s,\"controller_online\":%s,"
                                  "\"controller_speed_deci_units\":%s,\"controller_rpm\":%s,"
                                  "\"controller_gear\":%s,\"controller_power_w\":%s,"
                                  "\"controller_temp_c\":%s,\"motor_temp_c\":%s,"
@@ -3843,6 +3926,7 @@ static bool runtime_status_json(esp_bms_idf_runtime_t *runtime, char *json, size
                                  remaining_capacity,
                                  running_time,
                                  cycle_capacity,
+                                 ant_diagnostics,
                                  RUNTIME_SNAPSHOT_FLAG(runtime, CONTROLLER_ONLINE) ? "true" : "false",
                                  controller_speed,
                                  controller_rpm,
@@ -4070,7 +4154,7 @@ static bool runtime_config_json(esp_bms_idf_runtime_t *runtime, char *json, size
                                  "\"language\":\"%s\","
                                  "\"setup_ap_ssid\":\"%s\",\"setup_ap_password_saved\":%s,"
                                  "\"setup_ap_state\":\"%s\",\"bms_mac\":%s,\"controller_mac\":%s,\"bms_type\":\"%s\","
-                                 "\"controller_type\":\"%s\",\"bluebabe_code_saved\":%s}",
+                                 "\"controller_type\":\"%s\",\"ant_channel\":%u,\"bluebabe_code_saved\":%s}",
                                  runtime->brightness_percent,
                                  runtime->volume_percent,
                                  runtime_rotation_config_text(runtime->display_rotation),
@@ -4086,6 +4170,7 @@ static bool runtime_config_json(esp_bms_idf_runtime_t *runtime, char *json, size
                                  controller_mac,
                                  runtime_bms_type_config_text((esp_bms_idf_bms_type_t)runtime->bms_type),
                                  runtime_controller_type_config_text(runtime->controller_type),
+                                 (unsigned)runtime->bms_ant_channel,
                                  runtime->bluebabe_code[0] == '\0' ? "false" : "true");
     return written >= 0 && (size_t)written < json_len;
 }
@@ -4278,6 +4363,7 @@ static int runtime_apply_config_json(esp_bms_idf_runtime_t *runtime,
     esp_bms_idf_bms_type_t bms_type = (esp_bms_idf_bms_type_t)runtime->bms_type;
     char bluebabe_code[sizeof(runtime->bluebabe_code)] = { 0 };
 
+    uint8_t ant_channel = runtime->bms_ant_channel;
     bool found = false;
     uint8_t parsed_u8 = 0;
     if (!runtime_json_get_u8(body, "brightness", &parsed_u8, &found)) {
@@ -4364,6 +4450,14 @@ static int runtime_apply_config_json(esp_bms_idf_runtime_t *runtime,
         memcpy(bluebabe_code, runtime->bluebabe_code, sizeof(bluebabe_code));
     }
 
+    if (!runtime_json_get_u8(body, "ant_channel", &parsed_u8, &found) ||
+        (found && parsed_u8 > 2U)) {
+        CONFIG_REJECT("invalid ANT channel");
+    }
+    if (found) {
+        ant_channel = parsed_u8;
+    }
+
     uint8_t controller_type = runtime->controller_type;
     memset(parsed_text, 0, sizeof(parsed_text));
     if (!runtime_json_get_string(body, "controller_type", parsed_text, sizeof(parsed_text), &found)) {
@@ -4376,7 +4470,7 @@ static int runtime_apply_config_json(esp_bms_idf_runtime_t *runtime,
     if (!runtime_set_pending_http_config(runtime, brightness_percent, volume_percent,
                                          rotation, speed_unit, speed_source,
                                          language_zh, bms_type, controller_type,
-                                         bluebabe_code)) {
+                                         bluebabe_code, ant_channel)) {
         *message = "config queue failed";
         return 500;
     }

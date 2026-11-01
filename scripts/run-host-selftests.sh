@@ -118,3 +118,5 @@ printf '%s\n' "Controller protocol self-tests passed"
 
 python3 "${repo_root}/scripts/push-agnss.py" --self-test
 python3 "${repo_root}/scripts/build-firmware.py" --self-test
+
+python3 -m unittest discover -s "${repo_root}/tests" -p 'test_bms_*.py'

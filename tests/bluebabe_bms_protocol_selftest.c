@@ -124,6 +124,10 @@ static void test_state_frame(void)
     assert(telemetry.balancing_supported == false && telemetry.balancing_active == false);
     assert(telemetry.protection_mask == 0U && telemetry.warning_mask == 0U);
     assert(telemetry.partial);
+    assert(telemetry.present_fields == (ESP_BMS_BMS_FIELD_PACK_VOLTAGE | ESP_BMS_BMS_FIELD_CURRENT |
+           ESP_BMS_BMS_FIELD_SOC | ESP_BMS_BMS_FIELD_MIN_CELL | ESP_BMS_BMS_FIELD_MAX_CELL |
+           ESP_BMS_BMS_FIELD_DELTA_CELL | ESP_BMS_BMS_FIELD_CAPACITY_REMAINING |
+           ESP_BMS_BMS_FIELD_TEMPERATURES));
 
     /* CRC error: same frame with the last CRC byte flipped. */
     frame[frame_len - 2U] ^= 0xFFU;
@@ -184,6 +188,7 @@ static void test_info_frame(void)
     assert(telemetry.total_capacity_mah == 100000U);
     assert(telemetry.pack_voltage_mv == 0U);
     assert(telemetry.partial);
+    assert(telemetry.present_fields == ESP_BMS_BMS_FIELD_TOTAL_CAPACITY);
 }
 
 static void test_matching_code_rejection(void)

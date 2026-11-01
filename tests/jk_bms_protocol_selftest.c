@@ -139,6 +139,8 @@ int main(void)
     assert(telemetry.partial && telemetry.pack_voltage_mv == 52800U &&
            telemetry.min_cell_voltage_mv == 3300U && telemetry.max_cell_voltage_mv == 3300U);
 
+    assert(telemetry.present_fields == (ESP_BMS_BMS_FIELD_PACK_VOLTAGE | ESP_BMS_BMS_FIELD_MIN_CELL |
+           ESP_BMS_BMS_FIELD_AVERAGE_CELL | ESP_BMS_BMS_FIELD_MAX_CELL | ESP_BMS_BMS_FIELD_DELTA_CELL));
     frame[299] ^= 1U;
     stream_len = 0U;
     assert(!esp_bms_jk_feed(stream, &stream_len, sizeof(stream), frame, sizeof(frame), &telemetry));

@@ -29,15 +29,11 @@
 static const char *TAG = "esp_bms_bms_ble";
 
 #define BMS_SCAN_DEBUG_REPORT_LIMIT 32U
-#define BMS_FRAME_MIN_LEN 10U
-#define BMS_FRAME_START_1 0x7EU
-#define BMS_FRAME_START_2 0xA1U
-#define BMS_FRAME_END_1 0xAAU
-#define BMS_FRAME_END_2 0x55U
 #define ANT_BMS_SERVICE_UUID_16 0xFFE0U
 #define ANT_BMS_CHARACTERISTIC_UUID_16 0xFFE1U
 #define BMS_SCAN_DURATION_MS 10000
 #define BMS_CONNECT_TIMEOUT_MS 10000
+#define BMS_ESTABLISH_TIMEOUT_MS 10000U
 #define BMS_STATUS_POLL_PERIOD_MS 500U
 #define BMS_HEARTBEAT_TIMEOUT_MS 30000U
 #define BMS_RECONNECT_BACKOFF_MS 3000U
@@ -69,6 +65,27 @@ typedef enum {
     BMS_BLE_PHASE_ONLINE = 7,
     BMS_BLE_PHASE_BACKOFF = 8,
 } bms_ble_phase_t;
+
+/* The runtime and protocol modules have one device owner; tokens outlive callbacks. */
+static esp_bms_idf_runtime_t *s_bms_runtime;
+
+static void bms_advance_session(esp_bms_idf_runtime_t *runtime)
+{
+    if (++runtime->bms_ble_session == 0U) {
+        ++runtime->bms_ble_session;
+    }
+}
+
+static void *bms_callback_arg(const esp_bms_idf_runtime_t *runtime)
+{
+    return (void *)(uintptr_t)runtime->bms_ble_session;
+}
+
+static esp_bms_idf_runtime_t *bms_callback_runtime(void *arg)
+{
+    return s_bms_runtime && (uint32_t)(uintptr_t)arg == s_bms_runtime->bms_ble_session
+               ? s_bms_runtime : NULL;
+}
 
 static void bms_set_info(esp_bms_idf_runtime_t *runtime, const char *text)
 {
@@ -138,7 +155,33 @@ static void bms_apply_safety_status(esp_bms_idf_runtime_t *runtime,
     uint16_t supported = 0U;
     uint16_t active = 0U;
     const uint64_t mask = telemetry->protection_mask;
-    if (runtime->bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_JBD) {
+    if (runtime->bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_ANT && telemetry->ant_diagnostics.valid) {
+        supported = ESP_BMS_BMS_SAFETY_CELL_OV | ESP_BMS_BMS_SAFETY_CELL_UV |
+                    ESP_BMS_BMS_SAFETY_OVER_TEMP | ESP_BMS_BMS_SAFETY_UNDER_TEMP |
+                    ESP_BMS_BMS_SAFETY_OVER_CURRENT | ESP_BMS_BMS_SAFETY_SHORT_CIRCUIT |
+                    ESP_BMS_BMS_SAFETY_CELL_DELTA;
+        if (bms_mask_has_any(mask, (UINT64_C(1) << 1U) | (UINT64_C(1) << 2U) | (UINT64_C(1) << 3U))) {
+            active |= ESP_BMS_BMS_SAFETY_CELL_OV;
+        }
+        if (bms_mask_has_any(mask, (UINT64_C(1) << 4U) | (UINT64_C(1) << 5U) | (UINT64_C(1) << 6U))) {
+            active |= ESP_BMS_BMS_SAFETY_CELL_UV;
+        }
+        if (bms_mask_has_any(mask, (UINT64_C(1) << 8U) | (UINT64_C(1) << 9U) | (UINT64_C(1) << 10U))) {
+            active |= ESP_BMS_BMS_SAFETY_OVER_TEMP;
+        }
+        if (bms_mask_has_any(mask, (UINT64_C(1) << 11U) | (UINT64_C(1) << 12U))) {
+            active |= ESP_BMS_BMS_SAFETY_UNDER_TEMP;
+        }
+        if (bms_mask_has_any(mask, (UINT64_C(1) << 13U) | (UINT64_C(1) << 14U) | (UINT64_C(1) << 15U))) {
+            active |= ESP_BMS_BMS_SAFETY_OVER_CURRENT;
+        }
+        if (bms_mask_has_any(mask, UINT64_C(1) << 16U)) {
+            active |= ESP_BMS_BMS_SAFETY_SHORT_CIRCUIT;
+        }
+        if (bms_mask_has_any(mask, UINT64_C(1) << 7U)) {
+            active |= ESP_BMS_BMS_SAFETY_CELL_DELTA;
+        }
+    } else if (runtime->bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_JBD) {
         supported = ESP_BMS_BMS_SAFETY_CELL_OV | ESP_BMS_BMS_SAFETY_CELL_UV |
                     ESP_BMS_BMS_SAFETY_OVER_TEMP | ESP_BMS_BMS_SAFETY_UNDER_TEMP |
                     ESP_BMS_BMS_SAFETY_OVER_CURRENT | ESP_BMS_BMS_SAFETY_SHORT_CIRCUIT;
@@ -256,43 +299,67 @@ static bool bms_apply_telemetry(esp_bms_idf_runtime_t *runtime,
     const bool new_connection = !esp_bms_dashboard_snapshot_flag_get(
         &runtime->snapshot,
         ESP_BMS_DASHBOARD_FLAG_BMS_ONLINE);
-    RUNTIME_SET_SNAPSHOT_FLAG(runtime, BMS_ONLINE, true);
-    RUNTIME_SET_SNAPSHOT_FLAG(runtime, PACK_VOLTAGE_VALID, true);
-    runtime->snapshot.pack_voltage_mv = telemetry->pack_voltage_mv;
-    RUNTIME_SET_SNAPSHOT_FLAG(runtime, CURRENT_VALID, !telemetry->partial);
-    runtime->snapshot.current_deci_amps = telemetry->partial ? 0 : telemetry->current_deci_amps;
-    RUNTIME_SET_SNAPSHOT_FLAG(runtime, SOC_VALID, !telemetry->partial);
-    runtime->snapshot.soc_percent = telemetry->partial ? 0U : telemetry->soc_percent;
-    RUNTIME_SET_SNAPSHOT_FLAG(runtime, MAX_CELL_VALID, true);
-    runtime->snapshot.max_cell_voltage_mv = telemetry->max_cell_voltage_mv;
-    RUNTIME_SET_SNAPSHOT_FLAG(runtime, MIN_CELL_VALID, true);
-    runtime->snapshot.min_cell_voltage_mv = telemetry->min_cell_voltage_mv;
-    RUNTIME_SET_SNAPSHOT_FLAG(runtime, DELTA_CELL_VALID, true);
-    runtime->snapshot.delta_cell_voltage_mv = telemetry->delta_cell_voltage_mv;
-    RUNTIME_SET_SNAPSHOT_FLAG(runtime, AVERAGE_CELL_VALID, true);
-    runtime->snapshot.average_cell_voltage_mv = telemetry->average_cell_voltage_mv;
-    RUNTIME_SET_SNAPSHOT_FLAG(runtime, TOTAL_CAPACITY_VALID, !telemetry->partial);
-    runtime->snapshot.total_capacity_mah = telemetry->partial ? 0U : telemetry->total_capacity_mah;
-    RUNTIME_SET_SNAPSHOT_FLAG(runtime, CAPACITY_REMAINING_VALID, !telemetry->partial);
-    runtime->snapshot.capacity_remaining_mah = telemetry->partial ? 0U : telemetry->capacity_remaining_mah;
-    runtime->snapshot.bms_running_time_seconds = telemetry->running_time_seconds;
-    runtime->snapshot.bms_running_time_valid = !telemetry->partial && telemetry->running_time_valid;
-    runtime->snapshot.bms_cycle_capacity_mah = telemetry->total_cycle_mah;
-    runtime->snapshot.bms_cycle_capacity_valid =
-        !telemetry->partial && telemetry->total_cycle_valid;
-    for (uint8_t index = 0U; index < ESP_BMS_BMS_TEMP_MAX_COUNT; ++index) {
-        esp_bms_dashboard_snapshot_temperature_valid_set(&runtime->snapshot,
-                                                         index,
-                                                         telemetry->temperature_valid[index]);
+    const uint32_t fields = telemetry->partial ? telemetry->present_fields : UINT32_MAX;
+    const bool live = (fields & ESP_BMS_BMS_FIELD_PACK_VOLTAGE) != 0U;
+#define BMS_APPLY_FIELD(field, flag, member) \
+    if ((fields & ESP_BMS_BMS_FIELD_##field) != 0U) { \
+        runtime->snapshot.member = telemetry->member; \
+        RUNTIME_SET_SNAPSHOT_FLAG(runtime, flag, true); \
     }
-    memcpy(runtime->snapshot.bms_temperature_celsius,
-           telemetry->temperatures_celsius,
-           sizeof(runtime->snapshot.bms_temperature_celsius));
+    BMS_APPLY_FIELD(PACK_VOLTAGE, PACK_VOLTAGE_VALID, pack_voltage_mv);
+    BMS_APPLY_FIELD(CURRENT, CURRENT_VALID, current_deci_amps);
+    BMS_APPLY_FIELD(SOC, SOC_VALID, soc_percent);
+    BMS_APPLY_FIELD(MAX_CELL, MAX_CELL_VALID, max_cell_voltage_mv);
+    BMS_APPLY_FIELD(MIN_CELL, MIN_CELL_VALID, min_cell_voltage_mv);
+    BMS_APPLY_FIELD(DELTA_CELL, DELTA_CELL_VALID, delta_cell_voltage_mv);
+    BMS_APPLY_FIELD(AVERAGE_CELL, AVERAGE_CELL_VALID, average_cell_voltage_mv);
+    BMS_APPLY_FIELD(TOTAL_CAPACITY, TOTAL_CAPACITY_VALID, total_capacity_mah);
+    BMS_APPLY_FIELD(CAPACITY_REMAINING, CAPACITY_REMAINING_VALID, capacity_remaining_mah);
+#undef BMS_APPLY_FIELD
+    if ((fields & ESP_BMS_BMS_FIELD_TEMPERATURES) != 0U) {
+        for (uint8_t index = 0U; index < ESP_BMS_BMS_TEMP_MAX_COUNT; ++index) {
+            esp_bms_dashboard_snapshot_temperature_valid_set(&runtime->snapshot,
+                                                             index,
+                                                             telemetry->temperature_valid[index]);
+        }
+        memcpy(runtime->snapshot.bms_temperature_celsius,
+               telemetry->temperatures_celsius,
+               sizeof(runtime->snapshot.bms_temperature_celsius));
+    }
     if (!telemetry->partial) {
+        runtime->snapshot.bms_running_time_seconds = telemetry->running_time_seconds;
+        runtime->snapshot.bms_running_time_valid = telemetry->running_time_valid;
+        runtime->snapshot.bms_cycle_capacity_mah = telemetry->total_cycle_mah;
+        runtime->snapshot.bms_cycle_capacity_valid = telemetry->total_cycle_valid;
+        const esp_bms_bms_ant_diagnostics_t *diag = &telemetry->ant_diagnostics;
+        runtime->snapshot.bms_ant_diagnostics = (esp_bms_ant_snapshot_diagnostics_t) {
+            .valid = diag->valid,
+            .cell_count = diag->cell_count,
+            .soh_percent = diag->soh_percent,
+            .charge_mos_state = diag->charge_mos_state,
+            .discharge_mos_state = diag->discharge_mos_state,
+            .balance_state = diag->balance_state,
+            .balance_mask = diag->balance_mask,
+            .power_w = diag->power_w,
+            .charge_time_seconds = diag->charge_time_seconds,
+            .last_charge_gap_seconds = diag->last_charge_gap_seconds,
+            .remaining_charge_minutes = diag->remaining_charge_minutes,
+            .remaining_discharge_minutes = diag->remaining_discharge_minutes,
+            .charge_time_valid = diag->charge_time_valid,
+            .last_charge_gap_valid = diag->last_charge_gap_valid,
+            .remaining_charge_valid = diag->remaining_charge_valid,
+            .remaining_discharge_valid = diag->remaining_discharge_valid,
+        };
+        memcpy(runtime->snapshot.bms_ant_diagnostics.cell_voltage_mv,
+               diag->cell_voltage_mv,
+               sizeof(runtime->snapshot.bms_ant_diagnostics.cell_voltage_mv));
         bms_apply_fault_masks(&runtime->snapshot, telemetry->protection_mask, telemetry->warning_mask);
         bms_apply_safety_status(runtime, telemetry);
     }
-    runtime->bms_telemetry_last_us = esp_timer_get_time();
+    if (live) {
+        RUNTIME_SET_SNAPSHOT_FLAG(runtime, BMS_ONLINE, true);
+        runtime->bms_telemetry_last_us = esp_timer_get_time();
+    }
     if (!telemetry->partial && telemetry->total_cycle_valid &&
         (runtime->bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_ANT ||
          runtime->bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_JK)) {
@@ -309,7 +376,11 @@ static bool bms_apply_telemetry(esp_bms_idf_runtime_t *runtime,
                                                                      telemetry->current_deci_amps,
                                                                      telemetry->soc_percent);
     }
-    bms_set_info(runtime, "BMS OK");
+    if (live) {
+        bms_set_info(runtime, "BMS OK");
+    } else {
+        RUNTIME_SET_FLAG(runtime, BMS_SNAPSHOT_DIRTY, true);
+    }
     if (!telemetry->partial && telemetry->pack_voltage_mv != 0U && telemetry->soc_percent <= 100U) {
         esp_bms_ride_record_sample_t sample = {
             .valid = true,
@@ -372,12 +443,6 @@ static bool bms_ant_uses_old_protocol(const esp_bms_idf_runtime_t *runtime)
                        runtime->bms_poll_index == (uint8_t)ANT_BLE_PROTOCOL_OLD);
 }
 
-static bool bms_has_separate_write_characteristic(const esp_bms_idf_runtime_t *runtime)
-{
-    return bms_is_yanyang(runtime) || bms_is_jbd(runtime) || bms_is_daly(runtime) ||
-           bms_is_bluebabe(runtime) || bms_is_mingtang(runtime) || bms_is_em02(runtime);
-}
-
 static bool bms_is_jk_characteristic(const struct ble_gatt_chr *chr)
 {
     return chr && ble_uuid_cmp(&chr->uuid.u, BLE_UUID16_DECLARE(ANT_BMS_CHARACTERISTIC_UUID_16)) == 0;
@@ -410,6 +475,8 @@ static ble_uuid128_t bms_uuid128(const uint8_t bytes[ESP_BMS_YANYANG_UUID_LEN])
     return uuid;
 }
 
+static void bms_clear_telemetry(esp_bms_idf_runtime_t *runtime);
+
 static bool bms_frame_push(esp_bms_idf_runtime_t *runtime,
                            const uint8_t *chunk,
                            size_t chunk_len)
@@ -433,10 +500,11 @@ static bool bms_frame_push(esp_bms_idf_runtime_t *runtime,
                                chunk[2] == 0xAAU;
     const bool ant_old_stream = runtime->bms_frame_len >= 3U && runtime->bms_frame[0] == 0xAAU &&
                                 runtime->bms_frame[1] == 0x55U && runtime->bms_frame[2] == 0xAAU;
-    if (ant_old_start) {
+    if (runtime->bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_ANT && ant_old_start) {
         runtime->bms_poll_index = (uint8_t)ANT_BLE_PROTOCOL_PROBE_OLD;
     }
-    if (ant_old_start || ant_old_stream) {
+    if (runtime->bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_ANT &&
+        (ant_old_start || ant_old_stream)) {
         size_t stream_len = runtime->bms_frame_len;
         const bool decoded = esp_bms_ant_protocol_old_feed(runtime->bms_frame,
                                                             &stream_len,
@@ -486,30 +554,30 @@ static bool bms_frame_push(esp_bms_idf_runtime_t *runtime,
     }
     if (bms_is_em02(runtime)) {
         size_t stream_len = runtime->bms_frame_len;
-        bool identity_known = false;
-        const uint8_t response_index = runtime->bms_poll_index == 0U
-                                           ? 3U
-                                           : (uint8_t)((runtime->bms_poll_index + 3U) % 4U);
-        const bool decoded = esp_bms_em02_feed(runtime->bms_frame, &stream_len,
-                                               sizeof(runtime->bms_frame), chunk, chunk_len,
-                                               response_index, &identity_known, &telemetry);
+        bool identity_known = RUNTIME_FLAG(runtime, BMS_DEVICE_INFO_KNOWN);
+        uint8_t response_index = 0xFFU;
+        bool consumed = false;
+        bool applied = false;
+        const uint8_t *input = chunk;
+        size_t input_len = chunk_len;
+        while (esp_bms_em02_feed(runtime->bms_frame, &stream_len,
+                                  sizeof(runtime->bms_frame), input, input_len,
+                                  &response_index, &identity_known, &telemetry)) {
+            consumed = true;
+            input = NULL;
+            input_len = 0U;
+            if (response_index == 0U) {
+                RUNTIME_SET_FLAG(runtime, BMS_DEVICE_INFO_KNOWN, identity_known);
+                if (!identity_known) {
+                    bms_clear_telemetry(runtime);
+                    bms_set_info(runtime, "BMS MODEL");
+                }
+            } else if (response_index == 1U && identity_known) {
+                applied = bms_apply_telemetry(runtime, &telemetry) || applied;
+            }
+        }
         runtime->bms_frame_len = (uint16_t)stream_len;
-        if (response_index == 0U) {
-            RUNTIME_SET_FLAG(runtime, BMS_DEVICE_INFO_KNOWN, identity_known);
-            /* A notification may contain only part of the Modbus response. Keep
-             * the link healthy while the parser retains that partial frame, but
-             * reject a complete response with an unknown model. */
-            return identity_known || (!decoded && runtime->bms_frame_len > 0U);
-        }
-        if (response_index >= 2U) {
-            /* These Motexa pages are CRC/length checked but not projected yet. */
-            return decoded || runtime->bms_frame_len > 0U;
-        }
-        if (!decoded) {
-            return runtime->bms_frame_len > 0U;
-        }
-        return RUNTIME_FLAG(runtime, BMS_DEVICE_INFO_KNOWN) &&
-               bms_apply_telemetry(runtime, &telemetry);
+        return applied || consumed || stream_len > 0U;
     }
     if (bms_is_mingtang(runtime)) {
         size_t stream_len = runtime->bms_frame_len;
@@ -533,36 +601,23 @@ static bool bms_frame_push(esp_bms_idf_runtime_t *runtime,
         runtime->bms_frame_len = (uint16_t)stream_len;
         return !decoded || bms_apply_telemetry(runtime, &telemetry);
     }
-    if (chunk_len >= 2U && chunk[0] == BMS_FRAME_START_1 && chunk[1] == BMS_FRAME_START_2) {
-        runtime->bms_frame_len = 0U;
-    } else if (runtime->bms_frame_len == 0U && chunk[0] != BMS_FRAME_START_1) {
+    if (runtime->bms_type != (uint8_t)ESP_BMS_IDF_BMS_TYPE_ANT) {
         return false;
     }
-    if ((size_t)runtime->bms_frame_len + chunk_len > sizeof(runtime->bms_frame)) {
-        runtime->bms_frame_len = 0U;
-        return false;
-    }
-    memcpy(&runtime->bms_frame[runtime->bms_frame_len], chunk, chunk_len);
-    runtime->bms_frame_len = (uint16_t)(runtime->bms_frame_len + chunk_len);
-    if (runtime->bms_frame_len < BMS_FRAME_MIN_LEN ||
-        runtime->bms_frame[runtime->bms_frame_len - 2U] != BMS_FRAME_END_1 ||
-        runtime->bms_frame[runtime->bms_frame_len - 1U] != BMS_FRAME_END_2) {
-        return true;
-    }
+    size_t stream_len = runtime->bms_frame_len;
     bool device_info = false;
-    const bool decoded = esp_bms_ant_protocol_decode(runtime->bms_frame,
-                                                     runtime->bms_frame_len,
-                                                     &telemetry,
-                                                     &device_info);
-    runtime->bms_frame_len = 0U;
+    const bool decoded = esp_bms_ant_protocol_feed(runtime->bms_frame, &stream_len,
+                                                    sizeof(runtime->bms_frame), chunk, chunk_len,
+                                                    &telemetry, &device_info);
+    runtime->bms_frame_len = (uint16_t)stream_len;
     if (device_info) {
         RUNTIME_SET_FLAG(runtime, BMS_DEVICE_INFO_KNOWN, true);
-        return true;
     }
     if (decoded) {
         runtime->bms_poll_index = (uint8_t)ANT_BLE_PROTOCOL_NEW;
+        return bms_apply_telemetry(runtime, &telemetry);
     }
-    return decoded && bms_apply_telemetry(runtime, &telemetry);
+    return true;
 }
 
 static void bms_clear_telemetry(esp_bms_idf_runtime_t *runtime)
@@ -591,6 +646,7 @@ static void bms_clear_telemetry(esp_bms_idf_runtime_t *runtime)
     runtime->snapshot.delta_cell_voltage_mv = 0U;
     runtime->snapshot.total_capacity_mah = 0U;
     runtime->snapshot.capacity_remaining_mah = 0U;
+    memset(&runtime->snapshot.bms_ant_diagnostics, 0, sizeof(runtime->snapshot.bms_ant_diagnostics));
     runtime->snapshot.bms_running_time_seconds = 0U;
     runtime->snapshot.bms_running_time_valid = false;
     runtime->snapshot.bms_cycle_capacity_mah = 0U;
@@ -615,6 +671,8 @@ static void bms_reset_connection_state(esp_bms_idf_runtime_t *runtime, bms_ble_p
     if (!runtime) {
         return;
     }
+    bms_advance_session(runtime);
+    runtime->bms_establish_deadline_us = 0;
     runtime->bms_ble_phase = (uint8_t)phase;
     runtime->bms_conn_handle = 0xFFFFU;
     runtime->bms_service_start_handle = 0U;
@@ -623,12 +681,16 @@ static void bms_reset_connection_state(esp_bms_idf_runtime_t *runtime, bms_ble_p
     runtime->bms_write_char_val_handle = 0U;
     runtime->bms_cccd_handle = 0U;
     runtime->bms_cccd_value = 1U;
+    runtime->bms_notify_end_handle = 0U;
+    runtime->bms_write_properties = 0U;
+    runtime->bms_ant_alt_available = false;
     runtime->bms_frame_len = 0U;
     runtime->bms_poll_index = 0U;
     runtime->bms_status_poll_elapsed_ms = 0U;
     if (bms_is_jk(runtime)) {
         esp_bms_jk_reset();
     }
+    RUNTIME_SET_FLAG(runtime, BMS_SCAN_ACTIVE, false);
     RUNTIME_SET_FLAG(runtime, BMS_WRITE_IN_FLIGHT, false);
     RUNTIME_SET_FLAG(runtime, BMS_DEVICE_INFO_REQUESTED, false);
     RUNTIME_SET_FLAG(runtime, BMS_DEVICE_INFO_KNOWN, false);
@@ -638,24 +700,47 @@ static esp_err_t bms_send_poll_request(esp_bms_idf_runtime_t *runtime,
                                        bool include_device_info);
 static esp_err_t bms_start_scan(esp_bms_idf_runtime_t *runtime);
 
+static void bms_fail_connection(esp_bms_idf_runtime_t *runtime, const char *text)
+{
+    runtime->bms_ble_phase = (uint8_t)BMS_BLE_PHASE_BACKOFF;
+    runtime->bms_establish_deadline_us = 0;
+    runtime->bms_status_poll_elapsed_ms = 0U;
+    RUNTIME_SET_FLAG(runtime, BMS_WRITE_IN_FLIGHT, false);
+    bms_clear_telemetry(runtime);
+    bms_set_info(runtime, text);
+    if (runtime->bms_conn_handle == 0xFFFFU ||
+        ble_gap_terminate(runtime->bms_conn_handle, BLE_ERR_REM_USER_CONN_TERM) == BLE_HS_ENOTCONN) {
+        bms_reset_connection_state(runtime, BMS_BLE_PHASE_BACKOFF);
+    }
+}
+
 static int bms_write_cb(uint16_t conn_handle,
                         const struct ble_gatt_error *error,
                         struct ble_gatt_attr *attr,
                         void *arg)
 {
-    (void)attr;
-    esp_bms_idf_runtime_t *runtime = (esp_bms_idf_runtime_t *)arg;
-    if (!runtime || conn_handle != runtime->bms_conn_handle) {
+    esp_bms_idf_runtime_t *runtime = bms_callback_runtime(arg);
+    if (!runtime || conn_handle != runtime->bms_conn_handle ||
+        (runtime->bms_ble_phase != (uint8_t)BMS_BLE_PHASE_SUBSCRIBING &&
+         runtime->bms_ble_phase != (uint8_t)BMS_BLE_PHASE_ONLINE)) {
         return 0;
+    }
+    if (!attr || attr->handle != (runtime->bms_ble_phase == (uint8_t)BMS_BLE_PHASE_SUBSCRIBING
+                                      ? runtime->bms_cccd_handle
+                                      : runtime->bms_write_char_val_handle)) {
+        if (!error || error->status == 0) {
+            return 0;
+        }
     }
     RUNTIME_SET_FLAG(runtime, BMS_WRITE_IN_FLIGHT, false);
     if (error && error->status != 0) {
-        bms_set_info(runtime, "BMS WR");
         ESP_LOGW(TAG, "GATT write failed: conn=%u status=%u", conn_handle, (unsigned)error->status);
+        bms_fail_connection(runtime, "BMS WR");
         return 0;
     }
     if (runtime->bms_ble_phase == (uint8_t)BMS_BLE_PHASE_SUBSCRIBING) {
         runtime->bms_ble_phase = (uint8_t)BMS_BLE_PHASE_ONLINE;
+        runtime->bms_establish_deadline_us = 0;
         runtime->bms_telemetry_last_us = esp_timer_get_time();
         bms_set_info(runtime, "BMS ON");
         const esp_err_t poll_ret = bms_send_poll_request(runtime, false);
@@ -671,21 +756,31 @@ static esp_err_t bms_write_frame(esp_bms_idf_runtime_t *runtime,
                                  const uint8_t *frame,
                                  size_t frame_len)
 {
-    if (!runtime || !frame || frame_len == 0U || runtime->bms_conn_handle == 0xFFFFU ||
-        runtime->bms_write_char_val_handle == 0U || RUNTIME_FLAG(runtime, BMS_WRITE_IN_FLIGHT)) {
+    if (!runtime || !frame || frame_len == 0U || frame_len > UINT16_MAX ||
+        runtime->bms_ble_phase != (uint8_t)BMS_BLE_PHASE_ONLINE ||
+        runtime->bms_conn_handle == 0xFFFFU || runtime->bms_write_char_val_handle == 0U ||
+        RUNTIME_FLAG(runtime, BMS_WRITE_IN_FLIGHT)) {
         return ESP_ERR_INVALID_STATE;
     }
-    const int rc = ble_gattc_write_flat(runtime->bms_conn_handle,
-                                        runtime->bms_write_char_val_handle,
-                                        frame,
-                                        (uint16_t)frame_len,
-                                        bms_write_cb,
-                                        runtime);
-    if (rc != 0) {
-        return ESP_FAIL;
+    if ((runtime->bms_write_properties & BLE_GATT_CHR_F_WRITE) != 0U) {
+        RUNTIME_SET_FLAG(runtime, BMS_WRITE_IN_FLIGHT, true);
+        const int rc = ble_gattc_write_flat(runtime->bms_conn_handle,
+                                           runtime->bms_write_char_val_handle,
+                                           frame, (uint16_t)frame_len,
+                                           bms_write_cb, bms_callback_arg(runtime));
+        if (rc != 0) {
+            RUNTIME_SET_FLAG(runtime, BMS_WRITE_IN_FLIGHT, false);
+            return ESP_FAIL;
+        }
+        return ESP_OK;
     }
-    RUNTIME_SET_FLAG(runtime, BMS_WRITE_IN_FLIGHT, true);
-    return ESP_OK;
+    if (!bms_is_em02(runtime) &&
+        (runtime->bms_write_properties & BLE_GATT_CHR_F_WRITE_NO_RSP) != 0U) {
+        return ble_gattc_write_no_rsp_flat(runtime->bms_conn_handle,
+                                           runtime->bms_write_char_val_handle,
+                                           frame, (uint16_t)frame_len) == 0 ? ESP_OK : ESP_FAIL;
+    }
+    return ESP_ERR_INVALID_STATE;
 }
 
 static esp_err_t bms_send_poll_request(esp_bms_idf_runtime_t *runtime,
@@ -837,7 +932,7 @@ static esp_err_t bms_subscribe(esp_bms_idf_runtime_t *runtime)
                                         value,
                                         sizeof(value),
                                         bms_write_cb,
-                                        runtime);
+                                        bms_callback_arg(runtime));
     if (rc != 0) {
         RUNTIME_SET_FLAG(runtime, BMS_WRITE_IN_FLIGHT, false);
         return ESP_FAIL;
@@ -853,127 +948,133 @@ static int bms_dsc_cb(uint16_t conn_handle,
                       const struct ble_gatt_dsc *dsc,
                       void *arg)
 {
-    esp_bms_idf_runtime_t *runtime = (esp_bms_idf_runtime_t *)arg;
+    esp_bms_idf_runtime_t *runtime = bms_callback_runtime(arg);
     if (!runtime || conn_handle != runtime->bms_conn_handle ||
+        runtime->bms_ble_phase != (uint8_t)BMS_BLE_PHASE_DISCOVERING_CCCD ||
         chr_val_handle != runtime->bms_char_val_handle) {
         return 0;
     }
     if (error && error->status == 0 && dsc) {
-        if (ble_uuid_cmp(&dsc->uuid.u, BLE_UUID16_DECLARE(BLE_GATT_DSC_CLT_CFG_UUID16)) == 0) {
+        if (dsc->handle > chr_val_handle && dsc->handle <= runtime->bms_notify_end_handle &&
+            ble_uuid_cmp(&dsc->uuid.u, BLE_UUID16_DECLARE(BLE_GATT_DSC_CLT_CFG_UUID16)) == 0) {
             runtime->bms_cccd_handle = dsc->handle;
         }
         return 0;
     }
     if (error && error->status == BLE_HS_EDONE) {
         if (runtime->bms_cccd_handle == 0U || bms_subscribe(runtime) != ESP_OK) {
-            bms_set_info(runtime, runtime->bms_cccd_handle == 0U ? "BMS NO CCCD" : "BMS SUB");
-            (void)ble_gap_terminate(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+            bms_fail_connection(runtime, runtime->bms_cccd_handle == 0U ? "BMS NO CCCD" : "BMS SUB");
         }
         return 0;
     }
-    bms_set_info(runtime, "BMS DSC");
-    (void)ble_gap_terminate(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+    bms_fail_connection(runtime, "BMS DSC");
     return 0;
 }
 
 static esp_err_t bms_start_descriptor_discovery(esp_bms_idf_runtime_t *runtime)
 {
     if (!runtime || runtime->bms_conn_handle == 0xFFFFU || runtime->bms_char_val_handle == 0U ||
-        runtime->bms_char_val_handle >= runtime->bms_service_end_handle) {
+        runtime->bms_char_val_handle >= runtime->bms_notify_end_handle) {
         return ESP_ERR_INVALID_STATE;
     }
     runtime->bms_ble_phase = (uint8_t)BMS_BLE_PHASE_DISCOVERING_CCCD;
     runtime->bms_cccd_handle = 0U;
     return ble_gattc_disc_all_dscs(runtime->bms_conn_handle,
                                    runtime->bms_char_val_handle,
-                                   runtime->bms_service_end_handle,
+                                   runtime->bms_notify_end_handle,
                                    bms_dsc_cb,
-                                   runtime) == 0
-               ? ESP_OK
-               : ESP_FAIL;
+                                   bms_callback_arg(runtime)) == 0
+               ? ESP_OK : ESP_FAIL;
 }
 
 static esp_err_t bms_start_characteristic_discovery(esp_bms_idf_runtime_t *runtime);
+
+static void bms_select_characteristic(esp_bms_idf_runtime_t *runtime,
+                                       const struct ble_gatt_chr *chr,
+                                       bool notify, bool write)
+{
+    if (notify && runtime->bms_char_val_handle == 0U &&
+        (chr->properties & (BLE_GATT_CHR_F_NOTIFY | BLE_GATT_CHR_F_INDICATE)) != 0U) {
+        runtime->bms_char_val_handle = chr->val_handle;
+        runtime->bms_cccd_value = (chr->properties & BLE_GATT_CHR_F_NOTIFY) != 0U ? 1U : 2U;
+        runtime->bms_notify_end_handle = runtime->bms_service_end_handle;
+    }
+    const uint8_t allowed = bms_is_em02(runtime) ? BLE_GATT_CHR_F_WRITE
+                               : (BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP);
+    if (write && runtime->bms_write_char_val_handle == 0U && (chr->properties & allowed) != 0U) {
+        runtime->bms_write_char_val_handle = chr->val_handle;
+        runtime->bms_write_properties = chr->properties;
+    }
+}
 
 static int bms_chr_cb(uint16_t conn_handle,
                       const struct ble_gatt_error *error,
                       const struct ble_gatt_chr *chr,
                       void *arg)
 {
-    esp_bms_idf_runtime_t *runtime = (esp_bms_idf_runtime_t *)arg;
-    if (!runtime || conn_handle != runtime->bms_conn_handle) {
+    esp_bms_idf_runtime_t *runtime = bms_callback_runtime(arg);
+    if (!runtime || conn_handle != runtime->bms_conn_handle ||
+        runtime->bms_ble_phase != (uint8_t)BMS_BLE_PHASE_DISCOVERING_CHARACTERISTIC) {
         return 0;
     }
     if (error && error->status == 0 && chr) {
-        if (bms_is_jk(runtime) && bms_is_jk_characteristic(chr)) {
-            const uint8_t properties = chr->properties;
-            if ((properties & BLE_GATT_CHR_F_NOTIFY) != 0U) {
-                runtime->bms_char_val_handle = chr->val_handle;
-                runtime->bms_cccd_value = 1U;
-            } else if ((properties & BLE_GATT_CHR_F_INDICATE) != 0U) {
-                runtime->bms_char_val_handle = chr->val_handle;
-                runtime->bms_cccd_value = 2U;
+        if (runtime->bms_char_val_handle != 0U && chr->def_handle > runtime->bms_char_val_handle &&
+            chr->def_handle <= runtime->bms_notify_end_handle) {
+            runtime->bms_notify_end_handle = chr->def_handle - 1U;
+        }
+        if (bms_is_jk(runtime)) {
+            if (bms_is_jk_characteristic(chr)) {
+                bms_select_characteristic(runtime, chr, true, true);
             }
-            if ((properties & (BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP)) != 0U) {
-                runtime->bms_write_char_val_handle = chr->val_handle;
-            }
-            ESP_LOGI(TAG, "JK FFE1 characteristic: handle=%u properties=0x%02x",
-                     chr->val_handle, properties);
         } else if (bms_is_yanyang(runtime)) {
             const ble_uuid128_t write_uuid = bms_uuid128(esp_bms_yanyang_write_uuid);
             const ble_uuid128_t notify_uuid = bms_uuid128(esp_bms_yanyang_notify_uuid);
-            if (ble_uuid_cmp(&chr->uuid.u, &write_uuid.u) == 0) {
-                runtime->bms_write_char_val_handle = chr->val_handle;
-            } else if (ble_uuid_cmp(&chr->uuid.u, &notify_uuid.u) == 0) {
-                runtime->bms_char_val_handle = chr->val_handle;
-            }
-        } else if (bms_is_bluebabe(runtime) || bms_is_em02(runtime)) {
-            /* Bluebabe/EM02: FFE1 notifications, FFE2 acknowledged writes. */
-            const ble_uuid16_t write_uuid = BLE_UUID16_INIT(0xFFE2U);
-            const ble_uuid16_t notify_uuid = BLE_UUID16_INIT(0xFFE1U);
-            if (ble_uuid_cmp(&chr->uuid.u, &write_uuid.u) == 0) {
-                runtime->bms_write_char_val_handle = chr->val_handle;
-            } else if (ble_uuid_cmp(&chr->uuid.u, &notify_uuid.u) == 0) {
-                runtime->bms_char_val_handle = chr->val_handle;
-                runtime->bms_cccd_value =
-                    (chr->properties & BLE_GATT_CHR_F_NOTIFY) != 0U ? 1U : 2U;
-            }
+            bms_select_characteristic(runtime, chr,
+                ble_uuid_cmp(&chr->uuid.u, &notify_uuid.u) == 0,
+                ble_uuid_cmp(&chr->uuid.u, &write_uuid.u) == 0);
         } else if (bms_is_mingtang(runtime)) {
-            /* 明唐：UUID 不固定，按属性挑 notify/indicate 与 write 特征 */
-            if ((chr->properties & (BLE_GATT_CHR_F_NOTIFY | BLE_GATT_CHR_F_INDICATE)) != 0U) {
-                runtime->bms_char_val_handle = chr->val_handle;
-                runtime->bms_cccd_value =
-                    (chr->properties & BLE_GATT_CHR_F_NOTIFY) != 0U ? 1U : 2U;
-            }
-            if ((chr->properties & (BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP)) != 0U) {
-                runtime->bms_write_char_val_handle = chr->val_handle;
-            }
-        } else if (bms_has_separate_write_characteristic(runtime)) {
-            const uint16_t write_uuid_16 = bms_is_jbd(runtime) ? 0xFF02U : 0xFFF2U;
-            const uint16_t notify_uuid_16 = bms_is_jbd(runtime) ? 0xFF01U : 0xFFF1U;
-            ble_uuid16_t write_uuid = BLE_UUID16_INIT(write_uuid_16);
-            ble_uuid16_t notify_uuid = BLE_UUID16_INIT(notify_uuid_16);
-            if (ble_uuid_cmp(&chr->uuid.u, &write_uuid.u) == 0) {
-                runtime->bms_write_char_val_handle = chr->val_handle;
-            } else if (ble_uuid_cmp(&chr->uuid.u, &notify_uuid.u) == 0) {
-                runtime->bms_char_val_handle = chr->val_handle;
-            }
+            bms_select_characteristic(runtime, chr, true, true);
         } else {
-            runtime->bms_char_val_handle = chr->val_handle;
-            runtime->bms_write_char_val_handle = chr->val_handle;
+            uint16_t write_uuid_16 = ANT_BMS_CHARACTERISTIC_UUID_16;
+            uint16_t notify_uuid_16 = ANT_BMS_CHARACTERISTIC_UUID_16;
+            if (bms_is_bluebabe(runtime) || bms_is_em02(runtime)) {
+                write_uuid_16 = 0xFFE2U;
+            } else if (bms_is_jbd(runtime)) {
+                write_uuid_16 = 0xFF02U;
+                notify_uuid_16 = 0xFF01U;
+            } else if (bms_is_daly(runtime)) {
+                write_uuid_16 = 0xFFF2U;
+                notify_uuid_16 = 0xFFF1U;
+            } else if (runtime->bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_ANT) {
+                if (ble_uuid_cmp(&chr->uuid.u, BLE_UUID16_DECLARE(0xFFF5U)) == 0 &&
+                    (chr->properties & (BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP)) != 0U) {
+                    runtime->bms_ant_alt_available = true;
+                }
+                if (runtime->bms_ant_channel == 1U) {
+                    write_uuid_16 = 0xFFF3U;
+                    notify_uuid_16 = 0xFFF4U;
+                } else if (runtime->bms_ant_channel == 2U) {
+                    write_uuid_16 = 0xFFF5U;
+                    notify_uuid_16 = 0xFFF6U;
+                }
+            }
+            bms_select_characteristic(runtime, chr,
+                ble_uuid_cmp(&chr->uuid.u, BLE_UUID16_DECLARE(notify_uuid_16)) == 0,
+                ble_uuid_cmp(&chr->uuid.u, BLE_UUID16_DECLARE(write_uuid_16)) == 0);
         }
         return 0;
     }
     if (error && error->status == BLE_HS_EDONE) {
-        if (runtime->bms_char_val_handle == 0U || runtime->bms_write_char_val_handle == 0U ||
-            bms_start_descriptor_discovery(runtime) != ESP_OK) {
-            bms_set_info(runtime, "BMS NO CHR");
-            (void)ble_gap_terminate(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+        if (runtime->bms_type == (uint8_t)ESP_BMS_IDF_BMS_TYPE_ANT &&
+            runtime->bms_ant_channel != 0U && !runtime->bms_ant_alt_available) {
+            bms_fail_connection(runtime, "BMS NO ALT");
+        } else if (runtime->bms_char_val_handle == 0U || runtime->bms_write_char_val_handle == 0U ||
+                   bms_start_descriptor_discovery(runtime) != ESP_OK) {
+            bms_fail_connection(runtime, "BMS NO CHR");
         }
         return 0;
     }
-    bms_set_info(runtime, "BMS CHR");
-    (void)ble_gap_terminate(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+    bms_fail_connection(runtime, "BMS CHR");
     return 0;
 }
 
@@ -986,24 +1087,15 @@ static esp_err_t bms_start_characteristic_discovery(esp_bms_idf_runtime_t *runti
     runtime->bms_ble_phase = (uint8_t)BMS_BLE_PHASE_DISCOVERING_CHARACTERISTIC;
     runtime->bms_char_val_handle = 0U;
     runtime->bms_write_char_val_handle = 0U;
-    if (bms_is_jk(runtime) || bms_is_yanyang(runtime) || bms_has_separate_write_characteristic(runtime)) {
-        return ble_gattc_disc_all_chrs(runtime->bms_conn_handle,
-                                       runtime->bms_service_start_handle,
-                                       runtime->bms_service_end_handle,
-                                       bms_chr_cb,
-                                       runtime) == 0
-                   ? ESP_OK
-                   : ESP_FAIL;
-    }
-    ble_uuid16_t characteristic_uuid = BLE_UUID16_INIT(ANT_BMS_CHARACTERISTIC_UUID_16);
-    return ble_gattc_disc_chrs_by_uuid(runtime->bms_conn_handle,
-                                       runtime->bms_service_start_handle,
-                                       runtime->bms_service_end_handle,
-                                       &characteristic_uuid.u,
-                                       bms_chr_cb,
-                                       runtime) == 0
-               ? ESP_OK
-               : ESP_FAIL;
+    runtime->bms_notify_end_handle = 0U;
+    runtime->bms_write_properties = 0U;
+    runtime->bms_ant_alt_available = false;
+    return ble_gattc_disc_all_chrs(runtime->bms_conn_handle,
+                                   runtime->bms_service_start_handle,
+                                   runtime->bms_service_end_handle,
+                                   bms_chr_cb,
+                                   bms_callback_arg(runtime)) == 0
+               ? ESP_OK : ESP_FAIL;
 }
 
 static esp_err_t bms_start_service_discovery(esp_bms_idf_runtime_t *runtime);
@@ -1013,8 +1105,9 @@ static int bms_service_cb(uint16_t conn_handle,
                           const struct ble_gatt_svc *service,
                           void *arg)
 {
-    esp_bms_idf_runtime_t *runtime = (esp_bms_idf_runtime_t *)arg;
-    if (!runtime || conn_handle != runtime->bms_conn_handle) {
+    esp_bms_idf_runtime_t *runtime = bms_callback_runtime(arg);
+    if (!runtime || conn_handle != runtime->bms_conn_handle ||
+        runtime->bms_ble_phase != (uint8_t)BMS_BLE_PHASE_DISCOVERING_SERVICE) {
         return 0;
     }
     if (error && error->status == 0 && service) {
@@ -1025,13 +1118,11 @@ static int bms_service_cb(uint16_t conn_handle,
     if (error && error->status == BLE_HS_EDONE) {
         if (runtime->bms_service_start_handle == 0U ||
             bms_start_characteristic_discovery(runtime) != ESP_OK) {
-            bms_set_info(runtime, "BMS NO SVC");
-            (void)ble_gap_terminate(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+            bms_fail_connection(runtime, "BMS NO SVC");
         }
         return 0;
     }
-    bms_set_info(runtime, "BMS SVC");
-    (void)ble_gap_terminate(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+    bms_fail_connection(runtime, "BMS SVC");
     return 0;
 }
 
@@ -1048,7 +1139,7 @@ static esp_err_t bms_start_service_discovery(esp_bms_idf_runtime_t *runtime)
         return ble_gattc_disc_svc_by_uuid(runtime->bms_conn_handle,
                                           &service_uuid.u,
                                           bms_service_cb,
-                                          runtime) == 0
+                                          bms_callback_arg(runtime)) == 0
                    ? ESP_OK
                    : ESP_FAIL;
     }
@@ -1056,7 +1147,7 @@ static esp_err_t bms_start_service_discovery(esp_bms_idf_runtime_t *runtime)
     return ble_gattc_disc_svc_by_uuid(runtime->bms_conn_handle,
                                       &service_uuid.u,
                                       bms_service_cb,
-                                      runtime) == 0
+                                      bms_callback_arg(runtime)) == 0
                ? ESP_OK
                : ESP_FAIL;
 }
@@ -1118,27 +1209,52 @@ static bool bms_name_copy(char *out, size_t out_len, const uint8_t *name, size_t
 
 static int bms_gap_event(struct ble_gap_event *event, void *arg);
 
+static int bms_connection_gap_event(struct ble_gap_event *event, void *arg)
+{
+    esp_bms_idf_runtime_t *runtime = bms_callback_runtime(arg);
+    if (!runtime) {
+        if (event && event->type == BLE_GAP_EVENT_CONNECT && event->connect.status == 0 &&
+            (!s_bms_runtime || event->connect.conn_handle != s_bms_runtime->bms_conn_handle)) {
+            (void)ble_gap_terminate(event->connect.conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+        }
+        return 0;
+    }
+    return bms_gap_event(event, runtime);
+}
+
+static int bms_scan_gap_event(struct ble_gap_event *event, void *arg)
+{
+    esp_bms_idf_runtime_t *runtime = bms_callback_runtime(arg);
+    return runtime ? bms_gap_event(event, runtime) : 0;
+}
+
 static esp_err_t bms_connect_to_disc(esp_bms_idf_runtime_t *runtime,
                                      const struct ble_gap_disc_desc *disc,
                                      const char *mac)
 {
-    if (!runtime || !disc || !mac || runtime->bms_ble_phase == (uint8_t)BMS_BLE_PHASE_CONNECTING ||
-        runtime->bms_ble_phase == (uint8_t)BMS_BLE_PHASE_ONLINE) {
+    if (!runtime || !disc || !mac || !RUNTIME_FLAG(runtime, BMS_BIND_ACTIVE) ||
+        runtime->bms_ble_phase != (uint8_t)BMS_BLE_PHASE_SCANNING) {
         return ESP_ERR_INVALID_STATE;
     }
     if (ble_gap_disc_active() && ble_gap_disc_cancel() != 0) {
         return ESP_FAIL;
     }
+    RUNTIME_SET_FLAG(runtime, BMS_SCAN_ACTIVE, false);
     uint8_t own_addr_type = 0U;
     if (ble_hs_id_infer_auto(0, &own_addr_type) != 0) {
+        bms_reset_connection_state(runtime, BMS_BLE_PHASE_BACKOFF);
         return ESP_FAIL;
     }
+    bms_reset_connection_state(runtime, BMS_BLE_PHASE_CONNECTING);
+    runtime->bms_establish_deadline_us = esp_timer_get_time() +
+        (int64_t)BMS_CONNECT_TIMEOUT_MS * 1000;
     if (ble_gap_connect(own_addr_type,
                         &disc->addr,
                         BMS_CONNECT_TIMEOUT_MS,
                         NULL,
-                        bms_gap_event,
-                        runtime) != 0) {
+                        bms_connection_gap_event,
+                        bms_callback_arg(runtime)) != 0) {
+        bms_reset_connection_state(runtime, BMS_BLE_PHASE_BACKOFF);
         return ESP_FAIL;
     }
     runtime->bms_own_addr_type = own_addr_type;
@@ -1152,7 +1268,8 @@ static esp_err_t bms_connect_to_disc(esp_bms_idf_runtime_t *runtime,
 static void bms_handle_notification(esp_bms_idf_runtime_t *runtime,
                                     const struct ble_gap_event *event)
 {
-    if (!runtime || !event || event->notify_rx.conn_handle != runtime->bms_conn_handle ||
+    if (!runtime || !event || runtime->bms_ble_phase != (uint8_t)BMS_BLE_PHASE_ONLINE ||
+        event->notify_rx.conn_handle != runtime->bms_conn_handle ||
         event->notify_rx.attr_handle != runtime->bms_char_val_handle) {
         return;
     }
@@ -1179,6 +1296,9 @@ static int bms_gap_event(struct ble_gap_event *event, void *arg)
     }
     switch (event->type) {
     case BLE_GAP_EVENT_DISC: {
+        if (runtime->bms_ble_phase != (uint8_t)BMS_BLE_PHASE_SCANNING) {
+            return 0;
+        }
         const struct ble_hs_adv_field *name_field = NULL;
         const struct ble_hs_adv_field *short_name_field = NULL;
         const int complete_name_rc = ble_hs_adv_find_field(BLE_HS_ADV_TYPE_COMP_NAME,
@@ -1236,8 +1356,17 @@ static int bms_gap_event(struct ble_gap_event *event, void *arg)
         return 0;
     }
     case BLE_GAP_EVENT_CONNECT:
+        if (!RUNTIME_FLAG(runtime, BMS_BIND_ACTIVE) ||
+            runtime->bms_ble_phase != (uint8_t)BMS_BLE_PHASE_CONNECTING) {
+            if (event->connect.status == 0 && event->connect.conn_handle != runtime->bms_conn_handle) {
+                (void)ble_gap_terminate(event->connect.conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+            }
+            return 0;
+        }
         if (event->connect.status == 0) {
             runtime->bms_conn_handle = event->connect.conn_handle;
+            runtime->bms_establish_deadline_us = esp_timer_get_time() +
+                (int64_t)BMS_ESTABLISH_TIMEOUT_MS * 1000;
             esp_bms_idf_runtime_request_coded_phy(event->connect.conn_handle, "BMS");
             __atomic_fetch_or(&runtime->pending_audio_events,
                               ESP_BMS_IDF_RUNTIME_AUDIO_EVENT_BMS_CONNECTED,
@@ -1246,8 +1375,7 @@ static int bms_gap_event(struct ble_gap_event *event, void *arg)
             runtime->bms_ble_phase = (uint8_t)BMS_BLE_PHASE_DISCOVERING_SERVICE;
             bms_set_info(runtime, "BMS DISC");
             if (bms_start_service_discovery(runtime) != ESP_OK) {
-                bms_set_info(runtime, "BMS SVC");
-                (void)ble_gap_terminate(event->connect.conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+                bms_fail_connection(runtime, "BMS SVC");
             }
         } else {
             bms_reset_connection_state(runtime, BMS_BLE_PHASE_BACKOFF);
@@ -1265,8 +1393,7 @@ static int bms_gap_event(struct ble_gap_event *event, void *arg)
         return 0;
 #endif
     case BLE_GAP_EVENT_DISCONNECT:
-        if (event->disconnect.conn.conn_handle == runtime->bms_conn_handle ||
-            runtime->bms_ble_phase != (uint8_t)BMS_BLE_PHASE_SCANNING) {
+        if (event->disconnect.conn.conn_handle == runtime->bms_conn_handle) {
             ESP_LOGW(TAG,
                      "BMS disconnected: conn=%u reason=%d phase=%u",
                      (unsigned)event->disconnect.conn.conn_handle,
@@ -1316,13 +1443,19 @@ static esp_err_t bms_start_scan(esp_bms_idf_runtime_t *runtime)
     if (!runtime) {
         return ESP_ERR_INVALID_ARG;
     }
+    if (runtime->bms_conn_handle != 0xFFFFU ||
+        (runtime->bms_ble_phase >= (uint8_t)BMS_BLE_PHASE_CONNECTING &&
+         runtime->bms_ble_phase <= (uint8_t)BMS_BLE_PHASE_ONLINE)) {
+        RUNTIME_SET_FLAG(runtime, BMS_SCAN_REQUESTED, true);
+        return ESP_ERR_INVALID_STATE;
+    }
     /* NimBLE owns one discovery callback: the most recent request wins. */
     RUNTIME_SET_FLAG(runtime, CONTROLLER_SCAN_REQUESTED, false);
     if (!RUNTIME_FLAG(runtime, BMS_BLE_READY) || !RUNTIME_FLAG(runtime, BMS_BLE_SYNCED)) {
         RUNTIME_SET_FLAG(runtime, BMS_SCAN_REQUESTED, true);
         return ESP_ERR_INVALID_STATE;
     }
-    if (RUNTIME_FLAG(runtime, BMS_SCAN_ACTIVE)) {
+    if (RUNTIME_FLAG(runtime, BMS_SCAN_ACTIVE) && ble_gap_disc_active()) {
         RUNTIME_SET_FLAG(runtime, BMS_SCAN_REQUESTED, false);
         return ESP_OK;
     }
@@ -1348,11 +1481,12 @@ static esp_err_t bms_start_scan(esp_bms_idf_runtime_t *runtime)
         .filter_policy = 0,
         .limited = 0,
     };
+    bms_advance_session(runtime);
     if (ble_gap_disc(own_addr_type,
                      BMS_SCAN_DURATION_MS,
                      &params,
-                     bms_gap_event,
-                     runtime) != 0) {
+                     bms_scan_gap_event,
+                     bms_callback_arg(runtime)) != 0) {
         RUNTIME_SET_FLAG(runtime, BMS_SCAN_REQUESTED, true);
         bms_reset_connection_state(runtime, BMS_BLE_PHASE_BACKOFF);
         return ESP_FAIL;
@@ -1390,6 +1524,8 @@ static esp_err_t bms_start_if_bound(esp_bms_idf_runtime_t *runtime)
     return host_ret == ESP_OK ? bms_start_scan_or_defer(runtime) : host_ret;
 }
 
+static bool bms_stop(esp_bms_idf_runtime_t *runtime);
+
 static esp_err_t bms_start_for_bind(esp_bms_idf_runtime_t *runtime)
 {
     if (!runtime) {
@@ -1397,6 +1533,18 @@ static esp_err_t bms_start_for_bind(esp_bms_idf_runtime_t *runtime)
     }
     bms_clear_telemetry(runtime);
     esp_bms_idf_runtime_bms_scan_clear_candidates(runtime);
+    if (runtime->bms_conn_handle != 0xFFFFU) {
+        RUNTIME_SET_FLAG(runtime, BMS_SCAN_REQUESTED, true);
+        bms_fail_connection(runtime, "BMS WAIT");
+        return ESP_OK;
+    }
+    if (runtime->bms_ble_phase == (uint8_t)BMS_BLE_PHASE_CONNECTING) {
+        const bool bound = RUNTIME_FLAG(runtime, BMS_BIND_ACTIVE);
+        (void)bms_stop(runtime);
+        RUNTIME_SET_FLAG(runtime, BMS_BIND_ACTIVE, bound);
+        RUNTIME_SET_FLAG(runtime, BMS_SCAN_REQUESTED, true);
+        return ESP_OK;
+    }
     const esp_err_t host_ret = esp_bms_idf_runtime_ensure_ble_host(runtime);
     return host_ret == ESP_OK ? bms_start_scan_or_defer(runtime) : host_ret;
 }
@@ -1416,6 +1564,8 @@ static bool bms_stop(esp_bms_idf_runtime_t *runtime)
                         RUNTIME_FLAG(runtime, BMS_SCAN_ACTIVE) ||
                         RUNTIME_FLAG(runtime, BMS_SCAN_REQUESTED) ||
                         RUNTIME_FLAG(runtime, BMS_BIND_ACTIVE);
+    const uint16_t old_conn_handle = runtime->bms_conn_handle;
+    bool retry_terminate = false;
     RUNTIME_SET_FLAG(runtime, BMS_BIND_ACTIVE, false);
     RUNTIME_SET_FLAG(runtime, BMS_SCAN_REQUESTED, false);
     RUNTIME_SET_FLAG(runtime, BMS_SCAN_ACTIVE, false);
@@ -1426,10 +1576,14 @@ static bool bms_stop(esp_bms_idf_runtime_t *runtime)
         if (runtime->bms_ble_phase == (uint8_t)BMS_BLE_PHASE_CONNECTING) {
             (void)ble_gap_conn_cancel();
         } else if (runtime->bms_conn_handle != 0xFFFFU) {
-            (void)ble_gap_terminate(runtime->bms_conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+            const int rc = ble_gap_terminate(runtime->bms_conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+            retry_terminate = rc != 0 && rc != BLE_HS_ENOTCONN;
         }
     }
-    bms_reset_connection_state(runtime, BMS_BLE_PHASE_IDLE);
+    bms_reset_connection_state(runtime, retry_terminate ? BMS_BLE_PHASE_BACKOFF : BMS_BLE_PHASE_IDLE);
+    if (retry_terminate) {
+        runtime->bms_conn_handle = old_conn_handle;
+    }
     bms_clear_telemetry(runtime);
     bms_set_info(runtime, "BMS OFF");
     ESP_LOGI(TAG, "BMS connection cancelled");
@@ -1438,11 +1592,13 @@ static bool bms_stop(esp_bms_idf_runtime_t *runtime)
 
 static void bms_on_ble_reset(esp_bms_idf_runtime_t *runtime)
 {
-    if (!runtime || !RUNTIME_FLAG(runtime, BMS_BIND_ACTIVE)) {
+    if (!runtime) {
         return;
     }
-    bms_reset_connection_state(runtime, BMS_BLE_PHASE_BACKOFF);
-    RUNTIME_SET_FLAG(runtime, BMS_SCAN_REQUESTED, true);
+    const bool bound = RUNTIME_FLAG(runtime, BMS_BIND_ACTIVE);
+    bms_reset_connection_state(runtime, bound ? BMS_BLE_PHASE_BACKOFF : BMS_BLE_PHASE_IDLE);
+    bms_clear_telemetry(runtime);
+    RUNTIME_SET_FLAG(runtime, BMS_SCAN_REQUESTED, bound);
 }
 
 static bool bms_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_ms)
@@ -1452,8 +1608,10 @@ static bool bms_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_ms)
     }
     bool changed = false;
     if (RUNTIME_FLAG(runtime, BMS_SCAN_REQUESTED) &&
-        RUNTIME_FLAG(runtime, BMS_BLE_READY) &&
-        RUNTIME_FLAG(runtime, BMS_BLE_SYNCED) && !ble_gap_disc_active()) {
+        RUNTIME_FLAG(runtime, BMS_BLE_READY) && RUNTIME_FLAG(runtime, BMS_BLE_SYNCED) &&
+        runtime->bms_conn_handle == 0xFFFFU &&
+        (runtime->bms_ble_phase == (uint8_t)BMS_BLE_PHASE_IDLE ||
+         runtime->bms_ble_phase == (uint8_t)BMS_BLE_PHASE_BACKOFF) && !ble_gap_disc_active()) {
         (void)bms_start_scan(runtime);
         changed = true;
     }
@@ -1461,23 +1619,23 @@ static bool bms_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_ms)
         RUNTIME_SET_FLAG(runtime, BMS_SCAN_SNAPSHOT_DIRTY, false);
         changed = esp_bms_idf_runtime_bms_scan_project_snapshot(runtime) || changed;
     }
+    if (runtime->bms_ble_phase >= (uint8_t)BMS_BLE_PHASE_CONNECTING &&
+        runtime->bms_ble_phase <= (uint8_t)BMS_BLE_PHASE_SUBSCRIBING &&
+        runtime->bms_establish_deadline_us > 0 &&
+        esp_timer_get_time() >= runtime->bms_establish_deadline_us) {
+        ESP_LOGW(TAG, "BMS establishment timeout: phase=%u", (unsigned)runtime->bms_ble_phase);
+        if (runtime->bms_ble_phase == (uint8_t)BMS_BLE_PHASE_CONNECTING) {
+            (void)ble_gap_conn_cancel();
+        }
+        bms_fail_connection(runtime, "BMS GATT TIMEOUT");
+        return true;
+    }
     if (runtime->bms_ble_phase == (uint8_t)BMS_BLE_PHASE_ONLINE) {
         const int64_t heartbeat_age_us = esp_timer_get_time() - runtime->bms_telemetry_last_us;
         if (runtime->bms_telemetry_last_us > 0 && heartbeat_age_us >= 0 &&
             heartbeat_age_us >= (int64_t)BMS_HEARTBEAT_TIMEOUT_MS * 1000) {
-            const uint16_t conn_handle = runtime->bms_conn_handle;
-            ESP_LOGW(TAG,
-                     "BMS heartbeat timeout: age_ms=%lld poll=%u write_in_flight=%u",
-                     (long long)(heartbeat_age_us / 1000),
-                     (unsigned)runtime->bms_poll_index,
-                     (unsigned)RUNTIME_FLAG(runtime, BMS_WRITE_IN_FLIGHT));
-            runtime->bms_ble_phase = (uint8_t)BMS_BLE_PHASE_BACKOFF;
-            runtime->bms_status_poll_elapsed_ms = 0U;
-            bms_clear_telemetry(runtime);
-            bms_set_info(runtime, "BMS TIMEOUT");
-            if (ble_gap_terminate(conn_handle, BLE_ERR_REM_USER_CONN_TERM) != 0) {
-                bms_reset_connection_state(runtime, BMS_BLE_PHASE_BACKOFF);
-            }
+            ESP_LOGW(TAG, "BMS heartbeat timeout: age_ms=%lld", (long long)(heartbeat_age_us / 1000));
+            bms_fail_connection(runtime, "BMS TIMEOUT");
             changed = true;
         } else {
             runtime->bms_status_poll_elapsed_ms += elapsed_ms;
@@ -1488,14 +1646,20 @@ static bool bms_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_ms)
                 changed = true;
             }
         }
-    } else if (RUNTIME_FLAG(runtime, BMS_BIND_ACTIVE) && RUNTIME_FLAG(runtime, BMS_BLE_READY) &&
-               RUNTIME_FLAG(runtime, BMS_BLE_SYNCED) &&
+    } else if (RUNTIME_FLAG(runtime, BMS_BLE_READY) && RUNTIME_FLAG(runtime, BMS_BLE_SYNCED) &&
                (runtime->bms_ble_phase == (uint8_t)BMS_BLE_PHASE_IDLE ||
                 runtime->bms_ble_phase == (uint8_t)BMS_BLE_PHASE_BACKOFF)) {
         runtime->bms_status_poll_elapsed_ms += elapsed_ms;
         if (runtime->bms_status_poll_elapsed_ms >= BMS_RECONNECT_BACKOFF_MS) {
             runtime->bms_status_poll_elapsed_ms = 0U;
-            (void)bms_start_scan(runtime);
+            if (runtime->bms_conn_handle != 0xFFFFU) {
+                /* Wait for disconnect before reusing the link; retry a failed terminate. */
+                if (ble_gap_terminate(runtime->bms_conn_handle, BLE_ERR_REM_USER_CONN_TERM) == BLE_HS_ENOTCONN) {
+                    bms_reset_connection_state(runtime, BMS_BLE_PHASE_BACKOFF);
+                }
+            } else if (RUNTIME_FLAG(runtime, BMS_BIND_ACTIVE)) {
+                (void)bms_start_scan(runtime);
+            }
             changed = true;
         }
     }
@@ -1516,6 +1680,11 @@ esp_err_t esp_bms_bms_ble_init(esp_bms_idf_runtime_t *runtime)
     if (!runtime) {
         return ESP_ERR_INVALID_ARG;
     }
+    if (s_bms_runtime && s_bms_runtime != runtime) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    s_bms_runtime = runtime;
+    bms_advance_session(runtime);
     esp_bms_idf_runtime_register_bms_frame_handler(runtime, bms_frame_push);
     esp_bms_idf_runtime_register_bms_ble_driver(runtime, &s_bms_ble_driver);
     return ESP_OK;

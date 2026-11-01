@@ -51,11 +51,13 @@ int main(void)
     uint8_t stream[512] = { 0 };
     size_t stream_len = 0U;
     bool known = false;
+    uint8_t response_index = 0xFFU;
     esp_bms_bms_telemetry_t telemetry = { 0 };
-    assert(!esp_bms_em02_feed(stream, &stream_len, sizeof(stream), identity, 40U, 0U, &known, &telemetry));
+    assert(!esp_bms_em02_feed(stream, &stream_len, sizeof(stream), identity, 40U, &response_index, &known, &telemetry));
     assert(esp_bms_em02_feed(stream, &stream_len, sizeof(stream), identity + 40U,
-                             identity_len - 40U, 0U, &known, &telemetry));
+                             identity_len - 40U, &response_index, &known, &telemetry));
     assert(known);
+    assert(response_index == 0U);
 
     uint8_t wrong_identity[183];
     memcpy(wrong_identity, identity, sizeof(wrong_identity));
@@ -67,8 +69,8 @@ int main(void)
     stream_len = 0U;
     known = true;
     telemetry.pack_voltage_mv = 0x1234U;
-    assert(!esp_bms_em02_feed(stream, &stream_len, sizeof(stream), wrong_identity,
-                              sizeof(wrong_identity), 0U, &known, &telemetry));
+    assert(esp_bms_em02_feed(stream, &stream_len, sizeof(stream), wrong_identity,
+                              sizeof(wrong_identity), &response_index, &known, &telemetry));
     assert(!known);
     assert(telemetry.pack_voltage_mv == 0x1234U);
 
@@ -81,19 +83,23 @@ int main(void)
     realtime[8] = 61U;
     realtime[10] = 1U;
     realtime[11] = 62U;
-    realtime[25] = 0x00; realtime[26] = 0x00; realtime[27] = 0x30; realtime[28] = 0xD4;
-    realtime[33] = 0x0D; realtime[34] = 0xAC;
-    realtime[35] = 0x0D; realtime[36] = 0xB0;
-    realtime[105] = 0x01; realtime[106] = 0xF4;
-    realtime[107] = 0x01; realtime[108] = 0x2C;
+    /* Source-known EM02 offsets use little endian, independently of poll order. */
+    realtime[25] = 0xD4; realtime[26] = 0x30; realtime[27] = 0x00; realtime[28] = 0x00;
+    realtime[29] = 0x2E; realtime[30] = 0xFB; realtime[31] = 0xFF; realtime[32] = 0xFF;
+    realtime[33] = 0xAC; realtime[34] = 0x0D;
+    realtime[35] = 0xB0; realtime[36] = 0x0D;
+    realtime[105] = 0xF4; realtime[106] = 0x01;
+    realtime[107] = 0x2C; realtime[108] = 0x01;
     realtime[109] = 88U;
     crc = crc16(realtime, realtime_len - 2U);
     realtime[realtime_len - 2U] = (uint8_t)crc;
     realtime[realtime_len - 1U] = (uint8_t)(crc >> 8U);
     stream_len = 0U;
     assert(esp_bms_em02_feed(stream, &stream_len, sizeof(stream), realtime, realtime_len,
-                             1U, &known, &telemetry));
+                             &response_index, &known, &telemetry));
     assert(telemetry.pack_voltage_mv == 12500U);
+    assert(response_index == 1U);
+    assert(telemetry.current_deci_amps == -123);
     assert(telemetry.soc_percent == 88U);
     assert(telemetry.capacity_remaining_mah == 44000U);
     assert(telemetry.min_cell_voltage_mv == 3500U);
@@ -109,18 +115,57 @@ int main(void)
         const size_t auxiliary_len = make_frame(auxiliary, auxiliary_counts[i]);
         stream_len = 0U;
         assert(esp_bms_em02_feed(stream, &stream_len, sizeof(stream), auxiliary,
-                                 auxiliary_len, (uint8_t)(i + 2U), &known, &telemetry));
+                                 auxiliary_len, &response_index, &known, &telemetry));
+        assert(response_index == i + 2U);
         assert(telemetry.pack_voltage_mv == 12500U);
     }
+
+    /* Every notification boundary retains the same decoded signed readings. */
+    for (size_t split = 1U; split < realtime_len; ++split) {
+        stream_len = 0U;
+        assert(!esp_bms_em02_feed(stream, &stream_len, sizeof(stream), realtime, split,
+                                 &response_index, &known, &telemetry));
+        assert(esp_bms_em02_feed(stream, &stream_len, sizeof(stream), realtime + split,
+                                realtime_len - split, &response_index, &known, &telemetry));
+        assert(response_index == 1U && telemetry.current_deci_amps == -123);
+    }
+    uint8_t combined[sizeof(identity) + sizeof(realtime)];
+    memcpy(combined, identity, sizeof(identity));
+    memcpy(combined + sizeof(identity), realtime, sizeof(realtime));
+    stream_len = 0U;
+    known = false;
+    assert(esp_bms_em02_feed(stream, &stream_len, sizeof(stream), combined, sizeof(combined),
+                            &response_index, &known, &telemetry));
+    assert(response_index == 0U && known);
+    assert(esp_bms_em02_feed(stream, &stream_len, sizeof(stream), NULL, 0U,
+                            &response_index, &known, &telemetry));
+    assert(response_index == 1U && stream_len == 0U);
+    /* Invalid count must not keep a valid late response stuck behind it. */
+    uint8_t noise[] = { 0xFF, 0x01, 0x03, 0xFF, 0x00 };
+    assert(!esp_bms_em02_feed(stream, &stream_len, sizeof(stream), noise, sizeof(noise),
+                             &response_index, &known, &telemetry));
+    assert(esp_bms_em02_feed(stream, &stream_len, sizeof(stream), realtime, realtime_len,
+                            &response_index, &known, &telemetry));
+    /* Overflowing signed current is rejected before publishing telemetry. */
+    uint8_t invalid[sizeof(realtime)];
+    memcpy(invalid, realtime, sizeof(invalid));
+    invalid[29] = 0xFF; invalid[30] = 0xFF; invalid[31] = 0xFF; invalid[32] = 0x7F;
+    crc = crc16(invalid, sizeof(invalid) - 2U);
+    invalid[sizeof(invalid) - 2U] = (uint8_t)crc;
+    invalid[sizeof(invalid) - 1U] = (uint8_t)(crc >> 8U);
+    stream_len = 0U;
+    assert(!esp_bms_em02_feed(stream, &stream_len, sizeof(stream), invalid, sizeof(invalid),
+                             &response_index, &known, &telemetry));
+    assert(telemetry.current_deci_amps == -123);
 
     realtime[realtime_len - 1U] ^= 0x01U;
     stream_len = 0U;
     assert(!esp_bms_em02_feed(stream, &stream_len, sizeof(stream), realtime, realtime_len,
-                              1U, &known, &telemetry));
+                              &response_index, &known, &telemetry));
     uint8_t oversized[513] = { 0 };
     stream_len = 12U;
     assert(!esp_bms_em02_feed(stream, &stream_len, sizeof(stream), oversized, sizeof(oversized),
-                              1U, &known, &telemetry));
+                              &response_index, &known, &telemetry));
     assert(stream_len == 0U);
     return 0;
 }

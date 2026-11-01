@@ -133,6 +133,9 @@ static bool decode_state_frame(const uint8_t *frame, size_t tlv_end, esp_bms_bms
     int32_t charge_ma = 0;
     int32_t discharge_ma = 0;
     bool have_capacity = false;
+    bool have_total_capacity = false;
+    bool have_remaining_capacity = false;
+    bool have_temperatures = false;
     bool have_cell_array = false;
     uint32_t cell_sum = 0U;
     uint16_t cell_count = 0U;
@@ -229,6 +232,7 @@ static bool decode_state_frame(const uint8_t *frame, size_t tlv_end, esp_bms_bms
         case 29U:
         case 30U:
         case 31U:
+            have_temperatures = have_temperatures || value_len >= 2U;
             record_temperature(telemetry, (uint8_t)(tag - 27U), value, value_len);
             break;
         case 36U:
@@ -236,6 +240,7 @@ static bool decode_state_frame(const uint8_t *frame, size_t tlv_end, esp_bms_bms
                 /* 0.001 Ah per count, which is one mAh per count. */
                 const int32_t capacity = read_s32_be(value, 0U);
                 if (capacity > 0) {
+                    have_total_capacity = true;
                     telemetry->total_capacity_mah = (uint32_t)capacity;
                     have_capacity = true;
                 }
@@ -245,6 +250,7 @@ static bool decode_state_frame(const uint8_t *frame, size_t tlv_end, esp_bms_bms
             if (value_len >= 4U) {
                 const int32_t capacity = read_s32_be(value, 0U);
                 if (capacity >= 0) {
+                    have_remaining_capacity = true;
                     telemetry->capacity_remaining_mah = (uint32_t)capacity;
                     have_capacity = true;
                 }
@@ -307,7 +313,20 @@ static bool decode_state_frame(const uint8_t *frame, size_t tlv_end, esp_bms_bms
         return false;
     }
     /* Tags 3/4/10/36/37 are required for a complete snapshot. */
-    telemetry->partial = !have_capacity || !have_cell_array;
+    telemetry->present_fields = ESP_BMS_BMS_FIELD_PACK_VOLTAGE | ESP_BMS_BMS_FIELD_SOC;
+    if (have_current) telemetry->present_fields |= ESP_BMS_BMS_FIELD_CURRENT;
+    if (have_cell_maximum || have_cell_array) telemetry->present_fields |= ESP_BMS_BMS_FIELD_MAX_CELL;
+    if (have_cell_minimum || have_cell_array) telemetry->present_fields |= ESP_BMS_BMS_FIELD_MIN_CELL;
+    if (have_cell_array) telemetry->present_fields |= ESP_BMS_BMS_FIELD_AVERAGE_CELL;
+    if (have_cell_delta || ((have_cell_maximum || have_cell_array) &&
+                            (have_cell_minimum || have_cell_array))) {
+        telemetry->present_fields |= ESP_BMS_BMS_FIELD_DELTA_CELL;
+    }
+    if (have_total_capacity) telemetry->present_fields |= ESP_BMS_BMS_FIELD_TOTAL_CAPACITY;
+    if (have_remaining_capacity) telemetry->present_fields |= ESP_BMS_BMS_FIELD_CAPACITY_REMAINING;
+    if (have_temperatures) telemetry->present_fields |= ESP_BMS_BMS_FIELD_TEMPERATURES;
+    telemetry->partial = !have_capacity || !have_cell_array ||
+                         !have_total_capacity || !have_remaining_capacity;
     return true;
 }
 

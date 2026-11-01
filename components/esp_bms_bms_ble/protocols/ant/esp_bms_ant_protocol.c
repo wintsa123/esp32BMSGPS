@@ -89,26 +89,63 @@ static bool read_u32_be(const uint8_t *data, size_t len, size_t index, uint32_t 
     return true;
 }
 
-static bool validate_frame(const uint8_t *data, size_t len, uint8_t *function, size_t *protocol_len)
+/* Returns 0 for incomplete input and SIZE_MAX for invalid input. */
+static size_t frame_length(const uint8_t *data, size_t len)
 {
-    if (!data || !function || !protocol_len || len < ANT_FRAME_MIN_LEN ||
-        data[0] != ANT_FRAME_START_1 || data[1] != ANT_FRAME_START_2 ||
-        data[len - 2U] != ANT_FRAME_END_1 || data[len - 1U] != ANT_FRAME_END_2) {
+    if (len == 0U) {
+        return 0U;
+    }
+    if (data[0] != ANT_FRAME_START_1 || (len >= 2U && data[1] != ANT_FRAME_START_2)) {
+        return SIZE_MAX;
+    }
+    if (len < 6U) {
+        return 0U;
+    }
+    size_t segment_start = 1U;
+    size_t crc_offset = 6U + data[5U];
+    for (;;) {
+        if (crc_offset + 2U > len) {
+            return 0U;
+        }
+        const uint16_t remote_crc = (uint16_t)data[crc_offset] |
+                                    ((uint16_t)data[crc_offset + 1U] << 8U);
+        if (crc16_modbus(data + segment_start, crc_offset - segment_start) != remote_crc) {
+            return SIZE_MAX;
+        }
+        const size_t next = crc_offset + 2U;
+        if (len - next < 2U) {
+            return 0U;
+        }
+        if (data[next] == ANT_FRAME_END_1 && data[next + 1U] == ANT_FRAME_END_2) {
+            return next + 2U;
+        }
+        if (data[next] == ANT_FRAME_START_1 && data[next + 1U] == ANT_FRAME_START_2) {
+            return SIZE_MAX;
+        }
+        if (len - next < 4U) {
+            return 0U;
+        }
+        segment_start = next;
+        crc_offset = next + 4U + data[next + 3U];
+    }
+}
+
+static bool validate_frame(const uint8_t *data, size_t len, uint8_t *function, size_t *payload_end)
+{
+    if (!data || !function || !payload_end || len < ANT_FRAME_MIN_LEN ||
+        frame_length(data, len) != len) {
         return false;
     }
     *function = data[2U];
-    *protocol_len = 10U + data[5U];
-    if (*protocol_len > len || *protocol_len < ANT_FRAME_MIN_LEN ||
-        (*function != ANT_FRAME_TYPE_DEVICE_INFO && *protocol_len != len)) {
-        return false;
-    }
-    const size_t crc_offset = *protocol_len - 4U;
-    const uint16_t remote_crc = (uint16_t)data[crc_offset] | ((uint16_t)data[crc_offset + 1U] << 8U);
-    return crc16_modbus(data + 1U, crc_offset - 1U) == remote_crc;
+    *payload_end = 6U + data[5U];
+    return true;
 }
 
 static bool decode_status(const uint8_t *data, size_t len, esp_bms_bms_telemetry_t *telemetry)
 {
+    if (!data || !telemetry || len < 10U) {
+        return false;
+    }
     const uint8_t temperature_sensor_count = data[8U];
     const uint8_t cell_count = data[9U];
     if (!telemetry || cell_count > ANT_MAX_CELLS || temperature_sensor_count > ANT_MAX_TEMPERATURE_SENSORS) {
@@ -174,6 +211,42 @@ static bool decode_status(const uint8_t *data, size_t len, esp_bms_bms_telemetry
     }
     telemetry->temperature_valid[4U] = true;
     telemetry->temperature_valid[5U] = true;
+    esp_bms_bms_ant_diagnostics_t *const diagnostics = &telemetry->ant_diagnostics;
+    diagnostics->cell_count = cell_count;
+    for (uint8_t index = 0U; index < cell_count; ++index) {
+        uint16_t voltage = 0U;
+        if (!read_u16_le(data, len, 34U + (size_t)index * 2U, &voltage)) {
+            return false;
+        }
+        diagnostics->cell_voltage_mv[index] = voltage & 0x1FFFU;
+    }
+    uint32_t power = 0U;
+    if (!read_u16_le(data, len, 44U + dynamic_offset, &diagnostics->soh_percent) ||
+        !read_u32_le(data, len, 62U + dynamic_offset, &power) ||
+        !read_u32_le(data, len, 70U + dynamic_offset, &diagnostics->balance_mask)) {
+        return false;
+    }
+    diagnostics->power_w = (int32_t)power;
+    diagnostics->discharge_mos_state = data[46U + dynamic_offset];
+    diagnostics->charge_mos_state = data[47U + dynamic_offset];
+    diagnostics->balance_state = data[48U + dynamic_offset];
+    diagnostics->valid = true;
+    telemetry->balancing_supported = true;
+    /* State 3 is a thermal stop, not active balancing. */
+    telemetry->balancing_active = diagnostics->balance_mask != 0U ||
+                                  diagnostics->balance_state == 1U ||
+                                  diagnostics->balance_state == 2U ||
+                                  diagnostics->balance_state == 4U ||
+                                  diagnostics->balance_state == 5U;
+    const size_t ext_offset = 112U + dynamic_offset;
+    diagnostics->charge_time_valid = read_u32_le(data, len, ext_offset,
+                                                 &diagnostics->charge_time_seconds);
+    diagnostics->last_charge_gap_valid = read_u32_le(data, len, ext_offset + 4U,
+                                                     &diagnostics->last_charge_gap_seconds);
+    diagnostics->remaining_charge_valid = read_u16_le(data, len, ext_offset + 8U,
+                                                      &diagnostics->remaining_charge_minutes);
+    diagnostics->remaining_discharge_valid = read_u16_le(data, len, ext_offset + 10U,
+                                                         &diagnostics->remaining_discharge_minutes);
     return true;
 }
 
@@ -261,6 +334,84 @@ bool esp_bms_ant_protocol_decode(const uint8_t *data,
         return true;
     }
     return false;
+}
+
+static void stream_drop(uint8_t *stream, size_t *stream_len, size_t count)
+{
+    *stream_len -= count;
+    memmove(stream, stream + count, *stream_len);
+}
+
+static bool stream_decode(uint8_t *stream,
+                           size_t *stream_len,
+                           esp_bms_bms_telemetry_t *telemetry,
+                           bool *device_info)
+{
+    bool have_status = false;
+    while (*stream_len > 0U) {
+        const size_t length = frame_length(stream, *stream_len);
+        if (length == 0U) {
+            /* A corrupt length must not hide a later complete, CRC-valid frame. */
+            size_t next = 1U;
+            for (; next < *stream_len; ++next) {
+                if (stream[next] == ANT_FRAME_START_1) {
+                    const size_t candidate = frame_length(stream + next, *stream_len - next);
+                    if (candidate != 0U && candidate != SIZE_MAX) {
+                        break;
+                    }
+                }
+            }
+            if (next == *stream_len) {
+                break;
+            }
+            stream_drop(stream, stream_len, next);
+            continue;
+        }
+        if (length == SIZE_MAX) {
+            stream_drop(stream, stream_len, 1U);
+            continue;
+        }
+        bool info = false;
+        esp_bms_bms_telemetry_t candidate = { 0 };
+        if (esp_bms_ant_protocol_decode(stream, length, &candidate, &info)) {
+            if (info) {
+                if (device_info) {
+                    *device_info = true;
+                }
+            } else {
+                *telemetry = candidate;
+                have_status = true;
+            }
+        }
+        stream_drop(stream, stream_len, length);
+    }
+    return have_status;
+}
+
+bool esp_bms_ant_protocol_feed(uint8_t *stream,
+                               size_t *stream_len,
+                               size_t stream_capacity,
+                               const uint8_t *chunk,
+                               size_t chunk_len,
+                               esp_bms_bms_telemetry_t *telemetry,
+                               bool *device_info)
+{
+    if (device_info) {
+        *device_info = false;
+    }
+    if (!stream || !stream_len || !telemetry || (!chunk && chunk_len > 0U) ||
+        stream_capacity < ANT_FRAME_MIN_LEN || *stream_len > stream_capacity) {
+        return false;
+    }
+    bool have_status = stream_decode(stream, stream_len, telemetry, device_info);
+    for (size_t index = 0U; index < chunk_len; ++index) {
+        if (*stream_len == stream_capacity) {
+            stream_drop(stream, stream_len, 1U);
+        }
+        stream[(*stream_len)++] = chunk[index];
+        have_status = stream_decode(stream, stream_len, telemetry, device_info) || have_status;
+    }
+    return have_status;
 }
 
 bool esp_bms_ant_protocol_old_poll_request(uint8_t out[6])

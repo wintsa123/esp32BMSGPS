@@ -21,6 +21,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Logging Guidelines](./logging-guidelines.md) | Structured logging, log levels | Started |
 | [BLE notification security](./ble-peripheral-notification-security.md) | Unencrypted peripheral telemetry and encrypted local GATT services | Active |
 | [Controller binding persistence](./controller-binding-persistence.md) | Empty factory binding, user selection and boot reconnect | Active |
+| [BMS link and telemetry](./bms-link-and-telemetry.md) | Recovery, streaming, partial fields, ANT channels and EM02 | Active |
 | [Hardware, Build, and Flash](./hardware-build-flash.md) | GPIO ownership, board conflicts, toolchains, partitions, and supported flash paths | Active |
 
 ---

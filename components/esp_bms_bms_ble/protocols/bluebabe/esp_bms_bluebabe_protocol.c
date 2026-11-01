@@ -160,6 +160,10 @@ static bool decode_state_table(const uint8_t *payload,
     telemetry->balancing_supported = false;
     telemetry->balancing_active = false;
     telemetry->partial = true;
+    telemetry->present_fields = ESP_BMS_BMS_FIELD_PACK_VOLTAGE | ESP_BMS_BMS_FIELD_CURRENT |
+                                ESP_BMS_BMS_FIELD_SOC | ESP_BMS_BMS_FIELD_MIN_CELL |
+                                ESP_BMS_BMS_FIELD_MAX_CELL | ESP_BMS_BMS_FIELD_DELTA_CELL |
+                                ESP_BMS_BMS_FIELD_CAPACITY_REMAINING | ESP_BMS_BMS_FIELD_TEMPERATURES;
     return true;
 }
 
@@ -176,6 +180,7 @@ static bool decode_info_table(const uint8_t *payload,
     /* 16..23 hardware version and 24..31 software version are ASCII identity strings
        that the telemetry contract does not carry. */
     telemetry->partial = true;
+    telemetry->present_fields = ESP_BMS_BMS_FIELD_TOTAL_CAPACITY;
     return telemetry->total_capacity_mah != 0U;
 }
 

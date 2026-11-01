@@ -180,6 +180,8 @@ struct esp_bms_idf_runtime {
     bool history_session_started;
     bool history_time_anchored;
     int64_t bms_telemetry_last_us;
+    int64_t bms_establish_deadline_us;
+    uint32_t bms_ble_session;
     uint32_t bms_status_poll_elapsed_ms;
     uint32_t controller_keepalive_elapsed_ms;
     uint32_t controller_scan_revision;
@@ -201,6 +203,9 @@ struct esp_bms_idf_runtime {
     uint16_t bms_write_char_val_handle;
     uint16_t bms_cccd_handle;
     uint16_t bms_cccd_value;
+    uint16_t bms_notify_end_handle;
+    uint8_t bms_write_properties;
+    bool bms_ant_alt_available;
     uint16_t controller_service_start_handle;
     uint16_t controller_service_end_handle;
     uint16_t controller_char_val_handle;
@@ -209,6 +214,7 @@ struct esp_bms_idf_runtime {
     uint8_t brightness_percent;
     uint8_t volume_percent;
     uint8_t bms_type;
+    uint8_t bms_ant_channel;
     uint8_t bms_poll_index;
     uint8_t bms_own_addr_type;
     uint8_t bluetooth_own_addr_type;
@@ -281,6 +287,7 @@ struct esp_bms_idf_runtime {
     uint8_t http_pending_brightness_percent;
     uint8_t http_pending_volume_percent;
     uint8_t http_pending_bms_type;
+    uint8_t http_pending_bms_ant_channel;
     uint8_t http_pending_controller_type;
     char http_pending_bluebabe_code[7];
     uint8_t capacity_estimate_bms_type;

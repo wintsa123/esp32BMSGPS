@@ -1,5 +1,6 @@
 #include "esp_bms_em02_protocol.h"
 
+#include <limits.h>
 #include <string.h>
 
 static const uint8_t s_requests[4][ESP_BMS_EM02_REQUEST_LEN] = {
@@ -23,15 +24,16 @@ static uint16_t crc16(const uint8_t *bytes, size_t len)
     return crc;
 }
 
-static uint16_t u16be(const uint8_t *p)
+/* Motexa v6.w0.e/f and the EM02 v70 reference both read little endian. */
+static uint16_t u16le(const uint8_t *p)
 {
-    return (uint16_t)(((uint16_t)p[0] << 8U) | p[1]);
+    return (uint16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8U));
 }
 
-static uint32_t u32be(const uint8_t *p)
+static uint32_t u32le(const uint8_t *p)
 {
-    return ((uint32_t)p[0] << 24U) | ((uint32_t)p[1] << 16U) |
-           ((uint32_t)p[2] << 8U) | p[3];
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8U) |
+           ((uint32_t)p[2] << 16U) | ((uint32_t)p[3] << 24U);
 }
 
 bool esp_bms_em02_poll_request(uint8_t poll_index, uint8_t out[ESP_BMS_EM02_REQUEST_LEN])
@@ -65,18 +67,22 @@ static bool decode_realtime(const uint8_t *frame, size_t frame_len,
     if (cell_count == 0U || 33U + (size_t)cell_count * 2U > frame_len - 2U) {
         return false;
     }
+    const int32_t current_deci_amps = (int32_t)u32le(frame + 29U) / 10;
+    if (current_deci_amps < INT16_MIN || current_deci_amps > INT16_MAX || frame[109U] > 100U) {
+        return false;
+    }
     memset(telemetry, 0, sizeof(*telemetry));
-    telemetry->pack_voltage_mv = u32be(frame + 25U);
-    telemetry->current_deci_amps = (int16_t)((int32_t)u32be(frame + 29U) / 10);
-    telemetry->total_capacity_mah = (uint32_t)u16be(frame + 105U) * 100U;
-    telemetry->soc_percent = frame[109U] > 100U ? 100U : frame[109U];
+    telemetry->pack_voltage_mv = u32le(frame + 25U);
+    telemetry->current_deci_amps = (int16_t)current_deci_amps;
+    telemetry->total_capacity_mah = (uint32_t)u16le(frame + 105U) * 100U;
+    telemetry->soc_percent = frame[109U];
     telemetry->capacity_remaining_mah =
         telemetry->total_capacity_mah * telemetry->soc_percent / 100U;
     uint32_t sum = 0U;
     uint16_t min = UINT16_MAX;
     uint16_t max = 0U;
     for (uint8_t i = 0U; i < cell_count; ++i) {
-        const uint16_t value = u16be(frame + 33U + (size_t)i * 2U);
+        const uint16_t value = u16le(frame + 33U + (size_t)i * 2U);
         sum += value;
         min = value < min ? value : min;
         max = value > max ? value : max;
@@ -109,7 +115,7 @@ static bool decode_realtime(const uint8_t *frame, size_t frame_len,
 static bool decode_frame(const uint8_t *frame, size_t frame_len, uint8_t poll_index,
                          bool *identity_known, esp_bms_bms_telemetry_t *telemetry)
 {
-    if (poll_index >= 4U || frame_len != (size_t)frame[2] + 5U || frame[0] != 0x01U ||
+    if (frame_len < 5U || poll_index >= 4U || frame_len != (size_t)frame[2] + 5U || frame[0] != 0x01U ||
         frame[1] != 0x03U || frame[2] != s_byte_counts[poll_index]) {
         return false;
     }
@@ -132,50 +138,46 @@ static bool decode_frame(const uint8_t *frame, size_t frame_len, uint8_t poll_in
 }
 
 bool esp_bms_em02_feed(uint8_t *stream, size_t *stream_len, size_t stream_capacity,
-                       const uint8_t *chunk, size_t chunk_len, uint8_t poll_index,
+                       const uint8_t *chunk, size_t chunk_len, uint8_t *response_index,
                        bool *identity_known, esp_bms_bms_telemetry_t *telemetry)
 {
-    if (!stream || !stream_len || !chunk || !identity_known || !telemetry ||
-        chunk_len == 0U || stream_capacity == 0U) {
+    if (!stream || !stream_len || (!chunk && chunk_len != 0U) || !response_index ||
+        !identity_known || !telemetry || stream_capacity == 0U) {
         return false;
     }
-    if (chunk_len > stream_capacity) {
+    if (*stream_len > stream_capacity || chunk_len > stream_capacity - *stream_len) {
         *stream_len = 0U;
         return false;
     }
-    if (*stream_len + chunk_len > stream_capacity) {
-        *stream_len = 0U;
+    if (chunk_len != 0U) {
+        memcpy(stream + *stream_len, chunk, chunk_len);
+        *stream_len += chunk_len;
     }
-    memcpy(stream + *stream_len, chunk, chunk_len);
-    *stream_len += chunk_len;
     while (*stream_len >= 3U) {
-        size_t start = 0U;
-        while (start + 1U < *stream_len &&
-               !(stream[start] == 0x01U && stream[start + 1U] == 0x03U)) {
-            ++start;
+        uint8_t page = 0U;
+        while (page < 4U && stream[2U] != s_byte_counts[page]) {
+            ++page;
         }
-        if (start != 0U) {
-            memmove(stream, stream + start, *stream_len - start);
-            *stream_len -= start;
-        }
-        if (*stream_len < 3U) {
-            break;
+        if (stream[0U] != 0x01U || stream[1U] != 0x03U || page == 4U) {
+            memmove(stream, stream + 1U, --*stream_len);
+            continue;
         }
         const size_t frame_len = (size_t)stream[2U] + 5U;
-        if (frame_len > stream_capacity || frame_len < 5U) {
-            memmove(stream, stream + 1U, *stream_len - 1U);
-            --*stream_len;
+        if (frame_len > stream_capacity) {
+            memmove(stream, stream + 1U, --*stream_len);
             continue;
         }
         if (*stream_len < frame_len) {
             break;
         }
-        const bool decoded = decode_frame(stream, frame_len, poll_index, identity_known, telemetry);
+        if (!decode_frame(stream, frame_len, page, identity_known, telemetry)) {
+            memmove(stream, stream + 1U, --*stream_len);
+            continue;
+        }
         memmove(stream, stream + frame_len, *stream_len - frame_len);
         *stream_len -= frame_len;
-        if (decoded) {
-            return poll_index == 0U ? *identity_known : true;
-        }
+        *response_index = page;
+        return true;
     }
     return false;
 }
