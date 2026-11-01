@@ -182,27 +182,107 @@ int main(void)
     assert(joined_state.rpm_valid && !joined_state.controller_speed_params_valid);
 
     /* 另一些固件用 16 位求和校验（frame[1] bit7=0），官方 App 也同时支持：
-     * 只认 CRC 会把这类控制器判成"没有任何数据"。 */
+     * 只认 CRC 会把这类控制器判成"没有任何数据"。
+     *
+     * 关键：求和方言的字段布局与 CRC 方言**完全不同**（官方原生库 libfd_protocol.so
+     * 里这是两份独立的 handler 表）。老固件（如 ND60240）的块 0 把挡位放在 frame[4]、
+     * 转速放在 frame[6..7] 且是**大端**；新固件是 frame[2] 与小端 frame[8..9]。
+     * 这里按老固件布局构造，验证固件确实分派到了正确的解析路径。 */
     esp_fardriver_state_t sum_state = { 0 };
     memset(data, 0, sizeof(data));
-    data[0] = (uint8_t)((3U - 1U) << 2U); /* 挡位 3 */
-    data[6] = 0xC0U;
-    data[7] = 0x12U; /* 转速 4800 */
+    /* 官方老固件分支的 stage 原始值要先做一次 `^ 2`（0x011c4c 的 eor w8,w8,#2），
+     * 再按「0→1、1→2、其余→3」映射（e8.X 的 stage 分支）。
+     * 这里令 frame[4] 的 bit2-3 = 0 → (0 ^ 2) = 2 → 挡位 3。 */
+    data[2] = 0x00U;
+    data[4] = 0x12U;                      /* 大端 frame[6..7] = 0x12C0 = 4800 */
+    data[5] = 0xC0U;
     make_sum_frame(frame, 0U, data);
     assert(esp_fardriver_parse_frame(&sum_state, frame, sizeof(frame)));
     assert(sum_state.gear_valid && sum_state.gear == 3U);
     assert(sum_state.rpm_valid && sum_state.rpm == 4800U);
+    assert(sum_state.dialect == (uint8_t)ESP_FARDRIVER_DIALECT_SUM16);
+    assert(sum_state.sum16_frame_count == 1U && sum_state.crc16_frame_count == 0U);
+
+    /* 挡位编码 (raw ^ 2) 再映射：raw=2 → 0 → 1；raw=3 → 1 → 2；raw=0/1 → 3 */
+    memset(&sum_state, 0, sizeof(sum_state));
+    memset(data, 0, sizeof(data));
+    data[2] = 0x08U; /* raw = 2 */
+    make_sum_frame(frame, 0U, data);
+    assert(esp_fardriver_parse_frame(&sum_state, frame, sizeof(frame)));
+    assert(sum_state.gear == 1U);
+    memset(&sum_state, 0, sizeof(sum_state));
+    memset(data, 0, sizeof(data));
+    data[2] = 0x0CU; /* raw = 3 */
+    make_sum_frame(frame, 0U, data);
+    assert(esp_fardriver_parse_frame(&sum_state, frame, sizeof(frame)));
+    assert(sum_state.gear == 2U);
+    memset(&sum_state, 0, sizeof(sum_state));
+    memset(data, 0, sizeof(data));
+    data[2] = 0x04U; /* raw = 1 → (1^2)=3 → 挡位 3 */
+    make_sum_frame(frame, 0U, data);
+    assert(esp_fardriver_parse_frame(&sum_state, frame, sizeof(frame)));
+    assert(sum_state.gear == 3U);
+
+    /* 求和方言的块 1：电压/电流都是**大端有符号 16 位**，电流在 frame[4..5]。
+     * 这正是 60240 电压/电流读不出来的地方——旧代码按新固件的
+     * 「小端 frame[2..3] + 小端 frame[6..7]」去读，整块错位。 */
+    memset(&sum_state, 0, sizeof(sum_state));
+    memset(data, 0, sizeof(data));
+    data[0] = 0x02U; /* 大端 0x02D2 = 722 → 72.2V */
+    data[1] = 0xD2U;
+    data[2] = 0x00U; /* 大端 0x0032 = 50 → 50 * 0.25A = 12.50A */
+    data[3] = 0x32U;
+    make_sum_frame(frame, 1U, data);
+    assert(esp_fardriver_parse_frame(&sum_state, frame, sizeof(frame)));
+    assert(sum_state.voltage_deci_v == 722U);
+    assert(sum_state.current_valid && sum_state.current_centi_a == 1250);
+    assert(sum_state.power_valid && sum_state.power_w == 902);
+
+    /* 求和方言的回充：负电流也要能解出来（大端有符号） */
+    memset(&sum_state, 0, sizeof(sum_state));
+    memset(data, 0, sizeof(data));
+    data[0] = 0x02U;
+    data[1] = 0xD2U;
+    data[2] = 0xFFU; /* 大端 0xFFE0 = -32 → -8.00A */
+    data[3] = 0xE0U;
+    make_sum_frame(frame, 1U, data);
+    assert(esp_fardriver_parse_frame(&sum_state, frame, sizeof(frame)));
+    assert(sum_state.current_centi_a == -800);
+    assert(sum_state.power_valid && sum_state.power_w == -577);
+
+    /* 求和方言的控制器温度（块 4，取 frame[4] 单字节）与电机温度（块 13，取 frame[2]） */
+    memset(&sum_state, 0, sizeof(sum_state));
+    memset(data, 0, sizeof(data));
+    data[2] = 29U;
+    make_sum_frame(frame, 4U, data);
+    assert(esp_fardriver_parse_frame(&sum_state, frame, sizeof(frame)));
+    assert(sum_state.controller_temp_valid && sum_state.controller_temp_c == 29);
+
+    memset(&sum_state, 0, sizeof(sum_state));
+    memset(data, 0, sizeof(data));
+    data[0] = 45U;
+    make_sum_frame(frame, 13U, data);
+    assert(esp_fardriver_parse_frame(&sum_state, frame, sizeof(frame)));
+    assert(sum_state.motor_temp_valid && sum_state.motor_temp_c == 45);
 
     /* 求和错误必须被拒绝，且不改变状态 */
+    memset(&sum_state, 0, sizeof(sum_state));
+    memset(data, 0, sizeof(data));
+    data[2] = (uint8_t)((3U - 1U) << 2U);
+    data[4] = 0x12U;
+    data[5] = 0xC0U;
     make_sum_frame(frame, 0U, data);
+    assert(esp_fardriver_parse_frame(&sum_state, frame, sizeof(frame)));
     frame[15] ^= 1U;
     esp_fardriver_state_t before_sum_failure = sum_state;
     assert(!esp_fardriver_parse_frame(&sum_state, frame, sizeof(frame)));
     assert(memcmp(&sum_state, &before_sum_failure, sizeof(sum_state)) == 0);
 
-    /* 索引是 7 位：超过寄存器表的索引（>= 56）按未知块丢弃 */
+    /* 求和方言的块号只有 0..23：0x40 既不是合法块号，也不能被当成 CRC 方言的索引 */
     make_sum_frame(frame, 0x40U, data);
     assert(!esp_fardriver_parse_frame(&sum_state, frame, sizeof(frame)));
+    make_sum_frame(frame, 23U, data); /* 23 是最后一个合法块号，应被接受 */
+    assert(esp_fardriver_parse_frame(&sum_state, frame, sizeof(frame)));
 
     /* 求和帧同样支持滑动定位（更长缓冲、带前缀） */
     uint8_t sum_framing[ESP_FARDRIVER_FRAME_LEN + 1U] = { 0 };
@@ -211,6 +291,13 @@ int main(void)
     make_sum_frame(sum_framing + 1U, 0U, data);
     assert(esp_fardriver_parse_frame(&sum_framing_state, sum_framing, sizeof(sum_framing)));
     assert(sum_framing_state.rpm_valid);
+
+    /* 方言判定与命名 */
+    assert(esp_fardriver_frame_dialect(frame) == ESP_FARDRIVER_DIALECT_SUM16);
+    assert(strcmp(esp_fardriver_dialect_name(ESP_FARDRIVER_DIALECT_SUM16), "sum16") == 0);
+    assert(strcmp(esp_fardriver_dialect_name(ESP_FARDRIVER_DIALECT_CRC16), "crc16") == 0);
+    assert(strcmp(esp_fardriver_dialect_name(ESP_FARDRIVER_DIALECT_NONE), "none") == 0);
+    assert(esp_fardriver_frame_dialect(NULL) == ESP_FARDRIVER_DIALECT_NONE);
 
     /* 无效帧：CRC/长度/帧头/索引越界，且不得改变已有状态 */
     make_params_frame(frame);

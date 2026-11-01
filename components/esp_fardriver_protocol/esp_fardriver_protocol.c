@@ -3,12 +3,20 @@
 #include <math.h>
 #include <string.h>
 
-/* 远驱（YuanQu/FarDriver）真机帧：AA | 0x80|索引 | 12 字节数据 | CRC16。
- * 索引 = frame[1] & 0x3F，查下表得到寄存器地址：
- *   0xE2 挡位+转速、0xE8 电压+电流、0xD6 控制器温度、0xF4 电机温度+SOC，
- *   其余地址为控制器参数块（轮胎规格、传动比等）。 */
+/* 远驱（YuanQu/FarDriver）真机帧：AA | 索引 | 12 字节数据 | 校验，共 16 字节。
+ *
+ * 控制器有两代固件，同一批帧里 frame[1] 的最高位决定走哪一代：
+ *   bit7 = 1（新固件，CRC16 方言）：索引 = frame[1] & 0x7F，查下表得到寄存器地址；
+ *   bit7 = 0（老固件，求和方言）：frame[1] 本身就是 0..23 的块号，不经此表。
+ * 下表逐项等于官方 App 原生库 libfd_protocol.so 里 0x52a9 处的 56 字节索引表
+ * （fdHandleNotification 的 CRC 分支用它做 idx -> 地址映射），也等于 Motexa
+ * 2.7.0 的 com.motexaqixing.app.s6.H。
+ *   0xE2 挡位+转速、0xE8 电压+电流、0xD6 控制器温度、0xF4 电机温度，
+ *   其余地址为控制器参数块（轮胎规格、传动比等）。
+ * 注意第 4 项（index 3）是 0x00 而不是 0xE4：0xE4 是 2026-08-07 的
+ * 589572a3 "fixbug" 提交引入的反向修改，官方与 Motexa 都是 0x00。 */
 static const uint8_t FLASH_READ_ADDR[] = {
-    0xE2, 0xE8, 0xEE, 0xE4, 0x06, 0x0C, 0x12,
+    0xE2, 0xE8, 0xEE, 0x00, 0x06, 0x0C, 0x12,
     0xE2, 0xE8, 0xEE, 0x18, 0x1E, 0x24, 0x2A,
     0xE2, 0xE8, 0xEE, 0x30, 0x5D, 0x63, 0x69,
     0xE2, 0xE8, 0xEE, 0x7C, 0x82, 0x88, 0x8E,
@@ -108,9 +116,84 @@ bool esp_fardriver_build_keepalive_command(uint8_t out[ESP_FARDRIVER_COMMAND_LEN
     return esp_fardriver_build_control_command(0x13U, 0x07U, 0x5FU, 0x5FU, out);
 }
 
+bool esp_fardriver_build_write_packet(uint8_t cmd,
+                                      const uint8_t *payload,
+                                      size_t payload_len,
+                                      uint8_t *out,
+                                      size_t *out_len)
+{
+    if (!out || !out_len || payload_len > ESP_FARDRIVER_WRITE_PAYLOAD_MAX_LEN) {
+        return false;
+    }
+    if (payload_len > 0U && !payload) {
+        return false;
+    }
+    out[0] = 0xAAU;
+    /* 官方把长度写成 (n - 0x3C)：n=2 → 0xC6，n=0x0E → 0xD2 */
+    out[1] = (uint8_t)(payload_len - 0x3CU);
+    out[2] = cmd;
+    out[3] = cmd;
+    if (payload_len > 0U) {
+        memcpy(out + 4U, payload, payload_len);
+    }
+    const size_t body_len = payload_len + 4U;
+    /* 校验与读包共用同一张 A/B 表；esp_fardriver_crc 的返回值高字节在前 */
+    const uint16_t crc = esp_fardriver_crc(out, body_len);
+    out[body_len] = (uint8_t)(crc >> 8U);
+    out[body_len + 1U] = (uint8_t)crc;
+    *out_len = body_len + 2U;
+    return true;
+}
+
+bool esp_fardriver_build_open_sequence(uint8_t index, uint8_t *out, size_t *out_len)
+{
+    if (!out || !out_len) {
+        return false;
+    }
+    switch (index) {
+    case 0U: {
+        /* 产品码为空时官方发 {0, 0}；有产品码时发它派生出来的两个字节 */
+        const uint8_t payload[2] = { 0x00U, 0x00U };
+        return esp_fardriver_build_write_packet(171U, payload, sizeof(payload), out, out_len);
+    }
+    case 1U: {
+        const uint8_t payload[2] = { 0x34U, 0x14U };
+        return esp_fardriver_build_write_packet(171U, payload, sizeof(payload), out, out_len);
+    }
+    case 2U: {
+        const uint8_t payload[2] = { 0x88U, 0x03U };
+        return esp_fardriver_build_write_packet(160U, payload, sizeof(payload), out, out_len);
+    }
+    case 3U: {
+        const uint8_t payload[2] = { 0x88U, 0x02U };
+        return esp_fardriver_build_write_packet(160U, payload, sizeof(payload), out, out_len);
+    }
+    case 4U:
+        /* 官方 C0546Ul 初始化末尾统一发这条（两代都发） */
+        return esp_fardriver_build_control_command(19U, 7U, 1U, 95U, out);
+    case 5U:
+        /* 官方在老固件（config[112] ∈ '1'..'6'）分支上发这条 */
+        return esp_fardriver_build_control_command(4U, 111U, 187U, 85U, out);
+    default:
+        return false;
+    }
+}
+
 static uint16_t le16(const uint8_t *data)
 {
     return (uint16_t)(((uint16_t)data[1] << 8U) | data[0]);
+}
+
+/* 大端无符号 16 位：官方原生库对老固件帧统一用 ldrh + rev + lsr #16 取高半字。 */
+static uint16_t be16(const uint8_t *data)
+{
+    return (uint16_t)(((uint16_t)data[0] << 8U) | data[1]);
+}
+
+/* 大端有符号 16 位：官方原生库对老固件帧用 ldrh + rev + asr #16（算术右移保留符号）。 */
+static int16_t be16_signed(const uint8_t *data)
+{
+    return (int16_t)be16(data);
 }
 
 static void block_valid_set(esp_fardriver_state_t *state, uint8_t address)
@@ -191,6 +274,84 @@ static void parse_device_block(esp_fardriver_state_t *state, uint8_t address, co
     }
 }
 
+/* 求和方言（老固件，例如 ND60240）的块布局。
+ *
+ * 这条路径与 CRC 方言**完全不同**：frame[1] 不是「索引」，它本身就是 0..23 的块号，
+ * 不经 FLASH_READ_ADDR 查表；而且同一个逻辑量的字节偏移与端序也换了位置——
+ * 官方原生库 libfd_protocol.so 里这两套字段表是两份独立的代码（CRC 按寄存器地址查
+ * 表 @0x3e20 分派到 0x12994 系列；求和按块号查表 @0x3df0 分派到 0x11c38 系列）。
+ *
+ * 下面四个块的偏移逐条抄自官方原生库的 24 项跳转表 @0x3df0（基址 0x11c38）：
+ *   块 0  @0x011c38：挡位 = (frame[4]>>2)&3，转速 = 大端 u16(frame[6..7])
+ *   块 1  @0x011f70：电压 = 大端 s16(frame[2..3])（0.1V），
+ *                    电流 = 大端 s16(frame[4..5])（0.25A/计数，×25 换成 0.01A）
+ *   块 4  @0x011e98：控制器温度 = frame[4]（>200 视为负）
+ *   块 13 @0x011ef8：电机温度 = frame[2]（无符号字节）
+ * 其余块是参数区（轮胎规格、传动比、限流等），项目暂时用不到；
+ * 需要时按同样方法读官方跳转表即可。 */
+static void parse_sum16_block(esp_fardriver_state_t *state, uint8_t block, const uint8_t *frame)
+{
+    switch (block) {
+    case 0U:
+        /* 老固件把挡位放在 frame[4] 的 bit2-3、转速放在 frame[6..7] 且是**大端**；
+         * 新固件是 frame[2] 的 bit2-3 与小端 frame[8..9]。旧代码只按新固件偏移读，
+         * 于是挡位与转速整块读错。
+         * 挡位编码抄官方：先把原始值 `^ 2`（0x011c4c 的 eor w8,w8,#2），再按
+         * 「0→1、1→2、其余→3」映射（e8.X 的 stage 分支）。四档原始值 0..3
+         * 对应挡位 3/3/1/2，与官方 App 显示一致。 */
+        {
+            const uint8_t stage = (uint8_t)(((frame[4] >> 2U) & 0x03U) ^ 0x02U);
+            state->gear = (uint8_t)(stage < 2U ? (uint8_t)(stage + 1U) : 3U);
+            state->gear_valid = true;
+        }
+        state->rpm = be16(frame + 6U);
+        state->rpm_valid = true;
+        break;
+    case 1U: {
+        /* 电压在 frame[2..3]、电流在 frame[4..5]，都是大端有符号 16 位。
+         * 新固件是电压小端 frame[2..3]、电流小端 frame[6..7] —— 偏移与端序都不同，
+         * 这正是 60240 电压/电流读不出来或读成乱值的原因。
+         * 电压按 0.1V 计，只接受 0..200.0V 这个物理上可能的区间：越界说明这一帧的
+         * 偏移不是我们以为的那一种，宁可让电压保持无效，也不要显示一个荒谬的数字。 */
+        const int16_t voltage = be16_signed(frame + 2U);
+        if (voltage > 0 && voltage <= 2000) {
+            state->voltage_deci_v = (uint16_t)voltage;
+        }
+        const int16_t current_raw = be16_signed(frame + 4U);
+        /* 0.25A/计数；|原始值| 超过 2000（500A）不可能出现在两轮车上，判为不可信 */
+        if (current_raw > -2000 && current_raw < 2000) {
+            state->current_centi_a = (int32_t)current_raw * 25;
+            state->current_valid = true;
+        }
+        break;
+    }
+    case 4U: {
+        /* 官方判据是「frame[4] > 200 就当作负数」，与直接取 int8 不同：
+         * 128..200 这一段官方仍按正温度处理。这里照抄。 */
+        int16_t temperature = (int16_t)frame[4];
+        if (frame[4] > 0xC8U) {
+            temperature = (int16_t)(uint16_t)((uint16_t)0xFF00U | frame[4]);
+        }
+        if (temperature > -20 && temperature < 120) {
+            state->controller_temp_c = temperature;
+            state->controller_temp_valid = true;
+        }
+        break;
+    }
+    case 13U: {
+        /* 电机温度是单字节无符号；未接电机时读到越界哨兵值，丢弃 */
+        const int16_t temperature = (int16_t)frame[2];
+        if (temperature > -20 && temperature < 200) {
+            state->motor_temp_c = temperature;
+            state->motor_temp_valid = true;
+        }
+        break;
+    }
+    default:
+        break;
+    }
+}
+
 void esp_fardriver_refresh_derived(esp_fardriver_state_t *state)
 {
     if (!state) {
@@ -257,7 +418,8 @@ static bool frame_checksum_valid(const uint8_t *frame)
         const uint16_t wire_checksum = (uint16_t)(((uint16_t)frame[14] << 8U) | frame[15]);
         return wire_checksum == esp_fardriver_crc(frame, ESP_FARDRIVER_FRAME_LEN - 2U);
     }
-    /* 求和帧：0xAA + 索引 + 12 字节数据，frame[14] 高字节、frame[15] 低字节 */
+    /* 求和帧：0xAA + 块号 + 12 字节数据，frame[14] 高字节、frame[15] 低字节。
+     * 官方 0x9ef4 的求和分支只把 frame[2..13] 与 frame[1]、0xAA 相加，不累加 frame[0]。 */
     uint32_t sum = (uint32_t)0xAAU + frame[1];
     for (size_t index = 2U; index < ESP_FARDRIVER_FRAME_LEN - 2U; ++index) {
         sum += frame[index];
@@ -266,16 +428,52 @@ static bool frame_checksum_valid(const uint8_t *frame)
            frame[15] == (uint8_t)(sum & 0xFFU);
 }
 
+esp_fardriver_dialect_t esp_fardriver_frame_dialect(const uint8_t *frame)
+{
+    if (!frame) {
+        return ESP_FARDRIVER_DIALECT_NONE;
+    }
+    return (frame[1] & 0x80U) != 0U ? ESP_FARDRIVER_DIALECT_CRC16
+                                    : ESP_FARDRIVER_DIALECT_SUM16;
+}
+
+const char *esp_fardriver_dialect_name(esp_fardriver_dialect_t dialect)
+{
+    switch (dialect) {
+    case ESP_FARDRIVER_DIALECT_CRC16:
+        return "crc16";
+    case ESP_FARDRIVER_DIALECT_SUM16:
+        return "sum16";
+    default:
+        return "none";
+    }
+}
+
 static bool parse_frame_at(esp_fardriver_state_t *state, const uint8_t *frame)
 {
     if (!frame_checksum_valid(frame)) {
         return false;
     }
-    /* 索引是 7 位：bit7 只表示校验方式，不参与寄存器映射 */
+    if ((frame[1] & 0x80U) == 0U) {
+        /* 求和方言（老固件）：frame[1] 是 0..23 的块号，不走地址表，
+         * 字段偏移/端序也自成一套。 */
+        const uint8_t block = frame[1];
+        if (block >= ESP_FARDRIVER_SUM_BLOCK_COUNT) {
+            return false;
+        }
+        state->dialect = (uint8_t)ESP_FARDRIVER_DIALECT_SUM16;
+        state->sum16_frame_count++;
+        parse_sum16_block(state, block, frame);
+        esp_fardriver_refresh_derived(state);
+        return true;
+    }
+    /* CRC 方言（新固件）：索引是 7 位，bit7 只表示校验方式，不参与寄存器映射 */
     const uint8_t index = (uint8_t)(frame[1] & 0x7FU);
     if (index >= sizeof(FLASH_READ_ADDR)) {
         return false;
     }
+    state->dialect = (uint8_t)ESP_FARDRIVER_DIALECT_CRC16;
+    state->crc16_frame_count++;
     const uint8_t address = FLASH_READ_ADDR[index];
     store_extended_block(state, address, frame + 2U);
     parse_device_block(state, address, frame + 2U);

@@ -1546,10 +1546,12 @@ static int controller_gap_event(struct ble_gap_event *event, void *arg)
                     if (s_notify_diag_count <= 8U) {
                         /* 型号之间校验方式不同：这里直接标出收到的是哪一套 */
                         ESP_LOGI(TAG,
-                                 "frame accepted: len=%d index=%u checksum=%s",
+                                 "frame accepted: len=%d index=%u checksum=%s dialect=%s",
                                  len,
                                  (unsigned)(frame[1] & 0x7FU),
-                                 (frame[1] & 0x80U) != 0U ? "crc16" : "sum16");
+                                 (frame[1] & 0x80U) != 0U ? "crc16" : "sum16",
+                                 esp_fardriver_dialect_name(
+                                     (esp_fardriver_dialect_t)s_legacy_fardriver_state.dialect));
                     }
                     if (runtime->controller_ble_phase ==
                             (uint8_t)CONTROLLER_BLE_PHASE_SUBSCRIBING &&

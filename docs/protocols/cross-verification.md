@@ -171,24 +171,40 @@ Motexa 2.7.0 没有 Daly 协议类（`grep -rl daly` 无命中），因此只做
 
 ### 结论
 
+> **2026-11-02 补充**：本节原先只对照 Motexa 的 Java 层，结论「本项目额外支持 16 位求和」
+> 是错的——Motexa 的 `s6.C()` 直接以 `id` 拒绝 `bit7=0` 的帧，因此 Motexa **不覆盖**
+> 老固件。真正的参照是官方 App 的原生库 `libfd_protocol.so`（`far.apk` 内
+> `lib/arm64-v8a/`，`fdHandleNotification` @0x9e18）。按原生库核对后确认：
+> **两代固件不仅校验不同，同一个逻辑量的字节偏移与端序也完全不同**，是两套独立的
+> handler 表（求和按块号查表 @0x3df0 → 基址 0x11c38；CRC 按寄存器地址查表 @0x3e20
+> → 基址 0x12994）。原实现只写了 CRC 那套字段布局，于是老固件（ND60240）的帧
+> 校验通过、链路判在线，但电压/电流整块错位读不出来。详见下方新增行。
+
 | 项目 | 参照依据 | 结论 | 影响 |
 | --- | --- | --- | --- |
 | 帧 `AA / 0x80+index / 12B data / CRC16`，16 字节 | `s6.C()`：`length==16`、`bArr[0]==0xAA`、`(bArr[1]&0xC0)==0x80`、index=`bArr[1]&127` | 相同 | — |
 | CRC 算法 | `s6.z()`：初值 `0x7F3C`、poly `0xA001`；`s6.F()` 与「`[14]` 低字节、`[15]` 高字节」比较 | 相同（本项目表驱动实现返回字节交换值，与「线上低字节在前」等价；已用逐字节对照验证 `ref=0x0A09` ↔ `proj=0x090A`） | — |
-| 读请求 `addr addr 0x80 CRC` | `s6` 的 5 字节读请求 | 相同（CRC 同上一行口径） | — |
-| 开流/保活命令 `AA 13 EC 07 01 F1 A2 5D` / `… 5F 5F 6E 91` | 参照 `I = {AA,46,A0,A0,06,88,A0,D7}` 为另一条命令；开流命令未在本类 | 本项目自证（selftest 固定字节序列） | 无法交叉验证，按 selftest 保留 |
-| 索引→寄存器表 | `s6.H`：`E2,E8,EE,00,06,0C,12, …`（55 项） | 除 **index 3** 外全部相同 | 见下行 |
-| index 3 映射 | 参照 `H[3]=0x00`；本项目 `0xE4` | 差异 | 两者都不参与 `parse_device_block()`，只影响 `blocks/block_valid` 记账，无可见数值影响；未改 |
-| 索引越界 | `s6.C()`：`i9 >= H.length` → `id` 错误 | 相同（本项目 `index >= sizeof(table)` 拒绝，即 ≥55） | — |
-| `0xE2` 转速 `signed LE16(data+6)` | `e8`：`rotation-raw = c0(data,6)`（`c0`=signed LE16） | 相同 | — |
+| CRC 算法（官方原生库） | `0x127d0` 用 A/B 双表 @0x541c/@0x551c 逐字节滚动 | **与 `esp_fardriver_crc` 完全等价**（3000 个随机缓冲 0 不匹配；两种实现的 hi/lo 定义互换，配合项目「大端读取」后行为一致） | 现有 CRC 帧解析路径正确，未改 |
+| 读请求 `addr addr 0x80 CRC` | 原生库 `fdBuildReadPacket` @0xa20c 的三轮查表公式 | **完全一致**（256 个地址 0 不匹配） | — |
+| 开流/保活命令 `AA 13 EC 07 01 F1 A2 5D` / `… 5F 5F 6E 91` | 原生库 `fdBuildOldCommand` @0xa45c：`sum = (v1+v2+v3-0x57) & 0xFF` | 相同（项目用 6 字节累加，但在项目用到的 4 组参数上撞出同一字节） | — |
+| 官方第二套写帧 | 原生库 `fdBuildWritePacket` @0xa2f4：`AA \| (n-0x3C) \| cmd \| cmd \| payload… \| crc_hi \| crc_lo` | **已补实现**（`esp_fardriver_build_write_packet`） | 见修复清单 |
+| 开启序列 | 原生库 + `a/C0546Ul.java`、`C1637ll.java`、`C1557kl.java`；老固件判据 `b0()` = `fdGetConfig()[112] ∈ '1'..'6'` | **已补实现**（`esp_fardriver_build_open_sequence`，6 步） | 见修复清单 |
+| 索引→寄存器表 | `s6.H`；原生库 @0x52a9 56 字节 | 三处一致，含 **index 3 = `0x00`** | 见修复清单 |
+| index 3 映射 | 参照 `H[3]=0x00`；本项目原为 `0xE4` | **已修**：`0xE4` 是 `589572a3` 提交引入的反向修改 | 见修复清单 |
+| 索引越界 | `s6.C()`：`i9 >= H.length` → `id` 错误；原生库 `idx > 0x36` 返回 | 相同（本项目 `index >= sizeof(table)` 拒绝，即 ≥55） | — |
+| `0xE2` 转速 `signed LE16(data+6)` | `e8`：`rotation-raw = c0(data,6)`；原生库 CRC 方言读 `ldrh [x1,#8]` | 相同（小端 u16） | — |
 | `0xE2` 挡位 | `e8`：`stage-normal-raw=(data[0]>>2)&3`、`drive-state=data[0]&3` | 差异：本项目 `((data[0]>>2)&3)+1` 得 1..4 | 呈现偏移 +1，语义存疑，未改 |
-| `0xE8` 电压 `LE16/10 V`、电流 `signed LE16/4 A` | `e8`：`voltage-v=c0(0)/10`、`bus-current-a=c0(4)/4` | 相同（本项目电流 ×25 得 0.01A） | — |
-| `0xD6` 控制器温度 `signed LE16(data+10)` | `e8`：`controller-temperature-c = Z(c0(10), -40, 140)` | 偏移相同；本项目范围过滤为 `(-20,120)`，比参照窄 | 极端温度会被丢弃（更保守） |
-| `0xF4` 电机温度 `signed LE16(data+0)` | `e8`：`motor-temperature-raw = c0(0)` | 相同 | — |
+| `0xE8` 电压 `LE16/10 V`、电流 `signed LE16/4 A` | `e8`：`voltage-v=c0(0)/10`、`bus-current-a=c0(4)/4`；原生库 CRC 方言 `ldrh [x1,#2]` + `ldrsh [x1,#6]` | 相同（本项目电流 ×25 得 0.01A） | — |
+| `0xD6` 控制器温度 `signed LE16(data+10)` | `e8`：`controller-temperature-c = Z(c0(10), -40, 140)`；原生库 CRC 方言 `ldrh [x1,#0xc]` | 偏移相同；本项目范围过滤为 `(-20,120)`，比参照窄 | 极端温度会被丢弃（更保守） |
+| `0xF4` 电机温度 `signed LE16(data+0)` | `e8`：`motor-temperature-raw = c0(0)`；原生库 CRC 方言 `ldrh [x1,#2]` | 相同 | — |
 | `0xF4` 电池容量 `data[3]` | `e8`：`battery-capacity-raw = data[3]` | 差异：本项目未解码 | 功能缺失 |
 | 轮胎参数 `0xD2/0xD3/0xD4` → 周长/传动比 → 车速 | 参照无该块字段；车速由 `s3.c(rpm, 标定系数)` 的 legacy 标定scale 得出 | 无参照 | 本项目方案不可交叉验证，保留 |
-| 求和校验帧（bit7=0） | 参照 `s6.C()` 直接以 `id` 拒绝 bit7=0 帧 | 差异：本项目额外支持 16 位求和 | 更宽容；16 位和误判概率 1/65536，未改 |
-| 一帧多帧/前缀噪声 | `s6.r()`：逐字节组帧、CRC 失败后滑动找下一个 `0xAA` | 相同（本项目 16 字节滑窗 + CRC） | — |
+| **求和方言（bit7=0）字段布局** | 原生库求和跳转表 @0x3df0（24×u16，基址 0x11c38）：块 0 @0x011c38、块 1 @0x011f70、块 4 @0x011e98、块 13 @0x011ef8 | **已修**：原实现用 CRC 方言的字段布局去解求和帧，偏移与端序全错 | 见修复清单 |
+| 求和方言块 0：挡位 + 转速 | @0x011c38：`(frame[4]>>2)&3` 再 `^2` → stage；`ldrh[x1,#6]; rev; lsr#16` → 大端 u16 转速 | **与 CRC 方言不同**（CRC 是 `frame[2]` 与小端 `frame[8..9]`） | 已修 |
+| 求和方言块 1：电压 + 电流 | @0x011f70：`ldrh[x1,#2]; rev; asr#16` → 大端 s16 电压；`ldrh[x1,#4]; rev; asr#16` → 大端 s16 电流 | **与 CRC 方言不同**（CRC 是电压小端 `frame[2..3]`、电流小端 `frame[6..7]`） | 已修，即 60240 的根因 |
+| 求和方言块 4：控制器温度 | @0x011e98：`frame[4]`，`> 0xC8` 时按 `0xFF00 \| frame[4]` 取负 | 已按官方实现 | 已修 |
+| 求和方言块 13：电机温度 | @0x011ef8：`frame[2]` 单字节 | 已按官方实现 | 已修 |
+| 一帧多帧/前缀噪声 | `s6.r()`：逐字节组帧、CRC 失败后滑动找下一个 `0xAA` | 相同（本项目 16 字节滑窗 + 校验） | — |
 
 CRC 已逐字节验证等价，未改代码。
 
@@ -203,6 +219,13 @@ CRC 已逐字节验证等价，未改代码。
 | `components/esp_bms_bms_ble/protocols/jk/esp_bms_jk_protocol.c` | `decode_jk02_cell_info()` | 循环容量 `total_cycle_mah` 由 `raw×100` 改为 `raw`（去掉 100 倍放大） | `q0.java:710` |
 | `components/esp_bms_bms_ble/protocols/ant/esp_bms_ant_protocol.c` | `decode_old_status()` | **未改**：旧帧电流保留原始符号（产品要求，非缺陷） | `k.java:238` 对照后有意保留差异 |
 | `components/esp_bms_bms_ble/protocols/daly/esp_bms_daly_protocol.c` | `esp_bms_daly_feed()` | 帧头扫描接受 `0x81`，扩展请求的响应可被消费 | 本模块 `poll_request()` 会发 `0x81` |
+| `components/esp_fardriver_protocol/esp_fardriver_protocol.c` | `FLASH_READ_ADDR[]` | index 3 由 `0xE4` 改回 `0x00`（官方原生库 @0x52a9 与 Motexa `s6.H` 都是 `0x00`） | `589572a3` 是反向修改 |
+| 同上 | `parse_sum16_block()`（新增）、`parse_frame_at()` | 求和方言（bit7=0）按块号分派到**独立的字段布局**：块 0 挡位 `frame[4]`+转速大端 `frame[6..7]`、块 1 电压/电流大端 `frame[2..3]`/`frame[4..5]`、块 4 控制器温度 `frame[4]`、块 13 电机温度 `frame[2]` | 原生库求和跳转表 @0x3df0 → 0x11c38/0x11f70/0x11e98/0x011ef8 |
+| 同上 | `esp_fardriver_build_write_packet()`（新增） | 补官方第二套写帧 `AA \| (n-0x3C) \| cmd \| cmd \| payload… \| crc_hi \| crc_lo` | 原生库 `fdBuildWritePacket` @0xa2f4 |
+| 同上 | `esp_fardriver_build_open_sequence()`（新增） | 补官方 6 步开启序列：`write(171,{0,0})`、`write(171,{0x34,0x14})`、`write(160,{0x88,0x03})`、`write(160,{0x88,0x02})`、`old(19,7,1,95)`、`old(4,111,187,85)` | `a/C0546Ul.java`、`C1637ll.java`、`C1557kl.java` |
+| `components/esp_bms_controller_protocol/protocols/fardriver/esp_bms_ctrl_fardriver.c` | `esp_bms_ctrl_fardriver_build_start()` | 首帧前按官方 6 步顺序各发一次（覆盖两代固件初始化），之后才轮换读包 | 同上 |
+| `components/esp_bms_controller_ble/esp_bms_controller_ble.c` | 通知处理日志 | `frame accepted` 增加 `dialect=` 字段，上机可直接看对端走哪一代 | 诊断 |
+| `components/esp_fardriver_protocol/include/esp_fardriver_protocol.h` | `esp_fardriver_state_t` | 末尾新增 `dialect`、`crc16_frame_count`、`sum16_frame_count` 诊断字段 | 不影响 `esp_bms_dashboard_snapshot_t`（1752B）ABI |
 
 对应 selftest 同步更新：
 `tests/yanyang_bms_protocol_selftest.c`（CRC 字节序、期望请求字节）、
@@ -226,10 +249,21 @@ CRC 已逐字节验证等价，未改代码。
 9. **彦阳其他页**：参照有 A2/A3/B1/B2 四种布局，本项目只解 A1（94 字节页）。
 10. **彦阳 `0x51`**：DALY 扫描接受 `0x51` 但按 `P81` 解析，语义未验证。
 11. **DALY `0x81` 第 3 条请求**（起始 0x41、62 寄存器）的响应布局未验证；目前该帧被消费后丢弃。
-12. **FarDriver index 3**：参照 `0x00`、本项目 `0xE4`；当前解析路径不使用该块。
+12. **FarDriver index 3**：**已修**（2026-11-02）。参照 `0x00`、本项目原为 `0xE4`；
+    `0xE4` 是 `589572a3 "fixbug"` 提交引入的反向修改，官方原生库 @0x52a9 与 Motexa `s6.H`
+    都是 `0x00`。该块只影响 `blocks/block_valid` 记账，不影响可见数值，但保持与参照一致。
 13. **FarDriver 挡位 +1**：参照 `stage-normal-raw` 为 0..3，本项目 `+1` 成 1..4。
 14. **FarDriver 轮胎/传动比 → 车速**：参照用 legacy 标定系数 `s3.c()`，本项目用轮胎周长+传动比推算，无参照可比。
-15. **ANT 新帧轮询请求载荷长度**：参照 `k.f()` 为 `d(1,0,245)`（`data[5]=0xF5`），
+15. **FarDriver 求和方言覆盖度**：本次只补了遥测四件套（块 0/1/4/13）与官方开启序列。
+    求和方言的其余 20 个块（参数区：限流、转把标定、固件版本、故障位等）仍未解码，
+    需要时按官方求和跳转表 @0x3df0（基址 0x11c38）逐项补。
+16. **FarDriver 老固件判据**：官方用 `fdGetConfig()[112] ∈ '1'..'6'` 决定发哪条开启命令。
+    本项目当前对两代固件都发完整 6 步序列（不依赖先读到 config），代价是首帧前多几拍；
+    若后续要精确区分，需要先实现 config 读取（CRC 方言的 `0x00` 块）。
+17. **FarDriver 密码/DRM 握手**：官方新固件会先发 `write(171, {产品码派生密码})`，
+    本项目固定发 `{0x00, 0x00}`（产品码为空时的哨兵值，官方同样会走这条）。若某些型号
+    必须用真实产品码派生密码才出数据，需要实现 `fdBuildPasswordData` 的派生逻辑。
+18. **ANT 新帧轮询请求载荷长度**：参照 `k.f()` 为 `d(1,0,245)`（`data[5]=0xF5`），
     `esp_bms_bms_ble.c` 中 `status_request` 为 `data[5]=0xBE`。后者属 runtime 文件（本次禁止修改），仅记录。
 
 ## 自测命令与结果

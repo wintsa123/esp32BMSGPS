@@ -24,19 +24,17 @@ bool esp_bms_ctrl_fardriver_build_start(uint8_t attempt, uint8_t *out, size_t *o
     if (!out || !out_len) {
         return false;
     }
-    uint8_t command[ESP_FARDRIVER_COMMAND_LEN] = { 0 };
+    uint8_t command[ESP_FARDRIVER_WRITE_PACKET_MAX_LEN] = { 0 };
+    size_t command_len = 0U;
     bool built = false;
-    switch (attempt % 4U) {
-    case 0U:
-        built = esp_fardriver_build_open_command(command);
-        break;
-    case 1U:
-        built = esp_fardriver_build_control_command(0x13U, 0x07U, 0x01U, 0x5FU, command);
-        break;
-    case 2U:
-        built = esp_fardriver_build_control_command(0x17U, 0xF1U, 0x13U, 0x51U, command);
-        break;
-    default: {
+    /* 官方 App 的开启顺序（见 esp_fardriver_build_open_sequence 的注释）：
+     *   0 新固件密码 → 1 新固件第二段 → 2 write(160,{0x88,0x03})
+     *   → 3 write(160,{0x88,0x02}) → 4 old(19,7,1,95) → 5 old(4,111,187,85)
+     * 前 6 次严格按官方顺序各发一次（覆盖两代固件的初始化），之后轮换读包，
+     * 避免对端只回读包不主动推流时卡死。 */
+    if (attempt < ESP_FARDRIVER_OPEN_SEQUENCE_COUNT) {
+        built = esp_fardriver_build_open_sequence(attempt, command, &command_len);
+    } else {
         uint8_t address = 0U;
         const size_t count = esp_fardriver_poll_address_count();
         if (count == 0U) {
@@ -45,16 +43,15 @@ bool esp_bms_ctrl_fardriver_build_start(uint8_t attempt, uint8_t *out, size_t *o
         built = esp_fardriver_poll_address(s_poll_index % count, &address) &&
                 esp_fardriver_build_read_request(address, command);
         if (built) {
+            command_len = ESP_FARDRIVER_READ_REQUEST_LEN;
             s_poll_index = (uint8_t)((s_poll_index + 1U) % count);
         }
-        break;
     }
-    }
-    if (!built) {
+    if (!built || command_len == 0U || command_len > ESP_FARDRIVER_WRITE_PACKET_MAX_LEN) {
         return false;
     }
-    memcpy(out, command, sizeof(command));
-    *out_len = sizeof(command);
+    memcpy(out, command, command_len);
+    *out_len = command_len;
     return true;
 }
 
