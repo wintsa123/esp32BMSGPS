@@ -71,8 +71,8 @@ The control page is Chinese-first and can switch to English. The hotspot HTTP AP
 | Goal | Development progress | Status |
 | --- | --- | :---: |
 | 🖥️ Provide glanceable speed, BMS, controller, and GPS dashboards on a TFT | Profiles select ST7789/XPT2046, ILI9488/FT6336U, or ST7796U/GT1151; LVGL dashboards, rotation, brightness, touch calibration, and the quick panel are integrated | 🚧 Being refined |
-| 🔋 Connect to battery protection boards used across two-wheel vehicle platforms over BLE, with all telemetry coming from real devices | ANT BMS scanning, binding, connection, subscription, polling, and status-frame parsing are implemented and hardware-tested; other brands and models await adaptation and validation | 🚧 ANT tested; others pending |
-| 🛞 Connect to FarDriver controllers over BLE and accurately convert vehicle parameters | BLE protocol, real telemetry, tire parameters, and gear-ratio conversion are integrated; device compatibility and data calibration continue | 🚧 Being refined |
+| 🔋 Connect to battery protection boards used across two-wheel vehicle platforms over BLE, with all telemetry coming from real devices | 8 BMS protocols are integrated: ANT (hardware-tested), JK, JBD, Daly, Yanyang, Bluebabe meter, Mingtang BMS, and Luxing EM02; the remaining models await hardware validation | 🚧 ANT tested; others pending |
+| 🛞 Connect to controller platforms over BLE and accurately convert vehicle parameters | 16 controller models are integrated (FarDriver, BlueStone, Lingbo, Datai, Suniu, Yanxin, APT, Dunen, Zhike, JH, AUSI, Jiazhou, Xinda, Hobbywing, and more) with real telemetry, tire parameters, and gear-ratio conversion; the model is selected in settings and the rest await hardware validation | 🚧 Pending hardware validation |
 | 🛰️ Provide GPS positioning, speed, time synchronization, track recording, and maps | 336H UART NMEA, RMC speed/fix/UTC, and profile-configured PPS diagnostics are integrated; track storage and maps are not complete | 🚧 Core path available |
 | 📡 Support configuration, diagnostics, and maintenance through the Setup AP, embedded Web UI, and public HTTPS control page | Random hotspot credentials, QR code, `192.168.4.1`, configuration APIs, and BMS scan/bind entry points are integrated; the Vercel control page is live | ✅ Implemented |
 | 🔊 Provide clear audio feedback for connection state and device actions | Classic ESP32 uses DAC and ESP32-S3 uses I2S; amplifier and audio pins come from the selected profile | ✅ Implemented |
@@ -81,6 +81,50 @@ The control page is Chinese-first and can switch to English. The hotspot HTTP AP
 | 🔄 Complete the OTA, TF-card recording, track history, and map workflow | OTA does not yet provide a complete upgrade loop; TF-card recording, track history, and maps are planned for later phases | ⏳ Pending |
 
 “Implemented” means the code path exists; it does not mean every target hardware combination has completed long-duration validation.
+
+## 🔌 Supported Devices
+
+Select the device model on the TFT: protection board under “BMS type”, controller under “Controller → Controller model”. The same options appear on the device page of the hotspot Web UI (`192.168.4.1`) and apply as soon as they are saved. “Auto detect” keeps the original FarDriver probe chain for configurations without an explicit model.
+
+### Protection boards and battery meters (8)
+
+| Brand / model | Status |
+| --- | :---: |
+| ANT | ✅ Hardware-tested |
+| JK (JK04, JK02 24S, JK02 32S) | 🚧 Pending validation |
+| JBD | 🚧 Pending validation |
+| Daly | 🚧 Pending validation |
+| Yanyang | 🚧 Pending validation |
+| Bluebabe meter | 🚧 Pending validation |
+| Mingtang BMS | 🚧 Pending validation |
+| Luxing EM02 | 🚧 Pending validation |
+
+Available data depends on the protocol: pack voltage, current, SOC, capacity, cell voltages (max/min/average/delta), temperatures, protection and warning state, balancing state, cycle capacity, and runtime. Bluebabe needs its six-digit matching code, entered on the Web UI device page.
+
+### Controllers (16)
+
+| Brand / model | Status |
+| --- | :---: |
+| FarDriver | 🚧 Pending validation |
+| FarDriver YuanQu FOC | 🚧 Pending validation |
+| BlueStone 300 | 🚧 Pending validation |
+| Lingbo | 🚧 Pending validation |
+| Datai | 🚧 Pending validation |
+| Suniu | 🚧 Pending validation |
+| Yanxin VITMC | 🚧 Pending validation |
+| APT A8 | 🚧 Pending validation |
+| APT Anpei (legacy) | 🚧 Pending validation |
+| DN Dunen | 🚧 Pending validation |
+| GEKOO Zhike | 🚧 Pending validation |
+| JH | 🚧 Pending validation |
+| AUSI | 🚧 Pending validation |
+| Jiazhou DS11/DS15 | 🚧 Pending validation |
+| Xinda | 🚧 Pending validation |
+| Hobbywing SPD | 🚧 Pending validation |
+
+Controllers report speed, RPM, gear, bus voltage/current, power, controller and motor temperature, throttle opening, and fault codes. Speed comes from one of three sources: reported directly by the controller (Datai); derived from tire-circumference and gear-ratio parameters the controller exposes (FarDriver, Suniu, Yanxin — Dunen uses a built-in default circumference); or computed from the tire size and gear ratio configured in settings for models that only report RPM.
+
+> Controller frame layouts come from static analysis of Motexa 2.7.0 and have **not yet been validated with real-vehicle HCI captures**. On first connection, check for magnitude anomalies (voltage, current, or temperature off by 10× or 100×). Frame formats, field offsets, and confidence levels are recorded in the [protocol baseline](./docs/protocols/motexa-baseline.md), and per-frame differences against the existing implementations are in the [cross-verification report](./docs/protocols/cross-verification.md).
 
 ## 🛠️ Development Stack
 
@@ -167,6 +211,7 @@ vercel/                       Standalone Vercel control-page frontend
 simulator/                    Host-runnable LVGL simulator
 scripts/                      Build, flash, serial bridge, and diagnostic tools
 tests/                        Host-runnable protocol and logic self-tests
+docs/protocols/               Device protocol baseline, field maps, and cross-verification report
 preview/                      Local UI preview scripts and ignored preview assets
 img/                          README image assets
 .github/                      GitHub Actions cloud-build workflow
