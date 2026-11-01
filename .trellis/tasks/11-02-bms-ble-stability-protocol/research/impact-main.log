@@ -1,0 +1,1298 @@
+Function:components/esp_bms_bms_ble/protocols/em02/esp_bms_em02_protocol.c:decode_realtime
+{
+  "target": {
+    "id": "Function:components/esp_bms_bms_ble/protocols/em02/esp_bms_em02_protocol.c:decode_realtime",
+    "name": "decode_realtime",
+    "type": "Function",
+    "filePath": "components/esp_bms_bms_ble/protocols/em02/esp_bms_em02_protocol.c"
+  },
+  "direction": "upstream",
+  "impactedCount": 3,
+  "risk": "LOW",
+  "riskSharedAxes": "LOW",
+  "riskScale": {
+    "comparableAcrossKinds": true,
+    "unusedAxes": []
+  },
+  "epistemic": "exact",
+  "summary": {
+    "direct": 1,
+    "processes_affected": 0,
+    "modules_affected": 2
+  },
+  "byDepthCounts": {
+    "1": 1,
+    "2": 1,
+    "3": 1
+  },
+  "affected_processes": [],
+  "affected_modules": [
+    {
+      "name": "Em02",
+      "hits": 1,
+      "impact": "direct"
+    },
+    {
+      "name": "Esp_bms_bms_ble",
+      "hits": 1,
+      "impact": "indirect"
+    }
+  ],
+  "byDepth": {
+    "1": [
+      {
+        "depth": 1,
+        "id": "Function:components/esp_bms_bms_ble/protocols/em02/esp_bms_em02_protocol.c:decode_frame",
+        "name": "decode_frame",
+        "filePath": "components/esp_bms_bms_ble/protocols/em02/esp_bms_em02_protocol.c",
+        "relationType": "CALLS",
+        "confidence": 0.85,
+        "processes": []
+      }
+    ],
+    "2": [
+      {
+        "depth": 2,
+        "id": "Function:components/esp_bms_bms_ble/protocols/em02/esp_bms_em02_protocol.c:esp_bms_em02_feed",
+        "name": "esp_bms_em02_feed",
+        "filePath": "components/esp_bms_bms_ble/protocols/em02/esp_bms_em02_protocol.c",
+        "relationType": "CALLS",
+        "confidence": 0.85,
+        "processes": []
+      }
+    ],
+    "3": [
+      {
+        "depth": 3,
+        "id": "Function:components/esp_bms_bms_ble/esp_bms_bms_ble.c:bms_frame_push",
+        "name": "bms_frame_push",
+        "filePath": "components/esp_bms_bms_ble/esp_bms_bms_ble.c",
+        "relationType": "CALLS",
+        "confidence": 0.5,
+        "processes": []
+      }
+    ]
+  }
+}
+
+  GitNexus Impact (1.6.12)
+
+Function:components/esp_bms_bms_ble/protocols/em02/esp_bms_em02_protocol.c:decode_frame
+{
+  "target": {
+    "id": "Function:components/esp_bms_bms_ble/protocols/em02/esp_bms_em02_protocol.c:decode_frame",
+    "name": "decode_frame",
+    "type": "Function",
+    "filePath": "components/esp_bms_bms_ble/protocols/em02/esp_bms_em02_protocol.c"
+  },
+  "direction": "upstream",
+  "impactedCount": 2,
+  "risk": "LOW",
+  "riskSharedAxes": "LOW",
+  "riskScale": {
+    "comparableAcrossKinds": true,
+    "unusedAxes": []
+  },
+  "epistemic": "exact",
+  "summary": {
+    "direct": 1,
+    "processes_affected": 0,
+    "modules_affected": 1
+  },
+  "byDepthCounts": {
+    "1": 1,
+    "2": 1
+  },
+  "affected_processes": [],
+  "affected_modules": [
+    {
+      "name": "Esp_bms_bms_ble",
+      "hits": 1,
+      "impact": "indirect"
+    }
+  ],
+  "byDepth": {
+    "1": [
+      {
+        "depth": 1,
+        "id": "Function:components/esp_bms_bms_ble/protocols/em02/esp_bms_em02_protocol.c:esp_bms_em02_feed",
+        "name": "esp_bms_em02_feed",
+        "filePath": "components/esp_bms_bms_ble/protocols/em02/esp_bms_em02_protocol.c",
+        "relationType": "CALLS",
+        "confidence": 0.85,
+        "processes": []
+      }
+    ],
+    "2": [
+      {
+        "depth": 2,
+        "id": "Function:components/esp_bms_bms_ble/esp_bms_bms_ble.c:bms_frame_push",
+        "name": "bms_frame_push",
+        "filePath": "components/esp_bms_bms_ble/esp_bms_bms_ble.c",
+        "relationType": "CALLS",
+        "confidence": 0.5,
+        "processes": []
+      }
+    ]
+  }
+}
+
+  GitNexus Impact (1.6.12)
+
+esp_bms_em02_feed
+{
+  "status": "ambiguous",
+  "message": "Found 2 symbols matching 'esp_bms_em02_feed'. Blast radius differs per candidate (max 1 impacted at risk UNKNOWN; LOW among the candidates that resolved, and at least one could not be walked). Disambiguate with target_uid (or file_path/kind) for a single authoritative result.",
+  "target": {
+    "name": "esp_bms_em02_feed"
+  },
+  "direction": "upstream",
+  "totalCandidates": 2,
+  "impactedCount": null,
+  "risk": "UNKNOWN",
+  "maxImpactedCount": 1,
+  "maxRisk": "UNKNOWN",
+  "knownMaxRisk": "LOW",
+  "candidates": [
+    {
+      "uid": "Function:components/esp_bms_bms_ble/protocols/em02/esp_bms_em02_protocol.c:esp_bms_em02_feed",
+      "name": "esp_bms_em02_feed",
+      "kind": "Function",
+      "filePath": "components/esp_bms_bms_ble/protocols/em02/esp_bms_em02_protocol.c",
+      "line": 134,
+      "score": 0.56,
+      "impactedCount": 1,
+      "risk": "LOW",
+      "riskSharedAxes": "LOW",
+      "riskScale": {
+        "comparableAcrossKinds": false,
+        "unusedAxes": [
+          {
+            "axis": "processes",
+            "reason": "enrichment-skipped"
+          },
+          {
+            "axis": "modules",
+            "reason": "enrichment-skipped"
+          }
+        ]
+      },
+      "direct": 1
+    },
+    {
+      "uid": "Function:components/esp_bms_bms_ble/protocols/em02/esp_bms_em02_protocol.h:esp_bms_em02_feed",
+      "name": "esp_bms_em02_feed",
+      "kind": "Function",
+      "filePath": "components/esp_bms_bms_ble/protocols/em02/esp_bms_em02_protocol.h",
+      "line": 13,
+      "score": 0.56,
+      "impactedCount": 0,
+      "risk": "UNKNOWN",
+      "riskSharedAxes": "UNKNOWN",
+      "riskScale": {
+        "comparableAcrossKinds": false,
+        "unusedAxes": [
+          {
+            "axis": "processes",
+            "reason": "enrichment-skipped"
+          },
+          {
+            "axis": "modules",
+            "reason": "enrichment-skipped"
+          }
+        ]
+      },
+      "direct": 0,
+      "riskNote": "No callers resolved. Absence of edges is not evidence the symbol is unused: a caller reaching it through a reference class this index does not record — plain-object property access, a bare-identifier read of a module-scope const — produces no edge to find. Confirm with a text search before treating the change as safe."
+    }
+  ]
+}
+
+  GitNexus Impact (1.6.12)
+
+runtime_load_display_config
+{
+  "error": "Target 'runtime_load_display_config' not found",
+  "target": {
+    "name": "runtime_load_display_config"
+  },
+  "direction": "upstream",
+  "impactedCount": null,
+  "risk": "UNKNOWN"
+}
+
+  GitNexus Impact (1.6.12)
+
+runtime_save_display_config
+{
+  "error": "Target 'runtime_save_display_config' not found",
+  "target": {
+    "name": "runtime_save_display_config"
+  },
+  "direction": "upstream",
+  "impactedCount": null,
+  "risk": "UNKNOWN"
+}
+
+  GitNexus Impact (1.6.12)
+
+runtime_queue_config_update
+{
+  "error": "Target 'runtime_queue_config_update' not found",
+  "target": {
+    "name": "runtime_queue_config_update"
+  },
+  "direction": "upstream",
+  "impactedCount": null,
+  "risk": "UNKNOWN"
+}
+
+  GitNexus Impact (1.6.12)
+
+runtime_apply_pending_config
+{
+  "error": "Target 'runtime_apply_pending_config' not found",
+  "target": {
+    "name": "runtime_apply_pending_config"
+  },
+  "direction": "upstream",
+  "impactedCount": null,
+  "risk": "UNKNOWN"
+}
+
+  GitNexus Impact (1.6.12)
+
+runtime_http_config_get_handler
+{
+  "error": "Target 'runtime_http_config_get_handler' not found",
+  "target": {
+    "name": "runtime_http_config_get_handler"
+  },
+  "direction": "upstream",
+  "impactedCount": null,
+  "risk": "UNKNOWN"
+}
+
+  GitNexus Impact (1.6.12)
+
+runtime_http_config_post_handler
+{
+  "error": "Target 'runtime_http_config_post_handler' not found",
+  "target": {
+    "name": "runtime_http_config_post_handler"
+  },
+  "direction": "upstream",
+  "impactedCount": null,
+  "risk": "UNKNOWN"
+}
+
+  GitNexus Impact (1.6.12)
+
+saveBmsType
+{
+  "error": "Target 'saveBmsType' not found",
+  "target": {
+    "name": "saveBmsType"
+  },
+  "direction": "upstream",
+  "impactedCount": null,
+  "risk": "UNKNOWN"
+}
+
+  GitNexus Impact (1.6.12)
+
+fillConfig
+{
+  "error": "Target 'fillConfig' not found",
+  "target": {
+    "name": "fillConfig"
+  },
+  "direction": "upstream",
+  "impactedCount": null,
+  "risk": "UNKNOWN"
+}
+
+  GitNexus Impact (1.6.12)
+
+esp_bms_idf_runtime_load_display_settings
+{
+  "status": "ambiguous",
+  "message": "Found 2 symbols matching 'esp_bms_idf_runtime_load_display_settings'. Blast radius differs per candidate (max 1 impacted at risk UNKNOWN; LOW among the candidates that resolved, and at least one could not be walked). Disambiguate with target_uid (or file_path/kind) for a single authoritative result.",
+  "target": {
+    "name": "esp_bms_idf_runtime_load_display_settings"
+  },
+  "direction": "upstream",
+  "totalCandidates": 2,
+  "impactedCount": null,
+  "risk": "UNKNOWN",
+  "maxImpactedCount": 1,
+  "maxRisk": "UNKNOWN",
+  "knownMaxRisk": "LOW",
+  "candidates": [
+    {
+      "uid": "Function:components/esp_bms_idf_runtime/esp_bms_idf_runtime.c:esp_bms_idf_runtime_load_display_settings",
+      "name": "esp_bms_idf_runtime_load_display_settings",
+      "kind": "Function",
+      "filePath": "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c",
+      "line": 2906,
+      "score": 0.56,
+      "impactedCount": 1,
+      "risk": "LOW",
+      "riskSharedAxes": "LOW",
+      "riskScale": {
+        "comparableAcrossKinds": false,
+        "unusedAxes": [
+          {
+            "axis": "processes",
+            "reason": "enrichment-skipped"
+          },
+          {
+            "axis": "modules",
+            "reason": "enrichment-skipped"
+          }
+        ]
+      },
+      "direct": 1
+    },
+    {
+      "uid": "Function:components/esp_bms_idf_runtime/include/esp_bms_idf_runtime.h:esp_bms_idf_runtime_load_display_settings",
+      "name": "esp_bms_idf_runtime_load_display_settings",
+      "kind": "Function",
+      "filePath": "components/esp_bms_idf_runtime/include/esp_bms_idf_runtime.h",
+      "line": 329,
+      "score": 0.56,
+      "impactedCount": 0,
+      "risk": "UNKNOWN",
+      "riskSharedAxes": "UNKNOWN",
+      "riskScale": {
+        "comparableAcrossKinds": false,
+        "unusedAxes": [
+          {
+            "axis": "processes",
+            "reason": "enrichment-skipped"
+          },
+          {
+            "axis": "modules",
+            "reason": "enrichment-skipped"
+          }
+        ]
+      },
+      "direct": 0,
+      "riskNote": "No callers resolved. Absence of edges is not evidence the symbol is unused: a caller reaching it through a reference class this index does not record — plain-object property access, a bare-identifier read of a module-scope const — produces no edge to find. Confirm with a text search before treating the change as safe."
+    }
+  ]
+}
+
+  GitNexus Impact (1.6.12)
+
+esp_bms_idf_runtime_save_display_settings
+{
+  "status": "ambiguous",
+  "message": "Found 2 symbols matching 'esp_bms_idf_runtime_save_display_settings'. Blast radius differs per candidate (max 5 impacted at risk UNKNOWN; LOW among the candidates that resolved, and at least one could not be walked). Disambiguate with target_uid (or file_path/kind) for a single authoritative result.",
+  "target": {
+    "name": "esp_bms_idf_runtime_save_display_settings"
+  },
+  "direction": "upstream",
+  "totalCandidates": 2,
+  "impactedCount": null,
+  "risk": "UNKNOWN",
+  "maxImpactedCount": 5,
+  "maxRisk": "UNKNOWN",
+  "knownMaxRisk": "LOW",
+  "candidates": [
+    {
+      "uid": "Function:components/esp_bms_idf_runtime/esp_bms_idf_runtime.c:esp_bms_idf_runtime_save_display_settings",
+      "name": "esp_bms_idf_runtime_save_display_settings",
+      "kind": "Function",
+      "filePath": "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c",
+      "line": 3174,
+      "score": 0.56,
+      "impactedCount": 5,
+      "risk": "LOW",
+      "riskSharedAxes": "LOW",
+      "riskScale": {
+        "comparableAcrossKinds": false,
+        "unusedAxes": [
+          {
+            "axis": "processes",
+            "reason": "enrichment-skipped"
+          },
+          {
+            "axis": "modules",
+            "reason": "enrichment-skipped"
+          }
+        ]
+      },
+      "direct": 4
+    },
+    {
+      "uid": "Function:components/esp_bms_idf_runtime/include/esp_bms_idf_runtime.h:esp_bms_idf_runtime_save_display_settings",
+      "name": "esp_bms_idf_runtime_save_display_settings",
+      "kind": "Function",
+      "filePath": "components/esp_bms_idf_runtime/include/esp_bms_idf_runtime.h",
+      "line": 330,
+      "score": 0.56,
+      "impactedCount": 0,
+      "risk": "UNKNOWN",
+      "riskSharedAxes": "UNKNOWN",
+      "riskScale": {
+        "comparableAcrossKinds": false,
+        "unusedAxes": [
+          {
+            "axis": "processes",
+            "reason": "enrichment-skipped"
+          },
+          {
+            "axis": "modules",
+            "reason": "enrichment-skipped"
+          }
+        ]
+      },
+      "direct": 0,
+      "riskNote": "No callers resolved. Absence of edges is not evidence the symbol is unused: a caller reaching it through a reference class this index does not record — plain-object property access, a bare-identifier read of a module-scope const — produces no edge to find. Confirm with a text search before treating the change as safe."
+    }
+  ]
+}
+
+  GitNexus Impact (1.6.12)
+
+runtime_set_pending_http_config
+{
+  "target": {
+    "id": "Function:components/esp_bms_idf_runtime/esp_bms_idf_runtime.c:runtime_set_pending_http_config",
+    "name": "runtime_set_pending_http_config",
+    "type": "Function",
+    "filePath": "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c"
+  },
+  "direction": "upstream",
+  "impactedCount": 5,
+  "risk": "LOW",
+  "riskSharedAxes": "LOW",
+  "riskScale": {
+    "comparableAcrossKinds": true,
+    "unusedAxes": []
+  },
+  "epistemic": "exact",
+  "summary": {
+    "direct": 1,
+    "processes_affected": 1,
+    "modules_affected": 1
+  },
+  "byDepthCounts": {
+    "1": 1,
+    "2": 2,
+    "3": 2
+  },
+  "affected_processes": [
+    {
+      "name": "esp_bms_idf_runtime_http_api_handler",
+      "type": "Function",
+      "filePath": "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c",
+      "affected_process_count": 1,
+      "total_hits": 1,
+      "earliest_broken_step": 1
+    }
+  ],
+  "affected_modules": [
+    {
+      "name": "Esp_bms_idf_runtime",
+      "hits": 5,
+      "impact": "direct"
+    }
+  ],
+  "byDepth": {
+    "1": [
+      {
+        "depth": 1,
+        "id": "Function:components/esp_bms_idf_runtime/esp_bms_idf_runtime.c:runtime_apply_config_json",
+        "name": "runtime_apply_config_json",
+        "filePath": "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c",
+        "relationType": "CALLS",
+        "confidence": 0.85,
+        "processes": []
+      }
+    ],
+    "2": [
+      {
+        "depth": 2,
+        "id": "Function:components/esp_bms_idf_runtime/esp_bms_idf_runtime.c:runtime_ble_api_response",
+        "name": "runtime_ble_api_response",
+        "filePath": "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c",
+        "relationType": "CALLS",
+        "confidence": 0.85,
+        "processes": []
+      },
+      {
+        "depth": 2,
+        "id": "Function:components/esp_bms_idf_runtime/esp_bms_idf_runtime.c:runtime_http_post_config_handler",
+        "name": "runtime_http_post_config_handler",
+        "filePath": "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c",
+        "relationType": "CALLS",
+        "confidence": 0.85,
+        "processes": []
+      }
+    ],
+    "3": [
+      {
+        "depth": 3,
+        "id": "Function:components/esp_bms_idf_runtime/esp_bms_idf_runtime.c:esp_bms_idf_runtime_http_api_handler",
+        "name": "esp_bms_idf_runtime_http_api_handler",
+        "filePath": "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c",
+        "relationType": "CALLS",
+        "confidence": 0.85,
+        "processes": [
+          {
+            "id": "proc_247_esp_bms_idf_runtime_",
+            "label": "Esp_bms_idf_runtime_http_api_handler → Runtime_http_set_common_headers",
+            "processType": "intra_community",
+            "step": 1
+          }
+        ]
+      },
+      {
+        "depth": 3,
+        "id": "Function:components/esp_bms_idf_runtime/esp_bms_idf_runtime.c:runtime_ble_api_worker",
+        "name": "runtime_ble_api_worker",
+        "filePath": "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c",
+        "relationType": "CALLS",
+        "confidence": 0.85,
+        "processes": []
+      }
+    ]
+  }
+}
+
+  GitNexus Impact (1.6.12)
+
+esp_bms_idf_runtime_apply_pending_http_config
+{
+  "status": "ambiguous",
+  "message": "Found 2 symbols matching 'esp_bms_idf_runtime_apply_pending_http_config'. Blast radius differs per candidate (max 1 impacted at risk UNKNOWN; LOW among the candidates that resolved, and at least one could not be walked). Disambiguate with target_uid (or file_path/kind) for a single authoritative result.",
+  "target": {
+    "name": "esp_bms_idf_runtime_apply_pending_http_config"
+  },
+  "direction": "upstream",
+  "totalCandidates": 2,
+  "impactedCount": null,
+  "risk": "UNKNOWN",
+  "maxImpactedCount": 1,
+  "maxRisk": "UNKNOWN",
+  "knownMaxRisk": "LOW",
+  "candidates": [
+    {
+      "uid": "Function:components/esp_bms_idf_runtime/esp_bms_idf_runtime.c:esp_bms_idf_runtime_apply_pending_http_config",
+      "name": "esp_bms_idf_runtime_apply_pending_http_config",
+      "kind": "Function",
+      "filePath": "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c",
+      "line": 3346,
+      "score": 0.56,
+      "impactedCount": 1,
+      "risk": "LOW",
+      "riskSharedAxes": "LOW",
+      "riskScale": {
+        "comparableAcrossKinds": false,
+        "unusedAxes": [
+          {
+            "axis": "processes",
+            "reason": "enrichment-skipped"
+          },
+          {
+            "axis": "modules",
+            "reason": "enrichment-skipped"
+          }
+        ]
+      },
+      "direct": 1
+    },
+    {
+      "uid": "Function:components/esp_bms_idf_runtime/include/esp_bms_idf_runtime.h:esp_bms_idf_runtime_apply_pending_http_config",
+      "name": "esp_bms_idf_runtime_apply_pending_http_config",
+      "kind": "Function",
+      "filePath": "components/esp_bms_idf_runtime/include/esp_bms_idf_runtime.h",
+      "line": 379,
+      "score": 0.56,
+      "impactedCount": 0,
+      "risk": "UNKNOWN",
+      "riskSharedAxes": "UNKNOWN",
+      "riskScale": {
+        "comparableAcrossKinds": false,
+        "unusedAxes": [
+          {
+            "axis": "processes",
+            "reason": "enrichment-skipped"
+          },
+          {
+            "axis": "modules",
+            "reason": "enrichment-skipped"
+          }
+        ]
+      },
+      "direct": 0,
+      "riskNote": "No callers resolved. Absence of edges is not evidence the symbol is unused: a caller reaching it through a reference class this index does not record — plain-object property access, a bare-identifier read of a module-scope const — produces no edge to find. Confirm with a text search before treating the change as safe."
+    }
+  ]
+}
+
+  GitNexus Impact (1.6.12)
+
+runtime_config_json
+{
+  "target": {
+    "id": "Function:components/esp_bms_idf_runtime/esp_bms_idf_runtime.c:runtime_config_json",
+    "name": "runtime_config_json",
+    "type": "Function",
+    "filePath": "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c"
+  },
+  "direction": "upstream",
+  "impactedCount": 4,
+  "risk": "LOW",
+  "riskSharedAxes": "LOW",
+  "riskScale": {
+    "comparableAcrossKinds": true,
+    "unusedAxes": []
+  },
+  "epistemic": "exact",
+  "summary": {
+    "direct": 2,
+    "processes_affected": 1,
+    "modules_affected": 1
+  },
+  "byDepthCounts": {
+    "1": 2,
+    "2": 2
+  },
+  "affected_processes": [
+    {
+      "name": "esp_bms_idf_runtime_http_api_handler",
+      "type": "Function",
+      "filePath": "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c",
+      "affected_process_count": 1,
+      "total_hits": 1,
+      "earliest_broken_step": 1
+    }
+  ],
+  "affected_modules": [
+    {
+      "name": "Esp_bms_idf_runtime",
+      "hits": 4,
+      "impact": "direct"
+    }
+  ],
+  "byDepth": {
+    "1": [
+      {
+        "depth": 1,
+        "id": "Function:components/esp_bms_idf_runtime/esp_bms_idf_runtime.c:runtime_ble_api_response",
+        "name": "runtime_ble_api_response",
+        "filePath": "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c",
+        "relationType": "CALLS",
+        "confidence": 0.85,
+        "processes": []
+      },
+      {
+        "depth": 1,
+        "id": "Function:components/esp_bms_idf_runtime/esp_bms_idf_runtime.c:runtime_http_config_handler",
+        "name": "runtime_http_config_handler",
+        "filePath": "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c",
+        "relationType": "CALLS",
+        "confidence": 0.85,
+        "processes": []
+      }
+    ],
+    "2": [
+      {
+        "depth": 2,
+        "id": "Function:components/esp_bms_idf_runtime/esp_bms_idf_runtime.c:esp_bms_idf_runtime_http_api_handler",
+        "name": "esp_bms_idf_runtime_http_api_handler",
+        "filePath": "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c",
+        "relationType": "CALLS",
+        "confidence": 0.85,
+        "processes": [
+          {
+            "id": "proc_247_esp_bms_idf_runtime_",
+            "label": "Esp_bms_idf_runtime_http_api_handler → Runtime_http_set_common_headers",
+            "processType": "intra_community",
+            "step": 1
+          }
+        ]
+      },
+      {
+        "depth": 2,
+        "id": "Function:components/esp_bms_idf_runtime/esp_bms_idf_runtime.c:runtime_ble_api_worker",
+        "name": "runtime_ble_api_worker",
+        "filePath": "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c",
+        "relationType": "CALLS",
+        "confidence": 0.85,
+        "processes": []
+      }
+    ]
+  }
+}
+
+  GitNexus Impact (1.6.12)
+
+runtime_apply_config_json
+{
+  "target": {
+    "id": "Function:components/esp_bms_idf_runtime/esp_bms_idf_runtime.c:runtime_apply_config_json",
+    "name": "runtime_apply_config_json",
+    "type": "Function",
+    "filePath": "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c"
+  },
+  "direction": "upstream",
+  "impactedCount": 4,
+  "risk": "LOW",
+  "riskSharedAxes": "LOW",
+  "riskScale": {
+    "comparableAcrossKinds": true,
+    "unusedAxes": []
+  },
+  "epistemic": "exact",
+  "summary": {
+    "direct": 2,
+    "processes_affected": 1,
+    "modules_affected": 1
+  },
+  "byDepthCounts": {
+    "1": 2,
+    "2": 2
+  },
+  "affected_processes": [
+    {
+      "name": "esp_bms_idf_runtime_http_api_handler",
+      "type": "Function",
+      "filePath": "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c",
+      "affected_process_count": 1,
+      "total_hits": 1,
+      "earliest_broken_step": 1
+    }
+  ],
+  "affected_modules": [
+    {
+      "name": "Esp_bms_idf_runtime",
+      "hits": 4,
+      "impact": "direct"
+    }
+  ],
+  "byDepth": {
+    "1": [
+      {
+        "depth": 1,
+        "id": "Function:components/esp_bms_idf_runtime/esp_bms_idf_runtime.c:runtime_ble_api_response",
+        "name": "runtime_ble_api_response",
+        "filePath": "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c",
+        "relationType": "CALLS",
+        "confidence": 0.85,
+        "processes": []
+      },
+      {
+        "depth": 1,
+        "id": "Function:components/esp_bms_idf_runtime/esp_bms_idf_runtime.c:runtime_http_post_config_handler",
+        "name": "runtime_http_post_config_handler",
+        "filePath": "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c",
+        "relationType": "CALLS",
+        "confidence": 0.85,
+        "processes": []
+      }
+    ],
+    "2": [
+      {
+        "depth": 2,
+        "id": "Function:components/esp_bms_idf_runtime/esp_bms_idf_runtime.c:esp_bms_idf_runtime_http_api_handler",
+        "name": "esp_bms_idf_runtime_http_api_handler",
+        "filePath": "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c",
+        "relationType": "CALLS",
+        "confidence": 0.85,
+        "processes": [
+          {
+            "id": "proc_247_esp_bms_idf_runtime_",
+            "label": "Esp_bms_idf_runtime_http_api_handler → Runtime_http_set_common_headers",
+            "processType": "intra_community",
+            "step": 1
+          }
+        ]
+      },
+      {
+        "depth": 2,
+        "id": "Function:components/esp_bms_idf_runtime/esp_bms_idf_runtime.c:runtime_ble_api_worker",
+        "name": "runtime_ble_api_worker",
+        "filePath": "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c",
+        "relationType": "CALLS",
+        "confidence": 0.85,
+        "processes": []
+      }
+    ]
+  }
+}
+
+  GitNexus Impact (1.6.12)
+
+Function:components/esp_bms_bms_ble/protocols/em02/esp_bms_em02_protocol.c:esp_bms_em02_feed
+{
+  "target": {
+    "id": "Function:components/esp_bms_bms_ble/protocols/em02/esp_bms_em02_protocol.c:esp_bms_em02_feed",
+    "name": "esp_bms_em02_feed",
+    "type": "Function",
+    "filePath": "components/esp_bms_bms_ble/protocols/em02/esp_bms_em02_protocol.c"
+  },
+  "direction": "upstream",
+  "impactedCount": 1,
+  "risk": "LOW",
+  "riskSharedAxes": "LOW",
+  "riskScale": {
+    "comparableAcrossKinds": true,
+    "unusedAxes": []
+  },
+  "epistemic": "exact",
+  "summary": {
+    "direct": 1,
+    "processes_affected": 0,
+    "modules_affected": 1
+  },
+  "byDepthCounts": {
+    "1": 1
+  },
+  "affected_processes": [],
+  "affected_modules": [
+    {
+      "name": "Esp_bms_bms_ble",
+      "hits": 1,
+      "impact": "direct"
+    }
+  ],
+  "byDepth": {
+    "1": [
+      {
+        "depth": 1,
+        "id": "Function:components/esp_bms_bms_ble/esp_bms_bms_ble.c:bms_frame_push",
+        "name": "bms_frame_push",
+        "filePath": "components/esp_bms_bms_ble/esp_bms_bms_ble.c",
+        "relationType": "CALLS",
+        "confidence": 0.5,
+        "processes": []
+      }
+    ]
+  }
+}
+
+  GitNexus Impact (1.6.12)
+
+model_is_em02
+{
+  "target": {
+    "id": "Function:components/esp_bms_bms_ble/protocols/em02/esp_bms_em02_protocol.c:model_is_em02",
+    "name": "model_is_em02",
+    "type": "Function",
+    "filePath": "components/esp_bms_bms_ble/protocols/em02/esp_bms_em02_protocol.c"
+  },
+  "direction": "upstream",
+  "impactedCount": 3,
+  "risk": "LOW",
+  "riskSharedAxes": "LOW",
+  "riskScale": {
+    "comparableAcrossKinds": true,
+    "unusedAxes": []
+  },
+  "epistemic": "exact",
+  "summary": {
+    "direct": 1,
+    "processes_affected": 0,
+    "modules_affected": 2
+  },
+  "byDepthCounts": {
+    "1": 1,
+    "2": 1,
+    "3": 1
+  },
+  "affected_processes": [],
+  "affected_modules": [
+    {
+      "name": "Em02",
+      "hits": 1,
+      "impact": "direct"
+    },
+    {
+      "name": "Esp_bms_bms_ble",
+      "hits": 1,
+      "impact": "indirect"
+    }
+  ],
+  "byDepth": {
+    "1": [
+      {
+        "depth": 1,
+        "id": "Function:components/esp_bms_bms_ble/protocols/em02/esp_bms_em02_protocol.c:decode_frame",
+        "name": "decode_frame",
+        "filePath": "components/esp_bms_bms_ble/protocols/em02/esp_bms_em02_protocol.c",
+        "relationType": "CALLS",
+        "confidence": 0.85,
+        "processes": []
+      }
+    ],
+    "2": [
+      {
+        "depth": 2,
+        "id": "Function:components/esp_bms_bms_ble/protocols/em02/esp_bms_em02_protocol.c:esp_bms_em02_feed",
+        "name": "esp_bms_em02_feed",
+        "filePath": "components/esp_bms_bms_ble/protocols/em02/esp_bms_em02_protocol.c",
+        "relationType": "CALLS",
+        "confidence": 0.85,
+        "processes": []
+      }
+    ],
+    "3": [
+      {
+        "depth": 3,
+        "id": "Function:components/esp_bms_bms_ble/esp_bms_bms_ble.c:bms_frame_push",
+        "name": "bms_frame_push",
+        "filePath": "components/esp_bms_bms_ble/esp_bms_bms_ble.c",
+        "relationType": "CALLS",
+        "confidence": 0.5,
+        "processes": []
+      }
+    ]
+  }
+}
+
+  GitNexus Impact (1.6.12)
+
+main
+{
+  "status": "ambiguous",
+  "message": "Found 160 symbols matching 'main' (showing 6 of 160). Blast radius differs per candidate (max 170 impacted at risk UNKNOWN; CRITICAL among the candidates that resolved, and at least one could not be walked). Disambiguate with target_uid (or file_path/kind) for a single authoritative result.",
+  "target": {
+    "name": "main"
+  },
+  "direction": "upstream",
+  "totalCandidates": 160,
+  "candidatesTruncated": true,
+  "impactedCount": null,
+  "risk": "UNKNOWN",
+  "maxImpactedCount": 170,
+  "maxRisk": "UNKNOWN",
+  "knownMaxRisk": "CRITICAL",
+  "candidates": [
+    {
+      "uid": "",
+      "name": "main",
+      "kind": "",
+      "filePath": "",
+      "line": 42,
+      "score": 0.5,
+      "impactedCount": 170,
+      "risk": "CRITICAL",
+      "riskSharedAxes": "CRITICAL",
+      "riskScale": {
+        "comparableAcrossKinds": false,
+        "unusedAxes": [
+          {
+            "axis": "processes",
+            "reason": "enrichment-skipped"
+          },
+          {
+            "axis": "modules",
+            "reason": "enrichment-skipped"
+          }
+        ]
+      },
+      "direct": 115
+    },
+    {
+      "uid": "Function:managed_components.bak/espressif__cmake_utilities/scripts/gen_custom_ota.py:main",
+      "name": "main",
+      "kind": "Function",
+      "filePath": "managed_components.bak/espressif__cmake_utilities/scripts/gen_custom_ota.py",
+      "line": 111,
+      "score": 0.56,
+      "impactedCount": 134,
+      "risk": "HIGH",
+      "riskSharedAxes": "HIGH",
+      "riskScale": {
+        "comparableAcrossKinds": false,
+        "unusedAxes": [
+          {
+            "axis": "processes",
+            "reason": "enrichment-skipped"
+          },
+          {
+            "axis": "modules",
+            "reason": "enrichment-skipped"
+          }
+        ]
+      },
+      "direct": 1
+    },
+    {
+      "uid": "Function:managed_components.bak/espressif__cmake_utilities/scripts/relinker/configuration.py:main",
+      "name": "main",
+      "kind": "Function",
+      "filePath": "managed_components.bak/espressif__cmake_utilities/scripts/relinker/configuration.py",
+      "line": 182,
+      "score": 0.56,
+      "impactedCount": 95,
+      "risk": "MEDIUM",
+      "riskSharedAxes": "MEDIUM",
+      "riskScale": {
+        "comparableAcrossKinds": false,
+        "unusedAxes": [
+          {
+            "axis": "processes",
+            "reason": "enrichment-skipped"
+          },
+          {
+            "axis": "modules",
+            "reason": "enrichment-skipped"
+          }
+        ]
+      },
+      "direct": 1
+    },
+    {
+      "uid": "Folder:main",
+      "name": "main",
+      "kind": "",
+      "filePath": "main",
+      "score": 0.5,
+      "impactedCount": 0,
+      "risk": "UNKNOWN",
+      "riskSharedAxes": "UNKNOWN",
+      "riskScale": {
+        "comparableAcrossKinds": false,
+        "unusedAxes": [
+          {
+            "axis": "processes",
+            "reason": "enrichment-skipped"
+          },
+          {
+            "axis": "modules",
+            "reason": "enrichment-skipped"
+          }
+        ]
+      },
+      "direct": 0,
+      "riskNote": "No callers resolved. Absence of edges is not evidence the symbol is unused: a caller reaching it through a reference class this index does not record — plain-object property access, a bare-identifier read of a module-scope const — produces no edge to find. Confirm with a text search before treating the change as safe."
+    },
+    {
+      "uid": "Folder:android-cast/app/src/main",
+      "name": "main",
+      "kind": "",
+      "filePath": "android-cast/app/src/main",
+      "score": 0.5,
+      "impactedCount": 0,
+      "risk": "UNKNOWN",
+      "riskSharedAxes": "UNKNOWN",
+      "riskScale": {
+        "comparableAcrossKinds": false,
+        "unusedAxes": [
+          {
+            "axis": "processes",
+            "reason": "enrichment-skipped"
+          },
+          {
+            "axis": "modules",
+            "reason": "enrichment-skipped"
+          }
+        ]
+      },
+      "direct": 0,
+      "riskNote": "No callers resolved. Absence of edges is not evidence the symbol is unused: a caller reaching it through a reference class this index does not record — plain-object property access, a bare-identifier read of a module-scope const — produces no edge to find. Confirm with a text search before treating the change as safe."
+    },
+    {
+      "uid": "Folder:managed_components.bak/espressif__knob/test_apps/main",
+      "name": "main",
+      "kind": "",
+      "filePath": "managed_components.bak/espressif__knob/test_apps/main",
+      "score": 0.5,
+      "impactedCount": 0,
+      "risk": "UNKNOWN",
+      "riskSharedAxes": "UNKNOWN",
+      "riskScale": {
+        "comparableAcrossKinds": false,
+        "unusedAxes": [
+          {
+            "axis": "processes",
+            "reason": "enrichment-skipped"
+          },
+          {
+            "axis": "modules",
+            "reason": "enrichment-skipped"
+          }
+        ]
+      },
+      "direct": 0,
+      "riskNote": "No callers resolved. Absence of edges is not evidence the symbol is unused: a caller reaching it through a reference class this index does not record — plain-object property access, a bare-identifier read of a module-scope const — produces no edge to find. Confirm with a text search before treating the change as safe."
+    }
+  ]
+}
+
+  GitNexus Impact (1.6.12)
+
+esp_bms_idf_runtime
+{
+  "status": "ambiguous",
+  "message": "Found 7 symbols matching 'esp_bms_idf_runtime' (showing 6 of 7). Blast radius differs per candidate (max 170 impacted at risk CRITICAL). Disambiguate with target_uid (or file_path/kind) for a single authoritative result.",
+  "target": {
+    "name": "esp_bms_idf_runtime"
+  },
+  "direction": "upstream",
+  "totalCandidates": 7,
+  "candidatesTruncated": true,
+  "impactedCount": null,
+  "risk": "UNKNOWN",
+  "maxImpactedCount": 170,
+  "maxRisk": "CRITICAL",
+  "candidates": [
+    {
+      "uid": "",
+      "name": "esp_bms_idf_runtime",
+      "kind": "",
+      "filePath": "",
+      "line": 8,
+      "score": 0.5,
+      "impactedCount": 170,
+      "risk": "CRITICAL",
+      "riskSharedAxes": "CRITICAL",
+      "riskScale": {
+        "comparableAcrossKinds": false,
+        "unusedAxes": [
+          {
+            "axis": "processes",
+            "reason": "enrichment-skipped"
+          },
+          {
+            "axis": "modules",
+            "reason": "enrichment-skipped"
+          }
+        ]
+      },
+      "direct": 115
+    },
+    {
+      "uid": "",
+      "name": "esp_bms_idf_runtime",
+      "kind": "",
+      "filePath": "",
+      "line": 9,
+      "score": 0.5,
+      "impactedCount": 140,
+      "risk": "CRITICAL",
+      "riskSharedAxes": "CRITICAL",
+      "riskScale": {
+        "comparableAcrossKinds": false,
+        "unusedAxes": [
+          {
+            "axis": "processes",
+            "reason": "enrichment-skipped"
+          },
+          {
+            "axis": "modules",
+            "reason": "enrichment-skipped"
+          }
+        ]
+      },
+      "direct": 97
+    },
+    {
+      "uid": "",
+      "name": "esp_bms_idf_runtime",
+      "kind": "",
+      "filePath": "",
+      "line": 9,
+      "score": 0.5,
+      "impactedCount": 140,
+      "risk": "CRITICAL",
+      "riskSharedAxes": "CRITICAL",
+      "riskScale": {
+        "comparableAcrossKinds": false,
+        "unusedAxes": [
+          {
+            "axis": "processes",
+            "reason": "enrichment-skipped"
+          },
+          {
+            "axis": "modules",
+            "reason": "enrichment-skipped"
+          }
+        ]
+      },
+      "direct": 97
+    },
+    {
+      "uid": "",
+      "name": "esp_bms_idf_runtime",
+      "kind": "",
+      "filePath": "",
+      "line": 117,
+      "score": 0.5,
+      "impactedCount": 98,
+      "risk": "CRITICAL",
+      "riskSharedAxes": "CRITICAL",
+      "riskScale": {
+        "comparableAcrossKinds": false,
+        "unusedAxes": [
+          {
+            "axis": "processes",
+            "reason": "enrichment-skipped"
+          },
+          {
+            "axis": "modules",
+            "reason": "enrichment-skipped"
+          }
+        ]
+      },
+      "direct": 73
+    },
+    {
+      "uid": "",
+      "name": "esp_bms_idf_runtime",
+      "kind": "",
+      "filePath": "",
+      "line": 13,
+      "score": 0.5,
+      "impactedCount": 98,
+      "risk": "CRITICAL",
+      "riskSharedAxes": "CRITICAL",
+      "riskScale": {
+        "comparableAcrossKinds": false,
+        "unusedAxes": [
+          {
+            "axis": "processes",
+            "reason": "enrichment-skipped"
+          },
+          {
+            "axis": "modules",
+            "reason": "enrichment-skipped"
+          }
+        ]
+      },
+      "direct": 73
+    },
+    {
+      "uid": "",
+      "name": "esp_bms_idf_runtime",
+      "kind": "",
+      "filePath": "",
+      "line": 9,
+      "score": 0.5,
+      "impactedCount": 76,
+      "risk": "CRITICAL",
+      "riskSharedAxes": "CRITICAL",
+      "riskScale": {
+        "comparableAcrossKinds": false,
+        "unusedAxes": [
+          {
+            "axis": "processes",
+            "reason": "enrichment-skipped"
+          },
+          {
+            "axis": "modules",
+            "reason": "enrichment-skipped"
+          }
+        ]
+      },
+      "direct": 58
+    }
+  ]
+}
+
+  GitNexus Impact (1.6.12)

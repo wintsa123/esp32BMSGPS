@@ -1,0 +1,901 @@
+{
+  "summary": {
+    "changed_count": 115,
+    "affected_count": 7,
+    "changed_files": 26,
+    "risk_level": "high"
+  },
+  "changed_symbols": [
+    {
+      "id": "Macro:components/esp_bms_bms_ble/esp_bms_bms_ble.c:BMS_SCAN_DEBUG_REPORT_LIMIT",
+      "name": "BMS_SCAN_DEBUG_REPORT_LIMIT",
+      "type": "Macro",
+      "filePath": "components/esp_bms_bms_ble/esp_bms_bms_ble.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Macro:components/esp_bms_bms_ble/esp_bms_bms_ble.c:BMS_FRAME_END_1",
+      "name": "BMS_FRAME_END_1",
+      "type": "Macro",
+      "filePath": "components/esp_bms_bms_ble/esp_bms_bms_ble.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Macro:components/esp_bms_bms_ble/esp_bms_bms_ble.c:BMS_FRAME_END_2",
+      "name": "BMS_FRAME_END_2",
+      "type": "Macro",
+      "filePath": "components/esp_bms_bms_ble/esp_bms_bms_ble.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Enum:components/esp_bms_bms_ble/esp_bms_bms_ble.c:bms_ble_phase_t",
+      "name": "bms_ble_phase_t",
+      "type": "Enum",
+      "filePath": "components/esp_bms_bms_ble/esp_bms_bms_ble.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/esp_bms_bms_ble.c:bms_set_info",
+      "name": "bms_set_info",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/esp_bms_bms_ble.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/esp_bms_bms_ble.c:bms_apply_safety_status",
+      "name": "bms_apply_safety_status",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/esp_bms_bms_ble.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/esp_bms_bms_ble.c:bms_apply_telemetry",
+      "name": "bms_apply_telemetry",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/esp_bms_bms_ble.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/esp_bms_bms_ble.c:bms_is_yanyang",
+      "name": "bms_is_yanyang",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/esp_bms_bms_ble.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/esp_bms_bms_ble.c:bms_is_jk",
+      "name": "bms_is_jk",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/esp_bms_bms_ble.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/esp_bms_bms_ble.c:bms_is_jbd",
+      "name": "bms_is_jbd",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/esp_bms_bms_ble.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/esp_bms_bms_ble.c:bms_is_daly",
+      "name": "bms_is_daly",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/esp_bms_bms_ble.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/esp_bms_bms_ble.c:bms_is_bluebabe",
+      "name": "bms_is_bluebabe",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/esp_bms_bms_ble.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/esp_bms_bms_ble.c:bms_is_mingtang",
+      "name": "bms_is_mingtang",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/esp_bms_bms_ble.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/esp_bms_bms_ble.c:bms_has_separate_write_characteristic",
+      "name": "bms_has_separate_write_characteristic",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/esp_bms_bms_ble.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/esp_bms_bms_ble.c:bms_is_jk_characteristic",
+      "name": "bms_is_jk_characteristic",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/esp_bms_bms_ble.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/esp_bms_bms_ble.c:bms_frame_push",
+      "name": "bms_frame_push",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/esp_bms_bms_ble.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/esp_bms_bms_ble.c:bms_clear_telemetry",
+      "name": "bms_clear_telemetry",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/esp_bms_bms_ble.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/esp_bms_bms_ble.c:bms_reset_connection_state",
+      "name": "bms_reset_connection_state",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/esp_bms_bms_ble.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/esp_bms_bms_ble.c:bms_write_cb",
+      "name": "bms_write_cb",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/esp_bms_bms_ble.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/esp_bms_bms_ble.c:bms_write_frame",
+      "name": "bms_write_frame",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/esp_bms_bms_ble.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/esp_bms_bms_ble.c:bms_chr_cb",
+      "name": "bms_chr_cb",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/esp_bms_bms_ble.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/esp_bms_bms_ble.c:bms_start_service_discovery",
+      "name": "bms_start_service_discovery",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/esp_bms_bms_ble.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/esp_bms_bms_ble.c:bms_service_cb",
+      "name": "bms_service_cb",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/esp_bms_bms_ble.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/esp_bms_bms_ble.c:bms_addr_to_mac_text",
+      "name": "bms_addr_to_mac_text",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/esp_bms_bms_ble.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/esp_bms_bms_ble.c:bms_name_copy",
+      "name": "bms_name_copy",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/esp_bms_bms_ble.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/esp_bms_bms_ble.c:bms_connect_to_disc",
+      "name": "bms_connect_to_disc",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/esp_bms_bms_ble.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/esp_bms_bms_ble.c:bms_start_scan_or_defer",
+      "name": "bms_start_scan_or_defer",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/esp_bms_bms_ble.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/esp_bms_bms_ble.c:bms_start_if_bound",
+      "name": "bms_start_if_bound",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/esp_bms_bms_ble.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/esp_bms_bms_ble.c:bms_start_for_bind",
+      "name": "bms_start_for_bind",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/esp_bms_bms_ble.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/esp_bms_bms_ble.c:bms_on_ble_reset",
+      "name": "bms_on_ble_reset",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/esp_bms_bms_ble.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/esp_bms_bms_ble.c:bms_tick",
+      "name": "bms_tick",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/esp_bms_bms_ble.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/esp_bms_bms_ble.c:esp_bms_bms_ble_start",
+      "name": "esp_bms_bms_ble_start",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/esp_bms_bms_ble.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/protocols/ant/esp_bms_ant_protocol.c:validate_frame",
+      "name": "validate_frame",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/protocols/ant/esp_bms_ant_protocol.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/protocols/ant/esp_bms_ant_protocol.c:decode_status",
+      "name": "decode_status",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/protocols/ant/esp_bms_ant_protocol.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/protocols/ant/esp_bms_ant_protocol.c:decode_old_status",
+      "name": "decode_old_status",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/protocols/ant/esp_bms_ant_protocol.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/protocols/ant/esp_bms_ant_protocol.c:esp_bms_ant_protocol_decode",
+      "name": "esp_bms_ant_protocol_decode",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/protocols/ant/esp_bms_ant_protocol.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/protocols/ant/esp_bms_ant_protocol.h:esp_bms_ant_protocol_old_poll_request",
+      "name": "esp_bms_ant_protocol_old_poll_request",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/protocols/ant/esp_bms_ant_protocol.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/protocols/ant/esp_bms_ant_protocol.h:esp_bms_ant_protocol_old_feed",
+      "name": "esp_bms_ant_protocol_old_feed",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/protocols/ant/esp_bms_ant_protocol.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/protocols/bluebabe/esp_bms_bluebabe_protocol.c:decode_state_table",
+      "name": "decode_state_table",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/protocols/bluebabe/esp_bms_bluebabe_protocol.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/protocols/bluebabe/esp_bms_bluebabe_protocol.c:decode_info_table",
+      "name": "decode_info_table",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/protocols/bluebabe/esp_bms_bluebabe_protocol.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/protocols/bluebabe/esp_bms_bluebabe_protocol.c:decode_frame",
+      "name": "decode_frame",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/protocols/bluebabe/esp_bms_bluebabe_protocol.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/protocols/em02/esp_bms_em02_protocol.c:u16be",
+      "name": "u16be",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/protocols/em02/esp_bms_em02_protocol.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/protocols/em02/esp_bms_em02_protocol.c:u32be",
+      "name": "u32be",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/protocols/em02/esp_bms_em02_protocol.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/protocols/em02/esp_bms_em02_protocol.c:decode_realtime",
+      "name": "decode_realtime",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/protocols/em02/esp_bms_em02_protocol.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/protocols/em02/esp_bms_em02_protocol.c:decode_frame",
+      "name": "decode_frame",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/protocols/em02/esp_bms_em02_protocol.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/protocols/em02/esp_bms_em02_protocol.c:esp_bms_em02_feed",
+      "name": "esp_bms_em02_feed",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/protocols/em02/esp_bms_em02_protocol.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/protocols/em02/esp_bms_em02_protocol.h:esp_bms_em02_feed",
+      "name": "esp_bms_em02_feed",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/protocols/em02/esp_bms_em02_protocol.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Macro:components/esp_bms_bms_ble/protocols/esp_bms_bms_protocol.h:ESP_BMS_BMS_PROTOCOL_TEMP_MAX_COUNT",
+      "name": "ESP_BMS_BMS_PROTOCOL_TEMP_MAX_COUNT",
+      "type": "Macro",
+      "filePath": "components/esp_bms_bms_ble/protocols/esp_bms_bms_protocol.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_bms_ble/protocols/esp_bms_bms_protocol.h:pack_voltage_mv",
+      "name": "pack_voltage_mv",
+      "type": "Property",
+      "filePath": "components/esp_bms_bms_ble/protocols/esp_bms_bms_protocol.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_bms_ble/protocols/esp_bms_bms_protocol.h:current_deci_amps",
+      "name": "current_deci_amps",
+      "type": "Property",
+      "filePath": "components/esp_bms_bms_ble/protocols/esp_bms_bms_protocol.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_bms_ble/protocols/esp_bms_bms_protocol.h:soc_percent",
+      "name": "soc_percent",
+      "type": "Property",
+      "filePath": "components/esp_bms_bms_ble/protocols/esp_bms_bms_protocol.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_bms_ble/protocols/esp_bms_bms_protocol.h:min_cell_voltage_mv",
+      "name": "min_cell_voltage_mv",
+      "type": "Property",
+      "filePath": "components/esp_bms_bms_ble/protocols/esp_bms_bms_protocol.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_bms_ble/protocols/esp_bms_bms_protocol.h:average_cell_voltage_mv",
+      "name": "average_cell_voltage_mv",
+      "type": "Property",
+      "filePath": "components/esp_bms_bms_ble/protocols/esp_bms_bms_protocol.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_bms_ble/protocols/esp_bms_bms_protocol.h:max_cell_voltage_mv",
+      "name": "max_cell_voltage_mv",
+      "type": "Property",
+      "filePath": "components/esp_bms_bms_ble/protocols/esp_bms_bms_protocol.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_bms_ble/protocols/esp_bms_bms_protocol.h:delta_cell_voltage_mv",
+      "name": "delta_cell_voltage_mv",
+      "type": "Property",
+      "filePath": "components/esp_bms_bms_ble/protocols/esp_bms_bms_protocol.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_bms_ble/protocols/esp_bms_bms_protocol.h:total_capacity_mah",
+      "name": "total_capacity_mah",
+      "type": "Property",
+      "filePath": "components/esp_bms_bms_ble/protocols/esp_bms_bms_protocol.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_bms_ble/protocols/esp_bms_bms_protocol.h:capacity_remaining_mah",
+      "name": "capacity_remaining_mah",
+      "type": "Property",
+      "filePath": "components/esp_bms_bms_ble/protocols/esp_bms_bms_protocol.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_bms_ble/protocols/esp_bms_bms_protocol.h:total_cycle_mah",
+      "name": "total_cycle_mah",
+      "type": "Property",
+      "filePath": "components/esp_bms_bms_ble/protocols/esp_bms_bms_protocol.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_bms_ble/protocols/esp_bms_bms_protocol.h:running_time_seconds",
+      "name": "running_time_seconds",
+      "type": "Property",
+      "filePath": "components/esp_bms_bms_ble/protocols/esp_bms_bms_protocol.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_bms_ble/protocols/esp_bms_bms_protocol.h:total_cycle_valid",
+      "name": "total_cycle_valid",
+      "type": "Property",
+      "filePath": "components/esp_bms_bms_ble/protocols/esp_bms_bms_protocol.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_bms_ble/protocols/esp_bms_bms_protocol.h:running_time_valid",
+      "name": "running_time_valid",
+      "type": "Property",
+      "filePath": "components/esp_bms_bms_ble/protocols/esp_bms_bms_protocol.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_bms_ble/protocols/esp_bms_bms_protocol.h:protection_mask",
+      "name": "protection_mask",
+      "type": "Property",
+      "filePath": "components/esp_bms_bms_ble/protocols/esp_bms_bms_protocol.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_bms_ble/protocols/esp_bms_bms_protocol.h:warning_mask",
+      "name": "warning_mask",
+      "type": "Property",
+      "filePath": "components/esp_bms_bms_ble/protocols/esp_bms_bms_protocol.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_bms_ble/protocols/esp_bms_bms_protocol.h:balancing_supported",
+      "name": "balancing_supported",
+      "type": "Property",
+      "filePath": "components/esp_bms_bms_ble/protocols/esp_bms_bms_protocol.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_bms_ble/protocols/esp_bms_bms_protocol.h:balancing_active",
+      "name": "balancing_active",
+      "type": "Property",
+      "filePath": "components/esp_bms_bms_ble/protocols/esp_bms_bms_protocol.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_bms_ble/protocols/esp_bms_bms_protocol.h:partial",
+      "name": "partial",
+      "type": "Property",
+      "filePath": "components/esp_bms_bms_ble/protocols/esp_bms_bms_protocol.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/protocols/jk/esp_bms_jk_protocol.c:decode_jk04_cell_info",
+      "name": "decode_jk04_cell_info",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/protocols/jk/esp_bms_jk_protocol.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/protocols/mingtang/esp_bms_mingtang_protocol.c:decode_state_frame",
+      "name": "decode_state_frame",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/protocols/mingtang/esp_bms_mingtang_protocol.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_bms_ble/protocols/mingtang/esp_bms_mingtang_protocol.c:esp_bms_mingtang_feed",
+      "name": "esp_bms_mingtang_feed",
+      "type": "Function",
+      "filePath": "components/esp_bms_bms_ble/protocols/mingtang/esp_bms_mingtang_protocol.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_idf_runtime/esp_bms_idf_runtime.c:runtime_clear_bms_telemetry",
+      "name": "runtime_clear_bms_telemetry",
+      "type": "Function",
+      "filePath": "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_idf_runtime/esp_bms_idf_runtime.c:runtime_json_get_u32",
+      "name": "runtime_json_get_u32",
+      "type": "Function",
+      "filePath": "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_idf_runtime/esp_bms_idf_runtime.c:esp_bms_idf_runtime_load_display_settings",
+      "name": "esp_bms_idf_runtime_load_display_settings",
+      "type": "Function",
+      "filePath": "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_idf_runtime/esp_bms_idf_runtime.c:esp_bms_idf_runtime_save_display_settings",
+      "name": "esp_bms_idf_runtime_save_display_settings",
+      "type": "Function",
+      "filePath": "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_idf_runtime/esp_bms_idf_runtime.c:runtime_set_pending_http_config",
+      "name": "runtime_set_pending_http_config",
+      "type": "Function",
+      "filePath": "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_idf_runtime/esp_bms_idf_runtime.c:esp_bms_idf_runtime_apply_pending_http_config",
+      "name": "esp_bms_idf_runtime_apply_pending_http_config",
+      "type": "Function",
+      "filePath": "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_idf_runtime/esp_bms_idf_runtime.c:runtime_http_set_common_headers",
+      "name": "runtime_http_set_common_headers",
+      "type": "Function",
+      "filePath": "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_idf_runtime/esp_bms_idf_runtime.c:runtime_json_escape",
+      "name": "runtime_json_escape",
+      "type": "Function",
+      "filePath": "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:components/esp_bms_idf_runtime/esp_bms_idf_runtime.c:runtime_ble_api_response_access",
+      "name": "runtime_ble_api_response_access",
+      "type": "Function",
+      "filePath": "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_idf_runtime/include/esp_bms_idf_runtime.h:esp_bms_idf_runtime.bms_status_poll_elapsed_ms",
+      "name": "bms_status_poll_elapsed_ms",
+      "type": "Property",
+      "filePath": "components/esp_bms_idf_runtime/include/esp_bms_idf_runtime.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_idf_runtime/include/esp_bms_idf_runtime.h:esp_bms_idf_runtime.controller_keepalive_elapsed_ms",
+      "name": "controller_keepalive_elapsed_ms",
+      "type": "Property",
+      "filePath": "components/esp_bms_idf_runtime/include/esp_bms_idf_runtime.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_idf_runtime/include/esp_bms_idf_runtime.h:esp_bms_idf_runtime.controller_char_val_handle",
+      "name": "controller_char_val_handle",
+      "type": "Property",
+      "filePath": "components/esp_bms_idf_runtime/include/esp_bms_idf_runtime.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_idf_runtime/include/esp_bms_idf_runtime.h:esp_bms_idf_runtime.controller_write_char_val_handle",
+      "name": "controller_write_char_val_handle",
+      "type": "Property",
+      "filePath": "components/esp_bms_idf_runtime/include/esp_bms_idf_runtime.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_idf_runtime/include/esp_bms_idf_runtime.h:esp_bms_idf_runtime.controller_cccd_handle",
+      "name": "controller_cccd_handle",
+      "type": "Property",
+      "filePath": "components/esp_bms_idf_runtime/include/esp_bms_idf_runtime.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_idf_runtime/include/esp_bms_idf_runtime.h:esp_bms_idf_runtime.flags",
+      "name": "flags",
+      "type": "Property",
+      "filePath": "components/esp_bms_idf_runtime/include/esp_bms_idf_runtime.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h:gps_sentences_seen",
+      "name": "gps_sentences_seen",
+      "type": "Property",
+      "filePath": "components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h:uptime_seconds",
+      "name": "uptime_seconds",
+      "type": "Property",
+      "filePath": "components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h:pack_voltage_mv",
+      "name": "pack_voltage_mv",
+      "type": "Property",
+      "filePath": "components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h:total_capacity_mah",
+      "name": "total_capacity_mah",
+      "type": "Property",
+      "filePath": "components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h:capacity_remaining_mah",
+      "name": "capacity_remaining_mah",
+      "type": "Property",
+      "filePath": "components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h:bms_capacity_estimate_mah",
+      "name": "bms_capacity_estimate_mah",
+      "type": "Property",
+      "filePath": "components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h:bms_running_time_seconds",
+      "name": "bms_running_time_seconds",
+      "type": "Property",
+      "filePath": "components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h:bms_cycle_capacity_mah",
+      "name": "bms_cycle_capacity_mah",
+      "type": "Property",
+      "filePath": "components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h:local_battery_mv",
+      "name": "local_battery_mv",
+      "type": "Property",
+      "filePath": "components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h:speed_unit",
+      "name": "speed_unit",
+      "type": "Property",
+      "filePath": "components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h:speed_source",
+      "name": "speed_source",
+      "type": "Property",
+      "filePath": "components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h:active_speed_source",
+      "name": "active_speed_source",
+      "type": "Property",
+      "filePath": "components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h:speed_dashboard_style",
+      "name": "speed_dashboard_style",
+      "type": "Property",
+      "filePath": "components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h:wifi",
+      "name": "wifi",
+      "type": "Property",
+      "filePath": "components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h:speed_deci_units",
+      "name": "speed_deci_units",
+      "type": "Property",
+      "filePath": "components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h:average_speed_deci_units",
+      "name": "average_speed_deci_units",
+      "type": "Property",
+      "filePath": "components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h:average_consumption_deci_wh_per_distance",
+      "name": "average_consumption_deci_wh_per_distance",
+      "type": "Property",
+      "filePath": "components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h:preset_range_km",
+      "name": "preset_range_km",
+      "type": "Property",
+      "filePath": "components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h:bms_type",
+      "name": "bms_type",
+      "type": "Property",
+      "filePath": "components/esp_bms_lvgl_ui/include/esp_bms_lvgl_ui.h",
+      "change_type": "touched"
+    },
+    {
+      "id": "Section:docs/protocols/cross-verification.md:L1:保护板 / 控制器协议交叉验证报告",
+      "name": "保护板 / 控制器协议交叉验证报告",
+      "type": "Section",
+      "filePath": "docs/protocols/cross-verification.md",
+      "change_type": "touched"
+    },
+    {
+      "id": "Section:docs/protocols/cross-verification.md:L213:存疑清单（只记录，未改代码）",
+      "name": "存疑清单（只记录，未改代码）",
+      "type": "Section",
+      "filePath": "docs/protocols/cross-verification.md",
+      "change_type": "touched"
+    },
+    {
+      "id": "Section:docs/protocols/cross-verification.md:L260:方法与限制",
+      "name": "方法与限制",
+      "type": "Section",
+      "filePath": "docs/protocols/cross-verification.md",
+      "change_type": "touched"
+    },
+    {
+      "id": "Section:docs/protocols/motexa-baseline.md:L1:控制器 / 保护板协议移植基线（参照 Motexa 2.7.0）",
+      "name": "控制器 / 保护板协议移植基线（参照 Motexa 2.7.0）",
+      "type": "Section",
+      "filePath": "docs/protocols/motexa-baseline.md",
+      "change_type": "touched"
+    },
+    {
+      "id": "Section:docs/protocols/motexa-baseline.md:L79:2. 保护板清单（本项目 8 种）",
+      "name": "2. 保护板清单（本项目 8 种）",
+      "type": "Section",
+      "filePath": "docs/protocols/motexa-baseline.md",
+      "change_type": "touched"
+    },
+    {
+      "id": "Section:docs/protocols/motexa-baseline.md:L126:3. 交叉验证（既有协议）",
+      "name": "3. 交叉验证（既有协议）",
+      "type": "Section",
+      "filePath": "docs/protocols/motexa-baseline.md",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:tests/ant_bms_protocol_selftest.c:main",
+      "name": "main",
+      "type": "Function",
+      "filePath": "tests/ant_bms_protocol_selftest.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:tests/bluebabe_bms_protocol_selftest.c:test_state_frame",
+      "name": "test_state_frame",
+      "type": "Function",
+      "filePath": "tests/bluebabe_bms_protocol_selftest.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:tests/bluebabe_bms_protocol_selftest.c:test_matching_code_rejection",
+      "name": "test_matching_code_rejection",
+      "type": "Function",
+      "filePath": "tests/bluebabe_bms_protocol_selftest.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:tests/em02_bms_protocol_selftest.c:main",
+      "name": "main",
+      "type": "Function",
+      "filePath": "tests/em02_bms_protocol_selftest.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:tests/jk_bms_protocol_selftest.c:main",
+      "name": "main",
+      "type": "Function",
+      "filePath": "tests/jk_bms_protocol_selftest.c",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:tests/mingtang_bms_protocol_selftest.c:test_missing_tags",
+      "name": "test_missing_tags",
+      "type": "Function",
+      "filePath": "tests/mingtang_bms_protocol_selftest.c",
+      "change_type": "touched"
+    }
+  ],
+  "affected_processes": [
+    {
+      "id": "proc_244_esp_bms_idf_runtime_",
+      "name": "Esp_bms_idf_runtime_apply_pending_http_config → Runtime_bms_type_config_text",
+      "process_type": "cross_community",
+      "step_count": 3,
+      "changed_steps": [
+        {
+          "symbol": "esp_bms_idf_runtime_apply_pending_http_config",
+          "step": 1
+        }
+      ]
+    },
+    {
+      "id": "proc_245_esp_bms_idf_runtime_",
+      "name": "Esp_bms_idf_runtime_apply_pending_http_config → Runtime_bms_type_matches_policy",
+      "process_type": "intra_community",
+      "step_count": 3,
+      "changed_steps": [
+        {
+          "symbol": "esp_bms_idf_runtime_apply_pending_http_config",
+          "step": 1
+        }
+      ]
+    },
+    {
+      "id": "proc_246_esp_bms_idf_runtime_",
+      "name": "Esp_bms_idf_runtime_apply_pending_http_config → Runtime_bms_type_status_text",
+      "process_type": "intra_community",
+      "step_count": 3,
+      "changed_steps": [
+        {
+          "symbol": "esp_bms_idf_runtime_apply_pending_http_config",
+          "step": 1
+        }
+      ]
+    },
+    {
+      "id": "proc_247_esp_bms_idf_runtime_",
+      "name": "Esp_bms_idf_runtime_http_api_handler → Runtime_http_set_common_headers",
+      "process_type": "intra_community",
+      "step_count": 3,
+      "changed_steps": [
+        {
+          "symbol": "runtime_http_set_common_headers",
+          "step": 3
+        }
+      ]
+    },
+    {
+      "id": "proc_460_esp_bms_idf_runtime_",
+      "name": "Esp_bms_idf_runtime_apply_pending_http_config → Runtime_volume_matches_policy",
+      "process_type": "intra_community",
+      "step_count": 3,
+      "changed_steps": [
+        {
+          "symbol": "esp_bms_idf_runtime_apply_pending_http_config",
+          "step": 1
+        }
+      ]
+    },
+    {
+      "id": "proc_461_esp_bms_idf_runtime_",
+      "name": "Esp_bms_idf_runtime_apply_pending_http_config → Runtime_set_error",
+      "process_type": "cross_community",
+      "step_count": 3,
+      "changed_steps": [
+        {
+          "symbol": "esp_bms_idf_runtime_apply_pending_http_config",
+          "step": 1
+        }
+      ]
+    },
+    {
+      "id": "proc_498_esp_bms_idf_runtime_",
+      "name": "Esp_bms_idf_runtime_apply_pending_http_config → Runtime_brightness_matches_policy",
+      "process_type": "intra_community",
+      "step_count": 3,
+      "changed_steps": [
+        {
+          "symbol": "esp_bms_idf_runtime_apply_pending_http_config",
+          "step": 1
+        }
+      ]
+    }
+  ]
+}

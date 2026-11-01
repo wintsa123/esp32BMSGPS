@@ -1,0 +1,57 @@
+Checking "python3" ...
+Python 3.11.2
+"python3" has been detected
+Activating ESP-IDF 6.0
+Setting IDF_PATH to '/vol1/1000/toolchains/esp-idf-v6.0.2'.
+* Checking python version ... 3.11.2
+* Checking python dependencies ... OK
+* Deactivating the current ESP-IDF environment (if any) ... OK
+* Establishing a new ESP-IDF environment ... OK
+* Identifying shell ... bash
+* Detecting outdated tools in system ... OK - no outdated tools found
+* Shell completion ... Autocompletion code generated
+
+Done! You can now compile ESP-IDF projects.
+Go to the project directory and run:
+
+  idf.py build
+Adding "flash"'s dependency "all" to list of commands with default set of options.
+Executing action: all (aliases: build)
+Running ninja in directory /vol1/1000/project/esp32BmsGps/output/.bms-stability-validation/idf-build
+Executing "ninja all"...
+[1/4] cd /vol1/1000/project/esp32BmsGps/output/.bms-stability-validation/idf-build && /vol1/1000/toolchains/.espressif-v6.0.2/python_env/idf6.0_py3.11_env/bin/python /vol1/1000/toolchains/esp-idf-v6.0.2/components/partition_table/check_sizes.py --offset 0x8000 partition --type app /vol1/1000/project/esp32BmsGps/output/.bms-stability-validation/idf-build/partition_table/partition-table.bin /vol1/1000/project/esp32BmsGps/output/.bms-stability-validation/idf-build/esp32_bms_gps_idf.bin
+esp32_bms_gps_idf.bin binary size 0x1b5450 bytes. Smallest app partition is 0x600000 bytes. 0x44abb0 bytes (72%) free.
+[2/4] Performing build step for 'bootloader'
+[1/1] cd /vol1/1000/project/esp32BmsGps/output/.bms-stability-validation/idf-build/bootloader && /vol1/1000/toolchains/.espressif-v6.0.2/python_env/idf6.0_py3.11_env/bin/python /vol1/1000/toolchains/esp-idf-v6.0.2/components/partition_table/check_sizes.py --offset 0x8000 bootloader 0x0 /vol1/1000/project/esp32BmsGps/output/.bms-stability-validation/idf-build/bootloader/bootloader.bin
+Bootloader binary size 0x4de0 bytes. 0x3220 bytes (39%) free.
+[3/4] No install step for 'bootloader'
+[4/4] Completed 'bootloader'
+Executing action: flash
+Running ninja in directory /vol1/1000/project/esp32BmsGps/output/.bms-stability-validation/idf-build
+Executing "ninja flash"...
+[1/5] cd /vol1/1000/project/esp32BmsGps/output/.bms-stability-validation/idf-build && /vol1/1000/toolchains/.espressif-v6.0.2/python_env/idf6.0_py3.11_env/bin/python /vol1/1000/toolchains/esp-idf-v6.0.2/components/partition_table/check_sizes.py --offset 0x8000 partition --type app /vol1/1000/project/esp32BmsGps/output/.bms-stability-validation/idf-build/partition_table/partition-table.bin /vol1/1000/project/esp32BmsGps/output/.bms-stability-validation/idf-build/esp32_bms_gps_idf.bin
+esp32_bms_gps_idf.bin binary size 0x1b5450 bytes. Smallest app partition is 0x600000 bytes. 0x44abb0 bytes (72%) free.
+[2/5] Performing build step for 'bootloader'
+[1/1] cd /vol1/1000/project/esp32BmsGps/output/.bms-stability-validation/idf-build/bootloader && /vol1/1000/toolchains/.espressif-v6.0.2/python_env/idf6.0_py3.11_env/bin/python /vol1/1000/toolchains/esp-idf-v6.0.2/components/partition_table/check_sizes.py --offset 0x8000 bootloader 0x0 /vol1/1000/project/esp32BmsGps/output/.bms-stability-validation/idf-build/bootloader/bootloader.bin
+Bootloader binary size 0x4de0 bytes. 0x3220 bytes (39%) free.
+[3/5] No install step for 'bootloader'
+[4/5] Completed 'bootloader'
+[4/5] Running utility command for flash
+esptool --chip esp32s3 -p rfc2217://192.168.2.10:4000?ign_set_control&timeout=10 -b 115200 --before=default-reset --after=hard-reset write-flash --flash-mode dio --flash-freq 80m --flash-size 16MB 0x0 bootloader/bootloader.bin 0x8000 partition_table/partition-table.bin 0xd000 ota_data_initial.bin 0x10000 esp32_bms_gps_idf.bin
+esptool v5.3.1
+Serial port rfc2217://192.168.2.10:4000?ign_set_control&timeout=10:
+
+A fatal error occurred: Could not open rfc2217://192.168.2.10:4000?ign_set_control&timeout=10, the port is busy or doesn't exist.
+(Could not open port rfc2217://192.168.2.10:4000?ign_set_control&timeout=10: timed out)
+
+CMake Error at /vol1/1000/toolchains/esp-idf-v6.0.2/components/esptool_py/run_serial_tool.cmake:67 (message):
+
+  /vol1/1000/toolchains/.espressif-v6.0.2/python_env/idf6.0_py3.11_env/bin/python;-m;esptool;--chip;esp32s3
+  failed.
+
+
+
+FAILED: CMakeFiles/flash.util
+cd /vol1/1000/project/esp32BmsGps/output/.bms-stability-validation/idf-project && /usr/bin/cmake -D IDF_PATH=/vol1/1000/toolchains/esp-idf-v6.0.2 -D "SERIAL_TOOL=/vol1/1000/toolchains/.espressif-v6.0.2/python_env/idf6.0_py3.11_env/bin/python;-m;esptool;--chip;esp32s3" -D "SERIAL_TOOL_ARGS=--before=default-reset;--after=hard-reset;write-flash;@flash_args" -D WORKING_DIRECTORY=/vol1/1000/project/esp32BmsGps/output/.bms-stability-validation/idf-build -P /vol1/1000/toolchains/esp-idf-v6.0.2/components/esptool_py/run_serial_tool.cmake
+ninja: build stopped: subcommand failed.
+ninja failed with exit code 1, output of the command is in the /vol1/1000/project/esp32BmsGps/output/.bms-stability-validation/idf-build/log/idf_py_stderr_output_441332 and /vol1/1000/project/esp32BmsGps/output/.bms-stability-validation/idf-build/log/idf_py_stdout_output_441332

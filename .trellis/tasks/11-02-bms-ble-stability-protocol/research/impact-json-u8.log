@@ -1,0 +1,104 @@
+{
+  "target": {
+    "id": "Function:components/esp_bms_idf_runtime/esp_bms_idf_runtime.c:runtime_json_get_u8",
+    "name": "runtime_json_get_u8",
+    "type": "Function",
+    "filePath": "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c"
+  },
+  "direction": "upstream",
+  "impactedCount": 5,
+  "risk": "LOW",
+  "riskSharedAxes": "LOW",
+  "riskScale": {
+    "comparableAcrossKinds": true,
+    "unusedAxes": []
+  },
+  "epistemic": "exact",
+  "summary": {
+    "direct": 1,
+    "processes_affected": 1,
+    "modules_affected": 1
+  },
+  "byDepthCounts": {
+    "1": 1,
+    "2": 2,
+    "3": 2
+  },
+  "affected_processes": [
+    {
+      "name": "esp_bms_idf_runtime_http_api_handler",
+      "type": "Function",
+      "filePath": "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c",
+      "affected_process_count": 1,
+      "total_hits": 1,
+      "earliest_broken_step": 1
+    }
+  ],
+  "affected_modules": [
+    {
+      "name": "Esp_bms_idf_runtime",
+      "hits": 5,
+      "impact": "direct"
+    }
+  ],
+  "byDepth": {
+    "1": [
+      {
+        "depth": 1,
+        "id": "Function:components/esp_bms_idf_runtime/esp_bms_idf_runtime.c:runtime_apply_config_json",
+        "name": "runtime_apply_config_json",
+        "filePath": "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c",
+        "relationType": "CALLS",
+        "confidence": 0.85,
+        "processes": []
+      }
+    ],
+    "2": [
+      {
+        "depth": 2,
+        "id": "Function:components/esp_bms_idf_runtime/esp_bms_idf_runtime.c:runtime_ble_api_response",
+        "name": "runtime_ble_api_response",
+        "filePath": "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c",
+        "relationType": "CALLS",
+        "confidence": 0.85,
+        "processes": []
+      },
+      {
+        "depth": 2,
+        "id": "Function:components/esp_bms_idf_runtime/esp_bms_idf_runtime.c:runtime_http_post_config_handler",
+        "name": "runtime_http_post_config_handler",
+        "filePath": "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c",
+        "relationType": "CALLS",
+        "confidence": 0.85,
+        "processes": []
+      }
+    ],
+    "3": [
+      {
+        "depth": 3,
+        "id": "Function:components/esp_bms_idf_runtime/esp_bms_idf_runtime.c:esp_bms_idf_runtime_http_api_handler",
+        "name": "esp_bms_idf_runtime_http_api_handler",
+        "filePath": "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c",
+        "relationType": "CALLS",
+        "confidence": 0.85,
+        "processes": [
+          {
+            "id": "proc_247_esp_bms_idf_runtime_",
+            "label": "Esp_bms_idf_runtime_http_api_handler → Runtime_http_set_common_headers",
+            "processType": "intra_community",
+            "step": 1
+          }
+        ]
+      },
+      {
+        "depth": 3,
+        "id": "Function:components/esp_bms_idf_runtime/esp_bms_idf_runtime.c:runtime_ble_api_worker",
+        "name": "runtime_ble_api_worker",
+        "filePath": "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c",
+        "relationType": "CALLS",
+        "confidence": 0.85,
+        "processes": []
+      }
+    ]
+  }
+}
