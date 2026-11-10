@@ -44,6 +44,7 @@ function loadTs(filename, contents) {
   const requireSource = name => {
     if (!name.startsWith('.')) return localRequire(name);
     const base = path.resolve(path.dirname(filename), name);
+    if (base.endsWith('.css')) return {};
     const target = [base, base + '.ts', base + '.tsx'].find(file => fs.existsSync(file));
     if (!target) throw new Error('Missing module ' + base);
     return loadTs(target).exports;
@@ -116,7 +117,12 @@ console.log(JSON.stringify({
     def test_initial_page_is_chinese_and_has_no_zeeho_vehicle_controls(self):
         page = self.output["page"]
         self.assertIn("最近骑行", page)
-        self.assertIn("192.168.4.1", page)
+        self.assertIn("蓝牙连接", page)
+        self.assertIn("Wi-Fi 连接", page)
+        self.assertIn("系统信息", page)
+        self.assertNotIn("device-subnav", page)
+        self.assertIn('aria-label="功能"></section>', page)
+        self.assertNotIn('class="chip">AE5</span>', page)
         for removed in ("ZEEHO", "zeeho", "车辆位置", "车辆设置", "解锁车辆", "鸣笛", "寻车"):
             self.assertNotIn(removed, page)
 
@@ -128,6 +134,7 @@ console.log(JSON.stringify({
             self.assertIn(marker, page)
         self.assertEqual(3, len(re.findall(r'data-tab="', page)))
         self.assertIn('ae5', page.lower())
+        self.assertIn('>功能</span>', page)
         self.assertIn('<img', page)
         title = re.search(r'class="app-title"[^>]*>(.*?)</', page).group(1)
         self.assertIn("两轮智控", title)

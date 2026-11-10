@@ -121,6 +121,12 @@ class DashboardActivity : Activity() {
     }
 
     inner class Bridge {
+        @JavascriptInterface fun getAppInfo(): String = runCatching {
+            val info = packageManager.getPackageInfo(packageName, 0)
+            JSONObject().put("versionName", info.versionName.orEmpty())
+                .put("versionCode", info.longVersionCode).toString()
+        }.getOrDefault("{\"versionName\":\"\",\"versionCode\":0}")
+
         @JavascriptInterface fun bleConnected() = ble.connected
         @JavascriptInterface fun connectBle() = runOnUiThread { connectDeviceBle() }
 
