@@ -2,7 +2,7 @@
 
 默认启动离线内置的 Dashboard 首页；首页、设备连接、最近骑行和设备设置由 `vercel/` 前端提供。原生投屏、仪表详情、骑行历史及固件更新通过页面内的原生入口打开，继续使用现有设备协议。
 
-前端 `vercel/` 是独立仓库 `wintsa123/espBmsSetting`；本次前端提交为 `8feca5d`。本地预览执行 `npm --prefix vercel run dev -- --port 8787 --strictPort`。
+前端 `vercel/` 是独立仓库 `wintsa123/espBmsSetting`；本次前端提交为 `8feca5d`。通过 fnconnect 预览执行 `npm --prefix vercel run preview:fnconnect`，端口固定为 `8787`；使用构建产物和相对资源路径，避免请求站点根目录的开发热更新模块。
 
 ## 构建
 
