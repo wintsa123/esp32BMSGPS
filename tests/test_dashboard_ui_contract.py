@@ -1,6 +1,7 @@
 """Exercise the shipped React UI with its installed TypeScript/React dependencies."""
 
 import json
+import re
 import shutil
 import subprocess
 import unittest
@@ -31,15 +32,29 @@ const source = fs.readFileSync("vercel/src/App.tsx", "utf8").replace(
 module.exports.uiTest = { validSection, ManifestControl, RideRecordList, SessionList,
   formatMillivolts, formatDeciAmps, formatBmsCapacityEstimate, I18N,
   CONTROL_SERVICE_UUID, CONTROL_TX_UUID, CONTROL_RX_UUID };`;
-const compiled = ts.transpileModule(source, { compilerOptions: {
-  module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX,
-  target: ts.ScriptTarget.ES2022,
-}}).outputText;
-const appModule = { exports: {} };
-const context = { module: appModule, exports: appModule.exports,
-  require: localRequire, window: { location: { pathname: "/", search: "" }, setTimeout, clearTimeout },
-  console, URL, URLSearchParams, TextEncoder, TextDecoder, setTimeout, clearTimeout };
-vm.runInNewContext(compiled, context);
+const context = vm.createContext({
+  window: { location: { pathname: "/", search: "" }, setTimeout, clearTimeout },
+  console, URL, URLSearchParams, TextEncoder, TextDecoder, setTimeout, clearTimeout });
+const modules = new Map();
+function loadTs(filename, contents) {
+  filename = path.resolve(filename);
+  if (modules.has(filename)) return modules.get(filename);
+  const loaded = { exports: {} };
+  modules.set(filename, loaded);
+  const requireSource = name => {
+    if (!name.startsWith('.')) return localRequire(name);
+    const base = path.resolve(path.dirname(filename), name);
+    const target = [base, base + '.ts', base + '.tsx'].find(file => fs.existsSync(file));
+    if (!target) throw new Error('Missing module ' + base);
+    return loadTs(target).exports;
+  };
+  const compiled = ts.transpileModule(contents ?? fs.readFileSync(filename, 'utf8'), { compilerOptions: {
+    module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022,
+  }}).outputText;
+  vm.runInContext('(function(module,exports,require){' + compiled + '\n})', context)(loaded, loaded.exports, requireSource);
+  return loaded;
+}
+const appModule = loadTs('vercel/src/App.tsx', source);
 const ui = appModule.exports.uiTest;
 const t = key => ui.I18N.zh[key] || key;
 const labels = { zh: "GPS 轨迹", en: "GPS track" };
@@ -105,6 +120,13 @@ console.log(JSON.stringify({
         for removed in ("ZEEHO", "zeeho", "车辆位置", "车辆设置", "解锁车辆", "鸣笛", "寻车"):
             self.assertNotIn(removed, page)
 
+    def test_web_uses_original_dashboard_shell_and_rendered_source_parts(self):
+        page = self.output["page"]
+        for marker in ('class="stage web-preview"', 'id="phone"', 'class="preview-statusbar"',
+                       'id="topbar"', 'id="scroll"', 'id="tabbar"', 'class="tab-ind"',
+                       'data-num=', 'class="bar grow"', 'hero-in'):
+            self.assertIn(marker, page)
+
     def test_device_units_preserve_zero_and_missing_values(self):
         self.assertEqual(["52.40 V", "0.00 V", "--", "--"], self.output["millivolts"])
         self.assertEqual(["-12.6 A", "0.0 A", "--", "--"], self.output["deciAmps"])
@@ -125,7 +147,7 @@ console.log(JSON.stringify({
     def test_recent_sessions_use_device_duration_and_uncalibrated_label(self):
         sessions = self.output["sessions"]
         self.assertIn("#7", sessions)
-        self.assertIn("2m 5s", sessions)
+        self.assertIn("2m 5s", re.sub(r"<[^>]*>", "", sessions))
         self.assertIn("63", sessions)
         self.assertNotIn("1970", sessions)
         self.assertNotIn("km", sessions)
