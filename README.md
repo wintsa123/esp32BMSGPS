@@ -10,6 +10,12 @@
 
 > 当前项目处于持续开发与实机联调阶段。核心固件和主要交互链路已经可用，OTA、轨迹存储及部分硬件兼容性仍未完成。
 
+## 致谢与硬件文件
+
+感谢初版作者 **luose** 在立创开源硬件平台分享的 [ESP32 BMS GPS 初版项目](https://oshwhub.com/luose/project_dffyscoz)，为本项目后续开发和硬件迭代提供了基础。
+
+当前原理图、PCB、嘉立创工程、Gerber 和 BOM 见 [硬件设计目录](./hardware/README.md)。当前版本 R5 为 **2.2 Ω**；BOM 中 R4 的 **450 kΩ / 0805** 采购型号仍待确认，R9 不装，详情见 [BOM 说明](./hardware/2026-11-11-fpc-left18/BOM.md)。
+
 <h2 align="center">🖼️ 界面预览</h2>
 
 

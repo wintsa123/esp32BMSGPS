@@ -10,6 +10,12 @@ ESP32 smart dashboard firmware for electric motorcycles, e-bikes, and light vehi
 
 > The project is under active development and hardware validation. The core firmware and primary interaction paths are usable; OTA, track storage, and some hardware compatibility work are not complete.
 
+## Acknowledgements and hardware files
+
+Thanks to **luose**, the original author, for sharing the [original ESP32 BMS GPS project](https://oshwhub.com/luose/project_dffyscoz) on OSHWHub and providing a foundation for further development and hardware revisions.
+
+The current schematic, PCB, EasyEDA project, Gerber files, and BOM are in the [hardware directory](./hardware/README.md). R5 is **2.2 Ω**. An exact **450 kΩ / 0805** purchasing part for R4 remains unconfirmed; R9 is not populated. See the [BOM notes](./hardware/2026-11-11-fpc-left18/BOM.md).
+
 <h2 align="center">🖼️ UI Preview</h2>
 
 <table align="center">

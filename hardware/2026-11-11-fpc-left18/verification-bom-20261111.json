@@ -1,0 +1,29 @@
+{
+  "date": "2026-11-11",
+  "r5": "2.2Ω",
+  "selected_resistor_placements": 11,
+  "pending_purchase": [
+    "R4:450kΩ/R0805"
+  ],
+  "dnp": [
+    "R9"
+  ],
+  "physical_components": 37,
+  "populated_components": 36,
+  "bom_rows_including_dnp": 27,
+  "documents": {
+    "P1-final.esch": {
+      "saved_reopened_matches": true,
+      "only_requested_values_and_procurement_metadata_changed": true
+    },
+    "PCB1-final.epcb": {
+      "saved_reopened_matches": true,
+      "only_requested_values_and_procurement_metadata_changed": true
+    }
+  },
+  "strict_drc_after_reopen": [],
+  "epro2_current_geometry_and_component_attributes_match": true,
+  "sqlite_integrity": "ok",
+  "pcb_geometry_and_pad_net_mapping_unchanged": true,
+  "gerber_unchanged": true
+}
