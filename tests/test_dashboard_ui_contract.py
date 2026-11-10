@@ -129,8 +129,13 @@ console.log(JSON.stringify({
         self.assertIn('>设置</span>', page)
         for card in ("bluetooth", "wifi", "system", "device"):
             self.assertIn(f'aria-labelledby="settings-{card}-title"', page)
+        self.assertEqual(1, page.count('aria-labelledby="settings-update-title"'))
+        self.assertEqual(3, page.count('class="update-row"'))
         for title in ("App 更新", "Web 前端更新", "固件更新"):
             self.assertIn(f'aria-label="{title}"', page)
+            self.assertIn(f'aria-label="{title} · 查看更新"', page)
+        self.assertNotIn('role="dialog"', page)
+        self.assertNotIn("再次检查", page)
         self.assertIn('name="password"', page)
         self.assertIn('面板版本', page)
         self.assertIn('App 版本', page)
