@@ -1,5 +1,0 @@
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "C and protocol quality"}
-{"file": ".trellis/spec/backend/ble-peripheral-notification-security.md", "reason": "BLE trust and security"}
-{"file": ".trellis/spec/backend/directory-structure.md", "reason": "module boundaries"}
-{"file": ".trellis/spec/backend/hardware-build-flash.md", "reason": "correct build and flash profile"}
-{"file": ".trellis/tasks/11-02-bms-ble-stability-protocol/research/findings.md", "reason": "approved investigation evidence"}

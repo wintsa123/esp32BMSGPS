@@ -137,9 +137,9 @@
 | 嵌入式 Web | 单页 HTML / CSS / Vanilla JavaScript，编译进固件镜像 |
 | Vercel 控制站 | React 19、TypeScript、Vite 6、Vercel |
 | Android 投屏 | Kotlin、Android SDK 35、Java 17、Gradle 8.14.2 |
-| 质量与协作 | GitNexus、Trellis、主机协议自测、ESP-IDF 构建与实机日志 |
+| 质量与协作 | GitNexus、主机协议自测、ESP-IDF 构建与实机日志 |
 
-依赖版本、分区、诊断构建和各平台构建命令以[项目构建规范](./.trellis/spec/backend/hardware-build-flash.md)为准。
+依赖版本、分区、诊断构建和各平台构建命令以[项目构建规范](./docs/hardware-build-flash.md)为准。
 
 ## 🚀 配置、构建与烧录
 
@@ -182,7 +182,7 @@ Windows 本地串口：
 `<配置名>-flash.bin` 并写入 `0x0`；单独的 `<配置名>.bin` 是 OTA/应用镜像，
 只能按同目录 `flash-manifest.json` 的应用地址烧录（旧 ESP32 为 `0x10000`），不能写入 `0x1000`。
 
-如果设备此前使用其他分区表，首次切换时需要先擦除 Flash。详细的构建、擦除、诊断镜像、分区布局和故障排查见[固件硬件、构建与烧录规范](./.trellis/spec/backend/hardware-build-flash.md)。
+如果设备此前使用其他分区表，首次切换时需要先擦除 Flash。详细的构建、擦除、诊断镜像、分区布局和故障排查见[固件硬件、构建与烧录规范](./docs/hardware-build-flash.md)。
 
 ## 🖥️ 桌面模拟器
 
@@ -233,7 +233,6 @@ docs/protocols/               设备协议基线、字段映射与交叉验证�
 preview/                      本地 UI 预览脚本与未纳入版本控制的预览素材
 img/                          README 图片资源
 .github/                      GitHub Actions 云构建工作流
-.trellis/spec/                项目工程规范与可执行约定
 ```
 
 `main/idf_main.c` 只负责启动编排；硬件、协议、状态和 UI 逻辑应放在对应 ESP-IDF 组件中。

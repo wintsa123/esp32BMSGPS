@@ -1,6 +1,6 @@
 ---
 name: esp32-lan-rfc2217-flash
-description: Flash and monitor this project's ESP32 hardware through the fixed LAN RFC2217 bridge. Use when finishing a firmware-impacting code task that changes ESP-IDF sources, configuration, build inputs, or device runtime behavior; when the user asks to burn/flash/monitor logs; or when ESP-IDF hardware validation is needed from the Linux host through the Windows COM3 bridge. Do not trigger for host-only tools, documentation, generated previews, or Trellis/agent files that do not affect the firmware image.
+description: Flash and monitor this project's ESP32 hardware through the fixed LAN RFC2217 bridge. Use when finishing a firmware-impacting code task that changes ESP-IDF sources, configuration, build inputs, or device runtime behavior; when the user asks to burn/flash/monitor logs; or when ESP-IDF hardware validation is needed from the Linux host through the Windows COM3 bridge. Do not trigger for host-only tools, documentation, generated previews, or agent files that do not affect the firmware image.
 ---
 
 # ESP32 LAN RFC2217 Flash
@@ -29,7 +29,7 @@ sources, components, `sdkconfig*`, partition tables, firmware build files, or
 other inputs that alter the device image or runtime behavior.
 
 Do not flash for host-only utility scripts, documentation, generated images or
-previews, Trellis/spec files, or agent/skill files unless the user explicitly
+previews, spec files, or agent/skill files unless the user explicitly
 asks for hardware validation or those changes also affect the firmware image.
 
 ```bash

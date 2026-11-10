@@ -136,9 +136,9 @@ Controllers report speed, RPM, gear, bus voltage/current, power, controller and 
 | Embedded Web | Single-page HTML / CSS / vanilla JavaScript embedded in the firmware image |
 | Vercel control page | React 19, TypeScript, Vite 6, Vercel |
 | Android casting | Kotlin, Android SDK 35, Java 17, Gradle 8.14.2 |
-| Quality and workflow | GitNexus, Trellis, host protocol self-tests, ESP-IDF builds, and hardware logs |
+| Quality and workflow | GitNexus, host protocol self-tests, ESP-IDF builds, and hardware logs |
 
-Dependency versions, partitions, diagnostic images, and platform build commands are defined in the [project build contract](./.trellis/spec/backend/hardware-build-flash.md).
+Dependency versions, partitions, diagnostic images, and platform build commands are defined in the [project build contract](./docs/hardware-build-flash.md).
 
 ## 🚀 Configure, Build, and Flash
 
@@ -177,7 +177,7 @@ Windows local serial:
 
 Interactive flashing defaults to a local serial port; remote RFC2217 requires an explicit selection and URL.
 
-Erase Flash once when switching from a different partition table. See the [firmware hardware, build, and flash contract](./.trellis/spec/backend/hardware-build-flash.md) for build-only commands, erase flow, diagnostic images, partition layout, and troubleshooting.
+Erase Flash once when switching from a different partition table. See the [firmware hardware, build, and flash contract](./docs/hardware-build-flash.md) for build-only commands, erase flow, diagnostic images, partition layout, and troubleshooting.
 
 ## Desktop Simulator
 
@@ -215,7 +215,6 @@ docs/protocols/               Device protocol baseline, field maps, and cross-ve
 preview/                      Local UI preview scripts and ignored preview assets
 img/                          README image assets
 .github/                      GitHub Actions cloud-build workflow
-.trellis/spec/                Project engineering specifications and executable contracts
 ```
 
 `main/idf_main.c` owns boot orchestration only. Hardware, protocol, state, and UI logic belong in focused ESP-IDF components.

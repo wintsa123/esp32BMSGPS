@@ -1,3 +1,0 @@
-{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Firmware validation, no full-frame allocation, and GitNexus check contract."}
-{"file":".trellis/spec/backend/hardware-build-flash.md","reason":"Required ESP-IDF build and RFC2217 hardware verification."}
-{"file":".trellis/spec/frontend/lvgl-dashboard-layout.md","reason":"Rotation and restored carousel UI verification."}

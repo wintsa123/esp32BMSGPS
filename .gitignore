@@ -34,7 +34,6 @@
 /.npm-cache/
 /.selftests-work-current/
 /.yy-apk-analysis.*/
-/.trellis/workspace/*/yybms-analysis/
 /build*.stale-*/
 /esp_idf_activate_*/
 /tmp*idf_*
