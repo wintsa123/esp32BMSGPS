@@ -126,6 +126,13 @@ console.log(JSON.stringify({
                        'id="topbar"', 'id="scroll"', 'id="tabbar"', 'class="tab-ind"',
                        'data-num=', 'class="bar grow"', 'hero-in'):
             self.assertIn(marker, page)
+        self.assertEqual(3, len(re.findall(r'data-tab="', page)))
+        self.assertIn('ae5', page.lower())
+        self.assertIn('<img', page)
+        title = re.search(r'class="app-title"[^>]*>(.*?)</', page).group(1)
+        self.assertIn("两轮智控", title)
+        self.assertNotIn("button", title)
+        self.assertNotIn("192.168", title)
 
     def test_device_units_preserve_zero_and_missing_values(self):
         self.assertEqual(["52.40 V", "0.00 V", "--", "--"], self.output["millivolts"])

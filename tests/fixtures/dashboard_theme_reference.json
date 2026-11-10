@@ -1,0 +1,67 @@
+{
+  "source": "lswlc33/dashboard@35aa033eecb95f214dce059850aa629557abfd98 public/js/theme.js",
+  "presets": {
+    "purple": [
+      "a33d843d4a97cf440fc046903f83a46302c819cdb4ad540ed56cf9140eccd5b0",
+      "34fbd246fcc4661abc0776863c56a536c486182145801eab9c98a34280b44000"
+    ],
+    "blue": [
+      "1a37bd922d0f40a8e143374436820250faf5a4575382ac85d35b8d2e7cd51558",
+      "36755e6032f70a08e38a7f9255cd0aad87d6cdddbc425036fb734966add83872"
+    ],
+    "yellow": [
+      "b3e0269d95d71e215cb0beb112ad5d0f8b2689519420c20ded735146aaa0381b",
+      "3609a68294dc034f225ed380ce3113aa7a638924af895e8e0d46f257e6a6ec6a"
+    ],
+    "red": [
+      "6965998022ebcd135857685c3d4230f98e325d86d41c4b3ce3531e0af40bcb1e",
+      "ede1f565fd57b86fe96935b79d8237a8cc4df64ab7c92c71457ce705c81b07d8"
+    ],
+    "pink": [
+      "9960e879849e546c3484d91da6d7ebddd77816faaf933c9ea5cbc254733b60ed",
+      "6562b60cf4ad61a1125536b009ff95ae616bcc1852b4a14610f9bb49f719cd85"
+    ],
+    "green": [
+      "ada345e6580a73dc6a2f79ad3f974d641e61551abd24816d8c0e8e2809734909",
+      "bed8df2ec675f33f57e344c757b116bb895a329e1c00c82a9013a77612ba4dc9"
+    ],
+    "multi-cool": [
+      "8da2dafaffd3d53bb659a77eec08126d095ea7b620522e7906df916fe7d83501",
+      "346cd5af9ac820fbef5302b5b1df4c2024d487075a6832fca8acfebafd61a885"
+    ],
+    "multi-warm": [
+      "7a51a240551f43ae60a0d503aa2fca67977f16aefc149cd850d22ed84efd7a7f",
+      "8ef261700c0847f11bd849986e9191ef5bb80dde7ac8fe33fc1fb181407e4c59"
+    ]
+  },
+  "custom": {
+    "tonal-spot": [
+      "6cdb87b7725109fa8c123a5f5bead64ed95caf0fece205af37bc3a0fe3b44669",
+      "cfcdfdf5287eef3ec7c92243ccfb5f71a7b3c85bed4bf757f47954eefa0e53c2"
+    ],
+    "spritz": [
+      "1ec110ffecd57d0029965d0e25c95b5261fbc6005a7e914d0b9eb082c56a2fac",
+      "ce10b5bb01d553c6ec5e5ef183fd7d04f466e349aea5914fa655b69ba662ab09"
+    ],
+    "vibrant": [
+      "f9e1fe270a318a8c241f1c773b7e7376aab6d8341316d65ed9c583039d480a77",
+      "a4d149e189c992d5ce417e1350422f772fe9c10001f19408b69ee09a0ddc8808"
+    ],
+    "expressive": [
+      "b92fda1484344e4506737066e1d35cb6723f02e0d0e11e59965190bcdc650fea",
+      "b3788d1d574ee0d9eed727c353c5711ec9295db578da33216a5b87e77bd0c8b9"
+    ],
+    "rainbow": [
+      "f84218afe383d28fb676c1938ebbe749e32eba804cc807fab9224077e6fdab71",
+      "504d3893fbc62554430cecdcfea550480067c1c96f0dc7fc90f7fad1d7735cfe"
+    ],
+    "fruit-salad": [
+      "64936089c5eedf58eee0084da8b1841ae84afa49d37caf9c129cd31882d68dc0",
+      "02d092caa07f7d6a01b904fe9c382be2be2274880cf99b4b5c38f39d65db1fc0"
+    ],
+    "monochromatic": [
+      "f0943ab270ab6fb82a6650445fef847fa66f3a0575585cf7b6fbf6d41d065fba",
+      "b2d4ba72a7915c0aeaa4c0fe5b54ac557ff5f1a5e74e8d5bff8bbdf5470c6c6a"
+    ]
+  }
+}
