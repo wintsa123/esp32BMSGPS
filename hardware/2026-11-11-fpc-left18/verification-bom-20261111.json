@@ -1,10 +1,8 @@
 {
   "date": "2026-11-11",
   "r5": "2.2Ω",
-  "selected_resistor_placements": 11,
-  "pending_purchase": [
-    "R4:450kΩ/R0805"
-  ],
+  "selected_resistor_placements": 12,
+  "pending_purchase": [],
   "dnp": [
     "R9"
   ],
@@ -25,5 +23,27 @@
   "epro2_current_geometry_and_component_attributes_match": true,
   "sqlite_integrity": "ok",
   "pcb_geometry_and_pad_net_mapping_unchanged": true,
-  "gerber_unchanged": true
+  "gerber_unchanged": true,
+  "r4": "453kΩ",
+  "r4_manufacturer_part": "0805W8F4533T5E",
+  "r4_supplier_part": "C17702",
+  "r4_nominal_output_V": 3.318,
+  "r4_saved_reopened_matches": true,
+  "r4_only_value_and_procurement_metadata_changed": true,
+  "r4_epro2_current_geometry_and_component_attributes_match": true,
+  "r4_history": {
+    "conversations": [
+      {
+        "date": "2026-10-26",
+        "session_id": "01a175e4-0d01-7ef0-a793-9df9d8fd55e6",
+        "result": "推荐 453kΩ / 0805W8F4533T5E / C17702；当时明确未改生产 BOM 或原理图"
+      },
+      {
+        "date": "2026-11-02",
+        "session_id": "01a18ced-ec3c-7db2-b501-a6ac4e967550",
+        "result": "再次推荐同一 453kΩ 型号；当时明确未修改设计"
+      }
+    ],
+    "applied_on": "2026-11-11"
+  }
 }

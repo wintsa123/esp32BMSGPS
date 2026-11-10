@@ -72,6 +72,17 @@
         "R15",
         "R16"
       ]
+    },
+    {
+      "supplierPart": "C17702",
+      "manufacturer": "UNI-ROYAL(厚声)",
+      "manufacturerPart": "0805W8F4533T5E",
+      "footprint": "R0805",
+      "description": "电阻类型:厚膜电阻;阻值:453kΩ;精度:±1%;功率:125mW;工作电压:150V;温度系数:±100ppm/℃;",
+      "datasheet": "https://item.szlcsc.com/datasheet/0805W8F4533T5E/18390.html",
+      "usedBy": [
+        "R4"
+      ]
     }
   ]
 }
