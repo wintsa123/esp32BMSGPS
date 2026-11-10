@@ -121,6 +121,14 @@ console.log(JSON.stringify({
         self.assertIn("Wi-Fi 连接", page)
         self.assertIn("系统信息", page)
         self.assertNotIn("device-subnav", page)
+        self.assertNotIn("my-list-row", page)
+        self.assertNotIn(">我的</span>", page)
+        self.assertIn('>设置</span>', page)
+        for card in ("bluetooth", "wifi", "system", "device", "update"):
+            self.assertIn(f'aria-labelledby="settings-{card}-title"', page)
+        self.assertIn('name="password"', page)
+        self.assertIn('面板版本', page)
+        self.assertIn('App 版本', page)
         self.assertIn('aria-label="功能"></section>', page)
         self.assertNotIn('class="chip">AE5</span>', page)
         for removed in ("ZEEHO", "zeeho", "车辆位置", "车辆设置", "解锁车辆", "鸣笛", "寻车"):
