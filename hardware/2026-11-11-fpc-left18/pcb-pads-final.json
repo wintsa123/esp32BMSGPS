@@ -1,0 +1,3419 @@
+[
+  {
+    "designator": "C1",
+    "id": "2e569d2cdde80935e15",
+    "number": "2",
+    "net": "3.3V",
+    "x": 2754.4,
+    "y": -1635,
+    "shape": [
+      "RECT",
+      55.5,
+      53.1,
+      0
+    ],
+    "hole": null,
+    "rotation": 180
+  },
+  {
+    "designator": "C1",
+    "id": "2e569d2cdde80935e16",
+    "number": "1",
+    "net": "GND",
+    "x": 2833.1,
+    "y": -1635,
+    "shape": [
+      "RECT",
+      55.5,
+      53.1,
+      0
+    ],
+    "hole": null,
+    "rotation": 180
+  },
+  {
+    "designator": "C2",
+    "id": "a862659c7527849de15",
+    "number": "2",
+    "net": "+5V",
+    "x": 1922.9,
+    "y": -3755.7,
+    "shape": [
+      "RECT",
+      55.5,
+      53.1,
+      0
+    ],
+    "hole": null,
+    "rotation": -90
+  },
+  {
+    "designator": "C2",
+    "id": "a862659c7527849de16",
+    "number": "1",
+    "net": "GND",
+    "x": 1922.9,
+    "y": -3676.9,
+    "shape": [
+      "RECT",
+      55.5,
+      53.1,
+      0
+    ],
+    "hole": null,
+    "rotation": -90
+  },
+  {
+    "designator": "C3",
+    "id": "b4dc99a3d9979c98e15",
+    "number": "2",
+    "net": "3.3V",
+    "x": 2190.6,
+    "y": -3585,
+    "shape": [
+      "RECT",
+      55.5,
+      53.1,
+      0
+    ],
+    "hole": null,
+    "rotation": 180
+  },
+  {
+    "designator": "C3",
+    "id": "b4dc99a3d9979c98e16",
+    "number": "1",
+    "net": "GND",
+    "x": 2269.4,
+    "y": -3585,
+    "shape": [
+      "RECT",
+      55.5,
+      53.1,
+      0
+    ],
+    "hole": null,
+    "rotation": 180
+  },
+  {
+    "designator": "FPC1",
+    "id": "42c0df50d319d4fae53",
+    "number": "1",
+    "net": "GND",
+    "x": 1859.4,
+    "y": -1981.9,
+    "shape": [
+      "RECT",
+      11.8,
+      47.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "FPC1",
+    "id": "42c0df50d319d4fae54",
+    "number": "2",
+    "net": "3.3V",
+    "x": 1839.8,
+    "y": -1981.9,
+    "shape": [
+      "RECT",
+      11.8,
+      47.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "FPC1",
+    "id": "42c0df50d319d4fae55",
+    "number": "3",
+    "net": "IM0",
+    "x": 1820.1,
+    "y": -1981.9,
+    "shape": [
+      "RECT",
+      11.8,
+      47.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "FPC1",
+    "id": "42c0df50d319d4fae56",
+    "number": "4",
+    "net": "GND",
+    "x": 1800.4,
+    "y": -1981.9,
+    "shape": [
+      "RECT",
+      11.8,
+      47.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "FPC1",
+    "id": "42c0df50d319d4fae57",
+    "number": "5",
+    "net": "BK1",
+    "x": 1780.7,
+    "y": -1981.9,
+    "shape": [
+      "RECT",
+      11.8,
+      47.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "FPC1",
+    "id": "42c0df50d319d4fae58",
+    "number": "6",
+    "net": "BK1",
+    "x": 1761,
+    "y": -1981.9,
+    "shape": [
+      "RECT",
+      11.8,
+      47.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "FPC1",
+    "id": "42c0df50d319d4fae59",
+    "number": "7",
+    "net": "BK1",
+    "x": 1741.3,
+    "y": -1981.9,
+    "shape": [
+      "RECT",
+      11.8,
+      47.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "FPC1",
+    "id": "42c0df50d319d4fae60",
+    "number": "8",
+    "net": "LEDA",
+    "x": 1721.6,
+    "y": -1981.9,
+    "shape": [
+      "RECT",
+      11.8,
+      47.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "FPC1",
+    "id": "42c0df50d319d4fae61",
+    "number": "9",
+    "net": "DB15",
+    "x": 1702,
+    "y": -1981.9,
+    "shape": [
+      "RECT",
+      11.8,
+      47.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "FPC1",
+    "id": "42c0df50d319d4fae62",
+    "number": "10",
+    "net": "DB14",
+    "x": 1682.3,
+    "y": -1981.9,
+    "shape": [
+      "RECT",
+      11.8,
+      47.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "FPC1",
+    "id": "42c0df50d319d4fae63",
+    "number": "11",
+    "net": "DB13",
+    "x": 1662.6,
+    "y": -1981.9,
+    "shape": [
+      "RECT",
+      11.8,
+      47.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "FPC1",
+    "id": "42c0df50d319d4fae64",
+    "number": "12",
+    "net": "DB12",
+    "x": 1642.9,
+    "y": -1981.9,
+    "shape": [
+      "RECT",
+      11.8,
+      47.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "FPC1",
+    "id": "42c0df50d319d4fae65",
+    "number": "13",
+    "net": "DB11",
+    "x": 1623.2,
+    "y": -1981.9,
+    "shape": [
+      "RECT",
+      11.8,
+      47.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "FPC1",
+    "id": "42c0df50d319d4fae66",
+    "number": "14",
+    "net": "DB10",
+    "x": 1603.5,
+    "y": -1981.9,
+    "shape": [
+      "RECT",
+      11.8,
+      47.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "FPC1",
+    "id": "42c0df50d319d4fae67",
+    "number": "15",
+    "net": "DB9",
+    "x": 1583.9,
+    "y": -1981.9,
+    "shape": [
+      "RECT",
+      11.8,
+      47.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "FPC1",
+    "id": "42c0df50d319d4fae68",
+    "number": "16",
+    "net": "DB8",
+    "x": 1564.2,
+    "y": -1981.9,
+    "shape": [
+      "RECT",
+      11.8,
+      47.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "FPC1",
+    "id": "42c0df50d319d4fae69",
+    "number": "17",
+    "net": "DB7",
+    "x": 1544.5,
+    "y": -1981.9,
+    "shape": [
+      "RECT",
+      11.8,
+      47.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "FPC1",
+    "id": "42c0df50d319d4fae70",
+    "number": "18",
+    "net": "DB6",
+    "x": 1524.8,
+    "y": -1981.9,
+    "shape": [
+      "RECT",
+      11.8,
+      47.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "FPC1",
+    "id": "42c0df50d319d4fae71",
+    "number": "19",
+    "net": "DB5",
+    "x": 1505.1,
+    "y": -1981.9,
+    "shape": [
+      "RECT",
+      11.8,
+      47.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "FPC1",
+    "id": "42c0df50d319d4fae72",
+    "number": "20",
+    "net": "DB4",
+    "x": 1485.4,
+    "y": -1981.9,
+    "shape": [
+      "RECT",
+      11.8,
+      47.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "FPC1",
+    "id": "42c0df50d319d4fae73",
+    "number": "21",
+    "net": "DB3",
+    "x": 1465.7,
+    "y": -1981.9,
+    "shape": [
+      "RECT",
+      11.8,
+      47.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "FPC1",
+    "id": "42c0df50d319d4fae74",
+    "number": "22",
+    "net": "DB2",
+    "x": 1446.1,
+    "y": -1981.9,
+    "shape": [
+      "RECT",
+      11.8,
+      47.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "FPC1",
+    "id": "42c0df50d319d4fae75",
+    "number": "23",
+    "net": "DB1",
+    "x": 1426.4,
+    "y": -1981.9,
+    "shape": [
+      "RECT",
+      11.8,
+      47.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "FPC1",
+    "id": "42c0df50d319d4fae76",
+    "number": "24",
+    "net": "DB0",
+    "x": 1406.7,
+    "y": -1981.9,
+    "shape": [
+      "RECT",
+      11.8,
+      47.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "FPC1",
+    "id": "42c0df50d319d4fae77",
+    "number": "25",
+    "net": "GND",
+    "x": 1387,
+    "y": -1981.9,
+    "shape": [
+      "RECT",
+      11.8,
+      47.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "FPC1",
+    "id": "42c0df50d319d4fae78",
+    "number": "26",
+    "net": "LCD_RST",
+    "x": 1367.3,
+    "y": -1981.9,
+    "shape": [
+      "RECT",
+      11.8,
+      47.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "FPC1",
+    "id": "42c0df50d319d4fae79",
+    "number": "27",
+    "net": "",
+    "x": 1347.6,
+    "y": -1981.9,
+    "shape": [
+      "RECT",
+      11.8,
+      47.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "FPC1",
+    "id": "42c0df50d319d4fae80",
+    "number": "28",
+    "net": "GND",
+    "x": 1327.9,
+    "y": -1981.9,
+    "shape": [
+      "RECT",
+      11.8,
+      47.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "FPC1",
+    "id": "42c0df50d319d4fae81",
+    "number": "29",
+    "net": "LCD_RD",
+    "x": 1308.3,
+    "y": -1981.9,
+    "shape": [
+      "RECT",
+      11.8,
+      47.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "FPC1",
+    "id": "42c0df50d319d4fae82",
+    "number": "30",
+    "net": "LCD_WR",
+    "x": 1288.6,
+    "y": -1981.9,
+    "shape": [
+      "RECT",
+      11.8,
+      47.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "FPC1",
+    "id": "42c0df50d319d4fae83",
+    "number": "31",
+    "net": "LCD_RS",
+    "x": 1268.9,
+    "y": -1981.9,
+    "shape": [
+      "RECT",
+      11.8,
+      47.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "FPC1",
+    "id": "42c0df50d319d4fae84",
+    "number": "32",
+    "net": "LCD_CS",
+    "x": 1249.2,
+    "y": -1981.9,
+    "shape": [
+      "RECT",
+      11.8,
+      47.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "FPC1",
+    "id": "42c0df50d319d4fae85",
+    "number": "33",
+    "net": "",
+    "x": 1229.5,
+    "y": -1981.9,
+    "shape": [
+      "RECT",
+      11.8,
+      47.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "FPC1",
+    "id": "42c0df50d319d4fae86",
+    "number": "34",
+    "net": "3.3V",
+    "x": 1209.8,
+    "y": -1981.9,
+    "shape": [
+      "RECT",
+      11.8,
+      47.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "FPC1",
+    "id": "42c0df50d319d4fae87",
+    "number": "35",
+    "net": "3.3V",
+    "x": 1190.2,
+    "y": -1981.9,
+    "shape": [
+      "RECT",
+      11.8,
+      47.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "FPC1",
+    "id": "42c0df50d319d4fae88",
+    "number": "36",
+    "net": "GND",
+    "x": 1170.5,
+    "y": -1981.9,
+    "shape": [
+      "RECT",
+      11.8,
+      47.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "FPC1",
+    "id": "42c0df50d319d4fae89",
+    "number": "37",
+    "net": "Y+",
+    "x": 1150.8,
+    "y": -1981.9,
+    "shape": [
+      "RECT",
+      11.8,
+      47.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "FPC1",
+    "id": "42c0df50d319d4fae90",
+    "number": "38",
+    "net": "X+",
+    "x": 1131.1,
+    "y": -1981.9,
+    "shape": [
+      "RECT",
+      11.8,
+      47.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "FPC1",
+    "id": "42c0df50d319d4fae91",
+    "number": "39",
+    "net": "Y-",
+    "x": 1111.4,
+    "y": -1981.9,
+    "shape": [
+      "RECT",
+      11.8,
+      47.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "FPC1",
+    "id": "42c0df50d319d4fae92",
+    "number": "40",
+    "net": "X-",
+    "x": 1091.7,
+    "y": -1981.9,
+    "shape": [
+      "RECT",
+      11.8,
+      47.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "FPC1",
+    "id": "42c0df50d319d4fae93",
+    "number": "41",
+    "net": "GND",
+    "x": 1922.4,
+    "y": -1878.1,
+    "shape": [
+      "RECT",
+      86.6,
+      129.9,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "FPC1",
+    "id": "42c0df50d319d4fae94",
+    "number": "42",
+    "net": "GND",
+    "x": 1028.7,
+    "y": -1878.1,
+    "shape": [
+      "RECT",
+      86.6,
+      129.9,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "FPC2",
+    "id": "a9d9176016196463e5",
+    "number": "1",
+    "net": "3.3V",
+    "x": 1270.8,
+    "y": -1262.7,
+    "shape": [
+      "RECT",
+      47.2,
+      11.8,
+      0
+    ],
+    "hole": null,
+    "rotation": -90.00000000000001
+  },
+  {
+    "designator": "FPC2",
+    "id": "a9d9176016196463e6",
+    "number": "2",
+    "net": "SDA_TH",
+    "x": 1251.1,
+    "y": -1262.7,
+    "shape": [
+      "RECT",
+      47.2,
+      11.8,
+      0
+    ],
+    "hole": null,
+    "rotation": -90.00000000000001
+  },
+  {
+    "designator": "FPC2",
+    "id": "a9d9176016196463e7",
+    "number": "3",
+    "net": "SCL_TH",
+    "x": 1231.3,
+    "y": -1262.7,
+    "shape": [
+      "RECT",
+      47.2,
+      11.8,
+      0
+    ],
+    "hole": null,
+    "rotation": -90.00000000000001
+  },
+  {
+    "designator": "FPC2",
+    "id": "a9d9176016196463e8",
+    "number": "4",
+    "net": "INT",
+    "x": 1211.7,
+    "y": -1262.7,
+    "shape": [
+      "RECT",
+      47.2,
+      11.8,
+      0
+    ],
+    "hole": null,
+    "rotation": -90.00000000000001
+  },
+  {
+    "designator": "FPC2",
+    "id": "a9d9176016196463e9",
+    "number": "5",
+    "net": "RST",
+    "x": 1192,
+    "y": -1262.7,
+    "shape": [
+      "RECT",
+      47.2,
+      11.8,
+      0
+    ],
+    "hole": null,
+    "rotation": -90.00000000000001
+  },
+  {
+    "designator": "FPC2",
+    "id": "a9d9176016196463e10",
+    "number": "6",
+    "net": "GND",
+    "x": 1172.4,
+    "y": -1262.7,
+    "shape": [
+      "RECT",
+      47.2,
+      11.8,
+      0
+    ],
+    "hole": null,
+    "rotation": -90.00000000000001
+  },
+  {
+    "designator": "FPC2",
+    "id": "a9d9176016196463e11",
+    "number": "7",
+    "net": "GND",
+    "x": 1105.4,
+    "y": -1177.3,
+    "shape": [
+      "RECT",
+      129.9,
+      86.6,
+      0
+    ],
+    "hole": null,
+    "rotation": -90.00000000000001
+  },
+  {
+    "designator": "FPC2",
+    "id": "a9d9176016196463e12",
+    "number": "8",
+    "net": "GND",
+    "x": 1337.7,
+    "y": -1177.3,
+    "shape": [
+      "RECT",
+      129.9,
+      86.6,
+      0
+    ],
+    "hole": null,
+    "rotation": -90.00000000000001
+  },
+  {
+    "designator": "L1",
+    "id": "fe9a97469d2c2c92e20",
+    "number": "1",
+    "net": "$1N47",
+    "x": 2793,
+    "y": -1015,
+    "shape": [
+      "RECT",
+      44.6,
+      54.2,
+      0
+    ],
+    "hole": null,
+    "rotation": -90
+  },
+  {
+    "designator": "L1",
+    "id": "fe9a97469d2c2c92e21",
+    "number": "2",
+    "net": "$1N46",
+    "x": 2793,
+    "y": -1091.1,
+    "shape": [
+      "RECT",
+      44.6,
+      54.2,
+      0
+    ],
+    "hole": null,
+    "rotation": -90
+  },
+  {
+    "designator": "L2",
+    "id": "2150c9a7ff15d408e5",
+    "number": "2",
+    "net": "$1N78",
+    "x": 2145,
+    "y": -3769.4,
+    "shape": [
+      "RECT",
+      86.6,
+      31.5,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "L2",
+    "id": "2150c9a7ff15d408e6",
+    "number": "1",
+    "net": "3.3V",
+    "x": 2145,
+    "y": -3690.6,
+    "shape": [
+      "RECT",
+      86.6,
+      31.5,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "Q1",
+    "id": "60d34d52862dd4a0e9",
+    "number": "2",
+    "net": "GND",
+    "x": 1869.8,
+    "y": -2200.3,
+    "shape": [
+      "RECT",
+      39.4,
+      31.5,
+      0
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "Q1",
+    "id": "60d34d52862dd4a0e10",
+    "number": "3",
+    "net": "BK1",
+    "x": 1832.4,
+    "y": -2109.7,
+    "shape": [
+      "RECT",
+      39.4,
+      31.5,
+      0
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "Q1",
+    "id": "60d34d52862dd4a0e11",
+    "number": "1",
+    "net": "BL_EN",
+    "x": 1795,
+    "y": -2200.3,
+    "shape": [
+      "RECT",
+      39.4,
+      31.5,
+      0
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "R1",
+    "id": "674505b4327e6749e10",
+    "number": "2",
+    "net": "GND",
+    "x": 1770,
+    "y": -3500.6,
+    "shape": [
+      "RECT",
+      44.6,
+      54.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "R1",
+    "id": "674505b4327e6749e11",
+    "number": "1",
+    "net": "$1N67",
+    "x": 1770,
+    "y": -3579.4,
+    "shape": [
+      "RECT",
+      44.6,
+      54.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "R2",
+    "id": "57d8ae0a3da1276ce10",
+    "number": "2",
+    "net": "GND",
+    "x": 1530.5,
+    "y": -3500.6,
+    "shape": [
+      "RECT",
+      44.6,
+      54.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "R2",
+    "id": "57d8ae0a3da1276ce11",
+    "number": "1",
+    "net": "$1N68",
+    "x": 1530.5,
+    "y": -3579.4,
+    "shape": [
+      "RECT",
+      44.6,
+      54.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "R3",
+    "id": "d2fee83a3ee2c2dfe10",
+    "number": "2",
+    "net": "GND",
+    "x": 1885.6,
+    "y": -3585,
+    "shape": [
+      "RECT",
+      44.6,
+      54.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 180
+  },
+  {
+    "designator": "R3",
+    "id": "d2fee83a3ee2c2dfe11",
+    "number": "1",
+    "net": "$1N80",
+    "x": 1964.4,
+    "y": -3585,
+    "shape": [
+      "RECT",
+      44.6,
+      54.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 180
+  },
+  {
+    "designator": "R4",
+    "id": "bfb5b316fac92334e10",
+    "number": "2",
+    "net": "3.3V",
+    "x": 2114.4,
+    "y": -3585,
+    "shape": [
+      "RECT",
+      44.6,
+      54.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "R4",
+    "id": "bfb5b316fac92334e11",
+    "number": "1",
+    "net": "$1N80",
+    "x": 2035.6,
+    "y": -3585,
+    "shape": [
+      "RECT",
+      44.6,
+      54.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "R5",
+    "id": "e1dad1e992db39c8e10",
+    "number": "2",
+    "net": "3.3V",
+    "x": 1997.4,
+    "y": -2184.4,
+    "shape": [
+      "RECT",
+      44.6,
+      54.2,
+      0
+    ],
+    "hole": null,
+    "rotation": -90
+  },
+  {
+    "designator": "R5",
+    "id": "e1dad1e992db39c8e11",
+    "number": "1",
+    "net": "LEDA",
+    "x": 1997.4,
+    "y": -2105.6,
+    "shape": [
+      "RECT",
+      44.6,
+      54.2,
+      0
+    ],
+    "hole": null,
+    "rotation": -90
+  },
+  {
+    "designator": "R6",
+    "id": "bda02158fc019442e10",
+    "number": "2",
+    "net": "$1N87",
+    "x": 1265.6,
+    "y": -3755,
+    "shape": [
+      "RECT",
+      44.6,
+      54.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 180
+  },
+  {
+    "designator": "R6",
+    "id": "bda02158fc019442e11",
+    "number": "1",
+    "net": "3.3V",
+    "x": 1344.4,
+    "y": -3755,
+    "shape": [
+      "RECT",
+      44.6,
+      54.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 180
+  },
+  {
+    "designator": "R7",
+    "id": "4d942bb9c6e094dae10",
+    "number": "2",
+    "net": "$1N88",
+    "x": 415,
+    "y": -2924.4,
+    "shape": [
+      "RECT",
+      44.6,
+      54.2,
+      0
+    ],
+    "hole": null,
+    "rotation": -90
+  },
+  {
+    "designator": "R7",
+    "id": "4d942bb9c6e094dae11",
+    "number": "1",
+    "net": "3.3V",
+    "x": 415,
+    "y": -2845.6,
+    "shape": [
+      "RECT",
+      44.6,
+      54.2,
+      0
+    ],
+    "hole": null,
+    "rotation": -90
+  },
+  {
+    "designator": "R8",
+    "id": "6edc5583e5d850cce10",
+    "number": "2",
+    "net": "GND",
+    "x": 1797.4,
+    "y": -2379.4,
+    "shape": [
+      "RECT",
+      44.6,
+      54.2,
+      0
+    ],
+    "hole": null,
+    "rotation": -90
+  },
+  {
+    "designator": "R8",
+    "id": "6edc5583e5d850cce11",
+    "number": "1",
+    "net": "BL_EN",
+    "x": 1797.4,
+    "y": -2300.6,
+    "shape": [
+      "RECT",
+      44.6,
+      54.2,
+      0
+    ],
+    "hole": null,
+    "rotation": -90
+  },
+  {
+    "designator": "R9",
+    "id": "ea1b8d7e174a123de10",
+    "number": "2",
+    "net": "IM0",
+    "x": 1937.4,
+    "y": -2305.6,
+    "shape": [
+      "RECT",
+      44.6,
+      54.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "R9",
+    "id": "ea1b8d7e174a123de11",
+    "number": "1",
+    "net": "3.3V",
+    "x": 1937.4,
+    "y": -2384.4,
+    "shape": [
+      "RECT",
+      44.6,
+      54.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "R10",
+    "id": "cd57665a63d54710e10",
+    "number": "2",
+    "net": "IM0",
+    "x": 2057.4,
+    "y": -2305.6,
+    "shape": [
+      "RECT",
+      44.6,
+      54.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "R10",
+    "id": "cd57665a63d54710e11",
+    "number": "1",
+    "net": "GND",
+    "x": 2057.4,
+    "y": -2384.4,
+    "shape": [
+      "RECT",
+      44.6,
+      54.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "R15",
+    "id": "6be9435dc38230a0e10",
+    "number": "2",
+    "net": "3.3V",
+    "x": 1637.9,
+    "y": -1138.4,
+    "shape": [
+      "RECT",
+      44.6,
+      54.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "R15",
+    "id": "6be9435dc38230a0e11",
+    "number": "1",
+    "net": "SCL_TH",
+    "x": 1559.1,
+    "y": -1138.4,
+    "shape": [
+      "RECT",
+      44.6,
+      54.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "R16",
+    "id": "2e099288b63b008fe10",
+    "number": "2",
+    "net": "3.3V",
+    "x": 1636.8,
+    "y": -1220,
+    "shape": [
+      "RECT",
+      44.6,
+      54.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "R16",
+    "id": "2e099288b63b008fe11",
+    "number": "1",
+    "net": "SDA_TH",
+    "x": 1558.1,
+    "y": -1220,
+    "shape": [
+      "RECT",
+      44.6,
+      54.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "R17",
+    "id": "ea6a31c7b47320f4e10",
+    "number": "2",
+    "net": "D+",
+    "x": 1690.2,
+    "y": -3500.6,
+    "shape": [
+      "RECT",
+      44.6,
+      54.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "R17",
+    "id": "ea6a31c7b47320f4e11",
+    "number": "1",
+    "net": "$1N71",
+    "x": 1690.2,
+    "y": -3579.4,
+    "shape": [
+      "RECT",
+      44.6,
+      54.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "R18",
+    "id": "6cd7bb3bf2c1008de10",
+    "number": "2",
+    "net": "D-",
+    "x": 1610.3,
+    "y": -3500.6,
+    "shape": [
+      "RECT",
+      44.6,
+      54.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "R18",
+    "id": "6cd7bb3bf2c1008de11",
+    "number": "1",
+    "net": "$1N72",
+    "x": 1610.3,
+    "y": -3579.4,
+    "shape": [
+      "RECT",
+      44.6,
+      54.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "R19",
+    "id": "e92f437ae300250ce10",
+    "number": "2",
+    "net": "3.3V",
+    "x": 200,
+    "y": -3884.4,
+    "shape": [
+      "RECT",
+      44.6,
+      54.2,
+      0
+    ],
+    "hole": null,
+    "rotation": -90
+  },
+  {
+    "designator": "R19",
+    "id": "e92f437ae300250ce11",
+    "number": "1",
+    "net": "LCD_CS",
+    "x": 200,
+    "y": -3805.6,
+    "shape": [
+      "RECT",
+      44.6,
+      54.2,
+      0
+    ],
+    "hole": null,
+    "rotation": -90
+  },
+  {
+    "designator": "SW1",
+    "id": "d43c8913427b0b27e3",
+    "number": "1",
+    "net": "GND",
+    "x": 300,
+    "y": -2887.3,
+    "shape": [
+      "RECT",
+      59.1,
+      78.7,
+      0
+    ],
+    "hole": null,
+    "rotation": -90
+  },
+  {
+    "designator": "SW1",
+    "id": "d43c8913427b0b27e4",
+    "number": "2",
+    "net": "$1N88",
+    "x": 300,
+    "y": -3052.7,
+    "shape": [
+      "RECT",
+      59.1,
+      78.7,
+      0
+    ],
+    "hole": null,
+    "rotation": -90
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae54",
+    "number": "1",
+    "net": "GND",
+    "x": 1094.5,
+    "y": -3855.2,
+    "shape": [
+      "RECT",
+      59.1,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": 180
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae55",
+    "number": "2",
+    "net": "3.3V",
+    "x": 1094.5,
+    "y": -3805.2,
+    "shape": [
+      "RECT",
+      59.1,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": 180
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae56",
+    "number": "3",
+    "net": "$1N87",
+    "x": 1094.5,
+    "y": -3755.2,
+    "shape": [
+      "RECT",
+      59.1,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": 180
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae57",
+    "number": "4",
+    "net": "SDA_TH",
+    "x": 1094.5,
+    "y": -3705.2,
+    "shape": [
+      "RECT",
+      59.1,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": 180
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae58",
+    "number": "5",
+    "net": "SCL_TH",
+    "x": 1094.5,
+    "y": -3655.2,
+    "shape": [
+      "RECT",
+      59.1,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": 180
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae59",
+    "number": "6",
+    "net": "INT",
+    "x": 1094.5,
+    "y": -3605.2,
+    "shape": [
+      "RECT",
+      59.1,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": 180
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae60",
+    "number": "7",
+    "net": "RST",
+    "x": 1094.5,
+    "y": -3555.2,
+    "shape": [
+      "RECT",
+      59.1,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": 180
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae61",
+    "number": "8",
+    "net": "",
+    "x": 1094.5,
+    "y": -3505.2,
+    "shape": [
+      "RECT",
+      59.1,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": 180
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae62",
+    "number": "9",
+    "net": "PPS",
+    "x": 1094.5,
+    "y": -3455.2,
+    "shape": [
+      "RECT",
+      59.1,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": 180
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae63",
+    "number": "10",
+    "net": "TX",
+    "x": 1094.5,
+    "y": -3405.2,
+    "shape": [
+      "RECT",
+      59.1,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": 180
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae64",
+    "number": "11",
+    "net": "RX",
+    "x": 1094.5,
+    "y": -3355.2,
+    "shape": [
+      "RECT",
+      59.1,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": 180
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae65",
+    "number": "12",
+    "net": "BL_EN",
+    "x": 1094.5,
+    "y": -3305.2,
+    "shape": [
+      "RECT",
+      59.1,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": 180
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae66",
+    "number": "13",
+    "net": "D-",
+    "x": 1094.5,
+    "y": -3255.2,
+    "shape": [
+      "RECT",
+      59.1,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": 180
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae67",
+    "number": "14",
+    "net": "D+",
+    "x": 1094.5,
+    "y": -3205.2,
+    "shape": [
+      "RECT",
+      59.1,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": 180
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae68",
+    "number": "15",
+    "net": "DB15",
+    "x": 1025,
+    "y": -3154.8,
+    "shape": [
+      "RECT",
+      59.1,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": -90.00000000000001
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae69",
+    "number": "16",
+    "net": "DB14",
+    "x": 975,
+    "y": -3154.8,
+    "shape": [
+      "RECT",
+      59.1,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": -90.00000000000001
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae70",
+    "number": "17",
+    "net": "DB13",
+    "x": 925,
+    "y": -3154.8,
+    "shape": [
+      "RECT",
+      59.1,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": -90.00000000000001
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae71",
+    "number": "18",
+    "net": "DB12",
+    "x": 875,
+    "y": -3154.8,
+    "shape": [
+      "RECT",
+      59.1,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": -90.00000000000001
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae72",
+    "number": "19",
+    "net": "DB11",
+    "x": 825,
+    "y": -3154.8,
+    "shape": [
+      "RECT",
+      59.1,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": -90.00000000000001
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae73",
+    "number": "20",
+    "net": "DB10",
+    "x": 775,
+    "y": -3154.8,
+    "shape": [
+      "RECT",
+      59.1,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": -90.00000000000001
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae74",
+    "number": "21",
+    "net": "DB9",
+    "x": 725,
+    "y": -3154.8,
+    "shape": [
+      "RECT",
+      59.1,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": -90.00000000000001
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae75",
+    "number": "22",
+    "net": "DB8",
+    "x": 675,
+    "y": -3154.8,
+    "shape": [
+      "RECT",
+      59.1,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": -90.00000000000001
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae76",
+    "number": "23",
+    "net": "DB7",
+    "x": 625,
+    "y": -3154.8,
+    "shape": [
+      "RECT",
+      59.1,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": -90.00000000000001
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae77",
+    "number": "24",
+    "net": "DB6",
+    "x": 575,
+    "y": -3154.8,
+    "shape": [
+      "RECT",
+      59.1,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": -90.00000000000001
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae78",
+    "number": "25",
+    "net": "DB5",
+    "x": 525,
+    "y": -3154.8,
+    "shape": [
+      "RECT",
+      59.1,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": -90.00000000000001
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae79",
+    "number": "26",
+    "net": "DB4",
+    "x": 475,
+    "y": -3156,
+    "shape": [
+      "RECT",
+      59.1,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": -90.00000000000001
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae80",
+    "number": "27",
+    "net": "$1N88",
+    "x": 405.5,
+    "y": -3205.2,
+    "shape": [
+      "RECT",
+      59.1,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae81",
+    "number": "28",
+    "net": "",
+    "x": 405.5,
+    "y": -3255.2,
+    "shape": [
+      "RECT",
+      59.1,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae82",
+    "number": "29",
+    "net": "",
+    "x": 405.5,
+    "y": -3305.2,
+    "shape": [
+      "RECT",
+      59.1,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae83",
+    "number": "30",
+    "net": "",
+    "x": 405.5,
+    "y": -3355.2,
+    "shape": [
+      "RECT",
+      59.1,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae84",
+    "number": "31",
+    "net": "DB3",
+    "x": 405.5,
+    "y": -3405.2,
+    "shape": [
+      "RECT",
+      59.1,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae85",
+    "number": "32",
+    "net": "DB2",
+    "x": 405.5,
+    "y": -3455.2,
+    "shape": [
+      "RECT",
+      59.1,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae86",
+    "number": "33",
+    "net": "DB1",
+    "x": 405.5,
+    "y": -3505.2,
+    "shape": [
+      "RECT",
+      59.1,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae87",
+    "number": "34",
+    "net": "DB0",
+    "x": 405.5,
+    "y": -3555.2,
+    "shape": [
+      "RECT",
+      59.1,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae88",
+    "number": "35",
+    "net": "LCD_RST",
+    "x": 405.5,
+    "y": -3605.2,
+    "shape": [
+      "RECT",
+      59.1,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae89",
+    "number": "36",
+    "net": "LCD_RD",
+    "x": 405.5,
+    "y": -3655.2,
+    "shape": [
+      "RECT",
+      59.1,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae90",
+    "number": "37",
+    "net": "LCD_WR",
+    "x": 405.5,
+    "y": -3705.2,
+    "shape": [
+      "RECT",
+      59.1,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae91",
+    "number": "38",
+    "net": "LCD_RS",
+    "x": 405.5,
+    "y": -3755.2,
+    "shape": [
+      "RECT",
+      59.1,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae92",
+    "number": "39",
+    "net": "LCD_CS",
+    "x": 405.5,
+    "y": -3805.2,
+    "shape": [
+      "RECT",
+      59.1,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae93",
+    "number": "40",
+    "net": "GND",
+    "x": 405.5,
+    "y": -3855.2,
+    "shape": [
+      "RECT",
+      59.1,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae94",
+    "number": "41",
+    "net": "GND",
+    "x": 753.9,
+    "y": -3496.1,
+    "shape": [
+      "RECT",
+      35.4,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": -90.00000000000001
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae95",
+    "number": "41",
+    "net": "GND",
+    "x": 809.1,
+    "y": -3496.1,
+    "shape": [
+      "RECT",
+      35.4,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": -90.00000000000001
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae96",
+    "number": "41",
+    "net": "GND",
+    "x": 864.2,
+    "y": -3496.1,
+    "shape": [
+      "RECT",
+      35.4,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": -90.00000000000001
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae97",
+    "number": "41",
+    "net": "GND",
+    "x": 864.2,
+    "y": -3606.4,
+    "shape": [
+      "RECT",
+      35.4,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": -90.00000000000001
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae98",
+    "number": "41",
+    "net": "GND",
+    "x": 809.1,
+    "y": -3606.4,
+    "shape": [
+      "RECT",
+      35.4,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": -90.00000000000001
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae99",
+    "number": "41",
+    "net": "GND",
+    "x": 753.9,
+    "y": -3606.4,
+    "shape": [
+      "RECT",
+      35.4,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": -90.00000000000001
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae100",
+    "number": "41",
+    "net": "GND",
+    "x": 753.9,
+    "y": -3551.3,
+    "shape": [
+      "RECT",
+      35.4,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": -90.00000000000001
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae101",
+    "number": "41",
+    "net": "GND",
+    "x": 864.2,
+    "y": -3551.3,
+    "shape": [
+      "RECT",
+      35.4,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": -90.00000000000001
+  },
+  {
+    "designator": "U1",
+    "id": "93651c386bc8926ae102",
+    "number": "41",
+    "net": "GND",
+    "x": 809.1,
+    "y": -3551.3,
+    "shape": [
+      "RECT",
+      35.4,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": -90.00000000000001
+  },
+  {
+    "designator": "U2",
+    "id": "888ff265d18aaed6e22",
+    "number": "1",
+    "net": "GND",
+    "x": 2934.4,
+    "y": -1533.2,
+    "shape": [
+      "OVAL",
+      27.6,
+      69.8
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "U2",
+    "id": "888ff265d18aaed6e23",
+    "number": "2",
+    "net": "TX",
+    "x": 2934.4,
+    "y": -1489.9,
+    "shape": [
+      "OVAL",
+      27.6,
+      69.8
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "U2",
+    "id": "888ff265d18aaed6e24",
+    "number": "3",
+    "net": "RX",
+    "x": 2934.4,
+    "y": -1446.6,
+    "shape": [
+      "OVAL",
+      27.6,
+      69.8
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "U2",
+    "id": "888ff265d18aaed6e25",
+    "number": "4",
+    "net": "PPS",
+    "x": 2934.4,
+    "y": -1403.3,
+    "shape": [
+      "OVAL",
+      27.6,
+      69.8
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "U2",
+    "id": "888ff265d18aaed6e26",
+    "number": "5",
+    "net": "",
+    "x": 2934.4,
+    "y": -1360,
+    "shape": [
+      "OVAL",
+      27.6,
+      69.8
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "U2",
+    "id": "888ff265d18aaed6e27",
+    "number": "6",
+    "net": "3.3V",
+    "x": 2934.4,
+    "y": -1316.7,
+    "shape": [
+      "OVAL",
+      27.6,
+      69.8
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "U2",
+    "id": "888ff265d18aaed6e28",
+    "number": "7",
+    "net": "",
+    "x": 2934.4,
+    "y": -1273.4,
+    "shape": [
+      "OVAL",
+      27.6,
+      69.8
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "U2",
+    "id": "888ff265d18aaed6e29",
+    "number": "8",
+    "net": "3.3V",
+    "x": 2934.4,
+    "y": -1230.1,
+    "shape": [
+      "OVAL",
+      27.6,
+      69.8
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "U2",
+    "id": "888ff265d18aaed6e30",
+    "number": "9",
+    "net": "",
+    "x": 2934.4,
+    "y": -1186.8,
+    "shape": [
+      "OVAL",
+      27.6,
+      69.8
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "U2",
+    "id": "888ff265d18aaed6e31",
+    "number": "10",
+    "net": "GND",
+    "x": 2555.6,
+    "y": -1186.8,
+    "shape": [
+      "OVAL",
+      27.6,
+      69.8
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "U2",
+    "id": "888ff265d18aaed6e32",
+    "number": "11",
+    "net": "$1N47",
+    "x": 2555.6,
+    "y": -1230.1,
+    "shape": [
+      "OVAL",
+      27.6,
+      69.8
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "U2",
+    "id": "888ff265d18aaed6e33",
+    "number": "12",
+    "net": "GND",
+    "x": 2555.6,
+    "y": -1273.4,
+    "shape": [
+      "OVAL",
+      27.6,
+      69.8
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "U2",
+    "id": "888ff265d18aaed6e34",
+    "number": "13",
+    "net": "",
+    "x": 2555.6,
+    "y": -1316.7,
+    "shape": [
+      "OVAL",
+      27.6,
+      69.8
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "U2",
+    "id": "888ff265d18aaed6e35",
+    "number": "14",
+    "net": "$1N46",
+    "x": 2555.6,
+    "y": -1360,
+    "shape": [
+      "OVAL",
+      27.6,
+      69.8
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "U2",
+    "id": "888ff265d18aaed6e36",
+    "number": "15",
+    "net": "",
+    "x": 2555.6,
+    "y": -1403.3,
+    "shape": [
+      "OVAL",
+      27.6,
+      69.8
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "U2",
+    "id": "888ff265d18aaed6e37",
+    "number": "16",
+    "net": "",
+    "x": 2555.6,
+    "y": -1446.6,
+    "shape": [
+      "OVAL",
+      27.6,
+      69.8
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "U2",
+    "id": "888ff265d18aaed6e38",
+    "number": "17",
+    "net": "",
+    "x": 2555.6,
+    "y": -1489.9,
+    "shape": [
+      "OVAL",
+      27.6,
+      69.8
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "U2",
+    "id": "888ff265d18aaed6e39",
+    "number": "18",
+    "net": "",
+    "x": 2555.6,
+    "y": -1533.2,
+    "shape": [
+      "OVAL",
+      27.6,
+      69.8
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "U3",
+    "id": "16d826033d074fb3e14",
+    "number": "5",
+    "net": "$1N80",
+    "x": 1997.6,
+    "y": -3668.8,
+    "shape": [
+      "RECT",
+      43.3,
+      23.6,
+      0
+    ],
+    "hole": null,
+    "rotation": -90
+  },
+  {
+    "designator": "U3",
+    "id": "16d826033d074fb3e15",
+    "number": "4",
+    "net": "+5V",
+    "x": 2072.4,
+    "y": -3668.8,
+    "shape": [
+      "RECT",
+      43.3,
+      23.6,
+      0
+    ],
+    "hole": null,
+    "rotation": -90
+  },
+  {
+    "designator": "U3",
+    "id": "16d826033d074fb3e16",
+    "number": "3",
+    "net": "$1N78",
+    "x": 2072.4,
+    "y": -3771.2,
+    "shape": [
+      "RECT",
+      43.3,
+      23.6,
+      0
+    ],
+    "hole": null,
+    "rotation": -90
+  },
+  {
+    "designator": "U3",
+    "id": "16d826033d074fb3e17",
+    "number": "2",
+    "net": "GND",
+    "x": 2035,
+    "y": -3771.2,
+    "shape": [
+      "RECT",
+      43.3,
+      23.6,
+      0
+    ],
+    "hole": null,
+    "rotation": -90
+  },
+  {
+    "designator": "U3",
+    "id": "16d826033d074fb3e18",
+    "number": "1",
+    "net": "+5V",
+    "x": 1997.6,
+    "y": -3771.2,
+    "shape": [
+      "RECT",
+      43.3,
+      23.6,
+      0
+    ],
+    "hole": null,
+    "rotation": -90
+  },
+  {
+    "designator": "USB1",
+    "id": "758fb354ea39feafe28",
+    "number": "A1B12",
+    "net": "GND",
+    "x": 1539,
+    "y": -3856.5,
+    "shape": [
+      "RECT",
+      21.7,
+      43.3,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "USB1",
+    "id": "758fb354ea39feafe29",
+    "number": "A4B9",
+    "net": "+5V",
+    "x": 1570.5,
+    "y": -3856.5,
+    "shape": [
+      "RECT",
+      21.7,
+      43.3,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "USB1",
+    "id": "758fb354ea39feafe30",
+    "number": "B8",
+    "net": "",
+    "x": 1596.1,
+    "y": -3856.5,
+    "shape": [
+      "RECT",
+      11.8,
+      43.3,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "USB1",
+    "id": "758fb354ea39feafe31",
+    "number": "A5",
+    "net": "$1N68",
+    "x": 1615.8,
+    "y": -3856.5,
+    "shape": [
+      "RECT",
+      11.8,
+      43.3,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "USB1",
+    "id": "758fb354ea39feafe32",
+    "number": "B7",
+    "net": "$1N72",
+    "x": 1635.5,
+    "y": -3856.5,
+    "shape": [
+      "RECT",
+      11.8,
+      43.3,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "USB1",
+    "id": "758fb354ea39feafe33",
+    "number": "A6",
+    "net": "$1N71",
+    "x": 1655.2,
+    "y": -3856.5,
+    "shape": [
+      "RECT",
+      11.8,
+      43.3,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "USB1",
+    "id": "758fb354ea39feafe34",
+    "number": "A7",
+    "net": "$1N72",
+    "x": 1674.8,
+    "y": -3856.5,
+    "shape": [
+      "RECT",
+      11.8,
+      43.3,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "USB1",
+    "id": "758fb354ea39feafe35",
+    "number": "B6",
+    "net": "$1N71",
+    "x": 1694.5,
+    "y": -3856.5,
+    "shape": [
+      "RECT",
+      11.8,
+      43.3,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "USB1",
+    "id": "758fb354ea39feafe36",
+    "number": "A8",
+    "net": "",
+    "x": 1714.2,
+    "y": -3856.5,
+    "shape": [
+      "RECT",
+      11.8,
+      43.3,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "USB1",
+    "id": "758fb354ea39feafe37",
+    "number": "B5",
+    "net": "$1N67",
+    "x": 1733.9,
+    "y": -3856.5,
+    "shape": [
+      "RECT",
+      11.8,
+      43.3,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "USB1",
+    "id": "758fb354ea39feafe38",
+    "number": "B4A9",
+    "net": "+5V",
+    "x": 1759.5,
+    "y": -3856.5,
+    "shape": [
+      "RECT",
+      21.7,
+      43.3,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "USB1",
+    "id": "758fb354ea39feafe39",
+    "number": "B1A12",
+    "net": "GND",
+    "x": 1791,
+    "y": -3856.5,
+    "shape": [
+      "RECT",
+      21.7,
+      43.3,
+      0
+    ],
+    "hole": null,
+    "rotation": 0
+  },
+  {
+    "designator": "USB1",
+    "id": "758fb354ea39feafe42",
+    "number": "13",
+    "net": "GND",
+    "x": 1494.7,
+    "y": -3878.1,
+    "shape": [
+      "OVAL",
+      1.1,
+      78.7
+    ],
+    "hole": [
+      "SLOT",
+      2.3622,
+      5.9055
+    ],
+    "rotation": 0
+  },
+  {
+    "designator": "USB1",
+    "id": "758fb354ea39feafe43",
+    "number": "14",
+    "net": "GND",
+    "x": 1835.3,
+    "y": -3878.1,
+    "shape": [
+      "OVAL",
+      1.1,
+      78.7
+    ],
+    "hole": [
+      "SLOT",
+      2.3622,
+      5.9056
+    ],
+    "rotation": 0
+  },
+  {
+    "designator": "USB1",
+    "id": "758fb354ea39feafe44",
+    "number": "13",
+    "net": "GND",
+    "x": 1494.7,
+    "y": -4043.5,
+    "shape": [
+      "OVAL",
+      1.2,
+      70.9
+    ],
+    "hole": [
+      "SLOT",
+      2.3622,
+      4.7244
+    ],
+    "rotation": 0
+  },
+  {
+    "designator": "USB1",
+    "id": "758fb354ea39feafe45",
+    "number": "14",
+    "net": "GND",
+    "x": 1835.3,
+    "y": -4043.5,
+    "shape": [
+      "OVAL",
+      1.2,
+      70.9
+    ],
+    "hole": [
+      "SLOT",
+      2.3622,
+      4.7244
+    ],
+    "rotation": 0
+  },
+  {
+    "designator": "C5",
+    "id": "036579c5d4c835bde15",
+    "number": "2",
+    "net": "GND",
+    "x": 1330,
+    "y": -3909.4,
+    "shape": [
+      "RECT",
+      55.5,
+      53.1,
+      0
+    ],
+    "hole": null,
+    "rotation": -90
+  },
+  {
+    "designator": "C5",
+    "id": "036579c5d4c835bde16",
+    "number": "1",
+    "net": "3.3V",
+    "x": 1330,
+    "y": -3830.6,
+    "shape": [
+      "RECT",
+      55.5,
+      53.1,
+      0
+    ],
+    "hole": null,
+    "rotation": -90
+  },
+  {
+    "designator": "C6",
+    "id": "b0124d16cc2b8119e14",
+    "number": "2",
+    "net": "3.3V",
+    "x": 1200,
+    "y": -3812.4,
+    "shape": [
+      "RECT",
+      31.5,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "C6",
+    "id": "b0124d16cc2b8119e15",
+    "number": "1",
+    "net": "GND",
+    "x": 1200,
+    "y": -3867.6,
+    "shape": [
+      "RECT",
+      31.5,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "C4",
+    "id": "6026e386cd0d9ebde15",
+    "number": "2",
+    "net": "$1N87",
+    "x": 1270.6,
+    "y": -3670,
+    "shape": [
+      "RECT",
+      55.5,
+      53.1,
+      0
+    ],
+    "hole": null,
+    "rotation": 180
+  },
+  {
+    "designator": "C4",
+    "id": "6026e386cd0d9ebde16",
+    "number": "1",
+    "net": "GND",
+    "x": 1349.4,
+    "y": -3670,
+    "shape": [
+      "RECT",
+      55.5,
+      53.1,
+      0
+    ],
+    "hole": null,
+    "rotation": 180
+  },
+  {
+    "designator": "C7",
+    "id": "5f258f1558f88ee6e14",
+    "number": "2",
+    "net": "GND",
+    "x": 1540,
+    "y": -3652.4,
+    "shape": [
+      "RECT",
+      31.5,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "C7",
+    "id": "5f258f1558f88ee6e15",
+    "number": "1",
+    "net": "+5V",
+    "x": 1540,
+    "y": -3707.6,
+    "shape": [
+      "RECT",
+      31.5,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "C8",
+    "id": "640dc8e7ff4bec14e14",
+    "number": "2",
+    "net": "GND",
+    "x": 1542.4,
+    "y": -1315,
+    "shape": [
+      "RECT",
+      31.5,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": 180
+  },
+  {
+    "designator": "C8",
+    "id": "640dc8e7ff4bec14e15",
+    "number": "1",
+    "net": "3.3V",
+    "x": 1597.6,
+    "y": -1315,
+    "shape": [
+      "RECT",
+      31.5,
+      35.4,
+      0
+    ],
+    "hole": null,
+    "rotation": 180
+  },
+  {
+    "designator": "RF2",
+    "id": "ec75ef42a8d54195e15",
+    "number": "5",
+    "net": "GND",
+    "x": 2905.4,
+    "y": -681.6,
+    "shape": [
+      "ELLIPSE",
+      2.4,
+      94.5
+    ],
+    "hole": [
+      "ROUND",
+      7.0866142,
+      7.0866142
+    ],
+    "rotation": 180
+  },
+  {
+    "designator": "RF2",
+    "id": "ec75ef42a8d54195e16",
+    "number": "4",
+    "net": "GND",
+    "x": 2905.4,
+    "y": -882.4,
+    "shape": [
+      "ELLIPSE",
+      2.4,
+      94.5
+    ],
+    "hole": [
+      "ROUND",
+      7.0866142,
+      7.0866142
+    ],
+    "rotation": 180
+  },
+  {
+    "designator": "RF2",
+    "id": "ec75ef42a8d54195e17",
+    "number": "3",
+    "net": "GND",
+    "x": 2808.9,
+    "y": -681.6,
+    "shape": [
+      "ELLIPSE",
+      2.4,
+      94.5
+    ],
+    "hole": [
+      "ROUND",
+      7.0866142,
+      7.0866142
+    ],
+    "rotation": 180
+  },
+  {
+    "designator": "RF2",
+    "id": "ec75ef42a8d54195e18",
+    "number": "2",
+    "net": "GND",
+    "x": 2808.9,
+    "y": -882.4,
+    "shape": [
+      "ELLIPSE",
+      2.4,
+      94.5
+    ],
+    "hole": [
+      "ROUND",
+      7.0866142,
+      7.0866142
+    ],
+    "rotation": 180
+  },
+  {
+    "designator": "RF2",
+    "id": "ec75ef42a8d54195e19",
+    "number": "1",
+    "net": "$1N47",
+    "x": 2805,
+    "y": -780,
+    "shape": [
+      "ELLIPSE",
+      1.9,
+      74.8
+    ],
+    "hole": [
+      "ROUND",
+      5.1181102,
+      5.1181102
+    ],
+    "rotation": 180
+  },
+  {
+    "designator": "U4",
+    "id": "eddc1604ce9a7867e7",
+    "number": "1",
+    "net": "$1N71",
+    "x": 1710.2,
+    "y": -3712.4,
+    "shape": [
+      "RECT",
+      20.9,
+      42.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "U4",
+    "id": "eddc1604ce9a7867e8",
+    "number": "2",
+    "net": "GND",
+    "x": 1710.2,
+    "y": -3675,
+    "shape": [
+      "RECT",
+      20.9,
+      42.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "U4",
+    "id": "eddc1604ce9a7867e9",
+    "number": "3",
+    "net": "$1N72",
+    "x": 1710.2,
+    "y": -3637.6,
+    "shape": [
+      "RECT",
+      20.9,
+      42.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "U4",
+    "id": "eddc1604ce9a7867e10",
+    "number": "4",
+    "net": "$1N72",
+    "x": 1619.8,
+    "y": -3637.6,
+    "shape": [
+      "RECT",
+      20.9,
+      42.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "U4",
+    "id": "eddc1604ce9a7867e11",
+    "number": "5",
+    "net": "+5V",
+    "x": 1619.8,
+    "y": -3675,
+    "shape": [
+      "RECT",
+      20.9,
+      42.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "U4",
+    "id": "eddc1604ce9a7867e12",
+    "number": "6",
+    "net": "$1N71",
+    "x": 1619.8,
+    "y": -3712.4,
+    "shape": [
+      "RECT",
+      20.9,
+      42.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "U5",
+    "id": "bea1bec80505fcc2e9",
+    "number": "2",
+    "net": "$1N67",
+    "x": 1402.6,
+    "y": -3734.7,
+    "shape": [
+      "RECT",
+      39.4,
+      31.5,
+      0
+    ],
+    "hole": null,
+    "rotation": -90.00000000000001
+  },
+  {
+    "designator": "U5",
+    "id": "bea1bec80505fcc2e10",
+    "number": "3",
+    "net": "GND",
+    "x": 1440,
+    "y": -3825.3,
+    "shape": [
+      "RECT",
+      39.4,
+      31.5,
+      0
+    ],
+    "hole": null,
+    "rotation": -90.00000000000001
+  },
+  {
+    "designator": "U5",
+    "id": "bea1bec80505fcc2e11",
+    "number": "1",
+    "net": "$1N68",
+    "x": 1477.4,
+    "y": -3734.7,
+    "shape": [
+      "RECT",
+      39.4,
+      31.5,
+      0
+    ],
+    "hole": null,
+    "rotation": -90.00000000000001
+  },
+  {
+    "designator": "U6",
+    "id": "e82205be54c2342de7",
+    "number": "1",
+    "net": "SDA_TH",
+    "x": 1745.2,
+    "y": -1342.4,
+    "shape": [
+      "RECT",
+      20.9,
+      42.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "U6",
+    "id": "e82205be54c2342de8",
+    "number": "2",
+    "net": "GND",
+    "x": 1745.2,
+    "y": -1305,
+    "shape": [
+      "RECT",
+      20.9,
+      42.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "U6",
+    "id": "e82205be54c2342de9",
+    "number": "3",
+    "net": "SCL_TH",
+    "x": 1745.2,
+    "y": -1267.6,
+    "shape": [
+      "RECT",
+      20.9,
+      42.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "U6",
+    "id": "e82205be54c2342de10",
+    "number": "4",
+    "net": "RST",
+    "x": 1654.8,
+    "y": -1267.6,
+    "shape": [
+      "RECT",
+      20.9,
+      42.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "U6",
+    "id": "e82205be54c2342de11",
+    "number": "5",
+    "net": "3.3V",
+    "x": 1654.8,
+    "y": -1305,
+    "shape": [
+      "RECT",
+      20.9,
+      42.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 90
+  },
+  {
+    "designator": "U6",
+    "id": "e82205be54c2342de12",
+    "number": "6",
+    "net": "INT",
+    "x": 1654.8,
+    "y": -1342.4,
+    "shape": [
+      "RECT",
+      20.9,
+      42.2,
+      0
+    ],
+    "hole": null,
+    "rotation": 90
+  }
+]
