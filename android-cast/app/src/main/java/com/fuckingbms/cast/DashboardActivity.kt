@@ -22,6 +22,7 @@ import android.widget.Toast
 import org.json.JSONObject
 import org.json.JSONTokener
 import java.io.ByteArrayInputStream
+import java.io.File
 import java.util.concurrent.Executors
 
 // Adapted from dashboard's MainActivity/Client: trusted WebView document, native bridge and system insets.
@@ -31,10 +32,26 @@ class DashboardActivity : Activity() {
     private val requests = Executors.newSingleThreadExecutor()
     private var chooser: ValueCallback<Array<Uri>>? = null
     private var resumeBle = false
+    private lateinit var updates: WebResourceUpdate
+    @Volatile private var release: WebResourceUpdate.Release? = null
+
+    companion object {
+        private var resourceUpdates: WebResourceUpdate? = null
+        private val updateWorker = Executors.newSingleThreadExecutor()
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
+        updates = synchronized(DashboardActivity::class.java) {
+            resourceUpdates ?: run {
+                val config = runCatching { JSONObject(assets.open("dashboard-update.json").bufferedReader().use { it.readText() }) }.getOrDefault(JSONObject())
+                val bundled = runCatching { JSONObject(assets.open("dashboard/web-version.json").bufferedReader().use { it.readText() }).getString("version") }.getOrNull()
+                if (bundled != null) config.put("bundledVersion", bundled)
+                WebResourceUpdate(File(filesDir, "dashboard-releases"), config, packageManager.getPackageInfo(packageName, 0).longVersionCode)
+            }.also { resourceUpdates = it }
+        }
+        release = updates.acquire()
         if (Build.VERSION.SDK_INT >= 30) window.setDecorFitsSystemWindows(false)
         else @Suppress("DEPRECATION") run {
             window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
@@ -48,13 +65,14 @@ class DashboardActivity : Activity() {
             allowFileAccess = false
             allowContentAccess = false
             mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+            cacheMode = WebSettings.LOAD_NO_CACHE
         }
         web.addJavascriptInterface(Bridge(), "BmsNative")
         web.webViewClient = object : WebViewClient() {
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
                 if (!DashboardPolicy.isDocument(request.url.toString())) return null
                 val path = request.url.path.orEmpty().removePrefix("/").ifEmpty { "index.html" }
-                if (path.split('/').any { it == ".." }) return missing()
+                if (!WebResourceUpdate.safePath(path)) return missing()
                 return runCatching {
                     val mime = when (path.substringAfterLast('.')) {
                         "js" -> "text/javascript"
@@ -62,8 +80,12 @@ class DashboardActivity : Activity() {
                         else -> MimeTypeMap.getSingleton().getMimeTypeFromExtension(path.substringAfterLast('.')) ?: "text/html"
                     }
                     WebResourceResponse(mime, "UTF-8", 200, "OK", mapOf(
-                        "Content-Security-Policy" to "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src https: http:; img-src 'self' data:; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'self'"
-                    ), assets.open("dashboard/$path"))
+                        "Cache-Control" to "no-store",
+                        "Content-Security-Policy" to "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src https: http:; img-src 'self' data:; object-src 'none'; frame-src 'none'; worker-src 'none'; base-uri 'none'; form-action 'self'"
+                    ), release.let { snapshot ->
+                        if (snapshot == null) assets.open("dashboard/$path")
+                        else { require(path in snapshot.paths); File(snapshot.directory, "assets/$path").inputStream() }
+                    })
                 }.getOrElse { missing() }
             }
 
@@ -100,6 +122,7 @@ class DashboardActivity : Activity() {
         }
         web.requestApplyInsets()
         web.loadUrl("${DashboardPolicy.ORIGIN}/")
+        updateWorker.execute { updates.check() }
     }
 
     private fun missing() = WebResourceResponse("text/plain", "UTF-8", 404, "Not Found", emptyMap(), ByteArrayInputStream(byteArrayOf()))
@@ -121,11 +144,34 @@ class DashboardActivity : Activity() {
     }
 
     inner class Bridge {
+        @JavascriptInterface fun getWebUpdateState(): String = updates.state()
+        @JavascriptInterface fun checkWebUpdate() { updateWorker.execute { updates.check() } }
+        @JavascriptInterface fun restartWeb() {
+            updateWorker.execute {
+                val next = updates.acquire()
+                runOnUiThread {
+                    if (!isDestroyed) {
+                        val previous = release
+                        release = next
+                        web.clearCache(true)
+                        web.reload()
+                        updateWorker.execute { updates.release(previous) }
+                    } else updates.release(next)
+                }
+            }
+        }
+        @JavascriptInterface fun installAppUpdate() = runOnUiThread {
+            resumeBle = true
+            ble.close()
+            startActivity(Intent(this@DashboardActivity, MainActivity::class.java)
+                .putExtra("dashboard_route", "SETTINGS").putExtra("check_app_update", true))
+        }
+
         @JavascriptInterface fun getAppInfo(): String = runCatching {
             val info = packageManager.getPackageInfo(packageName, 0)
             JSONObject().put("versionName", info.versionName.orEmpty())
-                .put("versionCode", info.longVersionCode).toString()
-        }.getOrDefault("{\"versionName\":\"\",\"versionCode\":0}")
+                .put("versionCode", info.longVersionCode).put("updateBaseUrl", UpdateApi.BASE_URL).toString()
+        }.getOrElse { JSONObject().put("versionName", "").put("versionCode", 0).put("updateBaseUrl", UpdateApi.BASE_URL).toString() }
 
         @JavascriptInterface fun bleConnected() = ble.connected
         @JavascriptInterface fun connectBle() = runOnUiThread { connectDeviceBle() }
@@ -187,6 +233,8 @@ class DashboardActivity : Activity() {
         requests.shutdownNow()
         web.removeJavascriptInterface("BmsNative")
         web.destroy()
+        val previous = release
+        updateWorker.execute { updates.release(previous) }
         super.onDestroy()
     }
 }

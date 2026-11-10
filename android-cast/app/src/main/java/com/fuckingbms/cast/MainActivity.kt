@@ -280,6 +280,7 @@ class MainActivity : Activity() {
             runCatching { AppRoute.valueOf(route) }.getOrNull()?.let { selectRoute(it, refresh = false) }
         }
         refreshDeviceProfile()
+        if (intent.getBooleanExtra("check_app_update", false)) window.decorView.post { checkAppUpdate() }
     }
 
     override fun onNewIntent(intent: Intent) {

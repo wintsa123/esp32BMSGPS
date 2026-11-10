@@ -34,6 +34,7 @@ module.exports.uiTest = { validSection, ManifestControl, RideRecordList, Session
   CONTROL_SERVICE_UUID, CONTROL_TX_UUID, CONTROL_RX_UUID };`;
 const context = vm.createContext({
   window: { location: { pathname: "/", search: "" }, setTimeout, clearTimeout },
+  document: { baseURI: "http://localhost/" }, __WEB_VERSION__: "test-web-version",
   console, URL, URLSearchParams, TextEncoder, TextDecoder, setTimeout, clearTimeout });
 const modules = new Map();
 function loadTs(filename, contents) {
@@ -49,7 +50,9 @@ function loadTs(filename, contents) {
     if (!target) throw new Error('Missing module ' + base);
     return loadTs(target).exports;
   };
-  const compiled = ts.transpileModule(contents ?? fs.readFileSync(filename, 'utf8'), { compilerOptions: {
+  // Vite replaces import.meta.env during the production bundle; mirror its empty update-base default.
+  const input = (contents ?? fs.readFileSync(filename, 'utf8')).replaceAll('import.meta.env.VITE_UPDATE_BASE_URL', JSON.stringify(''));
+  const compiled = ts.transpileModule(input, { compilerOptions: {
     module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022,
   }}).outputText;
   vm.runInContext('(function(module,exports,require){' + compiled + '\n})', context)(loaded, loaded.exports, requireSource);
@@ -124,8 +127,10 @@ console.log(JSON.stringify({
         self.assertNotIn("my-list-row", page)
         self.assertNotIn(">我的</span>", page)
         self.assertIn('>设置</span>', page)
-        for card in ("bluetooth", "wifi", "system", "device", "update"):
+        for card in ("bluetooth", "wifi", "system", "device"):
             self.assertIn(f'aria-labelledby="settings-{card}-title"', page)
+        for title in ("App 更新", "Web 前端更新", "固件更新"):
+            self.assertIn(f'aria-label="{title}"', page)
         self.assertIn('name="password"', page)
         self.assertIn('面板版本', page)
         self.assertIn('App 版本', page)
