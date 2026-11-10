@@ -31,7 +31,10 @@ class BleDeviceApiContractTest(unittest.TestCase):
             self.assertIn(path, body)
         self.assertNotIn("/api/cast", body)
         self.assertNotIn("/api/ota", body)
-        self.assertNotIn("/api/history", body)
+        for path in ("/api/history/sessions", "/api/history/samples", "/api/history/faults"):
+            self.assertIn(f'runtime_http_uri_is(path, "{path}")', body)
+        for path in ("/api/bms/ride-records", "/api/gps/track", "/api/bms/bind", "/api/controller/bind"):
+            self.assertNotIn(path, body)
         self.assertIn('error = "path not allowed"', body)
 
     def test_http_and_ble_share_serializers_and_config_validation(self):

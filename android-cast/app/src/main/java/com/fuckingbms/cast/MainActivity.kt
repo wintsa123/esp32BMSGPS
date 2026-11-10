@@ -276,6 +276,9 @@ class MainActivity : Activity() {
         } else {
             render()
         }
+        intent.getStringExtra("dashboard_route")?.let { route ->
+            runCatching { AppRoute.valueOf(route) }.getOrNull()?.let { selectRoute(it, refresh = false) }
+        }
         refreshDeviceProfile()
     }
 
@@ -304,6 +307,11 @@ class MainActivity : Activity() {
             CastService.STATE_STREAMING -> setStage(UiStage.CASTING)
             else -> refreshDeviceProfile()
         }
+    }
+
+    override fun onPause() {
+        if (isFinishing && intent.hasExtra("dashboard_route")) deviceBle.close()
+        super.onPause()
     }
 
     override fun onDestroy() {

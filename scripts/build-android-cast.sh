@@ -26,6 +26,8 @@ else
     GRADLE=("$GRADLE_BIN")
 fi
 
+npm --prefix "$ROOT_DIR/vercel" run build
+
 "${GRADLE[@]}" -p "$ANDROID_DIR" :app:assembleDebug
 
 if [[ "${RUN_TESTS:-0}" == "1" ]]; then
