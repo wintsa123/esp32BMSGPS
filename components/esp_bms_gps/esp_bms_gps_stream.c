@@ -337,6 +337,7 @@ bool esp_bms_gps_stream_parse_gsa(const uint8_t *line,
     }
 
     esp_bms_gps_gsa_t parsed = { 0 };
+    parsed.talker_id = (uint16_t)(((uint16_t)line[1] << 8U) | line[2]);
     const char *payload = (const char *)&line[1];
     const size_t payload_len = line_len - 4U;
     size_t field_index = 0U;
@@ -353,8 +354,8 @@ bool esp_bms_gps_stream_parse_gsa(const uint8_t *line,
                 return false;
             }
         } else if (field_index >= 3U && field_index <= 14U && field_len > 0U) {
-            uint8_t satellite_id = 0U;
-            if (!nmea_uint8_parse(field, field_len, &satellite_id) || satellite_id == 0U) {
+            uint16_t satellite_id = 0U;
+            if (!nmea_uint16_parse(field, field_len, &satellite_id) || satellite_id == 0U) {
                 return false;
             }
             parsed.satellites_used++;
@@ -363,6 +364,10 @@ bool esp_bms_gps_stream_parse_gsa(const uint8_t *line,
                 return false;
             }
             parsed.hdop_valid = true;
+        } else if (field_index == 18U && field_len > 0U) {
+            if (!nmea_uint8_parse(field, field_len, &parsed.system_id)) {
+                return false;
+            }
         }
         field_index++;
         field_start = index + 1U;
@@ -384,9 +389,20 @@ bool esp_bms_gps_stream_parse_gsv(const uint8_t *line,
     }
 
     esp_bms_gps_gsv_t parsed = { 0 };
-    parsed.constellation_mask = nmea_talker_constellation_mask(line);
+    parsed.talker_id = (uint16_t)(((uint16_t)line[1] << 8U) | line[2]);
     const char *payload = (const char *)&line[1];
     const size_t payload_len = line_len - 4U;
+    size_t field_count = 1U;
+    for (size_t index = 0U; index < payload_len; ++index) {
+        if (payload[index] == ',') {
+            field_count++;
+        }
+    }
+    if (field_count < 4U || (field_count - 4U) % 4U > 1U) {
+        return false;
+    }
+    /* 四字段卫星组之后可附一个 signal ID，它不是下颗卫星的编号。 */
+    const bool has_signal_id = (field_count - 4U) % 4U == 1U;
     size_t field_index = 0U;
     size_t field_start = 0U;
     for (size_t index = 0U; index <= payload_len; ++index) {
@@ -407,13 +423,19 @@ bool esp_bms_gps_stream_parse_gsv(const uint8_t *line,
             } else {
                 parsed.satellites_visible = value;
             }
+        } else if (has_signal_id && field_index == field_count - 1U) {
+            if (field_len > 0U && !nmea_uint8_parse(field, field_len, &parsed.signal_id)) {
+                return false;
+            }
         } else if (field_index >= 4U && ((field_index - 4U) % 4U) == 0U &&
                    field_len > 0U) {
             uint16_t satellite_id = 0U;
             if (!nmea_uint16_parse(field, field_len, &satellite_id)) {
                 return false;
             }
-            parsed.constellation_mask |= nmea_satellite_constellation_mask(satellite_id);
+            if (line[1] == 'G' && line[2] == 'N') {
+                parsed.constellation_mask |= nmea_satellite_constellation_mask(satellite_id);
+            }
         } else if (field_index >= 7U && ((field_index - 7U) % 4U) == 0U &&
                    field_len > 0U) {
             if (!nmea_uint8_parse(field, field_len, &value)) {
@@ -431,6 +453,12 @@ bool esp_bms_gps_stream_parse_gsv(const uint8_t *line,
     if (field_index <= 3U || parsed.sentence_count == 0U ||
         parsed.sentence_index == 0U || parsed.sentence_index > parsed.sentence_count) {
         return false;
+    }
+    const uint8_t talker_mask = nmea_talker_constellation_mask(line);
+    if (parsed.satellites_visible == 0U) {
+        parsed.constellation_mask = 0U;
+    } else if (talker_mask != 0U) {
+        parsed.constellation_mask = talker_mask;
     }
     *gsv = parsed;
     return true;

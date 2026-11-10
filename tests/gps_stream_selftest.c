@@ -101,12 +101,14 @@ static void test_gsa_gsv_satellite_parsing(void)
     assert(esp_bms_gps_stream_parse_gsa((const uint8_t *)line, line_len, &gsa));
     assert(gsa.fix_dimension == 3U && gsa.satellites_used == 6U &&
            gsa.hdop_valid && gsa.hdop_centi == 80U);
+    assert(gsa.talker_id == 0x474EU && gsa.system_id == 1U);
 
     line_len = nmea_with_checksum(
         line, sizeof(line), "GPGSA,A,2,,,,,,,,,,,,,2.1,1.3,1.7");
     assert(esp_bms_gps_stream_parse_gsa((const uint8_t *)line, line_len, &gsa));
     assert(gsa.fix_dimension == 2U && gsa.satellites_used == 0U &&
            gsa.hdop_valid && gsa.hdop_centi == 130U);
+    assert(gsa.talker_id == 0x4750U && gsa.system_id == 0U);
 
     line_len = nmea_with_checksum(
         line, sizeof(line), "GNGSV,2,1,08,03,45,120,31,07,50,230,,08,22,050,44,11,18,300,27,1");
@@ -116,12 +118,14 @@ static void test_gsa_gsv_satellite_parsing(void)
            gsv.satellites_visible == 8U && gsv.max_cn0 == 44U &&
            gsv.cn0_sum == 102U && gsv.cn0_count == 3U &&
            gsv.constellation_mask == ESP_BMS_GPS_CONSTELLATION_GPS);
+    assert(gsv.talker_id == 0x474EU && gsv.signal_id == 1U);
 
     line_len = nmea_with_checksum(line,
                                   sizeof(line),
                                   "BDGSV,1,1,04,201,45,120,31,202,50,230,26,203,22,050,44,204,18,300,27");
     assert(esp_bms_gps_stream_parse_gsv((const uint8_t *)line, line_len, &gsv));
     assert(gsv.constellation_mask == ESP_BMS_GPS_CONSTELLATION_BDS);
+    assert(gsv.talker_id == 0x4244U && gsv.signal_id == 0U);
 
     line_len = nmea_with_checksum(line, sizeof(line), "GNGSV,1,1,01,65,45,120,31");
     assert(esp_bms_gps_stream_parse_gsv((const uint8_t *)line, line_len, &gsv));
@@ -141,6 +145,79 @@ static void test_gsa_gsv_satellite_parsing(void)
     assert(line_len > 96U && line_len < ESP_BMS_GPS_STREAM_CAPACITY);
     assert(esp_bms_gps_stream_parse_gsv((const uint8_t *)line, line_len, &gsv));
     assert(gsv.sentence_index == 3U && gsv.max_cn0 == 52U);
+}
+
+static void test_gsv_signal_and_talker_fields(void)
+{
+    esp_bms_gps_gsv_t gsv = { 0 };
+    const char *empty_qzss = "$GQGSV,1,1,00,8*6C";
+    assert(esp_bms_gps_stream_parse_gsv((const uint8_t *)empty_qzss,
+                                      strlen(empty_qzss), &gsv));
+    assert(gsv.talker_id == 0x4751U && gsv.signal_id == 8U &&
+           gsv.satellites_visible == 0U && gsv.constellation_mask == 0U &&
+           gsv.cn0_count == 0U);
+
+    const char *no_snr = "$GPGSV,1,1,03,14,12,165,,17,44,103,,19,64,059,,1*51";
+    assert(esp_bms_gps_stream_parse_gsv((const uint8_t *)no_snr, strlen(no_snr), &gsv));
+    assert(gsv.talker_id == 0x4750U && gsv.signal_id == 1U &&
+           gsv.satellites_visible == 3U && gsv.cn0_count == 0U &&
+           gsv.constellation_mask == ESP_BMS_GPS_CONSTELLATION_GPS);
+
+    char line[ESP_BMS_GPS_STREAM_CAPACITY + 1U] = { 0 };
+    size_t line_len = nmea_with_checksum(line, sizeof(line), "GLGSV,1,1,00,1");
+    assert(esp_bms_gps_stream_parse_gsv((const uint8_t *)line, line_len, &gsv));
+    assert(gsv.signal_id == 1U && gsv.constellation_mask == 0U);
+    line_len = nmea_with_checksum(line, sizeof(line), "GPGSV,1,1,00");
+    assert(esp_bms_gps_stream_parse_gsv((const uint8_t *)line, line_len, &gsv));
+    assert(gsv.signal_id == 0U && gsv.constellation_mask == 0U);
+
+    /* 已知 talker 的本地卫星编号不能凭数值范围误归到 GPS。 */
+    line_len = nmea_with_checksum(line, sizeof(line), "BDGSV,1,1,01,03,45,120,31,1");
+    assert(esp_bms_gps_stream_parse_gsv((const uint8_t *)line, line_len, &gsv));
+    assert(gsv.constellation_mask == ESP_BMS_GPS_CONSTELLATION_BDS && gsv.signal_id == 1U);
+    /* 混合 GN 报文仍按实际卫星编号推断星座，末尾信号不参与推断。 */
+    line_len = nmea_with_checksum(
+        line, sizeof(line), "GNGSV,1,1,03,01,45,120,31,65,40,100,27,201,30,090,29,0");
+    assert(esp_bms_gps_stream_parse_gsv((const uint8_t *)line, line_len, &gsv));
+    assert(gsv.constellation_mask == 0x07U && gsv.signal_id == 0U && gsv.cn0_count == 3U);
+    line_len = nmea_with_checksum(line, sizeof(line), "GQGSV,1,1,01,01,45,120,31,8");
+    assert(esp_bms_gps_stream_parse_gsv((const uint8_t *)line, line_len, &gsv));
+    assert(gsv.constellation_mask == 0U && gsv.signal_id == 8U);
+
+    /* 无 signal ID 的多句旧输出继续兼容，新的解析不能污染下一句。 */
+    line_len = nmea_with_checksum(line, sizeof(line), "GPGSV,2,2,05,22,45,120,30");
+    assert(esp_bms_gps_stream_parse_gsv((const uint8_t *)line, line_len, &gsv));
+    assert(gsv.sentence_count == 2U && gsv.sentence_index == 2U &&
+           gsv.signal_id == 0U && gsv.cn0_count == 1U);
+    line_len = nmea_with_checksum(line, sizeof(line), "GPGSV,1,1,01,22,45,120,30,bad");
+    assert(!esp_bms_gps_stream_parse_gsv((const uint8_t *)line, line_len, &gsv));
+}
+
+static void test_gsa_optional_system_fields(void)
+{
+    char payload[96] = { 0 };
+    char line[ESP_BMS_GPS_STREAM_CAPACITY + 1U] = { 0 };
+    esp_bms_gps_gsa_t gsa = { 0 };
+    /* 实机在未参与定位的星座上输出空卫星列表，仍须保留其系统编号。 */
+    for (unsigned system_id = 1U; system_id <= 5U; ++system_id) {
+        (void)snprintf(payload, sizeof(payload),
+                       "GNGSA,A,1,,,,,,,,,,,,,99.9,99.9,99.9,%u", system_id);
+        const size_t line_len = nmea_with_checksum(line, sizeof(line), payload);
+        assert(esp_bms_gps_stream_parse_gsa((const uint8_t *)line, line_len, &gsa));
+        assert(gsa.talker_id == 0x474EU && gsa.system_id == system_id &&
+               gsa.fix_dimension == 1U && gsa.satellites_used == 0U);
+    }
+    size_t line_len = nmea_with_checksum(
+        line, sizeof(line), "GNGSA,A,1,,,,,,,,,,,,,99.9,99.9,99.9,bad");
+    assert(!esp_bms_gps_stream_parse_gsa((const uint8_t *)line, line_len, &gsa));
+    /* Galileo 使用 301 起的编号；零编号仍属于非法卫星字段。 */
+    line_len = nmea_with_checksum(
+        line, sizeof(line), "GNGSA,A,3,301,302,,,,,,,,,,,1.2,0.8,0.9,3");
+    assert(esp_bms_gps_stream_parse_gsa((const uint8_t *)line, line_len, &gsa));
+    assert(gsa.system_id == 3U && gsa.satellites_used == 2U && gsa.fix_dimension == 3U);
+    line_len = nmea_with_checksum(
+        line, sizeof(line), "GNGSA,A,3,0,302,,,,,,,,,,,1.2,0.8,0.9,3");
+    assert(!esp_bms_gps_stream_parse_gsa((const uint8_t *)line, line_len, &gsa));
 }
 
 static void test_overflow_discards_whole_sentence(void)
@@ -268,6 +345,8 @@ int main(void)
     test_rmc_sentence_classification();
     test_nmea_checksum_validation();
     test_gsa_gsv_satellite_parsing();
+    test_gsv_signal_and_talker_fields();
+    test_gsa_optional_system_fields();
     test_overflow_discards_whole_sentence();
     test_new_dollar_recovers_without_newline();
     test_casbin_build_and_parse();

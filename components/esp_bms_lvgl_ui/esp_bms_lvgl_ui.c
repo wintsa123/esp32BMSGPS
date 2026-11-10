@@ -1104,20 +1104,14 @@ void apply_dashboard_snapshot(const esp_bms_dashboard_snapshot_t *snapshot)
                                         s_ui.last_snapshot.gps_module_state !=
                                             snapshot->gps_module_state;
     const bool gps_view_changed = !had_last_snapshot ||
-                                  s_ui.last_snapshot.gps_module_state != snapshot->gps_module_state ||
                                   SNAPSHOT_FLAG(&s_ui.last_snapshot, GPS_FIX_VALID) !=
                                       SNAPSHOT_FLAG(snapshot, GPS_FIX_VALID) ||
-                                  s_ui.last_snapshot.gps_local_time_valid !=
-                                      snapshot->gps_local_time_valid ||
-                                  s_ui.last_snapshot.gps_local_hour != snapshot->gps_local_hour ||
-                                  s_ui.last_snapshot.gps_local_minute != snapshot->gps_local_minute ||
                                   s_ui.last_snapshot.gps_satellite_info_valid !=
                                       snapshot->gps_satellite_info_valid ||
                                   s_ui.last_snapshot.gps_satellites_visible !=
                                       snapshot->gps_satellites_visible ||
                                   s_ui.last_snapshot.gps_satellites_used !=
                                       snapshot->gps_satellites_used ||
-                                  s_ui.last_snapshot.gps_max_cn0 != snapshot->gps_max_cn0 ||
                                   s_ui.last_snapshot.gps_average_cn0 !=
                                       snapshot->gps_average_cn0 ||
                                   s_ui.last_snapshot.gps_constellation_mask !=

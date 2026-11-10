@@ -61,6 +61,8 @@ typedef struct {
     uint8_t satellites_used;
     uint16_t hdop_centi;
     bool hdop_valid;
+    uint8_t system_id; /* GSA 可选系统编号，0 表示未指定。 */
+    uint16_t talker_id; /* 两个 talker ASCII 字节，高字节在前。 */
 } esp_bms_gps_gsa_t;
 
 enum {
@@ -77,6 +79,8 @@ typedef struct {
     uint16_t cn0_sum;
     uint8_t cn0_count;
     uint8_t constellation_mask;
+    uint8_t signal_id; /* GSV 末尾可选信号编号，0 表示未指定或信号 0。 */
+    uint16_t talker_id;
 } esp_bms_gps_gsv_t;
 
 void esp_bms_gps_stream_reset(esp_bms_gps_stream_t *stream);

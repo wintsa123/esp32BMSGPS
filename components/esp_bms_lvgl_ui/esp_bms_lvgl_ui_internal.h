@@ -470,6 +470,7 @@ typedef struct {
     lv_obj_t *settings_detail;
     lv_obj_t *settings_detail_header;
     lv_obj_t *settings_detail_title;
+    lv_obj_t *settings_gps_values[5];
     lv_obj_t *settings_detail_edge_zone;
     lv_obj_t *settings_boot_preview_button;
     lv_timer_t *settings_boot_preview_timer;

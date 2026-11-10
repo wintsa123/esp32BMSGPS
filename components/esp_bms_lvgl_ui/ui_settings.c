@@ -1554,6 +1554,13 @@ static void settings_controller_value_row(lv_obj_t *parent,
     lv_obj_set_style_text_color(arrow, COLOR_SETTINGS_ACCENT, LV_PART_MAIN);
 }
 
+static void settings_gps_card_delete_event_cb(lv_event_t *event)
+{
+    (void)event;
+    /* 卡片随详情切换或整屏重建销毁，不能继续持有其子标签。 */
+    memset(s_ui.settings_gps_values, 0, sizeof(s_ui.settings_gps_values));
+}
+
 void settings_show_gps_detail(void)
 {
     const int32_t card_x = SETTINGS_LIST_MARGIN_X;
@@ -1561,6 +1568,7 @@ void settings_show_gps_detail(void)
     const int32_t row_h = s_ui.width < s_ui.height ? SETTINGS_DETAIL_ROW_H_PORTRAIT :
                                                      SETTINGS_DETAIL_ROW_H_LANDSCAPE;
     const esp_bms_dashboard_snapshot_t *snapshot = settings_current_snapshot();
+    const bool fix_valid = SNAPSHOT_FLAG(snapshot, GPS_FIX_VALID);
     char fix_mode[32] = { 0 };
     char satellite_system[32] = { 0 };
     strncpy(satellite_system, ui_t("等待搜星", "Waiting for fix"), sizeof(satellite_system) - 1U);
@@ -1577,12 +1585,14 @@ void settings_show_gps_detail(void)
         { "HDOP", "HDOP", hdop, hdop, ESP_BMS_LVGL_ACTION_NONE, SETTINGS_SYSTEM_VIEW_ROOT },
     };
 
+    const char *fix_text = fix_valid ? ui_t("已定位", "Fix acquired")
+                                     : ui_t("无效定位", "No fix");
     if (snapshot->gps_satellite_info_valid) {
-        const char *const fix_text = snapshot->gps_fix_dimension == 3U ?
-                                         ui_t("3D 定位，测速精准", "3D fix, accurate speed") :
-                                     snapshot->gps_fix_dimension == 2U ?
-                                         ui_t("2D 定位，测速偏差大", "2D fix, speed less accurate")
-                                         : ui_t("无效定位", "No fix");
+        if (fix_valid && snapshot->gps_fix_dimension == 3U) {
+            fix_text = ui_t("3D 定位，测速精准", "3D fix, accurate speed");
+        } else if (fix_valid && snapshot->gps_fix_dimension == 2U) {
+            fix_text = ui_t("2D 定位，测速偏差大", "2D fix, speed less accurate");
+        }
         const char *const satellite_hint = snapshot->gps_satellites_used < 5U ?
                                              ui_t("，少于5颗不稳", "; <5 sats, unstable")
                                              : ui_t("，测速稳定", "; speed stable");
@@ -1594,6 +1604,12 @@ void settings_show_gps_detail(void)
             break;
         case 0x03U:
             (void)snprintf(satellite_system, sizeof(satellite_system), ui_t("GPS+北斗 双模", "GPS+BDS"));
+            break;
+        case 0x05U:
+            (void)snprintf(satellite_system, sizeof(satellite_system), ui_t("GPS+GLONASS 双模", "GPS+GLONASS"));
+            break;
+        case 0x06U:
+            (void)snprintf(satellite_system, sizeof(satellite_system), ui_t("北斗+GLONASS 双模", "BDS+GLONASS"));
             break;
         case 0x01U:
             (void)snprintf(satellite_system, sizeof(satellite_system), ui_t("单 GPS", "GPS only"));
@@ -1607,7 +1623,6 @@ void settings_show_gps_detail(void)
         default:
             break;
         }
-        (void)snprintf(fix_mode, sizeof(fix_mode), "%s", fix_text);
         (void)snprintf(satellites, sizeof(satellites), ui_t("%u 可见 / %u 有效%s", "%u vis / %u used%s"),
                        snapshot->gps_satellites_visible,
                        snapshot->gps_satellites_used,
@@ -1627,10 +1642,22 @@ void settings_show_gps_detail(void)
             (void)snprintf(hdop, sizeof(hdop), "--");
         }
     } else {
-        (void)snprintf(fix_mode, sizeof(fix_mode), "%s", ui_t("无效定位", "No fix"));
+        if (fix_valid) {
+            (void)snprintf(satellite_system, sizeof(satellite_system), "%s",
+                           ui_t("等待卫星信息", "Waiting for satellite data"));
+        }
         (void)snprintf(satellites, sizeof(satellites), "--");
         (void)snprintf(average_snr, sizeof(average_snr), "--");
         (void)snprintf(hdop, sizeof(hdop), "--");
+    }
+    (void)snprintf(fix_mode, sizeof(fix_mode), "%s", fix_text);
+
+    /* 定位更新只改变数值，保留行对象、滚动位置与正在执行的手势。 */
+    if (s_ui.settings_gps_values[0]) {
+        for (size_t index = 0U; index < ARRAY_SIZE(rows); ++index) {
+            label_set_text_if_changed(s_ui.settings_gps_values[index], rows[index].subtitle);
+        }
+        return;
     }
 
     lv_obj_clean(s_ui.settings_detail);
@@ -1641,10 +1668,12 @@ void settings_show_gps_detail(void)
     const size_t row_count = ARRAY_SIZE(rows);
     lv_obj_t *card = settings_list_card(s_ui.settings_detail, card_x, 12, card_w, row_h,
                                         row_count);
+    lv_obj_add_event_cb(card, settings_gps_card_delete_event_cb, LV_EVENT_DELETE, NULL);
     size_t row_index = 0U;
     for (size_t index = 0U; index < ARRAY_SIZE(rows); ++index) {
         lv_obj_t *row =
             settings_detail_row(card, 0, (int32_t)row_index++ * row_h, card_w, row_h, &rows[index]);
+        s_ui.settings_gps_values[index] = lv_obj_get_child(row, 1);
         lv_obj_remove_flag(row, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_state(row, LV_STATE_DISABLED);
         lv_obj_set_style_text_opa(row, LV_OPA_40, LV_PART_MAIN | LV_STATE_DISABLED);

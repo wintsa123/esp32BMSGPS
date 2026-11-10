@@ -7,6 +7,7 @@
 #include "driver/uart.h"
 #include "esp_bms_profile_hardware.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "esp_timer.h"
 
 #include <ctype.h>
@@ -23,8 +24,11 @@ static const char *TAG = "esp_bms_gps";
 #define GPS_PPS_GPIO ESP_BMS_PROFILE_GPS_PPS
 #define GPS_PPS_TIMEOUT_MS 3000U
 #define GPS_RMC_TIMEOUT_MS 3000U
-#define GPS_SATELLITE_TIMEOUT_MS 3000U
-#define GPS_DIAGNOSTIC_PERIOD_MS 60000U
+/* GSA/GSV 分频为 9，实机约 9 秒一批；另留 3 秒传输余量。RMC 仍独立按 3 秒超时。 */
+#define GPS_SATELLITE_TIMEOUT_MS 12000U
+#define GPS_GSA_GROUP_COUNT 8U
+#define GPS_GSV_GROUP_COUNT 16U
+#define GPS_DIAGNOSTIC_PERIOD_MS 10000U
 #define GPS_SECURITY_QUERY_PERIOD_MS 1000U
 #define GPS_SECURITY_JAM_CHANNEL_MASK 0x07U
 #define GPS_CASBIN_CLASS_ACK 0x05U
@@ -49,6 +53,21 @@ typedef struct {
 } gps_datetime_t;
 
 typedef struct {
+    esp_bms_gps_gsa_t data;
+    uint32_t age_ms;
+    bool occupied;
+} gps_gsa_group_t;
+
+typedef struct {
+    esp_bms_gps_gsv_t data;
+    esp_bms_gps_gsv_t pending;
+    uint32_t age_ms;
+    bool occupied;
+    bool complete;
+    bool collecting;
+} gps_gsv_group_t;
+
+typedef struct {
     uart_port_t uart;
     esp_bms_gps_stream_t nmea_stream;
     esp_bms_gps_casbin_stream_t casbin_stream;
@@ -65,6 +84,11 @@ typedef struct {
     uint32_t bytes_seen;
     uint32_t parse_errors;
     uint32_t casbin_errors;
+    uint32_t satellite_parse_errors;
+    uint32_t gsa_count;
+    uint32_t gsv_count;
+    uint8_t rejected_lines_logged;
+    uint8_t satellite_lines_logged;
     uint32_t overflow_lines;
     uint32_t rmc_valid_count;
     uint32_t rmc_invalid_count;
@@ -81,8 +105,8 @@ typedef struct {
     uint8_t constellation_mask;
     uint8_t fix_dimension;
     uint16_t hdop_centi;
-    uint16_t cn0_sum;
-    uint8_t cn0_count;
+    gps_gsa_group_t gsa_groups[GPS_GSA_GROUP_COUNT];
+    gps_gsv_group_t gsv_groups[GPS_GSV_GROUP_COUNT];
     bool uart_ready;
     bool pps_active;
     bool pps_ever_seen;
@@ -100,6 +124,171 @@ typedef struct {
 } esp_bms_gps_state_t;
 
 static esp_bms_gps_state_t s_gps;
+
+static bool gps_publish_satellite_groups(esp_bms_idf_runtime_t *runtime)
+{
+    bool gsa_valid = false;
+    bool gsv_valid = false;
+    uint16_t visible = 0U;
+    uint16_t used = 0U;
+    uint32_t cn0_sum = 0U;
+    uint16_t cn0_count = 0U;
+    uint8_t maximum = 0U;
+    uint8_t mask = 0U;
+    uint8_t dimension = 0U;
+    uint16_t hdop = 0U;
+    bool hdop_valid = false;
+    for (size_t index = 0U; index < GPS_GSA_GROUP_COUNT; ++index) {
+        const gps_gsa_group_t *group = &s_gps.gsa_groups[index];
+        if (!group->occupied) continue;
+        gsa_valid = true;
+        used += group->data.satellites_used;
+        if (group->data.fix_dimension > dimension) {
+            dimension = group->data.fix_dimension;
+            hdop = group->data.hdop_centi;
+            hdop_valid = group->data.hdop_valid;
+        } else if (group->data.fix_dimension == dimension && group->data.hdop_valid &&
+                   (!hdop_valid || group->data.hdop_centi < hdop)) {
+            hdop = group->data.hdop_centi;
+            hdop_valid = true;
+        }
+    }
+    /* 同一星座的多个信号不能重复计数，也不能用空信号组覆盖另一组。 */
+    for (size_t index = 0U; index < GPS_GSV_GROUP_COUNT; ++index) {
+        const gps_gsv_group_t *group = &s_gps.gsv_groups[index];
+        if (!group->occupied || !group->complete) continue;
+        bool already_counted = false;
+        for (size_t previous = 0U; previous < index; ++previous) {
+            const gps_gsv_group_t *other = &s_gps.gsv_groups[previous];
+            if (other->occupied && other->complete &&
+                other->data.talker_id == group->data.talker_id) {
+                already_counted = true;
+                break;
+            }
+        }
+        if (already_counted) continue;
+        gsv_valid = true;
+        uint8_t group_visible = 0U;
+        const esp_bms_gps_gsv_t *signal = &group->data;
+        for (size_t candidate = index; candidate < GPS_GSV_GROUP_COUNT; ++candidate) {
+            const gps_gsv_group_t *other = &s_gps.gsv_groups[candidate];
+            if (!other->occupied || !other->complete ||
+                other->data.talker_id != group->data.talker_id) continue;
+            if (other->data.satellites_visible > group_visible) {
+                group_visible = other->data.satellites_visible;
+            }
+            mask |= other->data.constellation_mask;
+            if (other->data.max_cn0 > maximum) maximum = other->data.max_cn0;
+            if (other->data.cn0_count > signal->cn0_count ||
+                (other->data.cn0_count == signal->cn0_count &&
+                 other->data.max_cn0 > signal->max_cn0)) signal = &other->data;
+        }
+        visible += group_visible;
+        cn0_sum += signal->cn0_sum;
+        cn0_count += signal->cn0_count;
+    }
+    s_gps.satellites_visible = visible > UINT8_MAX ? UINT8_MAX : (uint8_t)visible;
+    s_gps.satellites_used = used > UINT8_MAX ? UINT8_MAX : (uint8_t)used;
+    s_gps.max_cn0 = maximum;
+    s_gps.average_cn0 = cn0_count == 0U ? 0U : (uint8_t)(cn0_sum / cn0_count);
+    s_gps.constellation_mask = mask;
+    s_gps.fix_dimension = dimension;
+    s_gps.hdop_centi = hdop;
+    s_gps.hdop_valid = hdop_valid;
+    s_gps.satellite_info_valid = gsa_valid && gsv_valid;
+    return esp_bms_idf_runtime_publish_gps_satellites(runtime,
+        s_gps.satellites_visible, s_gps.satellites_used, maximum, s_gps.average_cn0,
+        mask, dimension, hdop, hdop_valid, s_gps.satellite_info_valid);
+}
+
+static bool gps_store_gsa(esp_bms_idf_runtime_t *runtime, const esp_bms_gps_gsa_t *gsa)
+{
+    gps_gsa_group_t *slot = NULL;
+    for (size_t index = 0U; index < GPS_GSA_GROUP_COUNT; ++index) {
+        gps_gsa_group_t *group = &s_gps.gsa_groups[index];
+        if (group->occupied && group->data.system_id == gsa->system_id &&
+            (gsa->system_id != 0U || group->data.talker_id == gsa->talker_id)) {
+            slot = group;
+            break;
+        }
+        if (!slot || !group->occupied || (slot->occupied && group->age_ms > slot->age_ms)) {
+            slot = group;
+        }
+    }
+    slot->data = *gsa;
+    slot->occupied = true;
+    slot->age_ms = 0U;
+    return gps_publish_satellite_groups(runtime);
+}
+
+static bool gps_store_gsv(esp_bms_idf_runtime_t *runtime, const esp_bms_gps_gsv_t *gsv)
+{
+    gps_gsv_group_t *slot = NULL;
+    bool matched = false;
+    for (size_t index = 0U; index < GPS_GSV_GROUP_COUNT; ++index) {
+        gps_gsv_group_t *group = &s_gps.gsv_groups[index];
+        if (group->occupied && group->pending.talker_id == gsv->talker_id &&
+            group->pending.signal_id == gsv->signal_id) {
+            slot = group;
+            matched = true;
+            break;
+        }
+        if (!slot || !group->occupied || (slot->occupied && group->age_ms > slot->age_ms)) {
+            slot = group;
+        }
+    }
+    if (!matched && gsv->sentence_index != 1U) return false;
+    if (!slot->occupied || slot->pending.talker_id != gsv->talker_id ||
+        slot->pending.signal_id != gsv->signal_id) memset(slot, 0, sizeof(*slot));
+    if (gsv->sentence_index == 1U) {
+        slot->pending = *gsv;
+        slot->occupied = true;
+        slot->collecting = true;
+    } else if (slot->collecting && slot->pending.sentence_count == gsv->sentence_count &&
+               slot->pending.sentence_index + 1U == gsv->sentence_index) {
+        if ((unsigned)slot->pending.cn0_count + gsv->cn0_count > UINT8_MAX ||
+            (unsigned)slot->pending.cn0_sum + gsv->cn0_sum > UINT16_MAX) {
+            slot->collecting = false;
+            return false;
+        }
+        slot->pending.sentence_index = gsv->sentence_index;
+        slot->pending.cn0_sum += gsv->cn0_sum;
+        slot->pending.cn0_count += gsv->cn0_count;
+        slot->pending.constellation_mask |= gsv->constellation_mask;
+        if (gsv->max_cn0 > slot->pending.max_cn0) slot->pending.max_cn0 = gsv->max_cn0;
+    } else {
+        slot->collecting = false;
+        return false;
+    }
+    if (gsv->sentence_index != gsv->sentence_count) return false;
+    slot->data = slot->pending;
+    slot->complete = true;
+    slot->collecting = false;
+    slot->age_ms = 0U;
+    return gps_publish_satellite_groups(runtime);
+}
+
+static bool gps_age_satellite_groups(uint32_t elapsed_ms)
+{
+    bool expired = false;
+    for (size_t index = 0U; index < GPS_GSA_GROUP_COUNT; ++index) {
+        gps_gsa_group_t *group = &s_gps.gsa_groups[index];
+        if (!group->occupied) continue;
+        if (elapsed_ms >= GPS_SATELLITE_TIMEOUT_MS - group->age_ms) {
+            group->occupied = false;
+            expired = true;
+        } else group->age_ms += elapsed_ms;
+    }
+    for (size_t index = 0U; index < GPS_GSV_GROUP_COUNT; ++index) {
+        gps_gsv_group_t *group = &s_gps.gsv_groups[index];
+        if (!group->occupied) continue;
+        if (elapsed_ms >= GPS_SATELLITE_TIMEOUT_MS - group->age_ms) {
+            group->occupied = false;
+            expired = true;
+        } else group->age_ms += elapsed_ms;
+    }
+    return expired;
+}
 
 static bool gps_line_is_satellite_sentence(const uint8_t *line, size_t line_len)
 {
@@ -501,7 +690,7 @@ static void gps_configure_receiver(void)
         gps_send_casbin(GPS_CASBIN_CLASS_CFG, GPS_CASBIN_ID_CFG_JSM, NULL, 0U);
     ESP_LOGI(TAG,
              "receiver config requested: rate=10Hz output=%s security_query=%s",
-             rate_ok && output_ok ? "rmc10_diag1" : "failed",
+             rate_ok && output_ok ? "rmc10_sat_div9" : "failed",
              security_query_ok ? "sent" : "failed");
 }
 
@@ -597,65 +786,38 @@ static bool gps_apply_line(esp_bms_idf_runtime_t *runtime, const uint8_t *line, 
 {
     esp_bms_gps_gsa_t gsa = { 0 };
     if (esp_bms_gps_stream_parse_gsa(line, line_len, &gsa)) {
+        s_gps.gsa_count++;
+        if (s_gps.satellite_lines_logged < 12U) {
+            ESP_LOGI(TAG, "satellite: %.*s", (int)line_len, (const char *)line);
+            s_gps.satellite_lines_logged++;
+        }
         s_gps.gsa_seen = true;
         s_gps.gsa_elapsed_ms = 0U;
-        s_gps.satellites_used = gsa.satellites_used;
-        s_gps.fix_dimension = gsa.fix_dimension;
-        s_gps.hdop_centi = gsa.hdop_centi;
-        s_gps.hdop_valid = gsa.hdop_valid;
-        s_gps.satellite_info_valid = s_gps.gsv_seen &&
-                                     s_gps.gsv_elapsed_ms < GPS_SATELLITE_TIMEOUT_MS;
-        return esp_bms_idf_runtime_publish_gps_satellites(runtime,
-                                                          s_gps.satellites_visible,
-                                                          s_gps.satellites_used,
-                                                          s_gps.max_cn0,
-                                                          s_gps.average_cn0,
-                                                          s_gps.constellation_mask,
-                                                          s_gps.fix_dimension,
-                                                          s_gps.hdop_centi,
-                                                          s_gps.hdop_valid,
-                                                          s_gps.satellite_info_valid);
+        return gps_store_gsa(runtime, &gsa);
     }
 
     esp_bms_gps_gsv_t gsv = { 0 };
     if (esp_bms_gps_stream_parse_gsv(line, line_len, &gsv)) {
-        const bool gsv_timed_out = !s_gps.gsv_seen ||
-                                   s_gps.gsv_elapsed_ms >= GPS_SATELLITE_TIMEOUT_MS;
+        s_gps.gsv_count++;
+        if (s_gps.satellite_lines_logged < 12U) {
+            ESP_LOGI(TAG, "satellite: %.*s", (int)line_len, (const char *)line);
+            s_gps.satellite_lines_logged++;
+        }
         s_gps.gsv_seen = true;
         s_gps.gsv_elapsed_ms = 0U;
-        s_gps.satellites_visible = gsv.satellites_visible;
-        if (gsv_timed_out) {
-            s_gps.constellation_mask = 0U;
-        }
-        s_gps.constellation_mask |= gsv.constellation_mask;
-        if (gsv.sentence_index == 1U) {
-            s_gps.max_cn0 = 0U;
-            s_gps.cn0_sum = 0U;
-            s_gps.cn0_count = 0U;
-        }
-        if (gsv.max_cn0 > s_gps.max_cn0) {
-            s_gps.max_cn0 = gsv.max_cn0;
-        }
-        s_gps.cn0_sum = (uint16_t)(s_gps.cn0_sum + gsv.cn0_sum);
-        s_gps.cn0_count = (uint8_t)(s_gps.cn0_count + gsv.cn0_count);
-        s_gps.average_cn0 = s_gps.cn0_count == 0U ? 0U :
-                            (uint8_t)(s_gps.cn0_sum / s_gps.cn0_count);
-        s_gps.satellite_info_valid = s_gps.gsa_seen &&
-                                     s_gps.gsa_elapsed_ms < GPS_SATELLITE_TIMEOUT_MS;
-        return esp_bms_idf_runtime_publish_gps_satellites(runtime,
-                                                          s_gps.satellites_visible,
-                                                          s_gps.satellites_used,
-                                                          s_gps.max_cn0,
-                                                          s_gps.average_cn0,
-                                                          s_gps.constellation_mask,
-                                                          s_gps.fix_dimension,
-                                                          s_gps.hdop_centi,
-                                                          s_gps.hdop_valid,
-                                                          s_gps.satellite_info_valid);
+        return gps_store_gsv(runtime, &gsv);
     }
 
     if (gps_line_is_satellite_sentence(line, line_len)) {
-        return gps_invalidate_satellite_info(runtime);
+        s_gps.satellite_parse_errors++;
+        if (s_gps.rejected_lines_logged < 12U) {
+            ESP_LOGW(TAG, "rejected satellite checksum=%d: %.*s",
+                     esp_bms_gps_stream_nmea_checksum_valid(line, line_len),
+                     (int)line_len, (const char *)line);
+            s_gps.rejected_lines_logged++;
+        }
+        /* 单条坏报文不能清空仍在有效期内的上一组卫星信息。 */
+        return false;
     }
 
     bool fix_valid = false;
@@ -676,6 +838,12 @@ static bool gps_apply_line(esp_bms_idf_runtime_t *runtime, const uint8_t *line, 
     }
     if (result == GPS_PARSE_ERROR) {
         s_gps.parse_errors++;
+        if (s_gps.rejected_lines_logged < 12U) {
+            ESP_LOGW(TAG, "rejected RMC checksum=%d: %.*s",
+                     esp_bms_gps_stream_nmea_checksum_valid(line, line_len),
+                     (int)line_len, (const char *)line);
+            s_gps.rejected_lines_logged++;
+        }
         return false;
     }
     if (fix_valid) {
@@ -732,12 +900,10 @@ static bool gps_feed_byte(esp_bms_idf_runtime_t *runtime, uint8_t byte)
         return false;
     }
 
-    const bool satellite_sentence =
-        gps_line_is_satellite_sentence(s_gps.nmea_stream.line, s_gps.nmea_stream.line_len);
     const esp_bms_gps_stream_event_t event = esp_bms_gps_stream_feed(&s_gps.nmea_stream, byte);
     if (event == ESP_BMS_GPS_STREAM_EVENT_OVERFLOW) {
         s_gps.overflow_lines++;
-        return satellite_sentence && gps_invalidate_satellite_info(runtime);
+        return false;
     }
     if (event != ESP_BMS_GPS_STREAM_EVENT_LINE) {
         return false;
@@ -900,7 +1066,9 @@ bool esp_bms_gps_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_ms)
         (void)gps_send_casbin(GPS_CASBIN_CLASS_MON, GPS_CASBIN_ID_MON_SEC, NULL, 0U);
     }
 
+    const bool satellite_groups_expired = gps_age_satellite_groups(elapsed_ms);
     bool changed = gps_poll_uart(runtime);
+    if (satellite_groups_expired) changed = gps_publish_satellite_groups(runtime) || changed;
     const uint32_t pps_count = s_gps.pps_count;
     if (pps_count != s_gps.pps_processed_count) {
         s_gps.pps_processed_count = pps_count;
@@ -933,6 +1101,18 @@ bool esp_bms_gps_tick(esp_bms_idf_runtime_t *runtime, uint32_t elapsed_ms)
                  (unsigned long)s_gps.parse_errors,
                  (unsigned long)s_gps.casbin_errors,
                  (unsigned long)s_gps.bytes_seen);
+        ESP_LOGI(TAG,
+                 "satellites: valid=%d gsa=%lu gsv=%lu errors=%lu age=%lu/%lu dim=%u visible=%u used=%u cn0=%u/%u mask=%02x hdop=%u; memory: internal=%u largest=%u psram=%u stack=%uB",
+                 s_gps.satellite_info_valid, (unsigned long)s_gps.gsa_count,
+                 (unsigned long)s_gps.gsv_count, (unsigned long)s_gps.satellite_parse_errors,
+                 (unsigned long)s_gps.gsa_elapsed_ms, (unsigned long)s_gps.gsv_elapsed_ms,
+                 s_gps.fix_dimension, s_gps.satellites_visible, s_gps.satellites_used,
+                 s_gps.average_cn0, s_gps.max_cn0, s_gps.constellation_mask,
+                 s_gps.hdop_centi,
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+                 (unsigned)uxTaskGetStackHighWaterMark(NULL));
     }
     return changed;
 }
