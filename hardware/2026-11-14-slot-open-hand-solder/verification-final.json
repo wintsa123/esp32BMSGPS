@@ -1,0 +1,115 @@
+{
+  "component_count": 37,
+  "physical_pad_count": 213,
+  "component_id_and_bom_unchanged": true,
+  "pad_nets_and_footprints_unchanged": true,
+  "schematic_sha256": "294163f7c558300472eb87dd90bbb2ec593b0945292e4841e9fc9f17644b4e8f",
+  "fpc_esp32_radio_usb_positions_unchanged": true,
+  "mounting_and_other_cutouts_unchanged": true,
+  "large_slot_right_side_crossings_x_mm": {
+    "SDA_TH": [
+      56.366013759999994
+    ],
+    "SCL_TH": [
+      57.00863122
+    ],
+    "INT": [
+      55.84505976
+    ],
+    "RST": [
+      61.53265569999999
+    ],
+    "3.3V": [
+      69.96099799999999,
+      57.94233267999999
+    ]
+  },
+  "nearest_external_component_pad_clearances": {
+    "Q1": {
+      "before": {
+        "clearance_mm": 1.4808199999999931,
+        "pad": "1",
+        "other_pad": "R8_1"
+      },
+      "after": {
+        "clearance_mm": 2.1462999999999997,
+        "pad": "3",
+        "other_pad": "FPC1_4"
+      }
+    },
+    "U3": {
+      "before": {
+        "clearance_mm": 0.4444999999999884,
+        "pad": "3",
+        "other_pad": "L2_2"
+      },
+      "after": {
+        "clearance_mm": 2.39395,
+        "pad": "1",
+        "other_pad": "C2_2"
+      }
+    },
+    "U4": {
+      "before": {
+        "clearance_mm": 0.6464299999999954,
+        "pad": "3",
+        "other_pad": "R17_1"
+      },
+      "after": {
+        "clearance_mm": 2.5514299999999954,
+        "pad": "3",
+        "other_pad": "R17_1"
+      }
+    },
+    "U5": {
+      "before": {
+        "clearance_mm": 0.5118099999999965,
+        "pad": "2",
+        "other_pad": "R6_1"
+      },
+      "after": {
+        "clearance_mm": 0.9753600000000022,
+        "pad": "3",
+        "other_pad": "USB1_13"
+      }
+    },
+    "U6": {
+      "before": {
+        "clearance_mm": 0.25526999999999883,
+        "pad": "4",
+        "other_pad": "R16_2"
+      },
+      "after": {
+        "clearance_mm": 1.5328900000000032,
+        "pad": "3",
+        "other_pad": "C8_2"
+      }
+    },
+    "L2": {
+      "before": {
+        "clearance_mm": 0.4444999999999884,
+        "pad": "1",
+        "other_pad": "U3_4"
+      },
+      "after": {
+        "clearance_mm": 2.4575195700746626,
+        "pad": "1",
+        "other_pad": "C3_2"
+      }
+    }
+  },
+  "gerber_outline": {
+    "valid": true,
+    "connected_board": true,
+    "internal_slots": 1,
+    "small_slot_open_to_top": true,
+    "notch_width_mm": 13,
+    "notch_depth_mm": 15.4,
+    "notch_bottom_radius_mm": 1
+  },
+  "native_strict_drc": [],
+  "limits": [
+    "Pad gaps measure external component copper only; lead pitch within each package is unchanged.",
+    "No fabricated board, hand soldering, power transient, thermal or EMC bench validation."
+  ]
+}
