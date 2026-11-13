@@ -1,26 +1,26 @@
 # 硬件设计文件
 
-当前版本：[2026-11-14：小 FPC 顶部开口贯通、右侧下行绕线与手焊间距调整](2026-11-14-slot-open-hand-solder/README.md)。
+当前版本：[2026-11-14：顶部凸外圆角、R6 留距与安装孔支撑柱避让](2026-11-14-rounded-cutout-clearance/README.md)。
 
 | 文件 | 用途 |
 | --- | --- |
-| [嘉立创工程 epro2](2026-11-14-slot-open-hand-solder/ESP32-BMS-GPS-slot-open-hand-solder-20261114.epro2) | 导入嘉立创 EDA 专业版，包含原理图与 PCB |
-| [本地工程 eprj2](2026-11-14-slot-open-hand-solder/ESP32-BMS-GPS-slot-open-hand-solder-20261114.eprj2) | 嘉立创 EDA 专业版本地工程 |
-| [原理图源文件](2026-11-14-slot-open-hand-solder/P1-final.esch) | 最终原理图 |
-| [PCB 源文件](2026-11-14-slot-open-hand-solder/PCB1-final.epcb) | 最终 PCB |
-| [Gerber 制造文件](2026-11-14-slot-open-hand-solder/Gerber-slot-open-hand-solder-20261114.zip) | PCB 制板输出 |
-| [采购 BOM CSV](2026-11-14-slot-open-hand-solder/BOM-final-20261114.csv) | UTF-8 CSV，含 R9 不装记录 |
-| [整体预览](../preview/pcb-slot-open-native-20261114.png) | 查看板图 |
-| [开口与右侧绕线预览](../preview/pcb-slot-open-fpc-20261114.png) | 查看 FPC 开口和走线 |
-| [手焊区域预览](../preview/pcb-hand-solder-20261114.png) | 查看器件间距 |
+| [嘉立创工程 epro2](2026-11-14-rounded-cutout-clearance/ESP32-BMS-GPS-rounded-cutout-clearance-20261114.epro2) | 导入专业版，包含原理图与 PCB |
+| [本地工程 eprj2](2026-11-14-rounded-cutout-clearance/ESP32-BMS-GPS-rounded-cutout-clearance-20261114.eprj2) | 直接打开的本地工程 |
+| [PCB 源文件](2026-11-14-rounded-cutout-clearance/PCB1-final.epcb) | 最终 PCB |
+| [原理图](2026-11-14-rounded-cutout-clearance/P1-final.esch) | 原理图源文档 |
+| [Gerber](2026-11-14-rounded-cutout-clearance/Gerber-rounded-cutout-clearance-20261114.zip) | 制造文件 |
+| [BOM](2026-11-14-rounded-cutout-clearance/BOM-final-20261114.csv) | 采购清单，R9 不装 |
+| [制造层预览](../preview/pcb-rounded-physical-20261114.png) | 成品板框、铜层和丝印 |
+| [顶部外圆角放大](../preview/pcb-rounded-outline-detail-20261114.png) | 从实际 Gerber 板框生成 |
+| [支撑柱避让](../preview/pcb-rounded-pillar-guides-20261114.png) | 四个安装孔为圆心，R4 mm 辅助范围 |
 
-本版本将小 FPC 上方开孔贯通顶部，开口宽 13 mm、深 15.4 mm、底角 R1 mm；小 FPC 及邻近器件的 SDA_TH、SCL_TH、INT、RST、3.3V 分支从大 FPC 右侧绕到下方。Q1/U5（三脚）、U3（五脚）、U4/U6（六脚）和 L2 周边焊盘已重新留距，调整后最近外部焊盘净距分别约为 2.15、2.39、2.55、0.98、1.53、2.46 mm。
+小 FPC 顶部开口保持 13 mm 直壁宽、15.4 mm 深、底角 R1 mm，仅将入口做成连续板框的 R0.5 mm 凸外圆角，不增加圆形钻孔；FPC2 丝印已移开。按用户最新确认，FPC1、大槽及其周边避让范围沿用上一版。
 
-同目录保存 DRC、重开、连通性、槽周铜距、过孔和 SHA-256 校验记录。最终原生严格 DRC 为零，51 个命名网络无断线或短路，槽周 Gerber 最小铜距约 1.553 mm。
+R6 上移并与 C6 拉开距离；RF2/L1/U2/C1 整组下移；左下安装孔旁的 R19 上移。四个安装孔分别按孔心 R4 mm 检查元件焊盘与封装外形。保留此前三脚、六脚器件和 L2 周围的手焊间距调整。
 
-上一版基准：[2026-11-11：两个 FPC 与排线槽左移 1.8 mm](2026-11-11-fpc-left18/README.md)。
+同目录保存原生 DRC、独立 Gerber 连通性、铜距、重开和 SHA-256 记录。尚未进行打样实焊、信号完整性实测或外壳装配验证。
 
-尚未进行排线和外壳的实物装配验证。历史中间版本、自动备份与临时文件未纳入本次归档。
+历史版本：[顶部贯通及手焊间距调整](2026-11-14-slot-open-hand-solder/README.md)；[FPC 左移 1.8 mm](2026-11-11-fpc-left18/README.md)。
 
 R5 已改为 2.2 Ω，其余已选型电阻的采购属性已同步至原理图、PCB 和完整工程。R4 已按历史选型改为 453 kΩ（厚声 `0805W8F4533T5E` / `C17702`），36 个装配器件均已填写采购料号；R9 不装。
 
