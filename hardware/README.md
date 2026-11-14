@@ -2,6 +2,10 @@
 
 当前版本：[2026-11-14：小 FPC 顶部开口加宽至 14 mm](2026-11-14-fpc2-wider-opening/README.md)。
 
+板名丝印：**wintsa-fuckBms-GPS V1.0**。本次将小 FPC 顶部贯通开口从 11 mm 加宽至 **14 mm**，左右各增加 1.5 mm 的排线余量，深度保持 **13.8 mm**；顶部两角为 **R1 mm 凸外圆角**。FPC2 丝印恢复旧版横向位置，并保留文字下方板材；FPC2 及相邻触摸元件的走线从大 FPC 右侧向下。
+
+<a href="../preview/pcb-fpc2-wider-physical-20261114.png"><img src="../preview/pcb-fpc2-wider-detail-20261114.png" alt="14 mm 顶部开口及 FPC2 丝印，点击查看整板制造层预览" width="400"></a>
+
 | 文件 | 用途 |
 | --- | --- |
 | [嘉立创工程 epro2](2026-11-14-fpc2-wider-opening/wintsa-fuckBms-GPS-V1.0-20261114.epro2) | 导入专业版，包含原理图与 PCB |
@@ -14,11 +18,11 @@
 | [顶部外圆角放大](../preview/pcb-fpc2-wider-detail-20261114.png) | 14 mm 开口与 FPC2 横向丝印 |
 | [支撑柱避让](../preview/pcb-fpc2-wider-pillar-guides-20261114.png) | 四个安装孔为圆心，R4 mm 辅助范围 |
 
-小 FPC 顶部开口加宽至 14 mm 直壁宽、13.8 mm 深，顶部为连续板框的 R1 mm 凸外圆角，底角 R1 mm，入口最宽 16 mm。FPC2 丝印恢复旧版横向位置，保留文字下方板材；右上板名为 `wintsa-fuckBms-GPS V1.0`。钻孔、大槽和现有走线保持上一版设计。
+小开口的入口最宽 16 mm，底角为 R1 mm。顶部两角属于连续板框，所有钻孔的位置和孔径均保持不变，没有增加角部圆孔。大槽和现有走线保持上一版设计。
 
 R6 上移并与 C6 拉开距离；RF2/L1/U2/C1 整组下移；左下安装孔旁的 R19 上移。四个安装孔分别按孔心 R4 mm 检查元件焊盘与封装外形。保留此前三脚、六脚器件和 L2 周围的手焊间距调整。
 
-同目录保存原生 DRC、独立 Gerber 连通性、铜距、重开和 SHA-256 记录。尚未进行打样实焊、信号完整性实测或外壳装配验证。
+本版严格 DRC 和保存重开后的严格 DRC 均为 **0 项**。独立 Gerber 检查覆盖 **51 个网络、197 个有网焊盘**，无断线或短路；小开口双面最小铜距为 **1.561 mm**，大槽为 **1.553 mm**。[本版目录](2026-11-14-fpc2-wider-opening/)保存验证和 SHA-256 记录。尚未进行实物排线穿装、打样实焊、信号完整性实测或外壳装配验证。
 
 历史版本：[FPC2 丝印恢复与板名](2026-11-14-fpc2-outline-label/README.md)；[顶部凸外圆角与器件避让](2026-11-14-rounded-cutout-clearance/README.md)；[顶部贯通及手焊间距调整](2026-11-14-slot-open-hand-solder/README.md)；[FPC 左移 1.8 mm](2026-11-11-fpc-left18/README.md)。
 
