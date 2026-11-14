@@ -1,6 +1,0 @@
-{
-  "expected_vias": 222,
-  "actual_gerber_via_drills": 222,
-  "all_centers_and_hole_diameters_match": true,
-  "tolerance_mm": 3e-05
-}

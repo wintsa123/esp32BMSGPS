@@ -1,8 +1,0 @@
-{
-  "method": "Independent Gerber copper union by layer, plated-via and through-hole-pad joins; physical pad centers assigned to copper islands",
-  "named_nets": 51,
-  "physical_named_pads": 197,
-  "opens": {},
-  "shorts": {},
-  "pad_center_rounding_tolerance_mm": 0.0015
-}
