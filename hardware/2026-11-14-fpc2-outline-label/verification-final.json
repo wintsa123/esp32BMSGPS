@@ -1,0 +1,47 @@
+{
+  "strict_drc": [],
+  "reopened_strict_drc": [],
+  "saved_and_reopened_primitives_match": true,
+  "functional_primitives_unchanged": [
+    "COMPONENT",
+    "FILL",
+    "LINE",
+    "NET",
+    "PAD_NET",
+    "REGION",
+    "RULE",
+    "VIA"
+  ],
+  "schematic_unchanged": true,
+  "fpc2_designator_exactly_matches_old_version": true,
+  "fpc2_silkscreen_bbox_to_notch_mm": 1.691008,
+  "fpc2_silkscreen_bbox_entirely_on_board_with_0_3mm_margin": true,
+  "board_label": "wintsa-fuckBms-GPS V1.0",
+  "outline": {
+    "one_connected_board": true,
+    "one_internal_large_slot": true,
+    "small_notch_open_to_top": true,
+    "straight_wall_width_mm": 11,
+    "depth_mm": 13.8,
+    "mouth_width_mm": 13,
+    "top_corners_two_tangent_convex_quarter_arcs_radius_mm": 1,
+    "bottom_corner_radius_mm": 1
+  },
+  "drills": {
+    "Drill_PTH_Through.DRL": {
+      "drill_centers_and_diameters_identical_to_previous": true,
+      "object_count": 231
+    },
+    "Drill_NPTH_Through.DRL": {
+      "drill_centers_and_diameters_identical_to_previous": true,
+      "object_count": 6
+    },
+    "Drill_PTH_Through_Via.DRL": {
+      "drill_centers_and_diameters_identical_to_previous": true,
+      "object_count": 222
+    }
+  },
+  "limits": [
+    "No physical FPC insertion or fabricated-board inspection."
+  ]
+}

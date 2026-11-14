@@ -16,6 +16,10 @@ Thanks to **luose**, the original author, for sharing the [original ESP32 BMS GP
 
 The current schematic, PCB, EasyEDA project, Gerber files, and BOM are in the [hardware directory](./hardware/README.md). R5 is **2.2 Ω**. R4 is **453 kΩ / 0805** (`0805W8F4533T5E` / `C17702`); R9 is not populated. See the [BOM notes](./hardware/2026-11-11-fpc-left18/BOM.md) and [Taobao display link](./hardware/README.md#外接屏幕采购地址).
 
+Latest PCB: **wintsa-fuckBms-GPS V1.0** (2026-11-14). The small FPC opening extends to the top edge and measures **14 mm wide × 13.8 mm deep**, with R1 mm convex entry corners. The horizontal FPC2 reference is restored, and the associated traces run down the right side of the large FPC. See the [revision notes](./hardware/2026-11-14-fpc2-wider-opening/README.md) for the complete project, manufacturing files, and verification records. Strict DRC reports zero errors after reopening; independent Gerber checks found no opens or shorts. Physical FPC insertion has not been verified.
+
+<a href="./preview/pcb-fpc2-wider-physical-20261114.png"><img src="./preview/pcb-fpc2-wider-detail-20261114.png" alt="Latest PCB opening and FPC2 reference; click for the full board" width="400"></a>
+
 <h2 align="center">🖼️ UI Preview</h2>
 
 <table align="center">

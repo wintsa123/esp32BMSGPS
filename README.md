@@ -16,6 +16,10 @@
 
 当前原理图、PCB、嘉立创工程、Gerber 和 BOM 见 [硬件设计目录](./hardware/README.md)。当前版本 R5 为 **2.2 Ω**；R4 为 **453 kΩ / 0805**（`0805W8F4533T5E` / `C17702`），R9 不装，详情见 [BOM 说明](./hardware/2026-11-11-fpc-left18/BOM.md)。[屏幕淘宝购买地址](./hardware/README.md#外接屏幕采购地址)。
 
+最新 PCB：**wintsa-fuckBms-GPS V1.0**（2026-11-14）。小 FPC 顶部贯通开口为 **14 mm 宽、13.8 mm 深**，顶部采用 R1 mm 外圆角；FPC2 丝印恢复横向位置，相关走线从大 FPC 右侧向下。完整工程、制造文件和验证记录见 [本版说明](./hardware/2026-11-14-fpc2-wider-opening/README.md)。保存重开后严格 DRC 为 0，Gerber 检查无断线或短路；尚未进行实物排线穿装验证。
+
+<a href="./preview/pcb-fpc2-wider-physical-20261114.png"><img src="./preview/pcb-fpc2-wider-detail-20261114.png" alt="最新 PCB 顶部开口及 FPC2 丝印，点击查看整板" width="400"></a>
+
 <h2 align="center">🖼️ 界面预览</h2>
 
 

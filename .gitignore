@@ -28,6 +28,8 @@
 /preview/*
 !/preview/android-cast-app-portrait.png
 !/preview/android-cast-app-landscape.png
+!/preview/pcb-fpc2-final-*.png
+!/preview/pcb-fpc2-wider-*.png
 /docs/hardware/
 /.idf-builds/
 /.idf-validation/
