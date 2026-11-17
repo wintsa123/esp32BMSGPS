@@ -28,7 +28,8 @@ const device = http.createServer((req, res) => {
     const errors=[];page.on('pageerror',error=>errors.push(error.message));
     // Grant only this test origin permission to contact the local fixture server.
     const cdp = await context.newCDPSession(page);
-    await cdp.send('Browser.grantPermissions',{origin:new URL(url).origin,permissions:['localNetworkAccess']});
+    const {targetInfo} = await cdp.send('Target.getTargetInfo');
+    await cdp.send('Browser.grantPermissions',{origin:new URL(url).origin,browserContextId:targetInfo.browserContextId,permissions:['localNetworkAccess','localNetwork','loopbackNetwork']});
     await page.addInitScript(() => {
       window.bleRequests=[];window.bleOptions=[];window.cancelBle=false;
       const encoder=new TextEncoder(),decoder=new TextDecoder();

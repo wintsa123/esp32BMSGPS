@@ -48,6 +48,7 @@ if (!process.argv.includes('--browser')) process.exit(0);
   served=builds.v1;
   const server=http.createServer((req,res)=>{
     let name=decodeURIComponent(new URL(req.url,'http://localhost').pathname).replace(/^\/fnconnect\//,'');
+    if(name==='index.html'){res.writeHead(308,{Location:'/fnconnect/'}).end();return;}
     if(!name)name='index.html';res.setHeader('Cache-Control','no-store');
     if(name==='sw.js'&&failWorker){res.writeHead(503).end();return;}
     if(name==='apk/latest.json'){res.setHeader('Content-Type','application/json');res.statusCode=failCatalog?503:200;res.end(JSON.stringify({versionCode:2,versionName:'2.0',url:'app.apk'}));return;}
