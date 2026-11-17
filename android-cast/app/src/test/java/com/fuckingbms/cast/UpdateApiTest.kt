@@ -6,6 +6,38 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class UpdateApiTest {
+    @Test fun bothSourcesKeepTheirDownloadPrefixAndFailuresAreNotLatest() {
+        val requested = mutableListOf<String>()
+        val body = """{"versionCode":4,"versionName":"0.4.0","url":"/apk/app.apk"}"""
+        for (source in UpdateApi.Source.entries) {
+            val release = UpdateApi.checkApkUpdate(source) { url -> requested += url; body }!!
+            assertEquals(source.base + "apk/latest.json", requested.last())
+            assertEquals(source.base + "apk/app.apk", release.url)
+        }
+        requested.clear()
+        val fallback = UpdateApi.checkApkUpdate { url ->
+            requested += url
+            if (url.startsWith(UpdateApi.BASE_URL)) throw java.io.IOException("offline")
+            body
+        }!!
+        assertEquals(2, requested.size)
+        assertTrue(fallback.url.startsWith(UpdateApi.Source.GITHUB.base))
+        try { UpdateApi.checkApkUpdate { throw java.io.IOException("offline") }; throw AssertionError("network failure reported as current") }
+        catch (_: java.io.IOException) { }
+        for (value in listOf("javascript:x", "http://bad.test/app.apk", "https://user@bad.test/app.apk")) {
+            org.junit.Assert.assertThrows(Exception::class.java) { UpdateApi.releaseUrl(value, UpdateApi.Source.GITHUB.base + "apk/latest.json") }
+        }
+    }
+
+    @Test fun firmwareDownloadsUseSelectedSourceAndInvalidCatalogFails() {
+        val body = """{"firmwares":[{"profile":"esp32","url":"/firmware/esp32.bin"}]}"""
+        for (source in UpdateApi.Source.entries) {
+            assertEquals(source.base + "firmware/esp32.bin", UpdateApi.fetchFirmwareList(source) { body }.single().url)
+        }
+        try { UpdateApi.fetchFirmwareList(UpdateApi.Source.CF) { "{}" }; throw AssertionError("invalid catalog accepted") }
+        catch (_: java.io.IOException) { }
+    }
+
     @Test fun parsesApkReleaseManifest() {
         val release = UpdateApi.parseApkRelease(
             """{"versionCode":2,"versionName":"0.2.0","url":"/apk/两轮智控.apk","size":3934388,"note":"最新版本，建议升级","publishedAt":"2026-08-22T00:00:00+08:00"}""",

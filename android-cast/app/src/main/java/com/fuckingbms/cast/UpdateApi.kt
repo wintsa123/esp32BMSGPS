@@ -6,17 +6,40 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 
-/** 在线更新源（Vercel 静态托管，与 vercel/public 下的清单一致）。 */
+/** Two independent mirrors; resolved download URLs always retain the selected source. */
 internal object UpdateApi {
-    const val BASE_URL = "https://esp-bms-setting.vercel.app"
+    const val BASE_URL = "https://fuckbms.com/"
+    enum class Source(val id: String, val label: String, val base: String) {
+        CF("cf", "Cloudflare", BASE_URL),
+        GITHUB("github", "GitHub", "https://raw.githubusercontent.com/wintsa123/espBmsSetting/updates/");
+        companion object { fun from(value: String?) = entries.firstOrNull { it.id == value } }
+    }
     private const val APK_MANIFEST_PATH = "/apk/latest.json"
     private const val FIRMWARE_MANIFEST_PATH = "/firmware/firmware.json"
     private const val CONNECT_TIMEOUT_MS = 8_000
     private const val READ_TIMEOUT_MS = 15_000
 
-    fun checkApkUpdate(): ApkRelease? {
-        val body = getJson(resolve(BASE_URL, APK_MANIFEST_PATH)) ?: return null
-        return parseApkRelease(body)
+    fun checkApkUpdate(source: Source? = null, fetch: (String) -> String = ::getJson): ApkRelease? =
+        catalog(APK_MANIFEST_PATH, source, fetch) { body, url ->
+            val release = parseApkRelease(body) ?: throw IOException("无效的 App 更新清单")
+            release.copy(url = releaseUrl(release.url, url))
+        }
+
+    private fun <T> catalog(path: String, source: Source?, fetch: (String) -> String, parse: (String, String) -> T): T {
+        val errors = mutableListOf<String>()
+        for (candidate in source?.let { listOf(it) } ?: Source.entries) {
+            val url = resolve(candidate.base, path)
+            try { return parse(fetch(url), url) }
+            catch (reason: Exception) { errors += "${candidate.label}: ${reason.message}" }
+        }
+        throw IOException(errors.joinToString("; "))
+    }
+
+    fun releaseUrl(value: String, manifestUrl: String): String {
+        val relative = if (value.startsWith("/") && !value.startsWith("//")) "..$value" else value
+        val uri = java.net.URI(URL(URL(manifestUrl), relative).toString())
+        require(uri.scheme == "https" && uri.host != null && uri.rawUserInfo == null && uri.rawFragment == null) { "下载地址必须使用 HTTPS" }
+        return uri.toASCIIString()
     }
 
     fun parseApkRelease(body: String): ApkRelease? {
@@ -27,13 +50,14 @@ internal object UpdateApi {
             url = value.optString("url", ""),
             size = value.optLong("size", 0L),
             note = value.optString("note", ""),
-        ).takeIf { it.url.isNotBlank() }
+        ).takeIf { it.url.isNotBlank() && it.versionCode > 0 && it.versionName.isNotBlank() }
     }
 
-    fun fetchFirmwareList(): List<FirmwareRelease> {
-        val body = getJson(resolve(BASE_URL, FIRMWARE_MANIFEST_PATH)) ?: return emptyList()
-        return parseFirmwareList(body)
-    }
+    fun fetchFirmwareList(source: Source? = null, fetch: (String) -> String = ::getJson): List<FirmwareRelease> =
+        catalog(FIRMWARE_MANIFEST_PATH, source, fetch) { body, url ->
+            require(JSONObject(body).optJSONArray("firmwares") != null) { "无效的固件更新清单" }
+            parseFirmwareList(body).map { it.copy(url = releaseUrl(it.url, url)) }
+        }
 
     fun parseFirmwareList(body: String): List<FirmwareRelease> {
         val root = JSONObject(body)
@@ -104,7 +128,7 @@ internal object UpdateApi {
         }
     }
 
-    private fun getJson(url: String): String? {
+    private fun getJson(url: String): String {
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             connectTimeout = CONNECT_TIMEOUT_MS
             readTimeout = READ_TIMEOUT_MS
@@ -112,10 +136,8 @@ internal object UpdateApi {
         }
         try {
             val code = connection.responseCode
-            if (code !in 200..299) return null
+            if (code !in 200..299) throw IOException("HTTP $code")
             return connection.inputStream.bufferedReader().use { it.readText() }
-        } catch (_: IOException) {
-            return null
         } finally {
             connection.disconnect()
         }

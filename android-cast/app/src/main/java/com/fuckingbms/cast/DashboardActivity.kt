@@ -146,6 +146,9 @@ class DashboardActivity : Activity() {
     inner class Bridge {
         @JavascriptInterface fun getWebUpdateState(): String = updates.state()
         @JavascriptInterface fun checkWebUpdate() { updateWorker.execute { updates.check() } }
+        @JavascriptInterface fun checkWebUpdateFrom(source: String) {
+            if (UpdateApi.Source.from(source) != null) updateWorker.execute { updates.check(source) }
+        }
         @JavascriptInterface fun restartWeb() {
             updateWorker.execute {
                 val next = updates.acquire()
@@ -161,10 +164,14 @@ class DashboardActivity : Activity() {
             }
         }
         @JavascriptInterface fun installAppUpdate() = runOnUiThread {
+            installAppUpdateFrom("cf")
+        }
+        @JavascriptInterface fun installAppUpdateFrom(source: String) = runOnUiThread {
+            if (UpdateApi.Source.from(source) == null) return@runOnUiThread
             resumeBle = true
             CompanionLink.remove(this@DashboardActivity)
             startActivity(Intent(this@DashboardActivity, MainActivity::class.java)
-                .putExtra("dashboard_route", "SETTINGS").putExtra("check_app_update", true))
+                .putExtra("dashboard_route", "SETTINGS").putExtra("check_app_update", true).putExtra("update_source", source))
         }
 
         @JavascriptInterface fun getAppInfo(): String = runCatching {

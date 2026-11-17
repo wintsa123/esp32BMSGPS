@@ -280,7 +280,7 @@ class MainActivity : Activity() {
             runCatching { AppRoute.valueOf(route) }.getOrNull()?.let { selectRoute(it, refresh = false) }
         }
         refreshDeviceProfile()
-        if (intent.getBooleanExtra("check_app_update", false)) window.decorView.post { checkAppUpdate() }
+        if (intent.getBooleanExtra("check_app_update", false)) window.decorView.post { checkAppUpdate(UpdateApi.Source.from(intent.getStringExtra("update_source"))) }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -676,7 +676,7 @@ class MainActivity : Activity() {
             ota.addView(label("可从服务器在线选择固件，或选择本地 .bin 文件并输入四位验证码。升级过程中不要断电或离开设备热点。", 14f, COLOR_MUTED), rowParams(top = 6, bottom = 8))
             otaFileValue = label("尚未选择固件", 14f, COLOR_MUTED)
             ota.addView(otaFileValue, rowParams(bottom = 8))
-            onlineFirmwareButton = actionButton("在线查询固件", false) { queryOnlineFirmware() }
+            onlineFirmwareButton = actionButton("在线查询固件", false) { chooseUpdateSource { queryOnlineFirmware(it) } }
             ota.addView(onlineFirmwareButton, rowParams(bottom = 8, height = dp(46)))
             ota.addView(actionButton("选择 .bin 文件", false) { chooseFirmware() }, rowParams(bottom = 8, height = dp(46)))
             otaCodeInput = input("四位固件验证码", InputType.TYPE_CLASS_NUMBER).apply {
@@ -700,7 +700,7 @@ class MainActivity : Activity() {
             app.addView(label("应用更新", 18f, COLOR_TEXT, true))
             appVersionValue = label("当前版本 v${currentAppVersion().second}", 14f, COLOR_MUTED)
             app.addView(appVersionValue, rowParams(top = 6, bottom = 8))
-            appUpdateButton = actionButton("检查更新", true) { checkAppUpdate() }
+            appUpdateButton = actionButton("检查更新", true) { chooseUpdateSource { checkAppUpdate(it) } }
             app.addView(appUpdateButton, rowParams(height = dp(48)))
         }
         column.addView(appCard, rowParams(top = 12))
@@ -1569,13 +1569,20 @@ class MainActivity : Activity() {
         startActivityForResult(intent, OTA_FILE_REQUEST)
     }
 
-    private fun queryOnlineFirmware() {
+    private fun chooseUpdateSource(action: (UpdateApi.Source) -> Unit) {
+        val sources = UpdateApi.Source.entries
+        AlertDialog.Builder(this).setTitle("选择更新链路")
+            .setItems(sources.map { it.label }.toTypedArray()) { _, index -> action(sources[index]) }
+            .setNegativeButton("取消", null).show()
+    }
+
+    private fun queryOnlineFirmware(source: UpdateApi.Source? = null) {
         if (onlineFirmwareButton.isEnabled == false) return
         onlineFirmwareButton.isEnabled = false
         val original = onlineFirmwareButton.text.toString()
         onlineFirmwareButton.text = "正在查询"
         thread {
-            val result = runCatching { UpdateApi.fetchFirmwareList() }
+            val result = runCatching { UpdateApi.fetchFirmwareList(source) }
             runOnUiThread {
                 onlineFirmwareButton.isEnabled = true
                 onlineFirmwareButton.text = original
@@ -1648,13 +1655,13 @@ class MainActivity : Activity() {
         return info.versionCode to (info.versionName ?: "")
     }
 
-    private fun checkAppUpdate() {
+    private fun checkAppUpdate(source: UpdateApi.Source? = null) {
         if (appUpdateBusy) return
         appUpdateBusy = true
         val original = appUpdateButton.text.toString()
         appUpdateButton.text = "正在检查"
         thread {
-            val result = runCatching { UpdateApi.checkApkUpdate() }
+            val result = runCatching { UpdateApi.checkApkUpdate(source) }
             runOnUiThread {
                 appUpdateBusy = false
                 appUpdateButton.text = original

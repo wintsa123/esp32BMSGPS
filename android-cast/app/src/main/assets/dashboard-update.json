@@ -1,0 +1,8 @@
+{
+  "manifestUrls": {
+    "cf": "https://fuckbms.com/web/manifest-cf.json",
+    "github": "https://raw.githubusercontent.com/wintsa123/espBmsSetting/updates/web/manifest-github.json"
+  },
+  "publicKey": "MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAs5BHutJi6EIuK3OMv3yfoiVKiyTC92Yaa7WQhh5Fqmhv+WtYQqhbLb5EthHEDpmSJhtoOq01dEhxrZtTeH00W3BpEd7GrbNE7j9/fU7y8w4gShK+VIxO+nt+oCRmcoAXJkbPZ307MqMWDFxcJysRh7EqLr4y1nQ35OJF+cJ/RhddZsazX/KGuD6Ipg2kaiAtHm+Wu6dOhVvxaIzT7cgadVM9o6xW3cGYd/8u0Bt2jk/Ey8djVx8khpACoI+AKpq30dZyZp20FKJiry0nIct5eT2syCSv3bGr6R9aC+FgPPmWw33YvCNMgJS/A8Xl4/w9XdFXe3y8m9U1lZfmNu96IPC05gEzxhixgscmtPnmdlEJdZRLTNa6dsEtdvNDJo5k3beoRDrOywnAwhG0KTciZUfC4v48MjsV8hQTIdIuWDbe4eEYnV/gF8C90E95TkIG3zgxu4dFmBG5BwIKvydTvXR1cSiedkWOZHQgnmmrYLlxf7weyn1zfLjIxJlScpABAgMBAAE=",
+  "bundledSequence": 1794939141015
+}

@@ -19,7 +19,7 @@ MAX_TOTAL = 32 * 1024 * 1024
 MAX_FILES = 512
 MAX_MANIFEST = 256 * 1024
 MAX_INTEGER = 9007199254740991
-EXCLUDED = {"apk", "firmware"}
+EXCLUDED = {"apk", "firmware", "web"}
 
 
 def https_base(value: str) -> str:

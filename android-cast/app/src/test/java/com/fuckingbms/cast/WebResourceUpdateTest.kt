@@ -12,6 +12,35 @@ import java.security.Signature
 import java.util.Base64
 
 class WebResourceUpdateTest {
+    @Test fun signedSourcesFallbackAndExplicitSelectionRemainBoundToTheirOrigin() {
+        val github = "https://raw.githubusercontent.com/owner/repo/updates/"
+        val settings = config.put("manifestUrls",JSONObject().put("cf","https://updates.example/manifest.json").put("github",github + "manifest.json"))
+        val payload = manifest()
+        val files = payload.getJSONArray("files")
+        for (i in 0 until files.length()) {val file = files.getJSONObject(i);file.put("url",github + file.getString("path"))}
+        val envelope = sign(payload)
+        val requests = mutableListOf<String>()
+        val update = WebResourceUpdate(home,settings,3) {url,_ ->
+            requests += url
+            if (url.startsWith("https://updates.example/")) throw IllegalStateException("offline")
+            if (url.endsWith("manifest.json")) envelope else bodies.getValue(url.removePrefix(github))
+        }
+        update.check()
+        assertEquals("ready",state(update).getString("status"))
+        assertEquals("github",state(update).getString("source"))
+        assertEquals("https://updates.example/manifest.json",requests.first())
+        assertEquals("web-2",update.activate()!!.version)
+        val nextOpen = WebResourceUpdate(home,settings,3) {_,_ -> throw IllegalStateException("offline")}
+        assertEquals("web-2",nextOpen.activate()!!.version)
+        requests.clear();update.check("cf")
+        assertEquals(listOf("https://updates.example/manifest.json"),requests)
+        assertEquals("error",state(update).getString("status"))
+        assertEquals("web-2",update.activate()!!.version)
+        // A valid signature from one mirror must not authorize another mirror's resource URLs.
+        val wrongOrigin = WebResourceUpdate(home.resolve("other"),settings,3) {_,_ -> envelope}
+        wrongOrigin.check("cf");assertEquals("error",state(wrongOrigin).getString("status"));assertNull(wrongOrigin.activate())
+    }
+
     private val keys = KeyPairGenerator.getInstance("RSA").apply { initialize(2048) }.generateKeyPair()
     private val home = Files.createTempDirectory("dashboard-update-test").toFile().apply { deleteOnExit() }
     private val bodies = mutableMapOf("index.html" to "<script src='assets/app.js'></script>".toByteArray(), "assets/app.js" to "window.release=2".toByteArray())

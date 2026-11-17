@@ -17,7 +17,7 @@ require(listOf(defaultAmapJsKey, defaultAmapSecurityCode).all { it.isEmpty() || 
 }
 
 android { namespace = "com.fuckingbms.cast"; compileSdk = 35
-    defaultConfig { applicationId = "com.fuckingbms.cast"; minSdk = 29; targetSdk = 35; versionCode = 3; versionName = "0.3.0"; testInstrumentationRunner = "com.fuckingbms.cast.CompanionInstrumentedChecks" }
+    defaultConfig { applicationId = "com.fuckingbms.cast"; minSdk = 29; targetSdk = 35; versionCode = 4; versionName = "0.4.0"; testInstrumentationRunner = "com.fuckingbms.cast.CompanionInstrumentedChecks" }
     buildFeatures { buildConfig = true }
     defaultConfig { buildConfigField("String", "DEFAULT_TIANDITU_KEY", "\"$defaultTiandituKey\"") }
     defaultConfig {
@@ -35,7 +35,7 @@ dependencies {
 }
 
 val dashboardAssets by tasks.registering(Sync::class) {
-    from("../../vercel/dist") { exclude("apk/**", "firmware/**") }
+    from("../../vercel/dist") { exclude("apk/**", "firmware/**", "web/**") }
     into(layout.buildDirectory.dir("generated/dashboard-assets/dashboard"))
     doFirst { check(file("../../vercel/dist/index.html").isFile) { "Build vercel frontend first: npm --prefix ../vercel run build" } }
 }

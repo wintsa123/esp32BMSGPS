@@ -33,7 +33,11 @@ internal class WebResourceUpdate(
     private var error: String? = null
     private val bundledVersion = config.optString("bundledVersion", "内置资源")
     private val bundledSequence = config.optLong("bundledSequence", 0).coerceAtLeast(0)
-    private val manifestUrl = config.optString("manifestUrl")
+    private val manifestUrls: Map<String, String> = config.optJSONObject("manifestUrls")?.let { values ->
+        listOf("cf", "github").mapNotNull { id -> values.optString(id).takeIf { it.isNotBlank() }?.let { id to it } }.toMap()
+    } ?: config.optString("manifestUrl").takeIf { it.isNotBlank() }?.let { mapOf("cf" to it) }.orEmpty()
+    private val manifestUrl = manifestUrls.values.firstOrNull().orEmpty()
+    private var source: String? = null
     private val publicKey = config.optString("publicKey")
     private val configured = manifestUrl.isNotBlank() && publicKey.isNotBlank()
 
@@ -49,7 +53,7 @@ internal class WebResourceUpdate(
 
     fun state(): String = synchronized(lock) {
         JSONObject().put("currentVersion", active?.version ?: bundledVersion)
-            .put("pendingVersion", pending?.version ?: JSONObject.NULL).put("status", status)
+            .put("pendingVersion", pending?.version ?: JSONObject.NULL).put("status", status).put("source", source ?: JSONObject.NULL)
             .apply { error?.let { put("error", it) } }.toString()
     }
 
@@ -94,52 +98,62 @@ internal class WebResourceUpdate(
     }
 
     /** Blocking worker API; caller schedules off the WebView/UI thread. */
-    fun check() {
+    fun check(requestedSource: String? = null) {
         synchronized(lock) {
             if (busy) return
             if (!configured) { status = "unconfigured"; return }
             busy = true; status = "checking"; error = null
         }
-        var staging: File? = null
         try {
-            val envelope = fetch(manifestUrl, MAX_MANIFEST)
-            val manifest = verify(envelope)
-            val sequence = integer(manifest, "sequence", 1)
-            synchronized(lock) {
-                if (sequence <= maxOf(bundledSequence, active?.sequence ?: 0, pending?.sequence ?: 0)) {
-                    status = if (pending != null) "ready" else "current"
+            val candidates = if (requestedSource == null) manifestUrls else manifestUrls.filterKeys { it == requestedSource }
+            require(candidates.isNotEmpty()) { "此 App 未配置所选更新链路，请先更新安装包" }
+            var failure: Exception? = null
+            for ((id, url) in candidates) {
+                var staging: File? = null
+                try {
+                    synchronized(lock) { source = id; status = "checking" }
+                    val envelope = fetch(url, MAX_MANIFEST)
+                    val manifest = verify(envelope, url)
+                    val sequence = integer(manifest, "sequence", 1)
+                    synchronized(lock) {
+                        if (sequence <= maxOf(bundledSequence, active?.sequence ?: 0, pending?.sequence ?: 0)) {
+                            status = if (pending != null) "ready" else "current"
+                            return
+                        }
+                        status = "downloading"
+                    }
+                    val stage = File(home, "stage-${UUID.randomUUID()}"); staging = stage
+                    check(stage.mkdirs())
+                    val files = manifest.getJSONArray("files")
+                    val assets = File(stage, "assets"); check(assets.mkdir())
+                    for (i in 0 until files.length()) {
+                        val item = files.getJSONObject(i)
+                        val bytes = fetch(item.getString("url"), integer(item, "size", 1).toInt())
+                        require(bytes.size.toLong() == integer(item, "size", 1)) { "资源长度不符" }
+                        require(sha256(bytes) == item.getString("sha256")) { "资源哈希不符" }
+                        val destination = File(assets, item.getString("path"))
+                        destination.parentFile!!.mkdirs()
+                        destination.outputStream().use { it.write(bytes); it.fd.sync() }
+                    }
+                    File(stage, "manifest.json").outputStream().use { it.write(envelope); it.fd.sync() }
+                    File(stage, "source.txt").outputStream().use { it.write(url.toByteArray()); it.fd.sync() }
+                    val releaseName = "release-$sequence-${UUID.randomUUID()}"
+                    val destination = File(home, releaseName)
+                    Files.move(stage.toPath(), destination.toPath(), StandardCopyOption.ATOMIC_MOVE)
+                    staging = null
+                    val release = readRelease(releaseName)
+                    synchronized(lock) {
+                        atomicPointer("pending", releaseName)
+                        pending = release; status = "ready"; error = null
+                    }
                     return
-                }
-                status = "downloading"
+                } catch (reason: Exception) { failure = reason }
+                finally { staging?.deleteRecursively() }
             }
-            val stage = File(home, "stage-${UUID.randomUUID()}"); staging = stage
-            check(stage.mkdirs())
-            val files = manifest.getJSONArray("files")
-            val assets = File(stage, "assets"); check(assets.mkdir())
-            for (i in 0 until files.length()) {
-                val item = files.getJSONObject(i)
-                val bytes = fetch(item.getString("url"), integer(item, "size", 1).toInt())
-                require(bytes.size.toLong() == integer(item, "size", 1)) { "资源长度不符" }
-                require(sha256(bytes) == item.getString("sha256")) { "资源哈希不符" }
-                val destination = File(assets, item.getString("path"))
-                destination.parentFile!!.mkdirs()
-                destination.outputStream().use { it.write(bytes); it.fd.sync() }
-            }
-            File(stage, "manifest.json").outputStream().use { it.write(envelope); it.fd.sync() }
-            val releaseName = "release-$sequence-${UUID.randomUUID()}"
-            val destination = File(home, releaseName)
-            Files.move(stage.toPath(), destination.toPath(), StandardCopyOption.ATOMIC_MOVE)
-            staging = null
-            val release = readRelease(releaseName)
-            synchronized(lock) {
-                atomicPointer("pending", releaseName)
-                pending = release; status = "ready"; error = null
-                collect()
-            }
+            throw failure ?: IllegalStateException("更新链路不可用")
         } catch (reason: Exception) {
             synchronized(lock) { status = "error"; error = reason.message ?: "资源更新失败" }
         } finally {
-            staging?.deleteRecursively()
             synchronized(lock) { busy = false; collect() }
         }
     }
@@ -155,7 +169,10 @@ internal class WebResourceUpdate(
         val directory = File(home, name)
         val envelope = File(directory, "manifest.json")
         require(envelope.length() in 1..MAX_MANIFEST.toLong())
-        val manifest = verify(envelope.readBytes())
+        val origin = File(directory, "source.txt").takeIf { it.isFile }?.let {
+            require(it.length() in 1..4096); it.readText()
+        } ?: manifestUrl
+        val manifest = verify(envelope.readBytes(), origin)
         val files = manifest.getJSONArray("files")
         val paths = mutableSetOf<String>()
         for (i in 0 until files.length()) {
@@ -174,7 +191,8 @@ internal class WebResourceUpdate(
         Files.move(temp.toPath(), File(home, "$name.json").toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
     }
 
-    private fun verify(envelope: ByteArray): JSONObject {
+    private fun verify(envelope: ByteArray, origin: String): JSONObject {
+        require(origin in manifestUrls.values) { "未授权的更新链路" }
         require(envelope.size in 1..MAX_MANIFEST) { "清单大小无效" }
         val signed = JSONObject(envelope.toString(Charsets.UTF_8))
         val payload = signed.getString("payload").toByteArray(Charsets.UTF_8)
@@ -186,7 +204,7 @@ internal class WebResourceUpdate(
         require(manifest.getString("version").let { it.isNotBlank() && it.length <= 100 })
         integer(manifest, "sequence", 1)
         require(integer(manifest, "minAppVersionCode", 1) <= appVersionCode) { "请先更新 App" }
-        trustedUrl(manifestUrl, manifestUrl)
+        trustedUrl(origin, origin)
         val files = manifest.getJSONArray("files")
         require(files.length() in 1..512)
         val paths = mutableSetOf<String>(); var total = 0L
@@ -197,7 +215,7 @@ internal class WebResourceUpdate(
             val size = integer(item, "size", 1); require(size <= MAX_FILE)
             total += size; require(total <= MAX_TOTAL)
             require(Regex("[a-f0-9]{64}").matches(item.getString("sha256")))
-            trustedUrl(item.getString("url"), manifestUrl)
+            trustedUrl(item.getString("url"), origin)
         }
         require("index.html" in paths) { "缺少首页资源" }
         return manifest
