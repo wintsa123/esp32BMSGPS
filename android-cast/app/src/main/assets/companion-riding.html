@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>骑行规划</title>
+<script src="https://webapi.amap.com/loader.js"></script>
+<script>
+"use strict";
+let sdkPromise;
+let activeRequest = null;
+window.cancelRiding = () => { activeRequest = null; };
+
+function coordinate(point) {
+    const pair = Array.isArray(point) ? point : [point.getLng(), point.getLat()];
+    if (pair.length !== 2 || !pair.every(Number.isFinite) || Math.abs(pair[0]) > 180 || Math.abs(pair[1]) > 85) {
+        throw new Error("坐标超出范围");
+    }
+    return pair.map(value => Number(value.toFixed(6)));
+}
+
+window.planRiding = async function(request) {
+    activeRequest = request.id;
+    const current = () => activeRequest === request.id;
+    const reply = data => {
+        if (current()) {
+            activeRequest = null;
+            BmsRiding.complete(request.id, JSON.stringify(data));
+        }
+    };
+    try {
+        if (!sdkPromise) {
+            if (typeof AMapLoader === "undefined") throw new Error("高德脚本未加载，请检查手机网络后重试");
+            window._AMapSecurityConfig = {securityJsCode: request.securityCode};
+            sdkPromise = AMapLoader.load({key: request.key, version: "2.0", plugins: ["AMap.Riding", "AMap.Geocoder"]}).then(AMap => {
+                AMap.getConfig().appname = "amap-jsapi-skill";
+                return AMap;
+            }).catch(error => { sdkPromise = null; throw error; });
+        }
+        const AMap = await sdkPromise;
+        if (!current()) return;
+        if (typeof AMap.Riding !== "function" || typeof AMap.Geocoder !== "function") throw new Error("高德骑行组件加载失败，请检查手机网络后重试");
+        let destination = request.destination;
+        if (!destination) {
+            const query = request.name.trim();
+            const match = /^([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)$/.exec(query);
+            if (match) destination = coordinate([Number(match[1]), Number(match[2])]);
+            else {
+                destination = await new Promise((resolve, reject) => {
+                    new AMap.Geocoder().getLocation(query, (status, result) => {
+                        if (status === "complete" && result.geocodes && result.geocodes[0]) resolve(coordinate(result.geocodes[0].location));
+                        else reject(new Error("地址查询失败：" + (result && result.info || status)));
+                    });
+                });
+            }
+        }
+        if (!current()) return;
+        destination = coordinate(destination);
+        const route = await new Promise((resolve, reject) => {
+            new AMap.Riding({policy: 0}).search(coordinate(request.origin), destination, (status, result) => {
+                if (status === "complete" && result.routes && result.routes[0]) resolve(result.routes[0]);
+                else reject(new Error("骑行规划失败：" + (result && result.info || result || status)));
+            });
+        });
+        if (!current()) return;
+        if (!Array.isArray(route.rides) || route.rides.length < 1 || route.rides.length > 5000) throw new Error("没有可用骑行分段");
+        let count = 0;
+        const steps = route.rides.map(ride => {
+            if (!Array.isArray(ride.path) || !ride.path.length || (count += ride.path.length) > 60000) throw new Error("骑行路线坐标无效或过多");
+            return {
+                instruction: String(ride.instruction || "沿路线骑行").slice(0, 160),
+                road: String(ride.road || "").slice(0, 100),
+                polyline: ride.path.map(point => coordinate(point).join(",")).join(";")
+            };
+        });
+        const duration = Math.round(Number(route.time));
+        if (!Number.isFinite(duration) || duration < 0) throw new Error("骑行时间无效");
+        reply({status: "1", destination, route: {paths: [{duration, steps}]}});
+    } catch (error) {
+        reply({status: "0", info: String(error && error.message || error).replace(/[a-f0-9]{32}/gi, "[隐藏]").slice(0, 160)});
+    }
+};
+</script>
+</html>

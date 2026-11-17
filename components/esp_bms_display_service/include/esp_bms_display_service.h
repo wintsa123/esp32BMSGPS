@@ -27,11 +27,13 @@ typedef enum {
     ESP_BMS_DISPLAY_SERVICE_COMMAND_OTA_FINISH,
     ESP_BMS_DISPLAY_SERVICE_COMMAND_ENTER_CAST,
     ESP_BMS_DISPLAY_SERVICE_COMMAND_EXIT_CAST,
+    ESP_BMS_DISPLAY_SERVICE_COMMAND_REMOTE_ACTION,
 } esp_bms_display_service_command_kind_t;
 
 typedef struct {
     esp_bms_display_service_command_kind_t kind;
     union {
+        esp_bms_lvgl_action_event_t remote_action;
         struct {
             uint8_t progress_percent;
             char status_text[ESP_BMS_DISPLAY_SERVICE_STATUS_TEXT_MAX];

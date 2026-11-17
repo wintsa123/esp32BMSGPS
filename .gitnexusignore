@@ -1,0 +1,13 @@
+managed_components.bak/
+managed_components/
+build*/
+firmware-builds/
+target/
+.tools/
+.idf-validation/
+.selftests-work-current/
+.yy-apk-analysis.*/
+broad/
+hardware/
+android-cast/build/
+android-cast/app/build/

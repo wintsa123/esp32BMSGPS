@@ -1,0 +1,10 @@
+{
+  "provider": "AMap.Riding JS API 2.0",
+  "geocoded": true,
+  "route_points": 137,
+  "steps": 11,
+  "seconds": 1218,
+  "tile_width": 256,
+  "tile_height": 256,
+  "local_remaining_m": 5118.798063111731
+}

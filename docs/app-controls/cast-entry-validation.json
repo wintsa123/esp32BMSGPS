@@ -1,0 +1,30 @@
+{
+  "validated_at": "2026-11-17T23:49:50.806099+08:00",
+  "apk": "两轮智控.apk",
+  "apk_sha256": "4ad8251209044f1b1b6d5ef2d1e5913e8b4e367323ec410ce053d2229579c9e4",
+  "checks": {
+    "frontend_typecheck": "passed",
+    "frontend_production_build": "passed",
+    "dashboard_cast_entry_check": "passed",
+    "dashboard_home_unit": "passed",
+    "dashboard_home_check": "passed",
+    "dashboard_companion_check": "passed",
+    "android_apk_home_to_native_cast": "passed",
+    "android_apk_settings_to_native_cast": "passed",
+    "android_back_to_dashboard": "passed"
+  },
+  "layout_migration": "Adds cast once, keeps existing order and sizes, respects later deletion",
+  "viewport_widths": [
+    320,
+    390
+  ],
+  "viewport_height": 568,
+  "android_device": "Android 35 emulator",
+  "physical_device_tested": false,
+  "streaming_to_esp32_tested": false,
+  "screenshots": [
+    "preview/cast-android-home.png",
+    "preview/cast-android-settings.png",
+    "preview/cast-android-native.png"
+  ]
+}

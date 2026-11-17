@@ -356,7 +356,7 @@ internal class DeviceBleSession(
     companion object {
         internal const val PROTOCOL_VERSION = 1
         internal const val MAX_REQUEST_BYTES = 512
-        internal const val MAX_RESPONSE_BYTES = 4096
+        internal const val MAX_RESPONSE_BYTES = 8192
         private const val MAX_MTU = 517
         private const val SCAN_TIMEOUT_MS = 10_000L
         private const val WRITE_TIMEOUT_SECONDS = 4L

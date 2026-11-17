@@ -1006,121 +1006,42 @@ static void create_music_page_content(void)
     memset(s_ui.music_control_icons, 0, sizeof(s_ui.music_control_icons));
     memset(s_ui.music_control_captions, 0, sizeof(s_ui.music_control_captions));
     s_ui.music_play_paused = false;
-#if MEDIA_HID_PAGE_ENABLED
-    const bool portrait = s_ui.width < s_ui.height;
-    s_ui.music_title = NULL;
-    const bool native_320x480 = s_ui.width == 320 && s_ui.height == 480;
-    const bool native_480x320 = s_ui.width == 480 && s_ui.height == 320;
-    const int32_t status_w =
-        native_320x480 ? 192 : native_480x320 ? 168 : portrait ? 156 : 128;
-    const int32_t status_y = native_320x480 ? 42 : portrait ? 30 : 16;
-    const int32_t status_h = native_320x480 ? 32 : 28;
-    lv_obj_t *status_card = panel(s_ui.music_page,
-                                  (s_ui.width - status_w) / 2,
-                                  status_y,
-                                  status_w,
-                                  status_h,
-                                  COLOR_PANEL_ALT);
-    lv_obj_set_style_radius(status_card, 8, LV_PART_MAIN);
-    lv_obj_set_style_border_width(status_card, 1, LV_PART_MAIN);
-    lv_obj_set_style_border_color(status_card, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
-    s_ui.music_status = label(status_card,
-                              4,
-                              native_320x480 ? 6 : 5,
-                              status_w - 8,
-                              18,
-                              &media_zh_13);
-    lv_obj_set_style_text_align(s_ui.music_status, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-
-    const esp_bms_lvgl_action_t music_actions[MUSIC_CONTROL_COUNT] = {
-        ESP_BMS_LVGL_ACTION_PHONE_MEDIA_PREVIOUS,
-        ESP_BMS_LVGL_ACTION_MEDIA_PLAY_PAUSE,
-        ESP_BMS_LVGL_ACTION_PHONE_MEDIA_NEXT,
-        ESP_BMS_LVGL_ACTION_PHONE_MEDIA_VOLUME_DOWN,
+    const int32_t content_h = s_ui.height - 120;
+    lv_obj_t *title = label(s_ui.music_page, 16, 24, s_ui.width - 32, 32, &lv_font_montserrat_24);
+    lv_label_set_text(title, "MUSIC");
+    lv_obj_set_style_text_color(title, COLOR_BOOT_CYAN, 0);
+    lv_obj_t *hint = label(s_ui.music_page, 16, content_h / 2, s_ui.width - 32, 36, &lv_font_montserrat_14);
+    lv_label_set_text(hint, "Open music on your phone");
+    lv_obj_set_style_text_color(hint, COLOR_MUTED, 0);
+    s_ui.music_status = label(s_ui.music_page, 16, content_h + 1, s_ui.width - 32, 18, &media_zh_13);
+    const esp_bms_lvgl_action_t actions[5] = {
+        ESP_BMS_LVGL_ACTION_PHONE_MEDIA_PREVIOUS, ESP_BMS_LVGL_ACTION_MEDIA_PLAY_PAUSE,
+        ESP_BMS_LVGL_ACTION_PHONE_MEDIA_NEXT, ESP_BMS_LVGL_ACTION_PHONE_MEDIA_VOLUME_DOWN,
         ESP_BMS_LVGL_ACTION_PHONE_MEDIA_VOLUME_UP,
     };
-    const char *const music_icons[MUSIC_CONTROL_COUNT] = {
-        LV_SYMBOL_PREV,
-        LV_SYMBOL_PLAY,
-        LV_SYMBOL_NEXT,
-        LV_SYMBOL_VOLUME_MID " " LV_SYMBOL_MINUS,
-        LV_SYMBOL_VOLUME_MID " " LV_SYMBOL_PLUS,
-    };
-    /* The play/pause key also answers/hangs up phone calls (standard media key
-     * behaviour on Android/iOS), so the label shows both roles. */
-    const char *const music_labels[MUSIC_CONTROL_COUNT] = {
-        ui_t("上一首", "Prev"), ui_t("播放/接听", "Play/Answer"), ui_t("下一首", "Next"),
-        ui_t("音量-", "Vol-"), ui_t("音量+", "Vol+"),
-    };
-    for (size_t index = 0U; index < MUSIC_CONTROL_COUNT; ++index) {
-        const bool track_control = index < 3U;
-        /* 480x320 横屏按钮加大：第一行 3 个 112x96，第二行 2 个 172x112 */
-        const int32_t button_w = track_control
-                                     ? (native_320x480 ? 84 : native_480x320 ? 112 : portrait ? 64 : 80)
-                                     : (native_320x480 ? 132 : native_480x320 ? 172 : portrait ? 100 : 128);
-        const int32_t button_h = track_control
-                                     ? (native_320x480 ? 104 : native_480x320 ? 96 : portrait ? 72 : 62)
-                                     : (native_320x480 ? 120 : native_480x320 ? 112 : portrait ? 82 : 64);
-        const int32_t gap = track_control
-                                ? (native_320x480 ? 12 : native_480x320 ? 14 : portrait ? 8 : 16)
-                                : (native_320x480 ? 16 : native_480x320 ? 20 : portrait ? 8 : 16);
-        const int32_t button_count = track_control ? 3 : 2;
-        const int32_t row_index = track_control ? (int32_t)index : (int32_t)(index - 3U);
-        const int32_t x = (s_ui.width - (button_w * button_count) -
-                           (gap * (button_count - 1))) /
-                              2 +
-                          row_index * (button_w + gap);
-        const int32_t y = track_control
-                              ? (native_320x480 ? 136 : native_480x320 ? 62 : portrait ? 82 : 62)
-                              : (native_320x480 ? 280 : native_480x320 ? 174 : portrait ? 168 : 140);
-        lv_obj_t *control = panel(s_ui.music_page,
-                                  x,
-                                  y,
-                                  button_w,
-                                  button_h,
-                                  track_control ? COLOR_PANEL_ALT : COLOR_SETTINGS_LIST);
+    const char *icons[5] = { LV_SYMBOL_PREV, LV_SYMBOL_PLAY, LV_SYMBOL_NEXT, LV_SYMBOL_MINUS, LV_SYMBOL_PLUS };
+    const char *captions[5] = { ui_t("上一首", "Prev"), ui_t("播放/接听", "Play"),
+        ui_t("下一首", "Next"), ui_t("音量-", "Vol-"), ui_t("音量+", "Vol+") };
+    const int32_t gap = 6;
+    const int32_t w = (s_ui.width - 24 - gap * 4) / 5;
+    for (size_t i = 0; i < 5; ++i) {
+        lv_obj_t *control = panel(s_ui.music_page, 12 + (w + gap) * i, content_h + 26, w, 72, COLOR_PANEL_ALT);
         lv_obj_add_flag(control, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_set_style_border_width(control, 1, LV_PART_MAIN);
-        lv_obj_set_style_border_color(control, COLOR_SETTINGS_BORDER, LV_PART_MAIN);
-        lv_obj_set_style_border_opa(control, LV_OPA_COVER, LV_PART_MAIN);
-        lv_obj_set_style_radius(control, 8, LV_PART_MAIN);
-        lv_obj_set_style_bg_opa(control, LV_OPA_40, LV_PART_MAIN | LV_STATE_DISABLED);
-        lv_obj_set_style_opa(control, LV_OPA_40, LV_PART_MAIN | LV_STATE_DISABLED);
-        lv_obj_add_event_cb(control,
-                            action_event_cb,
-                            LV_EVENT_CLICKED,
-                            (void *)(uintptr_t)music_actions[index]);
-        const int32_t icon_y = native_480x320
-                                   ? (button_h - 44) / 2 + 4
-                                   : track_control
-                                         ? (native_320x480 ? 20 : portrait ? 12 : 7)
-                                         : (native_320x480 ? 28 : portrait ? 17 : 9);
-        lv_obj_t *icon = label(control,
-                               0,
-                               icon_y,
-                               button_w,
-                               26,
-                               &lv_font_montserrat_24);
-        lv_label_set_text(icon, music_icons[index]);
-        lv_obj_set_style_text_align(icon, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-        lv_obj_set_style_text_color(icon,
-                                    track_control ? COLOR_ACCENT : COLOR_WHITE,
-                                    LV_PART_MAIN);
-        const int32_t caption_y = native_480x320 ? button_h - 24 : button_h - 22;
-        lv_obj_t *caption = label(control,
-                                  0,
-                                  caption_y,
-                                  button_w,
-                                  16,
-                                  &media_zh_13);
-        lv_label_set_text(caption, music_labels[index]);
-        lv_obj_set_style_text_align(caption, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-        lv_obj_set_style_text_color(caption, COLOR_MUTED, LV_PART_MAIN);
-        s_ui.music_controls[index] = control;
-        s_ui.music_control_icons[index] = icon;
-        s_ui.music_control_captions[index] = caption;
+        lv_obj_set_style_radius(control, 10, 0);
+        lv_obj_set_style_bg_color(control, COLOR_BOOT_DIM, LV_STATE_PRESSED);
+        lv_obj_set_style_opa(control, LV_OPA_40, LV_STATE_DISABLED);
+        lv_obj_add_event_cb(control, companion_music_control_event, LV_EVENT_CLICKED, (void *)(uintptr_t)actions[i]);
+        lv_obj_t *icon = label(control, 0, 10, w, 26, &lv_font_montserrat_24);
+        lv_label_set_text(icon, icons[i]);
+        lv_obj_set_style_text_align(icon, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_color(icon, COLOR_BOOT_CYAN, 0);
+        lv_obj_t *caption = label(control, 0, 46, w, 16, &media_zh_13);
+        lv_label_set_text(caption, captions[i]);
+        lv_obj_set_style_text_align(caption, LV_TEXT_ALIGN_CENTER, 0);
+        s_ui.music_controls[i] = control;
+        s_ui.music_control_icons[i] = icon;
+        s_ui.music_control_captions[i] = caption;
     }
-#endif
     set_music_page(&s_ui.last_snapshot);
 }
 

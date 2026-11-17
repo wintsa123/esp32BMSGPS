@@ -1,0 +1,48 @@
+{
+  "date": "2026-11-18",
+  "https_url": "https://192.168.2.108:8789/",
+  "build_mode": "production",
+  "lan_http": "PASS: actual TCP/CORS requests to an explicit HTTP device test double with browser local-network permission",
+  "ble_protocol": "PASS: simulated GATT service, fragmented requests and responses, independent status and disconnect",
+  "insecure_origin": "PASS: HTTPS/localhost guidance",
+  "certificate": "PASS: openssl chain and curl hostname validation with temporary CA; client trust is still required",
+  "physical_bluetooth": {
+    "available": false,
+    "actual_browser_getAvailability": false
+  },
+  "physical_wifi": "No WLAN adapter on this host; no ESP32 IP supplied",
+  "python_protocol_tests": 9,
+  "jvm": {
+    "tests": 46,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "apk_sha256": "de273bdd1c30e52c3eed067de30a78325026c67ae1ef7086c8135d91c444d4da",
+  "gitnexus": {
+    "root": {
+      "summary": {
+        "changed_count": 125,
+        "affected_count": 0,
+        "changed_files": 72,
+        "risk_level": "low"
+      },
+      "partial": false,
+      "truncated": false,
+      "returned_symbols": 125,
+      "returned_processes": 0
+    },
+    "web": {
+      "summary": {
+        "changed_count": 252,
+        "affected_count": 47,
+        "changed_files": 37,
+        "risk_level": "critical"
+      },
+      "partial": false,
+      "truncated": false,
+      "returned_symbols": 252,
+      "returned_processes": 47
+    }
+  }
+}

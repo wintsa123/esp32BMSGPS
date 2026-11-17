@@ -250,16 +250,16 @@ static void music_control_set_enabled(lv_obj_t *control, bool enabled)
 
 void set_music_page(const esp_bms_dashboard_snapshot_t *snapshot)
 {
-#if MEDIA_HID_PAGE_ENABLED
+#if MUSIC_PAGE_ENABLED
     if (!snapshot || !dashboard_page_content_ready(ESP_BMS_LVGL_PAGE_MUSIC) ||
         !s_ui.music_status) {
         return;
     }
 
-    const bool ready = snapshot->ble_media_hid_connected && !snapshot->ble_media_hid_suspended;
+    const bool ready = (snapshot->ble_media_hid_connected && !snapshot->ble_media_hid_suspended) || esp_bms_lvgl_ui_companion_connected();
     const char *status = snapshot->ble_media_hid_suspended
                              ? ui_t("挂起", "Suspended")
-                             : snapshot->ble_media_hid_connected ? ui_t("已连接", "Connected") : ui_t("未连接", "Not connected");
+                             : ready ? ui_t("已连接", "Connected") : ui_t("未连接", "Not connected");
     label_set_text_if_changed(s_ui.music_status, status);
     label_set_text_color_if_changed(s_ui.music_status,
                                     ready ? COLOR_SWITCH_ACTIVE : COLOR_SETTINGS_MUTED);

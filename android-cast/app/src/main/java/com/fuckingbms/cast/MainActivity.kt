@@ -269,7 +269,7 @@ class MainActivity : Activity() {
         registerReceiverCompat(castStatusReceiver, CastService.ACTION_STATUS)
         registerReceiverCompat(bluetoothStateReceiver, BluetoothAdapter.ACTION_CONNECTION_STATE_CHANGED)
         content()
-        deviceBle = DeviceBleSession(this, ::onDeviceBleStateChanged)
+        deviceBle = CompanionLink.observe(this,this, ::onDeviceBleStateChanged)
         blePrefs.getString("last_mac", null)?.let(deviceBle::connect) ?: startDeviceBle()
         if (readDeepLink(intent)) {
             selectRoute(AppRoute.CAST, refresh = false)
@@ -301,6 +301,7 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        CompanionService.startWhenAllowed(this)
         startDeviceBle()
         refreshTouchControlButton()
         when (CastService.currentState) {
@@ -311,13 +312,13 @@ class MainActivity : Activity() {
     }
 
     override fun onPause() {
-        if (isFinishing && intent.hasExtra("dashboard_route")) deviceBle.close()
+        if (isFinishing && intent.hasExtra("dashboard_route")) CompanionLink.remove(this)
         super.onPause()
     }
 
     override fun onDestroy() {
         stopBleScan()
-        if (::deviceBle.isInitialized) deviceBle.close()
+        CompanionLink.remove(this)
         uiHandler.removeCallbacksAndMessages(null)
         releaseNetworkRequest()
         invalidateInfoRequest()

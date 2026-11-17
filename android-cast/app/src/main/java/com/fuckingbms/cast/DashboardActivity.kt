@@ -127,7 +127,7 @@ class DashboardActivity : Activity() {
 
     private fun missing() = WebResourceResponse("text/plain", "UTF-8", 404, "Not Found", emptyMap(), ByteArrayInputStream(byteArrayOf()))
 
-    private fun createBleSession() = DeviceBleSession(this) { status, detail ->
+    private fun createBleSession() = CompanionLink.observe(this,this) { status, detail ->
         if (status == DeviceBleState.CONNECTED) {
             ble.connectedAddress?.let { getSharedPreferences("ble", MODE_PRIVATE).edit().putString("last_mac", it).apply() }
         }
@@ -162,7 +162,7 @@ class DashboardActivity : Activity() {
         }
         @JavascriptInterface fun installAppUpdate() = runOnUiThread {
             resumeBle = true
-            ble.close()
+            CompanionLink.remove(this@DashboardActivity)
             startActivity(Intent(this@DashboardActivity, MainActivity::class.java)
                 .putExtra("dashboard_route", "SETTINGS").putExtra("check_app_update", true))
         }
@@ -176,11 +176,16 @@ class DashboardActivity : Activity() {
         @JavascriptInterface fun bleConnected() = ble.connected
         @JavascriptInterface fun connectBle() = runOnUiThread { connectDeviceBle() }
 
+        @JavascriptInterface fun openCompanion(page: String, language: String) = runOnUiThread {
+            if (page !in listOf("music","navigation","settings")) return@runOnUiThread
+            startActivity(Intent(this@DashboardActivity,CompanionActivity::class.java).putExtra("page",page).putExtra("language",language))
+        }
+
         @JavascriptInterface fun openNative(route: String) = runOnUiThread {
             val target = runCatching { AppRoute.valueOf(route) }.getOrNull()
             if (target !in listOf(AppRoute.CAST, AppRoute.BMS, AppRoute.RECORDS, AppRoute.SETTINGS)) return@runOnUiThread
             resumeBle = true
-            ble.close()
+            CompanionLink.remove(this@DashboardActivity)
             startActivity(Intent(this@DashboardActivity, MainActivity::class.java).putExtra("dashboard_route", route))
         }
 
@@ -202,6 +207,7 @@ class DashboardActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        CompanionService.startWhenAllowed(this)
         if (resumeBle) {
             resumeBle = false
             ble = createBleSession()
@@ -211,7 +217,10 @@ class DashboardActivity : Activity() {
 
     override fun onRequestPermissionsResult(code: Int, permissions: Array<out String>, results: IntArray) {
         super.onRequestPermissionsResult(code, permissions, results)
-        if (code == 72 && results.isNotEmpty() && results.all { it == PackageManager.PERMISSION_GRANTED }) connectDeviceBle()
+        if (code == 72 && results.isNotEmpty() && results.all { it == PackageManager.PERMISSION_GRANTED }) {
+            connectDeviceBle()
+            CompanionService.startWhenAllowed(this)
+        }
     }
 
     override fun onActivityResult(code: Int, result: Int, data: Intent?) {
@@ -229,7 +238,7 @@ class DashboardActivity : Activity() {
 
     override fun onDestroy() {
         chooser?.onReceiveValue(null)
-        ble.close()
+        CompanionLink.remove(this)
         requests.shutdownNow()
         web.removeJavascriptInterface("BmsNative")
         web.destroy()

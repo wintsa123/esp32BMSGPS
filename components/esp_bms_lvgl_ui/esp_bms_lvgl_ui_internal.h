@@ -37,9 +37,7 @@ LV_FONT_DECLARE(fireblade_scale_digits_14);
 LV_FONT_DECLARE(settings_zh_10);
 LV_FONT_DECLARE(settings_zh_13);
 LV_FONT_DECLARE(settings_zh_16);
-#if ESP_BMS_FEATURE_BLE_MEDIA_HID
 LV_FONT_DECLARE(media_zh_13);
-#endif
 #if defined(CONFIG_IDF_TARGET_ESP32S3) || ESP_BMS_LVGL_UI_SIMULATOR
 #define SETTINGS_S3_FONT_ENABLED 1
 LV_FONT_DECLARE(settings_zh_18);
@@ -70,12 +68,8 @@ LV_FONT_DECLARE(settings_zh_18);
 #define ARRAY_SIZE(array) (sizeof(array) / sizeof((array)[0]))
 #define MEDIA_HID_PAGE_ENABLED \
     ESP_BMS_FEATURE_BLE_MEDIA_HID
-#define MUSIC_PAGE_ENABLED MEDIA_HID_PAGE_ENABLED
-#if MEDIA_HID_PAGE_ENABLED
+#define MUSIC_PAGE_ENABLED 1
 #define MUSIC_CONTROL_COUNT 5U
-#else
-#define MUSIC_CONTROL_COUNT 0U
-#endif
 #define SETTINGS_BLE_STATUS_TEXT_LEN 24U
 #define SETTINGS_BLE_ROW_TEXT_LEN (ESP_BMS_BMS_SCAN_NAME_LEN + 16U)
 #define SETTINGS_BLE_DIRECT_CANDIDATE_COUNT 6U
@@ -1187,3 +1181,5 @@ uint16_t boot_gauge_demo_speed(uint8_t progress_percent);
 esp_err_t esp_bms_lvgl_ui_boot_start(const esp_bms_dashboard_snapshot_t *snapshot);
 esp_err_t esp_bms_lvgl_ui_boot_update(uint8_t progress_percent, const char *status_text);
 esp_err_t esp_bms_lvgl_ui_boot_finish(const esp_bms_dashboard_snapshot_t *snapshot);
+
+void companion_music_control_event(lv_event_t *event);

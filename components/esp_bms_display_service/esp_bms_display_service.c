@@ -428,6 +428,18 @@ static esp_err_t service_process_command(const esp_bms_display_service_command_t
             }
             return ret;
         }
+    case ESP_BMS_DISPLAY_SERVICE_COMMAND_REMOTE_ACTION: {
+        const esp_bms_lvgl_action_event_t *event = &command->data.remote_action;
+        if (event->action == ESP_BMS_LVGL_ACTION_SHOW_DASHBOARD ||
+            event->action == ESP_BMS_LVGL_ACTION_SHOW_SETTINGS ||
+            event->action == ESP_BMS_LVGL_ACTION_SHOW_QUICK_MENU ||
+            event->action == ESP_BMS_LVGL_ACTION_CYCLE_LEVEL_POSITION ||
+            event->action == ESP_BMS_LVGL_ACTION_START_TOUCH_CALIBRATION ||
+            event->action == ESP_BMS_LVGL_ACTION_CANCEL_TOUCH_CALIBRATION) {
+            return esp_bms_lvgl_ui_remote_action(event->action);
+        }
+        return xQueueSend(s_service.action_queue, event, 0) == pdTRUE ? ESP_OK : ESP_ERR_TIMEOUT;
+    }
     case ESP_BMS_DISPLAY_SERVICE_COMMAND_SHOW_DASHBOARD:
         return esp_bms_lvgl_ui_show_dashboard();
     case ESP_BMS_DISPLAY_SERVICE_COMMAND_SET_PAGE:

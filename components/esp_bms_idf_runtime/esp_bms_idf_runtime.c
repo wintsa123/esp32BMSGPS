@@ -127,7 +127,7 @@ static const char *TAG = "bms_idf_runtime";
 #define CONTROLLER_RATIO_CENTI_MAX ESP_BMS_CONTROLLER_RATIO_CENTI_MAX
 #define CONTROLLER_RATIO_CENTI_DEFAULT ESP_BMS_CONTROLLER_RATIO_CENTI_DEFAULT
 #define HTTP_BODY_MAX_LEN 384U
-#define HTTP_JSON_MAX_LEN 2048U
+#define HTTP_JSON_MAX_LEN 4096U
 #define HTTP_BMS_CANDIDATES_JSON_MAX_LEN 2560U
 #define HTTP_MANIFEST_JSON_MAX_LEN 6144U
 #define CAST_HEARTBEAT_TIMEOUT_MS 5000U
@@ -145,7 +145,7 @@ static const char *TAG = "bms_idf_runtime";
 #define BLE_HOST_MIN_INTERNAL_FREE_BYTES (40U * 1024U)
 #define BLE_HOST_SETUP_RELEASE_THRESHOLD_BYTES (48U * 1024U)
 #define BLE_API_REQUEST_MAX_LEN 512U
-#define BLE_API_RESPONSE_MAX_LEN 4096U
+#define BLE_API_RESPONSE_MAX_LEN 8192U
 #define BLE_API_QUEUE_LEN 1U
 #define BLE_API_WORKER_STACK 4096U
 #define BLE_API_WORKER_PRIORITY 4U
@@ -3753,8 +3753,33 @@ static bool runtime_json_write_ant_diagnostics(char *out,
     return written >= 0 && (size_t)written < out_len;
 }
 
+static bool runtime_gps_status_json(const esp_bms_dashboard_snapshot_t *snapshot,
+                                    char *json, size_t json_len)
+{
+    char visible[16], used[16], maximum[16], average[16], mask[16], dimension[16], hdop[16];
+    const bool valid = snapshot->gps_satellite_info_valid;
+    if (!runtime_json_write_u32_or_null(visible, sizeof(visible), valid, snapshot->gps_satellites_visible) ||
+        !runtime_json_write_u32_or_null(used, sizeof(used), valid, snapshot->gps_satellites_used) ||
+        !runtime_json_write_u32_or_null(maximum, sizeof(maximum), valid, snapshot->gps_max_cn0) ||
+        !runtime_json_write_u32_or_null(average, sizeof(average), valid, snapshot->gps_average_cn0) ||
+        !runtime_json_write_u32_or_null(mask, sizeof(mask), valid, snapshot->gps_constellation_mask) ||
+        !runtime_json_write_u32_or_null(dimension, sizeof(dimension), valid, snapshot->gps_fix_dimension) ||
+        !runtime_json_write_u32_or_null(hdop, sizeof(hdop), valid && snapshot->gps_hdop_valid, snapshot->gps_hdop_centi)) {
+        return false;
+    }
+    const int written = snprintf(json, json_len,
+        "\"gps_satellite_info_valid\":%s,\"gps_satellites_visible\":%s,\"gps_satellites_used\":%s,"
+        "\"gps_max_cn0\":%s,\"gps_average_cn0\":%s,\"gps_constellation_mask\":%s,"
+        "\"gps_fix_dimension\":%s,\"gps_hdop_valid\":%s,\"gps_hdop_centi\":%s",
+        valid ? "true" : "false", visible, used, maximum, average, mask, dimension,
+        valid && snapshot->gps_hdop_valid ? "true" : "false", hdop);
+    return written >= 0 && (size_t)written < json_len;
+}
+
 static bool runtime_status_json(esp_bms_idf_runtime_t *runtime, char *json, size_t json_len)
 {
+    char gps[384];
+    if (!runtime_gps_status_json(&runtime->snapshot, gps, sizeof(gps))) return false;
     char ant_diagnostics[768];
     char pack_voltage[16] = { 0 };
     char current[16] = { 0 };
@@ -3889,7 +3914,7 @@ static bool runtime_status_json(esp_bms_idf_runtime_t *runtime, char *json, size
                                  json_len,
                                  "{\"version\":\"%s\",\"firmware_sha256\":\"%s\","
                                  "\"speed\":\"%s\",\"speed_unit\":\"%s\","
-                                 "\"gps_fix\":%s,\"bms\":\"%s\",\"pack_voltage_mv\":%s,"
+                                 "\"gps_fix\":%s,%s,\"bms\":\"%s\",\"pack_voltage_mv\":%s,"
                                  "\"current_deci_amps\":%s,\"soc_percent\":%s,"
                                  "\"local_battery_mv\":%s,\"bms_info\":\"%s\","
                                  "\"bms_protections\":%s,\"bms_warnings\":%s,"
@@ -3909,6 +3934,7 @@ static bool runtime_status_json(esp_bms_idf_runtime_t *runtime, char *json, size
                                  speed,
                                  runtime_speed_unit_config_text(runtime->snapshot.speed_unit),
                                  RUNTIME_SNAPSHOT_FLAG(runtime, GPS_FIX_VALID) ? "true" : "false",
+                                 gps,
                                  RUNTIME_SNAPSHOT_FLAG(runtime, BMS_ONLINE) ? "online" : "offline",
                                  pack_voltage,
                                  current,
@@ -4032,21 +4058,22 @@ static esp_err_t runtime_http_bms_candidates_handler(httpd_req_t *req,
 {
     esp_bms_idf_bms_scan_candidate_t candidates[ESP_BMS_IDF_BMS_SCAN_MAX_CANDIDATES] = { 0 };
     uint8_t count = 0;
+    const bool controller = strcmp(req->uri, "/api/controller/candidates") == 0;
 
     if (runtime->bms_scan_lock &&
         xSemaphoreTake(runtime->bms_scan_lock, pdMS_TO_TICKS(100)) == pdTRUE) {
-        count = runtime->bms_scan_candidate_count;
+        count = controller ? runtime->controller_scan_candidate_count : runtime->bms_scan_candidate_count;
         if (count > ESP_BMS_IDF_BMS_SCAN_MAX_CANDIDATES) {
             count = ESP_BMS_IDF_BMS_SCAN_MAX_CANDIDATES;
         }
-        memcpy(candidates, runtime->bms_scan_candidates, sizeof(candidates));
+        memcpy(candidates, controller ? runtime->controller_scan_candidates : runtime->bms_scan_candidates, sizeof(candidates));
         xSemaphoreGive(runtime->bms_scan_lock);
     } else if (!runtime->bms_scan_lock) {
-        count = runtime->bms_scan_candidate_count;
+        count = controller ? runtime->controller_scan_candidate_count : runtime->bms_scan_candidate_count;
         if (count > ESP_BMS_IDF_BMS_SCAN_MAX_CANDIDATES) {
             count = ESP_BMS_IDF_BMS_SCAN_MAX_CANDIDATES;
         }
-        memcpy(candidates, runtime->bms_scan_candidates, sizeof(candidates));
+        memcpy(candidates, controller ? runtime->controller_scan_candidates : runtime->bms_scan_candidates, sizeof(candidates));
     }
 
     static char json[HTTP_BMS_CANDIDATES_JSON_MAX_LEN];
@@ -4055,7 +4082,7 @@ static esp_err_t runtime_http_bms_candidates_handler(httpd_req_t *req,
     int written = snprintf(json,
                            sizeof(json),
                            "{\"scan_active\":%s,\"candidates\":[",
-                           RUNTIME_FLAG(runtime, BMS_SCAN_ACTIVE) ? "true" : "false");
+                           (controller ? RUNTIME_FLAG(runtime, CONTROLLER_SCAN_ACTIVE) : RUNTIME_FLAG(runtime, BMS_SCAN_ACTIVE)) ? "true" : "false");
     if (written < 0 || (size_t)written >= sizeof(json)) {
         return runtime_http_send_text(req, "500 Internal Server Error", "json too large");
     }
@@ -4258,7 +4285,8 @@ static bool runtime_settings_manifest_json(esp_bms_idf_runtime_t *runtime,
 #if ESP_BMS_FEATURE_CONTROLLER
     ok = ok && runtime_json_append(json, json_len, &offset,
         ",{\"id\":\"controller\",\"label\":{\"zh\":\"控制器\",\"en\":\"Controller\"},\"items\":["
-        "{\"id\":\"controller_mac\",\"kind\":\"choice\",\"label\":{\"zh\":\"蓝牙连接\",\"en\":\"Bluetooth connection\"},\"value\":%s,\"submit_endpoint\":\"/api/controller/bind\",\"submit_key\":\"mac\"}]}", controller_mac);
+        "{\"id\":\"controller_scan\",\"kind\":\"action\",\"label\":{\"zh\":\"扫描控制器\",\"en\":\"Scan controller\"},\"endpoint\":\"/api/controller/scan\"},"
+        "{\"id\":\"controller_mac\",\"kind\":\"choice\",\"label\":{\"zh\":\"蓝牙连接\",\"en\":\"Bluetooth connection\"},\"value\":%s,\"options_endpoint\":\"/api/controller/candidates\",\"submit_endpoint\":\"/api/controller/bind\",\"submit_key\":\"mac\"}]}", controller_mac);
 #endif
 #if ESP_BMS_FEATURE_OTA
     ok = ok && runtime_json_append(json, json_len, &offset,
@@ -4478,6 +4506,10 @@ static int runtime_apply_config_json(esp_bms_idf_runtime_t *runtime,
     return 204;
 #undef CONFIG_REJECT
 }
+
+#include "esp_bms_remote_controls.inc"
+
+#include "esp_bms_companion.inc"
 
 static esp_err_t runtime_http_post_config_handler(httpd_req_t *req, esp_bms_idf_runtime_t *runtime)
 {
@@ -4786,7 +4818,13 @@ static bool runtime_ble_api_response(esp_bms_idf_runtime_t *runtime,
                        runtime_json_get_string(request->json, "method", method, sizeof(method), &method_found) &&
                        runtime_json_get_string(request->json, "path", path, sizeof(path), &path_found);
     if (valid && version_found && version == 1U && id_found && method_found && path_found) {
-        if (strcmp(method, "GET") == 0 && strcmp(path, "/api/status") == 0) {
+        if (strcmp(method, "GET") == 0 && strcmp(path, "/api/companion") == 0) {
+            status = runtime_companion_info(body, sizeof(body)) ? 200 : 503;
+        } else if (strcmp(method, "POST") == 0 && strcmp(path, "/api/companion") == 0) {
+            if (runtime_json_get_object(request->json, "body", config, sizeof(config), &body_found) && body_found) {
+                status = runtime_companion_post(config);
+            }
+        } else if (strcmp(method, "GET") == 0 && strcmp(path, "/api/status") == 0) {
             status = runtime_status_json(runtime, body, sizeof(body)) ? 200 : 500;
             error = "status unavailable";
         } else if (strcmp(method, "GET") == 0 && strcmp(path, "/api/config") == 0) {
@@ -4801,6 +4839,13 @@ static bool runtime_ble_api_response(esp_bms_idf_runtime_t *runtime,
             } else {
                 status = 400;
                 error = "invalid body";
+            }
+        } else if (strcmp(method, "GET") == 0 && runtime_http_uri_is(path, "/api/controls")) {
+            status = runtime_remote_controls_json(runtime, path, body, sizeof(body)) ? 200 : 400;
+            error = "invalid control group";
+        } else if (strcmp(method, "POST") == 0 && strcmp(path, "/api/controls") == 0) {
+            if (runtime_json_get_object(request->json, "body", config, sizeof(config), &body_found) && body_found) {
+                status = runtime_remote_control(runtime, config, &error);
             }
         } else if (strcmp(method, "GET") == 0 && runtime_http_uri_is(path, "/api/history/sessions")) {
             status = runtime_ble_history_json(path, body, sizeof(body), &error);
@@ -5510,6 +5555,39 @@ esp_err_t esp_bms_idf_runtime_http_api_handler(httpd_req_t *req)
              (unsigned)runtime->setup_ap_clients);
     runtime_log_heap_state("http_api");
 
+    if (runtime_http_uri_is(req->uri, "/api/companion")) {
+        if (req->method == HTTP_GET) {
+            char json[256];
+            if (!runtime_companion_info(json, sizeof(json))) return runtime_http_send_text(req, "503 Service Unavailable", "display busy");
+            return runtime_http_send_json(req, json);
+        }
+        if (req->method == HTTP_POST) {
+            char body[512];
+            if (runtime_http_read_body(req, body, sizeof(body)) != ESP_OK) return runtime_http_send_text(req, "400 Bad Request", "invalid body");
+            const int status = runtime_companion_post(body);
+            return runtime_http_send_text(req, status == 204 ? "204 No Content" : status == 503 ? "503 Service Unavailable" : "400 Bad Request", "");
+        }
+        return runtime_http_send_text(req, "405 Method Not Allowed", "method not allowed");
+    }
+    if (runtime_http_uri_is(req->uri, "/api/controls")) {
+        if (req->method == HTTP_GET) {
+            char json[3072];
+            if (!runtime_remote_controls_json(runtime, req->uri, json, sizeof(json))) {
+                return runtime_http_send_text(req, "400 Bad Request", "invalid control group");
+            }
+            return runtime_http_send_json(req, json);
+        }
+        if (req->method == HTTP_POST) {
+            char body[HTTP_BODY_MAX_LEN];
+            if (runtime_http_read_body(req, body, sizeof(body)) != ESP_OK) {
+                return runtime_http_send_text(req, "400 Bad Request", "invalid body");
+            }
+            const char *error = NULL;
+            const int status = runtime_remote_control(runtime, body, &error);
+            return runtime_http_send_text(req, status == 204 ? "204 No Content" : status == 503 ? "503 Service Unavailable" : "400 Bad Request", error ? error : "");
+        }
+        return runtime_http_send_text(req, "405 Method Not Allowed", "method not allowed");
+    }
     if (req->method == HTTP_GET && runtime_http_uri_is(req->uri, "/api/history/sessions")) {
         return runtime_http_history_sessions_handler(req, runtime);
     }
@@ -5537,7 +5615,7 @@ esp_err_t esp_bms_idf_runtime_http_api_handler(httpd_req_t *req)
     if (req->method == HTTP_GET && strcmp(req->uri, "/api/settings/manifest") == 0) {
         return runtime_http_settings_manifest_handler(req, runtime);
     }
-    if (req->method == HTTP_GET && strcmp(req->uri, "/api/bms/candidates") == 0) {
+    if (req->method == HTTP_GET && (strcmp(req->uri, "/api/bms/candidates") == 0 || strcmp(req->uri, "/api/controller/candidates") == 0)) {
         return runtime_http_bms_candidates_handler(req, runtime);
     }
     if (req->method == HTTP_POST && strcmp(req->uri, "/api/config") == 0) {
@@ -5551,6 +5629,11 @@ esp_err_t esp_bms_idf_runtime_http_api_handler(httpd_req_t *req)
     }
     if (req->method == HTTP_POST && strcmp(req->uri, "/api/bms/bind") == 0) {
         return runtime_http_post_bms_bind_handler(req, runtime);
+    }
+    if (req->method == HTTP_POST && strcmp(req->uri, "/api/controller/scan") == 0) {
+        const char *error = NULL;
+        const int status = runtime_remote_control(runtime, "{\"action\":\"controller_scan\"}", &error);
+        return runtime_http_send_text(req, status == 204 ? "204 No Content" : "503 Service Unavailable", error ? error : "");
     }
     if (req->method == HTTP_POST && strcmp(req->uri, "/api/controller/bind") == 0) {
         return runtime_http_post_controller_bind_handler(req, runtime);

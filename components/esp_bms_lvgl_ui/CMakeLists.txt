@@ -29,6 +29,7 @@ set(ESP_BMS_LVGL_UI_SRCS
     "ui_settings_pickers.c" "ui_settings_system.c" "ui_dashboard_pages.c"
     "ui_dashboard_controller.c" "ui_dashboard_fireblade.c" "ui_dashboard_speed.c"
     "ui_screen.c" "ui_boot_ota.c" "ui_simulator.c"
+    "ui_companion.c" "esp_bms_companion_codec.c" "media_zh_13.c"
 )
 if(IDF_TARGET STREQUAL "esp32s3")
     list(APPEND ESP_BMS_LVGL_UI_SRCS "settings_zh_18.c")
@@ -42,9 +43,7 @@ if(ESP_BMS_FEATURE_DASHBOARD_FIREBLADE)
         "fireblade_info_units_8.c" "fireblade_scale_digits_14.c"
     )
 endif()
-if(ESP_BMS_FEATURE_BLE_MEDIA_HID)
-    list(APPEND ESP_BMS_LVGL_UI_SRCS "media_zh_13.c")
-endif()
+
 
 set(ESP_BMS_LVGL_UI_EMBED_FILES)
 if(IDF_TARGET STREQUAL "esp32" AND ESP_BMS_FEATURE_DASHBOARD_S1000RR)

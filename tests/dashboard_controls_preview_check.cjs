@@ -1,0 +1,112 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+let chromium;
+try { ({chromium} = require('playwright')); }
+catch { ({chromium} = require('/vol1/1000/.tools/battery-browser/node_modules/playwright')); }
+(async () => {
+  // Every preview action belongs to firmware settings; navigation/media actions stay out.
+  const catalogue = JSON.parse(fs.readFileSync('vercel/src/preview-controls.json', 'utf8'));
+  const firmware = fs.readFileSync('components/esp_bms_idf_runtime/esp_bms_remote_controls.inc', 'utf8');
+  const firmwareIds = [...firmware.matchAll(/\{"\w+", "(\w+)",/g)].map(match => match[1]);
+  const ids = catalogue.flatMap(group => group.controls.map(control => control.id));
+  assert(ids.every(id => firmwareIds.includes(id)));
+  for (const id of ['dashboard','settings','quick_menu','previous','play_pause','next','volume_up','volume_down','controller_connection','controller_scan','calibrate_cancel']) assert(!ids.includes(id));
+  assert.deepEqual(catalogue.map(group => group.zh), ['热点共享','蓝牙','BMS 设置','GPS','仪表','控制器','系统']);
+  const browser = await chromium.launch({headless:true,args:['--no-sandbox']});
+  try {
+    const page = await browser.newPage({viewport:{width:390,height:844},serviceWorkers:'block'});
+    const apiRequests = [];
+    page.on('request', request => { if (new URL(request.url()).pathname.startsWith('/api/')) apiRequests.push(request.url()); });
+    await page.goto('http://127.0.0.1:8787/');
+    await page.getByRole('button',{name:'功能',exact:true}).click();
+    const controls = page.getByRole('region',{name:'面板功能控制',exact:true});
+    await controls.getByText('测试预览',{exact:true}).waitFor();
+    assert.equal(await controls.locator('details').count(), 7);
+    assert.equal(await controls.locator('.feature-row').count(), ids.length + 7 + 1 + 2);
+    for (const id of ['brightness','volume','display_rotation','speed_unit','speed_source','bms_type','controller_type','ant_channel','bms_mac','controller_mac']) assert.equal(await controls.locator(`#control-${id}`).count(),1);
+    assert.equal(await controls.locator('input[type="file"]').count(), 0);
+    assert.equal(await controls.locator('details[open]').count(), 0);
+    assert(await controls.locator('details').evaluateAll(groups => groups.every(group => {
+      let dangerSeen = false;
+      return [...group.querySelectorAll('.feature-row')].every(row => {
+        const danger = !!row.querySelector('.control-danger');
+        if (danger) dangerSeen = true;
+        return danger || !dangerSeen;
+      });
+    })), 'destructive rows follow all regular options in every category');
+    for (const id of ['bms_disconnect', 'restore']) assert.equal(await controls.locator(`#control-${id}`).evaluate(row => row === row.parentElement.querySelector('.feature-row:last-child')),true);
+
+    await controls.locator('summary').filter({hasText:'控制器'}).click();
+    await controls.locator('#control-ratio').click();
+    const editor = page.getByRole('dialog');
+    const ratio = editor.getByLabel(/^传动比 × 100/);
+    await ratio.fill('250');
+    await ratio.locator('xpath=ancestor::form').getByRole('button',{name:'应用',exact:true}).click();
+    await page.locator('.toast').filter({hasText:'模拟操作完成，未发送到设备'}).waitFor();
+    assert.equal(await controls.locator('[role="status"]').count(),0);
+    assert.equal(await editor.locator('[role="status"]').count(),0);
+    await page.locator('.toast').waitFor({state:'detached'});
+    await editor.getByRole('button',{name:'取消',exact:true}).click();
+    await editor.waitFor({state:'detached'});
+    await controls.locator('#control-ratio').click();
+    assert.equal(await editor.getByRole('spinbutton').inputValue(), '250');
+    await editor.getByRole('spinbutton').fill('321');
+    await page.keyboard.press('Escape');
+    await editor.waitFor({state:'detached'});
+    await controls.locator('#control-ratio').click();
+    assert.equal(await editor.getByRole('spinbutton').inputValue(), '250', 'return discards unsubmitted edits');
+    await editor.getByRole('button',{name:'取消',exact:true}).click();
+    await editor.waitFor({state:'detached'});
+    await controls.locator('summary').filter({hasText:'系统'}).click();
+    await controls.locator('#control-restore').click();
+    await editor.getByRole('button',{name:'确认执行',exact:true}).click();
+    await editor.waitFor({state:'detached'});
+    assert.equal(await page.locator('.dashboard-sheet [role="alert"]').count(), 0);
+    await controls.locator('summary').filter({hasText:'BMS 设置'}).click();
+    await controls.locator('#control-ant_channel').click();
+    await editor.getByRole('radio',{name:'通道 B（充电器接口）',exact:true}).check();
+    await editor.getByRole('button',{name:'应用',exact:true}).click();
+    await page.locator('.toast').waitFor();
+    await page.keyboard.press('Escape');await editor.waitFor({state:'detached'});
+    assert.equal(await controls.locator('#control-bluebabe_code').count(),0);
+    await controls.locator('#control-bms_type').click();
+    await editor.getByRole('radio',{name:'蓝宝电量模块',exact:true}).check();
+    await editor.getByRole('button',{name:'应用',exact:true}).click();
+    await page.keyboard.press('Escape');await editor.waitFor({state:'detached'});
+    await controls.locator('#control-bluebabe_code').click();
+    await editor.locator('input').fill('123456');
+    await editor.getByRole('button',{name:'应用',exact:true}).click();
+    await page.locator('.toast').waitFor();
+    await page.keyboard.press('Escape');await editor.waitFor({state:'detached'});
+    assert.equal(apiRequests.length, 0, 'preview controls must not send device requests');
+    await page.getByRole('button',{name:'设置',exact:true}).click();
+    assert.equal(await controls.isVisible(), false);
+    await page.getByRole('button',{name:'功能',exact:true}).click();
+    await page.waitForTimeout(350);
+    await page.screenshot({path:'preview/app-features-preview.png',fullPage:true,animations:'disabled'});
+    await page.setViewportSize({width:320,height:568});
+    assert(await controls.evaluate(el => el.scrollWidth <= el.clientWidth));
+    await page.getByRole('button',{name:'设置',exact:true}).click();
+    const settings = page.locator('.panel.active');
+    assert.equal(await settings.locator('details, summary').count(), 0);
+    assert.equal(await settings.getByRole('heading',{name:'连接 ESP32 面板',exact:true}).count(), 1);
+    assert.equal(await settings.getByRole('button',{name:'连接面板蓝牙',exact:true}).count(), 1);
+    assert.equal(await settings.getByRole('button',{name:'连接 Wi-Fi 设备',exact:true}).count(), 1);
+    assert.equal(await settings.locator('.update-row').count(), 3);
+    assert.equal(await settings.locator('input, select').count(), 1);
+    assert.equal(await settings.getByLabel('设备地址',{exact:true}).inputValue(), 'http://192.168.4.1');
+    assert(await settings.evaluate(el => el.scrollWidth <= el.clientWidth));
+    await page.setViewportSize({width:390,height:844});
+    await page.emulateMedia({colorScheme:'dark'});
+    await page.locator('#scroll').evaluate(el=>el.scrollTop=0);
+    await page.waitForTimeout(350);
+    await page.screenshot({path:'preview/settings-dark.png',animations:'disabled'});
+    // Production must have no preview controls before a successful device read.
+    await page.goto(process.env.DASHBOARD_URL || 'http://127.0.0.1:8788/');
+    await page.getByRole('button',{name:'功能',exact:true}).click();
+    assert.equal(await controls.locator('.feature-row').count(), 0);
+    assert.equal(await controls.getByText('测试预览',{exact:true}).count(), 0);
+    assert.equal(await controls.getByRole('button',{name:'读取 / 刷新'}).count(), 0);
+    console.log('PASS: full preview catalogue, offline interactions without device writes, Features navigation, narrow layout, production gating');
+  } finally { await browser.close(); }
+})().catch(error=>{console.error(error);process.exitCode=1});

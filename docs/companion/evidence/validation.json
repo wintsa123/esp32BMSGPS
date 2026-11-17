@@ -1,0 +1,105 @@
+{
+  "date": "2026-11-17",
+  "firmware_profile": "esp32s3-n16r8-st7796-ft6336",
+  "android_unit_tests": [
+    {
+      "name": "com.fuckingbms.cast.CompanionTest",
+      "tests": "8",
+      "failures": "0",
+      "errors": "0"
+    },
+    {
+      "name": "com.fuckingbms.cast.CastCapabilitiesTest",
+      "tests": "4",
+      "failures": "0",
+      "errors": "0"
+    },
+    {
+      "name": "com.fuckingbms.cast.CastGeometryTest",
+      "tests": "5",
+      "failures": "0",
+      "errors": "0"
+    },
+    {
+      "name": "com.fuckingbms.cast.CastProtocolTest",
+      "tests": "6",
+      "failures": "0",
+      "errors": "0"
+    },
+    {
+      "name": "com.fuckingbms.cast.DeviceApiTest",
+      "tests": "4",
+      "failures": "0",
+      "errors": "0"
+    },
+    {
+      "name": "com.fuckingbms.cast.MainActivityStateTest",
+      "tests": "1",
+      "failures": "0",
+      "errors": "0"
+    },
+    {
+      "name": "com.fuckingbms.cast.WebResourceUpdateTest",
+      "tests": "8",
+      "failures": "0",
+      "errors": "0"
+    },
+    {
+      "name": "com.fuckingbms.cast.UpdateApiTest",
+      "tests": "5",
+      "failures": "0",
+      "errors": "0"
+    },
+    {
+      "name": "com.fuckingbms.cast.DeviceFormatTest",
+      "tests": "1",
+      "failures": "0",
+      "errors": "0"
+    },
+    {
+      "name": "com.fuckingbms.cast.DeviceBleSessionTest",
+      "tests": "2",
+      "failures": "0",
+      "errors": "0"
+    },
+    {
+      "name": "com.fuckingbms.cast.DashboardPolicyTest",
+      "tests": "2",
+      "failures": "0",
+      "errors": "0"
+    }
+  ],
+  "firmware_flash": "TCP/RFC2217 not established: timed out",
+  "online_provider_tested": true,
+  "physical_device_tested": false,
+  "artifacts": {
+    "两轮智控.apk": {
+      "bytes": 4431440,
+      "sha256": "664d330ebaa9e8c319e977687ddad7e3ca22449c046353b02a47bda46dd4fb63"
+    },
+    "build-companion-clean/esp32_bms_gps_idf.bin": {
+      "bytes": 1801072,
+      "sha256": "43b95940b74114aa880df2ab5f1e794dd94069bb56289aa399a6b96c659baca4"
+    }
+  },
+  "tianditu_tile_host_test": {
+    "credential_source": "YunPu backend TIANDITU_TK (value redacted)",
+    "request_style": "Android native user agent, no Referer",
+    "status": 200,
+    "format": "PNG",
+    "width": 256,
+    "height": 256,
+    "physical_phone_tested": false
+  },
+  "amap_jsapi_emulator_test": {
+    "provider": "AMap.Riding JS API 2.0",
+    "geocoded": true,
+    "route_points": 137,
+    "steps": 11,
+    "seconds": 1218,
+    "tile_width": 256,
+    "tile_height": 256,
+    "local_remaining_m": 5118.798063111731,
+    "cancellation_callback_once": true
+  }
+}

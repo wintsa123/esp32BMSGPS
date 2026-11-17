@@ -18,4 +18,13 @@ class DeviceBleSessionTest {
         assertNull(assembler.accept(byteArrayOf(1) + "hello ".toByteArray()))
         assertArrayEquals("hello world".toByteArray(), assembler.accept(byteArrayOf(2) + "world".toByteArray()))
     }
+    @Test fun acceptsFullSettingsManifestAndRejectsOversize() {
+        val payload = ByteArray(6144) { 65 }
+        val assembler = BleResponseAssembler()
+        assertNull(assembler.accept(byteArrayOf(1) + payload.copyOfRange(0, 3072)))
+        assertArrayEquals(payload, assembler.accept(byteArrayOf(2) + payload.copyOfRange(3072, 6144)))
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) {
+            assembler.accept(byteArrayOf(3) + ByteArray(8193))
+        }
+    }
 }

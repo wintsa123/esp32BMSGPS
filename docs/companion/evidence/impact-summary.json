@@ -1,0 +1,415 @@
+[
+  {
+    "file": "impact-DashboardActivity-createBleSession.json",
+    "target": {
+      "id": "Method:android-cast/app/src/main/java/com/fuckingbms/cast/DashboardActivity.kt:DashboardActivity.createBleSession#0",
+      "name": "createBleSession",
+      "type": "Method",
+      "filePath": "android-cast/app/src/main/java/com/fuckingbms/cast/DashboardActivity.kt"
+    },
+    "risk": "LOW",
+    "impactedCount": 2,
+    "partial": false,
+    "truncated": false,
+    "error": null
+  },
+  {
+    "file": "impact-DashboardActivity-onCreate.json",
+    "target": {
+      "id": "Method:android-cast/app/src/main/java/com/fuckingbms/cast/DashboardActivity.kt:DashboardActivity.onCreate#1",
+      "name": "onCreate",
+      "type": "Method",
+      "filePath": "android-cast/app/src/main/java/com/fuckingbms/cast/DashboardActivity.kt"
+    },
+    "risk": "UNKNOWN",
+    "impactedCount": 0,
+    "partial": false,
+    "truncated": false,
+    "error": null
+  },
+  {
+    "file": "impact-DashboardActivity-onDestroy.json",
+    "target": {
+      "id": "Method:android-cast/app/src/main/java/com/fuckingbms/cast/DashboardActivity.kt:DashboardActivity.onDestroy#0",
+      "name": "onDestroy",
+      "type": "Method",
+      "filePath": "android-cast/app/src/main/java/com/fuckingbms/cast/DashboardActivity.kt"
+    },
+    "risk": "UNKNOWN",
+    "impactedCount": 0,
+    "partial": false,
+    "truncated": false,
+    "error": null
+  },
+  {
+    "file": "impact-DashboardActivity-onPause.json",
+    "target": {
+      "name": "onPause"
+    },
+    "risk": "UNKNOWN",
+    "impactedCount": null,
+    "partial": false,
+    "truncated": false,
+    "error": "Target 'onPause' not found"
+  },
+  {
+    "file": "impact-DashboardActivity-onResume.json",
+    "target": {
+      "id": "Method:android-cast/app/src/main/java/com/fuckingbms/cast/DashboardActivity.kt:DashboardActivity.onResume#0",
+      "name": "onResume",
+      "type": "Method",
+      "filePath": "android-cast/app/src/main/java/com/fuckingbms/cast/DashboardActivity.kt"
+    },
+    "risk": "UNKNOWN",
+    "impactedCount": 0,
+    "partial": false,
+    "truncated": false,
+    "error": null
+  },
+  {
+    "file": "impact-DashboardActivity-openNative.json",
+    "target": {
+      "id": "Method:android-cast/app/src/main/java/com/fuckingbms/cast/DashboardActivity.kt:Bridge.openNative#1",
+      "name": "openNative",
+      "type": "Method",
+      "filePath": "android-cast/app/src/main/java/com/fuckingbms/cast/DashboardActivity.kt"
+    },
+    "risk": "UNKNOWN",
+    "impactedCount": 0,
+    "partial": false,
+    "truncated": false,
+    "error": null
+  },
+  {
+    "file": "impact-MainActivity-onCreate.json",
+    "target": {
+      "id": "Method:android-cast/app/src/main/java/com/fuckingbms/cast/MainActivity.kt:MainActivity.onCreate#1",
+      "name": "onCreate",
+      "type": "Method",
+      "filePath": "android-cast/app/src/main/java/com/fuckingbms/cast/MainActivity.kt"
+    },
+    "risk": "UNKNOWN",
+    "impactedCount": 0,
+    "partial": false,
+    "truncated": false,
+    "error": null
+  },
+  {
+    "file": "impact-MainActivity-onDestroy.json",
+    "target": {
+      "id": "Method:android-cast/app/src/main/java/com/fuckingbms/cast/MainActivity.kt:MainActivity.onDestroy#0",
+      "name": "onDestroy",
+      "type": "Method",
+      "filePath": "android-cast/app/src/main/java/com/fuckingbms/cast/MainActivity.kt"
+    },
+    "risk": "UNKNOWN",
+    "impactedCount": 0,
+    "partial": false,
+    "truncated": false,
+    "error": null
+  },
+  {
+    "file": "impact-MainActivity-onPause.json",
+    "target": {
+      "id": "Method:android-cast/app/src/main/java/com/fuckingbms/cast/MainActivity.kt:MainActivity.onPause#0",
+      "name": "onPause",
+      "type": "Method",
+      "filePath": "android-cast/app/src/main/java/com/fuckingbms/cast/MainActivity.kt"
+    },
+    "risk": "UNKNOWN",
+    "impactedCount": 0,
+    "partial": false,
+    "truncated": false,
+    "error": null
+  },
+  {
+    "file": "impact-MainActivity-onResume.json",
+    "target": {
+      "id": "Method:android-cast/app/src/main/java/com/fuckingbms/cast/MainActivity.kt:MainActivity.onResume#0",
+      "name": "onResume",
+      "type": "Method",
+      "filePath": "android-cast/app/src/main/java/com/fuckingbms/cast/MainActivity.kt"
+    },
+    "risk": "UNKNOWN",
+    "impactedCount": 0,
+    "partial": false,
+    "truncated": false,
+    "error": null
+  },
+  {
+    "file": "impact-createBleSession.json",
+    "target": {
+      "id": "Method:android-cast/app/src/main/java/com/fuckingbms/cast/DashboardActivity.kt:DashboardActivity.createBleSession#0",
+      "name": "createBleSession",
+      "type": "Method",
+      "filePath": "android-cast/app/src/main/java/com/fuckingbms/cast/DashboardActivity.kt"
+    },
+    "risk": "LOW",
+    "impactedCount": 2,
+    "partial": false,
+    "truncated": false,
+    "error": null
+  },
+  {
+    "file": "impact-create_music_page_content.json",
+    "note": "raw CLI output archived in temporary audit directory"
+  },
+  {
+    "file": "impact-create_page_transition.json",
+    "target": {
+      "name": "create_page_transition"
+    },
+    "risk": "UNKNOWN",
+    "impactedCount": null,
+    "partial": false,
+    "truncated": false,
+    "error": "Target 'create_page_transition' not found"
+  },
+  {
+    "file": "impact-create_screen.json",
+    "target": {
+      "name": "create_screen"
+    },
+    "risk": "UNKNOWN",
+    "impactedCount": null,
+    "partial": false,
+    "truncated": false,
+    "error": null
+  },
+  {
+    "file": "impact-dashboard_page_ensure_content.json",
+    "target": {
+      "name": "dashboard_page_ensure_content"
+    },
+    "risk": "UNKNOWN",
+    "impactedCount": null,
+    "partial": false,
+    "truncated": false,
+    "error": "Target 'dashboard_page_ensure_content' not found"
+  },
+  {
+    "file": "impact-esp_bms_idf_runtime-esp_bms_idf_runtime_http_api_handler.json",
+    "target": {
+      "name": "esp_bms_idf_runtime_http_api_handler",
+      "type": "",
+      "filePath": "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c"
+    },
+    "risk": "CRITICAL",
+    "impactedCount": 75,
+    "partial": false,
+    "truncated": false,
+    "error": null
+  },
+  {
+    "file": "impact-esp_bms_idf_runtime-runtime_ble_api_response.json",
+    "target": {
+      "name": "runtime_ble_api_response",
+      "type": "",
+      "filePath": "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c"
+    },
+    "risk": "CRITICAL",
+    "impactedCount": 75,
+    "partial": false,
+    "truncated": false,
+    "error": null
+  },
+  {
+    "file": "impact-esp_bms_idf_runtime_http_api_handler.json",
+    "target": {
+      "name": "esp_bms_idf_runtime_http_api_handler"
+    },
+    "risk": "UNKNOWN",
+    "impactedCount": null,
+    "partial": false,
+    "truncated": false,
+    "error": null
+  },
+  {
+    "file": "impact-esp_bms_lvgl_ui-perform_ui_action.json",
+    "target": {
+      "name": "perform_ui_action",
+      "type": "",
+      "filePath": "components/esp_bms_lvgl_ui/esp_bms_lvgl_ui.c"
+    },
+    "risk": "CRITICAL",
+    "impactedCount": 75,
+    "partial": false,
+    "truncated": false,
+    "error": null
+  },
+  {
+    "file": "impact-esp_bms_lvgl_ui_t.json",
+    "target": {
+      "id": "Struct:components/esp_bms_lvgl_ui/esp_bms_lvgl_ui_internal.h:esp_bms_lvgl_ui_t",
+      "name": "esp_bms_lvgl_ui_t",
+      "type": "",
+      "filePath": "components/esp_bms_lvgl_ui/esp_bms_lvgl_ui_internal.h"
+    },
+    "risk": "UNKNOWN",
+    "impactedCount": 0,
+    "partial": false,
+    "truncated": false,
+    "error": null
+  },
+  {
+    "file": "impact-onCreate.json",
+    "target": {
+      "name": "onCreate"
+    },
+    "risk": "UNKNOWN",
+    "impactedCount": null,
+    "partial": false,
+    "truncated": false,
+    "error": null
+  },
+  {
+    "file": "impact-onDestroy.json",
+    "target": {
+      "name": "onDestroy"
+    },
+    "risk": "UNKNOWN",
+    "impactedCount": null,
+    "partial": false,
+    "truncated": false,
+    "error": null
+  },
+  {
+    "file": "impact-onPause.json",
+    "target": {
+      "id": "Method:android-cast/app/src/main/java/com/fuckingbms/cast/MainActivity.kt:MainActivity.onPause#0",
+      "name": "onPause",
+      "type": "Method",
+      "filePath": "android-cast/app/src/main/java/com/fuckingbms/cast/MainActivity.kt"
+    },
+    "risk": "UNKNOWN",
+    "impactedCount": 0,
+    "partial": false,
+    "truncated": false,
+    "error": null
+  },
+  {
+    "file": "impact-onResume.json",
+    "target": {
+      "name": "onResume"
+    },
+    "risk": "UNKNOWN",
+    "impactedCount": null,
+    "partial": false,
+    "truncated": false,
+    "error": null
+  },
+  {
+    "file": "impact-openNative.json",
+    "target": {
+      "name": "openNative"
+    },
+    "risk": "UNKNOWN",
+    "impactedCount": null,
+    "partial": false,
+    "truncated": false,
+    "error": null
+  },
+  {
+    "file": "impact-page_from_scroll_x.json",
+    "target": {
+      "name": "page_from_scroll_x"
+    },
+    "risk": "UNKNOWN",
+    "impactedCount": null,
+    "partial": false,
+    "truncated": false,
+    "error": null
+  },
+  {
+    "file": "impact-page_last_scroll_x.json",
+    "target": {
+      "name": "page_last_scroll_x"
+    },
+    "risk": "UNKNOWN",
+    "impactedCount": null,
+    "partial": false,
+    "truncated": false,
+    "error": null
+  },
+  {
+    "file": "impact-page_target_scroll_x.json",
+    "target": {
+      "name": "page_target_scroll_x"
+    },
+    "risk": "UNKNOWN",
+    "impactedCount": null,
+    "partial": false,
+    "truncated": false,
+    "error": null
+  },
+  {
+    "file": "impact-runtime_ble_api_response.json",
+    "note": "raw CLI output archived in temporary audit directory"
+  },
+  {
+    "file": "impact-set_music_page.json",
+    "target": {
+      "name": "set_music_page"
+    },
+    "risk": "UNKNOWN",
+    "impactedCount": null,
+    "partial": false,
+    "truncated": false,
+    "error": null
+  },
+  {
+    "file": "impact-ui_dashboard_pages-set_music_page.json",
+    "target": {
+      "name": "set_music_page",
+      "type": "",
+      "filePath": "components/esp_bms_lvgl_ui/ui_dashboard_pages.c"
+    },
+    "risk": "CRITICAL",
+    "impactedCount": 75,
+    "partial": false,
+    "truncated": false,
+    "error": null
+  },
+  {
+    "file": "impact-ui_screen-create_gps_page_content.json",
+    "target": {
+      "id": "Function:components/esp_bms_lvgl_ui/ui_screen.c:create_gps_page_content",
+      "name": "create_gps_page_content",
+      "type": "Function",
+      "filePath": "components/esp_bms_lvgl_ui/ui_screen.c"
+    },
+    "risk": "CRITICAL",
+    "impactedCount": 43,
+    "partial": false,
+    "truncated": false,
+    "error": null
+  },
+  {
+    "file": "impact-ui_screen-create_music_page_content.json",
+    "target": {
+      "id": "Function:components/esp_bms_lvgl_ui/ui_screen.c:create_music_page_content",
+      "name": "create_music_page_content",
+      "type": "Function",
+      "filePath": "components/esp_bms_lvgl_ui/ui_screen.c"
+    },
+    "risk": "CRITICAL",
+    "impactedCount": 43,
+    "partial": false,
+    "truncated": false,
+    "error": null
+  },
+  {
+    "file": "impact-ui_screen-dashboard_page_content_release.json",
+    "target": {
+      "id": "Function:components/esp_bms_lvgl_ui/ui_screen.c:dashboard_page_content_release",
+      "name": "dashboard_page_content_release",
+      "type": "Function",
+      "filePath": "components/esp_bms_lvgl_ui/ui_screen.c"
+    },
+    "risk": "CRITICAL",
+    "impactedCount": 63,
+    "partial": false,
+    "truncated": false,
+    "error": null
+  }
+]

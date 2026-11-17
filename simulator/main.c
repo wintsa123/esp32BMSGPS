@@ -14,6 +14,7 @@
 #include "esp_bms_speed_dashboard.h"
 #include "host_ble_client.h"
 #include "lvgl.h"
+#include "companion_frame.h"
 
 typedef enum {
     HOST_COMMAND_NONE = 0,
@@ -1186,6 +1187,11 @@ int main(int argc, char **argv)
         !run_headless_feature_matrix(&app)) {
         fputs("GPS/启动动画功能矩阵失败\n", stderr);
         SDL_DelEventWatch(sdl_event_watch, &app);
+        lv_deinit();
+        return 1;
+    }
+    if (!companion_frame_load()) {
+        fputs("companion test frame rejected\n", stderr);
         lv_deinit();
         return 1;
     }

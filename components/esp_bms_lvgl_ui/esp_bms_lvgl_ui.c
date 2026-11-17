@@ -1447,6 +1447,7 @@ static bool native_focus_callback(lv_event_cb_t callback)
            callback == quick_level_event_cb ||
            callback == quick_edit_event_cb ||
            callback == action_event_cb ||
+           callback == companion_music_control_event ||
            callback == settings_option_event_cb ||
            callback == settings_detail_action_event_cb ||
            callback == settings_bms_type_option_event_cb ||
@@ -1696,5 +1697,28 @@ esp_err_t esp_bms_lvgl_ui_take_action(esp_bms_lvgl_action_t *action)
     esp_bms_lvgl_action_event_t event = { 0 };
     ESP_RETURN_ON_ERROR(esp_bms_lvgl_ui_take_action_event(&event), TAG, "take action event failed");
     *action = event.action;
+    return ESP_OK;
+}
+
+esp_err_t esp_bms_lvgl_ui_remote_action(esp_bms_lvgl_action_t action)
+{
+    ESP_RETURN_ON_FALSE(UI_FLAG(INITIALIZED), ESP_ERR_INVALID_STATE, TAG, "UI is not initialized");
+    if (action == ESP_BMS_LVGL_ACTION_START_TOUCH_CALIBRATION) {
+        ESP_RETURN_ON_FALSE(s_touch_calibration_supported, ESP_ERR_NOT_SUPPORTED, TAG, "touch calibration unavailable");
+        show_settings_view();
+        settings_show_system_view(SETTINGS_SYSTEM_VIEW_TOUCH_CALIBRATION);
+    } else if (action == ESP_BMS_LVGL_ACTION_CYCLE_LEVEL_POSITION) {
+        s_ui.quick_level_position = (s_ui.quick_level_position + 1U) % QUICK_LEVEL_POSITION_COUNT;
+        refresh_quick_level_layouts();
+    } else if (action == ESP_BMS_LVGL_ACTION_CANCEL_TOUCH_CALIBRATION) {
+        queue_action(action);
+        settings_show_detail(SETTINGS_DETAIL_SYSTEM);
+    } else if (action == ESP_BMS_LVGL_ACTION_SHOW_DASHBOARD ||
+               action == ESP_BMS_LVGL_ACTION_SHOW_SETTINGS ||
+               action == ESP_BMS_LVGL_ACTION_SHOW_QUICK_MENU) {
+        perform_ui_action(action, false);
+    } else {
+        return ESP_ERR_NOT_SUPPORTED;
+    }
     return ESP_OK;
 }

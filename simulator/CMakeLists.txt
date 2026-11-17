@@ -68,6 +68,10 @@ endif()
 
 set(ESP_BMS_SIMULATOR_SRCS
     main.c
+    companion_frame.c
+    "${REPO_ROOT}/components/esp_bms_lvgl_ui/ui_companion.c"
+    "${REPO_ROOT}/components/esp_bms_lvgl_ui/esp_bms_companion_codec.c"
+    "${REPO_ROOT}/components/esp_bms_lvgl_ui/media_zh_13.c"
     host_ble_client.c
     "${REPO_ROOT}/components/esp_bms_idf_runtime/esp_bms_speed_dashboard.c"
     "${REPO_ROOT}/components/esp_fardriver_protocol/esp_fardriver_protocol.c"
@@ -110,14 +114,28 @@ if(ESP_BMS_FEATURE_DASHBOARD_FIREBLADE)
     )
 endif()
 
+file(GLOB ESP_BMS_SIM_CONTROLLER_SRCS
+    "${REPO_ROOT}/components/esp_bms_controller_protocol/*.c"
+    "${REPO_ROOT}/components/esp_bms_controller_protocol/protocols/*/*.c"
+)
+list(APPEND ESP_BMS_SIMULATOR_SRCS ${ESP_BMS_SIM_CONTROLLER_SRCS})
+file(GLOB ESP_BMS_SIM_CONTROLLER_HEADERS "${REPO_ROOT}/components/esp_bms_controller_protocol/protocols/*/*.h")
+foreach(header ${ESP_BMS_SIM_CONTROLLER_HEADERS})
+    get_filename_component(directory "${header}" DIRECTORY)
+    list(APPEND ESP_BMS_SIM_CONTROLLER_INCLUDES "${directory}")
+endforeach()
+list(REMOVE_DUPLICATES ESP_BMS_SIM_CONTROLLER_INCLUDES)
+
 add_executable(esp_bms_lvgl_simulator
     ${ESP_BMS_SIMULATOR_SRCS}
 )
 
 target_include_directories(esp_bms_lvgl_simulator PRIVATE
+    ${ESP_BMS_SIM_CONTROLLER_INCLUDES}
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
     "${REPO_ROOT}/components/esp_bms_idf_runtime/include"
     "${REPO_ROOT}/components/esp_fardriver_protocol/include"
+    "${REPO_ROOT}/components/esp_bms_controller_protocol/include"
     "${REPO_ROOT}/components/esp_bms_bms_ble/protocols/ant"
     "${REPO_ROOT}/components/esp_bms_bms_ble/protocols/daly"
     "${REPO_ROOT}/components/esp_bms_bms_ble/protocols/jbd"

@@ -27,7 +27,7 @@ const ts = localRequire("typescript");
 const React = localRequire("react");
 const { renderToStaticMarkup } = localRequire("react-dom/server");
 const source = fs.readFileSync("vercel/src/App.tsx", "utf8").replace(
-  "  function setCurrentTransport", "  globalThis.bleTest = { bleApi, writeBleText, onBleValue, bleRef, pendingBle };\n  function setCurrentTransport"
+  "  function setCurrentTransport", "  globalThis.bleTest = { api, transportRef, bleApi, writeBleText, onBleValue, bleRef, pendingBle };\n  function setCurrentTransport"
 ) + `
 module.exports.uiTest = { validSection, ManifestControl, RideRecordList, SessionList,
   formatMillivolts, formatDeciAmps, formatBmsCapacityEstimate, I18N,
@@ -46,12 +46,13 @@ function loadTs(filename, contents) {
     if (!name.startsWith('.')) return localRequire(name);
     const base = path.resolve(path.dirname(filename), name);
     if (base.endsWith('.css')) return {};
+    if (base.endsWith('.json')) return JSON.parse(fs.readFileSync(base, 'utf8'));
     const target = [base, base + '.ts', base + '.tsx'].find(file => fs.existsSync(file));
     if (!target) throw new Error('Missing module ' + base);
     return loadTs(target).exports;
   };
   // Vite replaces import.meta.env during the production bundle; mirror its empty update-base default.
-  const input = (contents ?? fs.readFileSync(filename, 'utf8')).replaceAll('import.meta.env.VITE_UPDATE_BASE_URL', JSON.stringify(''));
+  const input = (contents ?? fs.readFileSync(filename, 'utf8')).replaceAll('import.meta.env.VITE_UPDATE_BASE_URL', JSON.stringify('')).replaceAll('import.meta.env.BASE_URL', JSON.stringify('/')).replaceAll('import.meta.env.MODE', JSON.stringify('production')).replaceAll('import.meta.env.VITE_TIANDITU_BROWSER_TK', JSON.stringify(''));
   const compiled = ts.transpileModule(input, { compilerOptions: {
     module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022,
   }}).outputText;
@@ -83,6 +84,27 @@ const page = render(appModule.exports.default, {});
   const malformed = ble.bleApi("/api/status").then(() => false, () => true);
   await new Promise(resolve => setImmediate(resolve));
   notify([2, 123, 125]);
+  const beforeQueue = chunks.length;
+  ble.transportRef.current = "ble";
+  ble.bleRef.current.rx = {};
+  const queuedA = ble.api("/api/history/samples?session=7").then(() => false, () => true);
+  const queuedB = ble.api("/api/status");
+  await new Promise(resolve => setImmediate(resolve));
+  const queuedEnvelope = JSON.parse(Buffer.from(chunks.slice(beforeQueue).flatMap(chunk => chunk.slice(1))).toString("utf8"));
+  if (queuedEnvelope.path !== "/api/history/samples?session=7" || ble.pendingBle.current.size !== 1) throw Error("BLE queue did not serialize requests");
+  const afterFirst = chunks.length;
+  notify([3, ...Buffer.from(JSON.stringify({ id: queuedEnvelope.id, status: 500, body: { error: "failed" } }))]);
+  if (!await queuedA) throw Error("failed queue request must reject");
+  await new Promise(resolve => setImmediate(resolve));
+  const secondEnvelope = JSON.parse(Buffer.from(chunks.slice(afterFirst).flatMap(chunk => chunk.slice(1))).toString("utf8"));
+  if (secondEnvelope.path !== "/api/status") throw Error("BLE queue did not recover after failure");
+  notify([3, ...Buffer.from(JSON.stringify({ id: secondEnvelope.id, status: 200, body: { queue: "ok" } }))]);
+  const queueResult = await queuedB;
+  if (queueResult.queue !== "ok") throw Error("BLE queue returned wrong response");
+  const beforeSwitch = chunks.length;
+  const switched = ble.api("/api/status").then(() => false, () => true);
+  ble.bleRef.current = {};
+  if (!await switched || chunks.length !== beforeSwitch) throw Error("BLE queue sent request after device switch");
 console.log(JSON.stringify({
   page,
   ble: { envelope, result, oversized, malformed: await malformed,
@@ -120,15 +142,16 @@ console.log(JSON.stringify({
     def test_initial_page_is_chinese_and_has_no_zeeho_vehicle_controls(self):
         page = self.output["page"]
         self.assertIn("最近骑行", page)
-        self.assertIn("蓝牙连接", page)
-        self.assertIn("Wi-Fi 连接", page)
-        self.assertIn("系统信息", page)
+        self.assertNotIn("系统信息", page)
+        settings = page.split('<section class="panel page" aria-label="设置">', 1)[1]
+        self.assertNotIn(">设备设置</", settings)
+        self.assertNotIn("<details", settings)
         self.assertNotIn("device-subnav", page)
         self.assertNotIn("my-list-row", page)
         self.assertNotIn(">我的</span>", page)
         self.assertIn('>设置</span>', page)
         for card in ("bluetooth", "wifi", "system", "device"):
-            self.assertIn(f'aria-labelledby="settings-{card}-title"', page)
+            self.assertNotIn(f'id="settings-{card}-title"', page)
         self.assertEqual(1, page.count('aria-labelledby="settings-update-title"'))
         self.assertEqual(3, page.count('class="update-row"'))
         for title in ("App 更新", "Web 前端更新", "固件更新"):
@@ -136,10 +159,11 @@ console.log(JSON.stringify({
             self.assertIn(f'aria-label="{title} · 查看更新"', page)
         self.assertNotIn('role="dialog"', page)
         self.assertNotIn("再次检查", page)
-        self.assertIn('name="password"', page)
-        self.assertIn('面板版本', page)
-        self.assertIn('App 版本', page)
-        self.assertIn('aria-label="功能"></section>', page)
+        self.assertNotIn('name="password"', settings)
+        self.assertNotIn('device-profile', settings)
+        self.assertNotIn('system-overview', settings)
+        self.assertIn('aria-label="功能">', page)
+        self.assertIn('面板功能控制', page)
         self.assertNotIn('class="chip">AE5</span>', page)
         for removed in ("ZEEHO", "zeeho", "车辆位置", "车辆设置", "解锁车辆", "鸣笛", "寻车"):
             self.assertNotIn(removed, page)

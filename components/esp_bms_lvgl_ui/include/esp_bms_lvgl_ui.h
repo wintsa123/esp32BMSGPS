@@ -463,12 +463,21 @@ esp_err_t esp_bms_lvgl_ui_ota_finish(void);
 esp_err_t esp_bms_lvgl_ui_show_dashboard(void);
 esp_err_t esp_bms_lvgl_ui_touch_calibration_result(bool success);
 esp_err_t esp_bms_lvgl_ui_set_page(esp_bms_lvgl_page_t page, bool animated);
+/* Caller holds the LVGL bridge lock. Slot 0 = music, slot 1 = navigation. */
+int esp_bms_lvgl_ui_companion_page(void);
+bool esp_bms_lvgl_ui_companion_connected(void);
+void esp_bms_lvgl_ui_companion_action(uint32_t *id, uint32_t *action);
+esp_err_t esp_bms_lvgl_ui_companion(unsigned slot, const char *operation,
+                                    uint32_t frame, uint16_t width, uint16_t height,
+                                    size_t offset, const uint8_t *data, size_t length);
 esp_err_t esp_bms_lvgl_ui_handle_native_gesture(esp_bms_lvgl_native_gesture_t gesture);
 bool esp_bms_lvgl_ui_speed_dashboard_style_available(esp_bms_speed_dashboard_style_t style);
 esp_bms_speed_dashboard_style_t esp_bms_lvgl_ui_default_speed_dashboard_style(void);
 esp_bms_lvgl_data_source_t esp_bms_lvgl_ui_stable_data_source(void);
 bool esp_bms_lvgl_ui_drag_active(void);
 esp_err_t esp_bms_lvgl_ui_take_action_event(esp_bms_lvgl_action_event_t *event);
+esp_err_t esp_bms_lvgl_ui_remote_action(esp_bms_lvgl_action_t action);
+
 esp_err_t esp_bms_lvgl_ui_take_action(esp_bms_lvgl_action_t *action);
 
 #if ESP_BMS_LVGL_UI_SIMULATOR

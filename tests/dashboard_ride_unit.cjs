@@ -1,0 +1,34 @@
+const assert = require('node:assert/strict');
+const { createRequire } = require('node:module');
+const vm = require('node:vm');
+const localRequire = createRequire(process.cwd() + '/vercel/package.json');
+const result = localRequire('esbuild').buildSync({ entryPoints: ['vercel/src/ride-data.ts'], bundle: true, write: false, platform: 'node', format: 'cjs', packages: 'external', loader: { '.css': 'empty' }, define: { 'import.meta.env.VITE_TIANDITU_BROWSER_TK': '""' } });
+const moduleResult = { exports: {} };
+vm.runInNewContext(result.outputFiles[0].text, { module: moduleResult, exports: moduleResult.exports, require: localRequire, URLSearchParams });
+const { rideSummary, ridesInRange, readTrackPage, dateKey } = moduleResult.exports;
+const midnight = new Date('2026-11-11T00:00:00').getTime() / 1000;
+const point = (elapsed_s, lon_e7) => ({ elapsed_s, lat_e7: 300000000, lon_e7 });
+const track = { session: { id: 7, start_s: midnight - 60, elapsed_s: 120, calibrated: true, samples: 5 }, loaded: true, cursor: null, samples: 5,
+  points: [point(0, 1200000000), point(30, 1200010000), null, point(90, 1200100000), point(120, 1200110000)] };
+(async () => {
+  const all = rideSummary([track]);
+  assert(all.km > .19 && all.km < .20, 'two short GPS segments; never bridge the invalid fix');
+  assert.equal(all.seconds, 120);
+  assert(Math.abs(all.avg - all.km / 120 * 3600) < 1e-9, 'average uses the full device ride duration');
+  const before = rideSummary([track], midnight - 86400, midnight);
+  const after = rideSummary([track], midnight, midnight + 86400);
+  assert.equal(before.seconds, 60); assert.equal(after.seconds, 60);
+  assert(Math.abs(before.km + after.km - all.km) < 1e-9, 'cross-midnight distance is allocated once');
+  const undated = { ...track, session: { ...track.session, calibrated: false, start_s: 0 } };
+  assert.equal(rideSummary([undated], midnight, midnight + 86400).km, null);
+  assert.equal(rideSummary([undated], midnight, midnight + 86400).seconds, 0);
+  assert.equal(ridesInRange([undated, track], midnight, midnight + 86400).length, 1);
+  assert.equal(rideSummary([{ ...track, points: [point(10, 1200000000)] }]).km, null);
+  assert.equal(rideSummary([{ ...track, points: [point(10, 1200000000), point(10, 1200010000)] }]).max, null, 'duplicate timestamps cannot create infinite speed');
+  assert.equal(dateKey(new Date('2026-11-11T00:00:00')), '2026-11-11');
+  let url;
+  const page = await readTrackPage(async path => { url = path; return { samples: [{ ...point(15, 1200010000), flags: 1 }], next_cursor: null }; }, 7, null, true);
+  assert(url.includes('limit=500')); assert.equal(page.points[0].elapsed_s, 15);
+  await assert.rejects(() => readTrackPage(async () => ({ samples: [], next_cursor: -1 }), 7, null, false), /invalid-track/);
+  console.log('PASS: real GPS distance/speed, invalid-fix gaps, midnight buckets, uncalibrated exclusion, missing/duplicate samples, HTTP page size');
+})().catch(error => { console.error(error); process.exitCode = 1; });
