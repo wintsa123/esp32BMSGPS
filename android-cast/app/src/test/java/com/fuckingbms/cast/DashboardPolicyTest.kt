@@ -22,4 +22,13 @@ class DashboardPolicyTest {
             assertTrue(runCatching { DashboardPolicy.localHost(it) }.isFailure)
         }
     }
+    @Test fun castLinksAlwaysOpenTheWebPageAndRejectUntrustedTargets() {
+        val expected = "https://bms.local/?cast=1&host=192.168.4.1&lang=zh"
+        assertEquals(expected, DashboardPolicy.castLaunchUrl("fuckingbms://cast/v1?host=192.168.4.1"))
+        assertEquals(expected, DashboardPolicy.castLaunchUrl("https://fuckbms.com/cast"))
+        assertEquals("https://bms.local/?cast=1&host=10.0.0.2:8080&lang=en", DashboardPolicy.castLaunchUrl("fuckingbms://cast/v1?host=10.0.0.2%3A8080&lang=en"))
+        listOf(null, "https://evil.test/cast", "http://fuckbms.com/cast", "fuckingbms://cast/v1?host=8.8.8.8", "fuckingbms://cast/v1?host=192.168.4.1%26lang%3Devil", "https://user@fuckbms.com/cast").forEach {
+            assertNull(DashboardPolicy.castLaunchUrl(it))
+        }
+    }
 }

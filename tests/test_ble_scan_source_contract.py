@@ -81,19 +81,14 @@ class BleScanSourceContractTest(unittest.TestCase):
         )
         self.assertNotIn("esp_bms_idf_runtime_stop_setup_services", body)
 
-    def test_android_bms_and_controller_scans_use_phone_ble(self):
-        activity = ROOT / "android-cast/app/src/main/java/com/fuckingbms/cast/MainActivity.kt"
+    def test_android_uses_web_connection_form_without_legacy_pages(self):
+        activity = ROOT / "android-cast/app/src/main/java/com/fuckingbms/cast/DashboardActivity.kt"
         source = activity.read_text(encoding="utf-8")
-        self.assertRegex(
-            source,
-            r"private fun startBmsScan\(\)\s*\{\s*requestBleScan\(BleScanTarget\.BMS\)",
-        )
-        self.assertNotIn("DeviceApi.startBmsScan", source)
-        self.assertRegex(
-            source,
-            r"private fun startPhoneBleScan\([^)]*\)\s*\{[^}]*bluetoothLeScanner",
-        )
-        self.assertIn("requestBleScan(BleScanTarget.CONTROLLER)", source)
+        self.assertNotIn("MainActivity::class.java", source)
+        self.assertFalse((activity.parent / "MainActivity.kt").exists())
+        form = (ROOT / "vercel/src/DeviceConnectionForm.tsx").read_text(encoding="utf-8")
+        self.assertIn("BrowserBluetooth", form)
+        self.assertIn('source === "computer"', form)
 
     def test_candidate_name_updates_are_scoped_to_the_same_mac(self):
         runtime_path = ROOT / "components/esp_bms_idf_runtime/esp_bms_idf_runtime.c"

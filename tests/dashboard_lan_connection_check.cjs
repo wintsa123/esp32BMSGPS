@@ -62,6 +62,7 @@ const device = http.createServer((req, res) => {
     await page.goto(url);
     assert(await page.evaluate(()=>isSecureContext));
     await page.getByRole('button',{name:'设置',exact:true}).click();
+    await page.getByText('自定义局域网地址',{exact:true}).click();
     await page.getByLabel('设备地址',{exact:true}).fill(`http://${deviceHost}:${device.address().port}`);
     await page.getByRole('button',{name:'连接 Wi-Fi 设备',exact:true}).click();
     await page.waitForFunction(()=>document.querySelector('.hero-top .chip:last-child')?.classList.contains('accent'));

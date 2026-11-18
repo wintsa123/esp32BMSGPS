@@ -17,8 +17,10 @@ RUN_TESTS=1 scripts/build-android-cast.sh
 仅内置 `https://bms.local` 文档可留在 WebView，外部页面交给系统浏览器。脚本、子页面由 CSP 限制为内置资源，原生请求仅允许本地 IPv4 设备和 `/api/` 路径。
 
 - `BmsNative.request(id, method, path, body, host)` 异步执行请求。`host` 为本地 IPv4 地址（可带端口），或 `ble`。响应调用 `window.__bmsNativeReply(id, json)`，`json` 为 `{ok:true,body:...}` 或 `{ok:false,error:...}` 的 JSON 字符串。
-- `BmsNative.connectBle()` 按需请求蓝牙权限并连接设备，`BmsNative.bleConnected()` 查询连接状态。
-- `BmsNative.openNative(route)` 接受 `CAST`、`BMS`、`RECORDS`、`SETTINGS`。进入原生页前释放首页 BLE，返回时恢复连接，投屏服务继续沿用原有生命周期。
+- `BmsNative.connectBle()` 按需请求蓝牙权限并连接设备，`BmsNative.bleConnected()` 和 `getBleState()` 查询连接结果。蓝牙失败或拒绝权限会结束网页等待。
+- 投屏入口统一打开网页 `WebCast`，通过 `startCast(host)`、`stopCast()`、`getCastState()` 调用原有 `CastService`。每次录屏重新取得系统授权；取消授权或关闭等待页面会作废本次请求。
+- 已删除旧投屏、仪表、记录、设置页面及其专用原生图表。旧 `.MainActivity` 组件仅保留 manifest 别名，投屏二维码和旧入口均转至 `DashboardActivity` 网页。
+- 系统连接设置只在实际离开并返回 App 后回调一次；不会重载 WebView。APK 安装通过 `installAppUpdateFrom(source)` 下载并交给系统安装器，网页读取 `getAppUpdateState()`，不再跳旧设置页。
 
 底座参考用户指定的 `lswlc33/dashboard` commit `35aa033eecb95f214dce059850aa629557abfd98` 中 `app-shell/webnext/.../MainActivity.java` 的可信 WebView、JavascriptInterface、资源拦截、系统边距及外部导航模式，按本项目 Kotlin、DeviceApi 和 DeviceBleSession 实现。未引入其云端账号、车控和车辆位置页面；不是完整复制原项目壳。
 

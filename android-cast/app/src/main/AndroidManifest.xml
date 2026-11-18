@@ -19,12 +19,10 @@
     <application android:theme="@style/AppTheme" android:label="@string/app_name"
         android:icon="@drawable/app_icon" android:roundIcon="@drawable/app_icon"
         android:usesCleartextTraffic="true">
-        <activity android:name=".DashboardActivity" android:exported="true">
+        <activity android:name=".DashboardActivity" android:exported="true" android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
-        </activity>
-        <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW"/><category android:name="android.intent.category.DEFAULT"/><category android:name="android.intent.category.BROWSABLE"/>
                 <data android:scheme="fuckingbms" android:host="cast" android:pathPrefix="/v1"/>
@@ -33,7 +31,12 @@
                 <action android:name="android.intent.action.VIEW"/><category android:name="android.intent.category.DEFAULT"/><category android:name="android.intent.category.BROWSABLE"/>
                 <data android:scheme="https" android:host="esp-bms-setting.vercel.app" android:pathPrefix="/cast"/>
             </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/><category android:name="android.intent.category.DEFAULT"/><category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="https" android:host="fuckbms.com" android:pathPrefix="/cast"/>
+            </intent-filter>
         </activity>
+        <activity-alias android:name=".MainActivity" android:targetActivity=".DashboardActivity" android:exported="true" />
         <activity android:name=".CompanionActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <service android:name=".CompanionService" android:exported="false" android:foregroundServiceType="connectedDevice|location" />
         <service android:name=".CompanionNotificationListener" android:exported="false"

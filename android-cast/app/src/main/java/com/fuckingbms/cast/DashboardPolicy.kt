@@ -5,6 +5,20 @@ import java.net.URI
 internal object DashboardPolicy {
     const val ORIGIN = "https://bms.local"
 
+    fun castLaunchUrl(value: String?): String? = runCatching {
+        val uri = URI(value ?: return null)
+        require(uri.rawUserInfo == null && uri.port == -1 && uri.rawFragment == null)
+        require((uri.scheme == "fuckingbms" && uri.host == "cast" && uri.path == "/v1") ||
+            (uri.scheme == "https" && uri.host in listOf("fuckbms.com", "esp-bms-setting.vercel.app") && uri.path == "/cast"))
+        val query = uri.rawQuery.orEmpty().split('&').associate { item ->
+            val fields = item.split('=', limit = 2)
+            fields[0] to java.net.URLDecoder.decode(fields.getOrElse(1) { "" }, "UTF-8")
+        }
+        val host = localHost(query["host"] ?: "192.168.4.1")
+        val language = if (query["lang"] == "en") "en" else "zh"
+        "$ORIGIN/?cast=1&host=$host&lang=$language"
+    }.getOrNull()
+
     fun isDocument(url: String): Boolean = runCatching {
         val uri = URI(url)
         uri.scheme == "https" && uri.host == "bms.local" && uri.port == -1 && uri.userInfo == null

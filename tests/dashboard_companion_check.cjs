@@ -20,11 +20,10 @@ const {chromium} = require('/vol1/1000/.tools/battery-browser/node_modules/playw
       await page.getByRole('button', {name: '功能', exact: true}).click();
       const card = page.locator('.companion-card');
       await card.getByRole('button', {name: /音乐与歌词/}).click();
-      await card.getByRole('button', {name: /实时导航/}).click();
+      await card.getByRole('button', {name: /骑行导航/}).click();
       assert.deepEqual(await page.evaluate(() => window.companionCalls), [['music', 'zh'], ['navigation', 'zh']]);
       assert(await card.evaluate(el => el.scrollWidth <= el.clientWidth + 1));
       await page.screenshot({path: `preview/companion-web-features-${width}.png`});
-      await page.getByRole('button', {name: '设置', exact: true}).click();
       await page.getByRole('button', {name: '同步与地图设置', exact: true}).click();
       assert.deepEqual((await page.evaluate(() => window.companionCalls)).at(-1), ['settings', 'zh']);
       assert.deepEqual(errors, []);
@@ -33,8 +32,8 @@ const {chromium} = require('/vol1/1000/.tools/battery-browser/node_modules/playw
     const browserPage = await browser.newPage();
     await browserPage.goto('http://127.0.0.1:8787/');
     await browserPage.getByRole('button', {name: '功能', exact: true}).click();
-    await browserPage.locator('.companion-card').getByRole('button', {name: /音乐与歌词/}).click();
-    await browserPage.getByText('请使用新版 Android App 打开音乐与导航', {exact: true}).waitFor();
+    await browserPage.locator('.companion-card').getByRole('button', {name: '骑行导航', exact: true}).click();
+    await browserPage.getByRole('dialog', {name: '实时导航', exact: true}).waitFor();
     console.log('Companion entry points, native bridge arguments, 320/390 px layout, and browser fallback passed');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exit(1); });

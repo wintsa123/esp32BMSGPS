@@ -17,7 +17,7 @@ catch { ({chromium} = require('/vol1/1000/.tools/battery-browser/node_modules/pl
     const page = await browser.newPage({viewport:{width:390,height:844},serviceWorkers:'block'});
     const apiRequests = [];
     page.on('request', request => { if (new URL(request.url()).pathname.startsWith('/api/')) apiRequests.push(request.url()); });
-    await page.goto('http://127.0.0.1:8787/');
+    await page.goto(process.env.DASHBOARD_PREVIEW_URL || 'http://127.0.0.1:8787/');
     await page.getByRole('button',{name:'功能',exact:true}).click();
     const controls = page.getByRole('region',{name:'面板功能控制',exact:true});
     await controls.getByText('测试预览',{exact:true}).waitFor();
@@ -88,13 +88,14 @@ catch { ({chromium} = require('/vol1/1000/.tools/battery-browser/node_modules/pl
     assert(await controls.evaluate(el => el.scrollWidth <= el.clientWidth));
     await page.getByRole('button',{name:'设置',exact:true}).click();
     const settings = page.locator('.panel.active');
-    assert.equal(await settings.locator('details, summary').count(), 0);
+    assert.equal(await settings.locator('details[open]').count(), 0);
     assert.equal(await settings.getByRole('heading',{name:'连接 ESP32 面板',exact:true}).count(), 1);
     assert.equal(await settings.getByRole('button',{name:'连接面板蓝牙',exact:true}).count(), 1);
     assert.equal(await settings.getByRole('button',{name:'连接 Wi-Fi 设备',exact:true}).count(), 1);
-    assert.equal(await settings.locator('.update-row').count(), 3);
+    assert.equal(await settings.locator('.update-row').count(), 2);
     assert.equal(await settings.locator('input, select').count(), 1);
-    assert.equal(await settings.getByLabel('设备地址',{exact:true}).inputValue(), 'http://192.168.4.1');
+    assert.equal(await settings.getByLabel('设备地址',{exact:true}).inputValue(), '');
+    assert.equal(await settings.getByLabel('设备地址',{exact:true}).isVisible(), false);
     assert(await settings.evaluate(el => el.scrollWidth <= el.clientWidth));
     await page.setViewportSize({width:390,height:844});
     await page.emulateMedia({colorScheme:'dark'});
