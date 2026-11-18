@@ -17,7 +17,7 @@ require(listOf(defaultAmapJsKey, defaultAmapSecurityCode).all { it.isEmpty() || 
 }
 
 android { namespace = "com.fuckingbms.cast"; compileSdk = 35
-    defaultConfig { applicationId = "com.fuckingbms.cast"; minSdk = 29; targetSdk = 35; versionCode = 7; versionName = "0.4.3"; testInstrumentationRunner = "com.fuckingbms.cast.CompanionInstrumentedChecks" }
+    defaultConfig { applicationId = "com.fuckingbms.cast"; minSdk = 29; targetSdk = 35; versionCode = 8; versionName = "0.4.4"; testInstrumentationRunner = "com.fuckingbms.cast.CompanionInstrumentedChecks" }
     buildFeatures { buildConfig = true }
     defaultConfig { buildConfigField("String", "DEFAULT_TIANDITU_KEY", "\"$defaultTiandituKey\"") }
     defaultConfig {

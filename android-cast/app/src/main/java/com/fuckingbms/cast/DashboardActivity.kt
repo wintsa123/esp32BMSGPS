@@ -17,6 +17,7 @@ import android.os.Build
 import android.provider.Settings
 import android.view.View
 import android.view.WindowInsets
+import android.view.WindowInsetsController
 import android.webkit.JavascriptInterface
 import android.webkit.MimeTypeMap
 import android.webkit.ValueCallback
@@ -41,6 +42,7 @@ import java.util.concurrent.Executors
 // Adapted from dashboard's MainActivity/Client: trusted WebView document, native bridge and system insets.
 class DashboardActivity : Activity() {
     private lateinit var web: WebView
+    private lateinit var content: FrameLayout
     private lateinit var ble: DeviceBleSession
     private val requests = Executors.newSingleThreadExecutor()
     private var chooser: ValueCallback<Array<Uri>>? = null
@@ -140,7 +142,7 @@ class DashboardActivity : Activity() {
                 }
             }
         }
-        val content = FrameLayout(this)
+        content = FrameLayout(this)
         content.setBackgroundColor(android.graphics.Color.rgb(10, 15, 20))
         content.addView(web, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         setContentView(content)
@@ -150,10 +152,10 @@ class DashboardActivity : Activity() {
                 val safe = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout() or WindowInsets.Type.ime())
                 val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
                 projectionInsets = CaptureInsets(bars.left, bars.top, bars.right, bars.bottom)
-                view.setPadding(safe.left, safe.top, safe.right, safe.bottom)
+                view.setPadding(safe.left, safe.top, safe.right, insets.getInsets(WindowInsets.Type.ime()).bottom)
             } else @Suppress("DEPRECATION") run {
                 projectionInsets = CaptureInsets(insets.systemWindowInsetLeft, insets.systemWindowInsetTop, insets.systemWindowInsetRight, insets.systemWindowInsetBottom)
-                view.setPadding(insets.systemWindowInsetLeft, insets.systemWindowInsetTop, insets.systemWindowInsetRight, insets.systemWindowInsetBottom)
+                view.setPadding(insets.systemWindowInsetLeft, insets.systemWindowInsetTop, insets.systemWindowInsetRight, (insets.systemWindowInsetBottom - insets.stableInsetBottom).coerceAtLeast(0))
             }
             if (Build.VERSION.SDK_INT >= 30) WindowInsets.CONSUMED else @Suppress("DEPRECATION") insets.consumeSystemWindowInsets()
         }
@@ -229,6 +231,24 @@ class DashboardActivity : Activity() {
     }
 
     inner class Bridge {
+        @JavascriptInterface fun setSystemBars(color: String, light: Boolean) = runOnUiThread {
+            if (!color.matches(Regex("#[a-fA-F0-9]{6}"))) return@runOnUiThread
+            val background = android.graphics.Color.parseColor(color)
+            content.setBackgroundColor(background)
+            @Suppress("DEPRECATION")
+            window.statusBarColor = background
+            @Suppress("DEPRECATION")
+            window.navigationBarColor = background
+            window.isNavigationBarContrastEnforced = false
+            if (Build.VERSION.SDK_INT >= 30) {
+                val appearance = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
+                window.insetsController?.setSystemBarsAppearance(if (light) appearance else 0, appearance)
+            } else @Suppress("DEPRECATION") run {
+                val appearance = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+                window.decorView.systemUiVisibility = (window.decorView.systemUiVisibility and appearance.inv()) or (if (light) appearance else 0)
+            }
+        }
+
         @JavascriptInterface fun getWebUpdateState(): String = updates.state()
         @JavascriptInterface fun checkWebUpdate() { updateWorker.execute { updates.check() } }
         @JavascriptInterface fun checkWebUpdateFrom(source: String) {
